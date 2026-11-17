@@ -7,6 +7,7 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/root_ring"
 
 // The caller side of one description, three ways to call
 // (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"):
@@ -345,7 +346,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 // ring of the grant Root_Ring or of the grant Connect.
 service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: string) -> (connection: Call_Connection, status: Status) {
 	packed := name_pack(name)
-	if !send(&requests.commands, ring.Record{kind = u32(Root_Command.Connect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
 		return {}, .No_Slot
 	}
 	limit := time() + 5000

@@ -226,6 +226,7 @@ The first program. The kernel gives it every handle that exists at boot.
 - Holds the system description and the grant records. Before it starts the first program, it checks each module and resource of the boot image against the system description that the boot program verified (`docs/TRUSTED_BOOT.md`, claim 5).
 - Is the only program that can create access from nothing. All other access is a handle that came from it, directly or through a chain.
 - Holds the records of the principals, and records for each program that it starts the principal of its session; it names that principal in each connection, in the name of each store and in the grants of the program (`docs/PRINCIPALS.md`).
+- Reads the role of a program one time, at its start, and keeps it with the program: each rule after the start reads that role, never the name. A program receives a root ring only with a start grant that sends a command, and each command of the root ring goes through one border, then the table of its senders, then its procedure (`src/library/contract/root_ring`; `src/md/api/root_ring.md`).
 
 ### U2b. Resources of the boot image
 

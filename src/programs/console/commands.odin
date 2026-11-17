@@ -14,6 +14,8 @@ import "modus:contract/value_kinds"
 import "modus:support/disk_program"
 import "modus:support/principals"
 import "modus:support/random"
+import "modus:contract/root_ring"
+import "modus:contract/enum_word"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -1406,7 +1408,7 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 root_refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) -> string {
 	error := errors.completion_record(completion.values)
 	writer := system.Writer{buffer = buffer}
-	system.ring_error_text(&writer, &error, "root", system.root_command_name(error.operation), system.root_argument_name(error.operation, error.argument))
+	system.ring_error_text(&writer, &error, "root", root_ring.root_command_name(error.operation), root_ring.root_argument_name(error.operation, error.argument))
 	return system.written(&writer)
 }
 
@@ -2128,7 +2130,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 
 // request_record sends one command to the root service and waits for its
 // completion. answered is false when the root service gave none.
-request_record :: proc "contextless" (kind: system.Root_Command, name: string, value: u64 = 0, time_limit: u64 = 3000) -> (completion: ring.Record, answered: bool) {
+request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string, value: u64 = 0, time_limit: u64 = 3000) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
@@ -2160,7 +2162,7 @@ request_record :: proc "contextless" (kind: system.Root_Command, name: string, v
 // request asks the root service to start or to stop a program. It gives
 // nothing: a refusal is the error of the line, with the error record of the
 // root service.
-request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value {
+request :: proc "contextless" (kind: root_ring.Root_Command, name: string) -> Value {
 	completion, answered := request_record(kind, name)
 	if !answered {
 		return fail_no_answer()
@@ -2234,7 +2236,7 @@ lock_session :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 @(rodata)
-principal_state_names := [system.Principal_State]string {
+principal_state_names := [root_ring.Principal_State]string {
 	.Absent   = "absent",
 	.Machine  = "machine",
 	.Locked   = "locked",
@@ -2270,7 +2272,7 @@ list_principals :: proc "contextless" (arguments: []Value) -> Value {
 		if system.Status(completion.kind) != .Ok {
 			continue // No record with this number.
 		}
-		state := completion.values[0] <= u64(max(system.Principal_State)) ? system.Principal_State(completion.values[0]) : .Absent
+		state := completion.values[0] <= u64(max(root_ring.Principal_State)) ? root_ring.Principal_State(completion.values[0]) : .Absent
 		principal_name := system.name_unpack({completion.values[1], completion.values[2], completion.values[3], completion.values[4]})
 		row := made_row(&table)
 		made_integer(&table, row, 0, i64(number))
@@ -2333,7 +2335,7 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	// The status and the kind of the record come from the root service: each
 	// is read at its border, and a word that names no member is said.
-	status, status_ok := system.member_of_word(system.Status, u64(completion.kind))
+	status, status_ok := enum_word.member_of_word(system.Status, u64(completion.kind))
 	if !status_ok {
 		return fail("the root service gave the status ", u64(completion.kind), " to the replacement, which names no status")
 	}
@@ -2345,7 +2347,7 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
 		// replace a module"); its log line gives the whole reason.
 		kind_word := errors.completion_record(completion.values).kind
-		kind, kind_ok := system.member_of_word(errors.Kind, u64(kind_word))
+		kind, kind_ok := enum_word.member_of_word(errors.Kind, u64(kind_word))
 		if !kind_ok {
 			return fail("the root service refused the replacement of ", name, " by ", by, " with the kind ", kind_word, ", which names no kind")
 		}
@@ -2451,7 +2453,7 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 // disk_request sends one command of the disk programs to the root service,
 // whose values are not a name of 31 bytes, and waits for its completion.
 // answered is false when the root service gave none before the limit.
-disk_request :: proc "contextless" (kind: system.Root_Command, values: [7]u64, time_limit: u64) -> (completion: ring.Record, answered: bool) {
+disk_request :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64, time_limit: u64) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
@@ -2523,7 +2525,7 @@ disk_grant_named :: proc "contextless" (text: string) -> (grant: start_grant.Gra
 // disk_grant_command asks the root service to give a grant to the file that
 // a nickname names, or to take it. The root service refuses a grant that
 // no command gives, with its sentence on the log.
-disk_grant_command :: proc "contextless" (command_name: string, action: system.Disk_Grant_Action, arguments: []Value) -> Value {
+disk_grant_command :: proc "contextless" (command_name: string, action: root_ring.Disk_Grant_Action, arguments: []Value) -> Value {
 	nickname := arguments[0].text
 	if refusal, refused := nickname_check(command_name, nickname); refused {
 		return refusal
@@ -2544,17 +2546,17 @@ disk_grant_command :: proc "contextless" (command_name: string, action: system.D
 }
 
 allow :: proc "contextless" (arguments: []Value) -> Value {
-	return disk_grant_command("allow", system.Disk_Grant_Action.Allow, arguments)
+	return disk_grant_command("allow", root_ring.Disk_Grant_Action.Allow, arguments)
 }
 
 disallow :: proc "contextless" (arguments: []Value) -> Value {
-	return disk_grant_command("disallow", system.Disk_Grant_Action.Disallow, arguments)
+	return disk_grant_command("disallow", root_ring.Disk_Grant_Action.Disallow, arguments)
 }
 
 // remote_client_request sends Remote_Client with a key of 64 hexadecimal
 // digits and an action, and waits for its completion. A key of another form
 // is refused here: the record carries 32 bytes.
-remote_client_request :: proc "contextless" (command_name: string, text: string, action: system.Remote_Client_Action) -> (completion: ring.Record, refusal: Value, refused: bool) {
+remote_client_request :: proc "contextless" (command_name: string, text: string, action: root_ring.Remote_Client_Action) -> (completion: ring.Record, refusal: Value, refused: bool) {
 	// A key and a hash of BLAKE3 have the same form: 32 bytes in 64
 	// hexadecimal digits.
 	key, parsed := disk_program.hash_parse(text)
@@ -2576,7 +2578,7 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 // remote_allow asks the root service to allow the key of a client of
 // `remote` for the principal of this console.
 remote_allow :: proc "contextless" (arguments: []Value) -> Value {
-	_, refusal, refused := remote_client_request("remote_allow", arguments[0].text, system.Remote_Client_Action.Allow)
+	_, refusal, refused := remote_client_request("remote_allow", arguments[0].text, root_ring.Remote_Client_Action.Allow)
 	if refused {
 		return refusal
 	}
@@ -2586,11 +2588,11 @@ remote_allow :: proc "contextless" (arguments: []Value) -> Value {
 // remote_disallow asks the root service to end the grant of the key of a
 // client of `remote`, and gives the count of the connections that ended.
 remote_disallow :: proc "contextless" (arguments: []Value) -> Value {
-	completion, refusal, refused := remote_client_request("remote_disallow", arguments[0].text, system.Remote_Client_Action.Revoke)
+	completion, refusal, refused := remote_client_request("remote_disallow", arguments[0].text, root_ring.Remote_Client_Action.Revoke)
 	if refused {
 		return refusal
 	}
-	if completion.values[1] == system.REMOTE_CLIENT_KEY_CAN_COME_BACK {
+	if completion.values[1] == root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK {
 		return {kind = .Text, text = scratch_text(completion.values[0], " connections to services ended; the disk grant table of this principal did not take the revocation, so the key can come back at the next start of the machine: revoke it again then")}
 	}
 	return {kind = .Text, text = scratch_text(completion.values[0], " connections to services ended")}
@@ -2608,7 +2610,7 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 	// The rows of the client table, then the contested keys of the disk
 	// grant table, whose rows are rows of another principal.
 	for place in u64(0) ..< remote.CLIENT_READ_PLACES {
-		completion, answered := disk_request(.Remote_Client, {4 = u64(system.Remote_Client_Action.Read), 5 = place}, 3000)
+		completion, answered := disk_request(.Remote_Client, {4 = u64(root_ring.Remote_Client_Action.Read), 5 = place}, 3000)
 		if !answered {
 			return fail_no_answer()
 		}
@@ -2630,7 +2632,7 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 		made_integer(&table, row, 1, i64(completion.values[4]))
 		// A word that names no state is refused: the row does not say
 		// "holds" for a key whose state the console cannot read.
-		state, state_ok := system.member_of_word(system.Remote_Client_State, completion.values[6])
+		state, state_ok := enum_word.member_of_word(root_ring.Remote_Client_State, completion.values[6])
 		if !state_ok {
 			return fail("remote_clients: the root service gave the state ", completion.values[6], ", which names no state of a client key")
 		}
@@ -2739,14 +2741,14 @@ machine_seal :: proc "contextless" (arguments: []Value) -> Value {
 // text of the console: the console keeps each line in its history, so they
 // are typed in the window of unlock.
 passphrase_change :: proc "contextless" (arguments: []Value) -> Value {
-	return change_request(system.Principal_Change.Passphrase)
+	return change_request(root_ring.Principal_Change.Passphrase)
 }
 
 // recovery_key_change asks the root service for a new recovery key of the
 // principal of the session of this console. The recovery key is never a
 // text of the console: the window of unlock shows it one time.
 recovery_key_change :: proc "contextless" (arguments: []Value) -> Value {
-	return change_request(system.Principal_Change.Recovery_Key)
+	return change_request(root_ring.Principal_Change.Recovery_Key)
 }
 
 // change_request sends Principal_Change and waits for the end of the
@@ -2754,14 +2756,14 @@ recovery_key_change :: proc "contextless" (arguments: []Value) -> Value {
 // line gives what changed, or why nothing changed. The wait has no time
 // limit, as a principal types at its own pace; Escape ends the wait, and
 // the window of unlock goes on.
-change_request :: proc "contextless" (change: system.Principal_Change) -> Value {
+change_request :: proc "contextless" (change: root_ring.Principal_Change) -> Value {
 	if requests.head == nil {
 		return fail_no_answer()
 	}
 	intrinsics.atomic_store(&work.call_stoppable, 1)
 	defer intrinsics.atomic_store(&work.call_stoppable, 0)
 	request_count += 1
-	system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Principal_Change), tag = request_count, values = {4 = u64(change)}})
+	system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Principal_Change), tag = request_count, values = {4 = u64(change)}})
 	for {
 		// A completion with another tag answers a command that this
 		// program waits for no more.
@@ -2789,7 +2791,7 @@ change_request :: proc "contextless" (change: system.Principal_Change) -> Value 
 // enum: a word that names no member is refused, and never read as a known
 // end or cause.
 change_result :: proc "contextless" (end_value: u64, problem_value: u64) -> Value {
-	end, end_ok := system.member_of_word(principals.Change_End, end_value)
+	end, end_ok := enum_word.member_of_word(principals.Change_End, end_value)
 	if !end_ok {
 		return fail("the root service gave the end ", end_value, " of the change, which names no end")
 	}
@@ -2797,7 +2799,7 @@ change_result :: proc "contextless" (end_value: u64, problem_value: u64) -> Valu
 	case .Passphrase_Changed, .Recovery_Key_Changed:
 		return {kind = .Text, text = principals.change_end_sentences[end]}
 	case .Refused:
-		problem, problem_ok := system.member_of_word(principals.Change_Problem, problem_value)
+		problem, problem_ok := enum_word.member_of_word(principals.Change_Problem, problem_value)
 		if !problem_ok {
 			return fail(principals.change_end_sentences[end], ": the root service gave the cause ", problem_value, ", which names no cause")
 		}

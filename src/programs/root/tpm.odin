@@ -49,7 +49,7 @@ tpm_service_start :: proc "contextless" () {
 	program: system.Handle
 	if status == .Ok {
 		grants: [op.CONTEXT_HANDLES]system.Grant
-		grants[op.CONTEXT_LOG] = log_grant("tpm")
+		grants[op.CONTEXT_LOG] = log_grant(role_of("tpm"))
 		grants[tpm_service.SERVICE_RING] = {ring_memory, {.Read, .Write}}
 		grants[tpm_service.SERVICE_REGION] = {region_memory, {.Read, .Write}}
 		grants[tpm_service.SERVICE_REGISTERS] = {registers, {.Read, .Write}}
@@ -67,7 +67,7 @@ tpm_service_start :: proc "contextless" () {
 	}
 	slot^ = {}
 	slot.program = program
-	slot.role = {.System_Part}
+	slot.role = {grants = {.System_Part}}
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], "tpm")
 	tpm_ring, tpm_region, tpm_program = ring_memory, region_memory, slot
@@ -92,14 +92,12 @@ tpm_service_end :: proc "contextless" (item: ^Started) {
 // tpm_grants_give gives a program with the start grant Tpm the ring and the
 // region of the TPM service, when it runs, and the service with the right
 // Read: its stop is then an event of the program, which ends a wait for an
-// answer at once.
-tpm_grants_give :: proc "contextless" (grants: ^[op.CONTEXT_HANDLES]system.Grant) {
+// answer at once. It gives false when a slot of these is taken.
+tpm_grants_give :: proc "contextless" (grants: ^system.Context_Grants) -> bool {
 	if tpm_ring == 0 || tpm_program == nil {
-		return
+		return true
 	}
-	grants[tpm_service.GRANT_RING] = {tpm_ring, {.Read, .Write}}
-	grants[tpm_service.GRANT_REGION] = {tpm_region, {.Read, .Write}}
-	grants[tpm_service.GRANT_SERVICE] = {tpm_program.program, {.Read}}
+	return system.grant_put(grants, system.GRANT_TPM_RING, {tpm_ring, {.Read, .Write}}) && system.grant_put(grants, system.GRANT_TPM_REGION, {tpm_region, {.Read, .Write}}) && system.grant_put(grants, system.GRANT_TPM_SERVICE, {tpm_program.program, {.Read}})
 }
 
 // tpm_seal_allowed says if a key may be sealed by the TPM: only when the

@@ -65,16 +65,17 @@ import "modus:contract/text_encoding"
 import "modus:support/system"
 
 // The roles of the context of a program that has a terminal, and of the
-// terminal itself.
-GRANT_RING :: 6 // Memory: the terminal ring. The program writes its command queue.
-GRANT_TEXT :: 7 // Memory: the text region. The terminal has the right Read only.
-GRANT_PROGRAM :: 1 // For the terminal only: the program that writes, with the right Read.
+// terminal itself: slots of the one table of the context slots
+// (src/library/support/system/grants.odin).
+GRANT_RING :: system.GRANT_TERMINAL_RING // Memory: the terminal ring. The program writes its command queue.
+GRANT_TEXT :: system.GRANT_TERMINAL_TEXT // Memory: the text region. The terminal has the right Read only.
+GRANT_PROGRAM :: system.GRANT_TERMINAL_PROGRAM // For the terminal only: the program that writes, with the right Read.
 
 // The values of the context of the terminal itself.
-VALUE_NAME :: 0 // 4 values: the name of the program. It is the title of the window.
-VALUE_COLUMNS :: 4 // The columns of the window, at most COLUMNS_LIMIT.
-VALUE_ROWS :: 5 // The rows of the window, at most ROWS_LIMIT.
-VALUE_MEASURE :: 6 // 1: the window shows the rates of the program.
+VALUE_NAME :: system.GRANT_VALUE_TERMINAL_NAME // 4 values: the name of the program. It is the title of the window.
+VALUE_COLUMNS :: system.GRANT_VALUE_TERMINAL_COLUMNS // The columns of the window, at most COLUMNS_LIMIT.
+VALUE_ROWS :: system.GRANT_VALUE_TERMINAL_ROWS // The rows of the window, at most ROWS_LIMIT.
+VALUE_MEASURE :: system.GRANT_VALUE_TERMINAL_MEASURE // 1: the window shows the rates of the program.
 COLUMNS_LIMIT :: 104 // The most columns of a terminal window.
 ROWS_LIMIT :: 32 // The most rows of a terminal window.
 

@@ -1598,6 +1598,18 @@ The design: `docs/MODULE_CONTRACT.md`, "The context", and `docs/PROPERTIES.md`, 
 
 Do not use: argv, argc, environment, arguments.
 
+### Context slot
+
+A context slot is one place of the context, a handle or a value, with the role that the starter and its program agree on.
+
+The context slots of a program that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. Two roles share a context slot only when no program holds both. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a program never starts with a handle lost. A context slot is not a slot of a module, which holds the address of an export.
+
+Example: the handle 7 is the call ring of the private store; the text region of a terminal is the handle 4.
+
+The design: `docs/MODULE_CONTRACT.md`, "6. The context", and `src/md/api/root_ring.md`.
+
+Do not use: argument index, environment slot.
+
 ### Kernel
 
 The kernel is the code that runs with processor privilege: it isolates the programs, schedules the processors, owns the handle tables and grants access to memory and devices.
@@ -2119,7 +2131,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a program by its name: a service, a private store, a right of the machine.
 
-The root service decides the start grants of a program from its name (`grants_of`), and keeps them in the state of the program that runs. The rule of the debug access reads them. The list and the name of each start grant are a contract (`src/library/contract/start_grant`): the root service puts the number of a start grant in an error record, and the reader of the record writes its name. The number of a start grant does not change; a new one takes the next number.
+The root service decides the start grants of a program from its name (`grants_of`) one time, at its start, and keeps them in the program role of the program that runs. Each rule after the start reads them there: the sender of a command of the root ring, the grant of a connection, the debug access. The list and the name of each start grant are a contract (`src/library/contract/start_grant`): the root service puts the number of a start grant in an error record, and the reader of the record writes its name. The number of a start grant does not change; a new one takes the next number.
 
 The name of a start grant is the name of its member, with its capital letters: `Store`, `Serve`, `System_Part`. The log of the root service, the sentence of an error record, the site and the guides write it so.
 
@@ -2142,6 +2154,30 @@ A recorded grant is not a start grant, which says what the root service gives a 
 The design: `docs/ARCHITECTURE.md`, "U2. Root service".
 
 Do not use: permission, access right, token.
+
+### Program role
+
+A program role is what the root service gives a program at its start: its start grants and the terms beside them, kept with the program while it runs.
+
+The root service reads the role of a program of the boot image one time, at its start, from its name (`role_of` in `src/programs/root/roles.odin`): the start grants of `grants_of`, the services that it can connect to, the blocks of its private store, the log with the right Give, the size of its terminal. Each rule after the start reads the role that the program keeps, never its name. A disk program has the role of the row of its nickname in the disk grant table.
+
+Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
+
+The design: `src/md/api/root_ring.md`.
+
+Do not use: permission set.
+
+### Root ring
+
+The root ring is the ring of a program to the root service: the program writes a command record on it, and the root service answers with a completion.
+
+A program receives a root ring at its start only when its program role holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger); a disk program has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
+
+Example: `start("clock")` in the console sends `Root_Command.Start` with the name `clock` on the root ring of the console.
+
+The design: `src/md/api/root_ring.md`.
+
+Do not use: control socket, init channel.
 
 ### Nickname
 

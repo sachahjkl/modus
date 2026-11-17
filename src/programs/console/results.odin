@@ -5,6 +5,7 @@ import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:support/console_results"
+import "modus:contract/root_ring"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
@@ -107,9 +108,9 @@ fail_root :: proc "contextless" (prefix: string, completion: ring.Record) -> Val
 		operation: [64]u8
 		argument_names: [ARGUMENT_CAPACITY]string
 		for &argument_name, index in argument_names {
-			argument_name = system.root_argument_name(error.operation, i64(index + 1))
+			argument_name = root_ring.root_argument_name(error.operation, i64(index + 1))
 		}
-		failure_record_set(error, system.format(operation[:], "root.", system.root_command_name(error.operation)), argument_names[:])
+		failure_record_set(error, system.format(operation[:], "root.", root_ring.root_command_name(error.operation)), argument_names[:])
 	}
 	return result
 }

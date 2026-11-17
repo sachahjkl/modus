@@ -69,6 +69,7 @@ import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/debugging"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // The results of an export that fails: a negative number, with an error
@@ -279,7 +280,7 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 // root_request_put writes the command of a request in the root ring.
 root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
 	packed := system.name_pack(string(request.name[:request.name_count]))
-	command := request.store ? system.Root_Command.Debug_Store : system.Root_Command.Debug
+	command := request.store ? root_ring.Root_Command.Debug_Store : root_ring.Root_Command.Debug
 	return system.send(&requests.commands, ring.Record{kind = u32(command), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end), 6 = u64(request.kept)}})
 }
 

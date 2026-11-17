@@ -557,7 +557,7 @@ So two principals that run one program have two stores, and the stores of the sy
 
 ## 7. The commands
 
-**The root ring** (`src/library/support/system`, `Root_Command`):
+**The root ring** (`src/library/contract/root_ring`, `Root_Command`; who sends each command: `ROOT_COMMAND_SENDERS`):
 
 | Command | Who sends it | What it does |
 |---|---|---|

@@ -35,6 +35,7 @@ import "modus:support/display"
 import "modus:support/principals"
 import "modus:support/random"
 import "modus:support/storage"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // What the load that runs waits for.
@@ -115,13 +116,13 @@ disk_grant_table_lasts :: proc "contextless" (principal: u64) -> string {
 // service: the store of its nickname when its start gave it the grant
 // store, and the grant was not revoked; else none.
 disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
-	if .Store not_in caller.role || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
+	if .Store not_in caller.role.grants || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
 		return 0
 	}
 	// The budget that a module asks for has no part for a store yet: the
 	// store of a nickname has the default limit of a store, which no name
 	// of the tables of this service changes for a disk program.
-	return store_limit_of("")
+	return STORE_BLOCKS_DEFAULT
 }
 
 // disk_program_running gives the disk program of a nickname that runs in
@@ -150,7 +151,7 @@ disk_refused :: proc "contextless" (name: string, values: [7]u64, parts: ..syste
 // the name of a disk program is the name of no module of the boot image, of
 // no row of those tables and of no program of the system.
 disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refused: bool) {
-	kind := u32(system.Root_Command.Start_From_Disk)
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	problem, offset := disk_program.name_problem(name)
 	switch problem {
 	case .None:
@@ -170,7 +171,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the object of the disk grant table")
 		return true
 	}
-	if name_is_a_system_part(name) || grants_of(name) != {} || callable_of(name) != nil {
+	if name_is_a_system_part(name) || role_names_the_program(name) {
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the grant table of the root service names it, and a disk program takes no grant by its name")
 		return true
 	}
@@ -187,7 +188,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 // asks for the size of the object, and holds the completion until the load
 // ends (held): the loop of this service goes on.
 disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u64) -> (status: system.Status, held: bool) {
-	kind := u32(system.Root_Command.Start_From_Disk)
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	hash := transmute([disk_program.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
 	name_bytes, name_length := disk_program.name_unpack({record.values[4], record.values[5], record.values[6]})
 	name := string(name_bytes[:name_length])
@@ -330,7 +331,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 	if load.stage == .Idle {
 		return
 	}
-	kind := u32(system.Root_Command.Start_From_Disk)
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	name := string(load.name[:load.name_length])
 	refused_status := errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 	if load.asker == nil {
@@ -458,7 +459,7 @@ disk_load_deadline :: proc "contextless" () -> u64 {
 // gives the bytes that the command names, or nothing runs.
 disk_load_complete :: proc "contextless" (wait: ^system.Wait) {
 	load := &disk_load
-	kind := u32(system.Root_Command.Start_From_Disk)
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	name := string(load.name[:load.name_length])
 	asked := load.hash
 	found := blake3.hash(load.bytes)
@@ -474,7 +475,7 @@ disk_load_complete :: proc "contextless" (wait: ^system.Wait) {
 // the files of the store that the import scan kept beside the boot image.
 disk_load_start :: proc "contextless" () {
 	load := &disk_load
-	kind := u32(system.Root_Command.Start_From_Disk)
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	name := string(load.name[:load.name_length])
 	found := load.hash
 	principal := load.principal
@@ -560,12 +561,15 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principal
 	slot.from_disk = true
+	// Its role is the grants of its row, and never a row of the tables of
+	// this service: it has no root ring, so it sends no root command
+	// (root_ring.ROOT_RING_GRANTS).
 	if .Store in disk_grants {
-		slot.role = {.Store}
+		slot.role = {grants = {.Store}}
 	}
-	grants: [op.CONTEXT_HANDLES]system.Grant
+	context_grants: system.Context_Grants
 	values: [op.CONTEXT_VALUES]u64
-	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
+	system.grant_put(&context_grants, op.CONTEXT_LOG, {system.context_record().handles[op.CONTEXT_LOG], {.Write}})
 	display_memory, status := system.memory_create(ring.PAGE_COUNT)
 	if status != .Ok {
 		return status
@@ -582,7 +586,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// choose the name that the menu of the windows shows.
 	nickname := disk_program.name_pack(name)
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = program_page.hash_head(hash)}})
-	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
+	system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
 	// The date page, the fresh bytes page, the settings page, five glyph
 	// caches, the font outlines, the demand cache, the file of the storage
 	// service.
@@ -610,12 +614,12 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 			release(slot) // The compositor forgets the ring.
 			return store_status
 		}
-		grants[storage.GRANT_RING] = {store_ring, {.Read, .Write}}
-		grants[storage.GRANT_REGION] = {store_region, {.Read, .Write}}
-		grants[storage.GRANT_SERVICE] = {storage_service.program, {.Read}}
+		system.grant_put(&context_grants, system.GRANT_STORAGE_RING, {store_ring, {.Read, .Write}})
+		system.grant_put(&context_grants, system.GRANT_STORAGE_REGION, {store_region, {.Read, .Write}})
+		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.program, {.Read}})
 		for &item in system.image_entries(image) {
 			if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
-				values[storage.VALUE_FILE_SIZE] = item.size
+				values[system.GRANT_VALUE_STORAGE_FILE_SIZE] = item.size
 				mappings[mapping_count] = {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 				mapping_count += 1
 			}
@@ -631,7 +635,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		program_budget := disk_budget_of(file, name, disk_programs)
 		source := load_source()
 		source.files = store_files
-		program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], nil, source, load_error, disk_programs)
+		program, status = system.program_start(file, name, context_grants.grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], nil, source, load_error, disk_programs)
 		if status == .No_Budget {
 			budget_refusal_log(name, program_budget, disk_programs, "the disk programs")
 		}
@@ -652,14 +656,14 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 // caller acts for its principal, and changes the table of that principal
 // only. values is the completion: an error record for a refusal.
 disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Disk_Grant)
+	kind := u32(root_ring.Root_Command.Disk_Grant)
 	nickname_bytes, nickname_length := disk_program.name_unpack({record.values[0], record.values[1], record.values[2]})
 	nickname := string(nickname_bytes[:nickname_length])
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right
 	}
-	action, action_status, action_refusal := system.ring_member_of_word(system.Disk_Grant_Action, record.values[4], .Disk_Grant, 0)
+	action, action_status, action_refusal := root_ring.member_of_word(root_ring.Disk_Grant_Action, record.values[4], .Disk_Grant, 0)
 	if action_status != .Ok {
 		values^ = action_refusal
 		return action_status
@@ -761,7 +765,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 // its store follow. The log says it before the change. A program of the
 // nickname that runs keeps the grants of its start.
 nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Nickname_Move)
+	kind := u32(root_ring.Root_Command.Nickname_Move)
 	hash := transmute([disk_program.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
 	nickname_bytes, nickname_length := disk_program.name_unpack({record.values[4], record.values[5], record.values[6]})
 	nickname := string(nickname_bytes[:nickname_length])
@@ -812,7 +816,7 @@ persistence_words := [disk_program.Persistence]string {
 // table is written after the change when the principal keeps it on the
 // disk: a row that now lasts until the machine stops leaves the disk.
 disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Disk_Grant_Persistence)
+	kind := u32(root_ring.Root_Command.Disk_Grant_Persistence)
 	nickname_bytes, nickname_length := disk_program.name_unpack({record.values[0], record.values[1], record.values[2]})
 	nickname := string(nickname_bytes[:nickname_length])
 	if .Acts_For_Principal not_in grants_held(caller) {
