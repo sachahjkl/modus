@@ -215,12 +215,14 @@
     # the one run of the machine test of the full check: its output holds the
     # pictures and the logs, which `modustool screenshots` takes from the store
     # (src/md/infrastructure/full_check.md).
-    # The names of the pictures of docs/screenshots, with no bytes: the
-    # checks read only which pictures exist (the README, the news, the
-    # gallery). `modustool screenshots` writes new bytes into these files at
-    # each run; with the names only, the source of the check stays the same,
-    # so the check that it built stays in the store whatever the order of the
-    # two commands of the full check. A new name is a new source.
+    # The names of the pictures of docs/screenshots, not their bytes: the
+    # checks read which pictures exist and that each is a PNG with a size
+    # (the README, the news, the pages of the site), so the build writes one
+    # PNG of one pixel under each name. `modustool screenshots` writes new
+    # bytes into these files at each run; with the names only, the source of
+    # the check stays the same, so the check that it built stays in the store
+    # whatever the order of the two commands of the full check. A new name is
+    # a new source.
     screenshotNames = builtins.filter (name: inputs.nixpkgs.lib.hasSuffix ".png" name) (builtins.attrNames (builtins.readDir ./docs/screenshots));
 
     bootTest = pkgs.stdenvNoCC.mkDerivation ({
@@ -241,7 +243,7 @@
           export HOME=$TMPDIR
           mkdir -p build docs/screenshots
           for name in $screenshotNames; do
-            touch "docs/screenshots/$name"
+            echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > "docs/screenshots/$name"
           done
           modustool check
         '';
