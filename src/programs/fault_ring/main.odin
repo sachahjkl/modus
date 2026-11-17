@@ -1032,7 +1032,11 @@ child_controls :: proc "contextless" () -> ! {
 	// 23. Extended states that the processor refuses.
 	control(spinner.handle, 0, .Stop)
 	state, _ := system.call(.Thread_State, u64(spinner.handle))
-	size, with_header := state[2], state[4] == 1
+	layout, layout_known := system.member_of_word(op.Extended_State_Layout, state[4])
+	if !layout_known {
+		system.log("fault_ring: Thread_State gave the layout ", state[4], ", which names no layout: WRONG")
+	}
+	size, with_header := state[2], layout_known && layout == .With_Header
 	_, area_read := control(spinner.handle, 0, .Read_Extended_State, &extended_state_area, size)
 	asked, area_refused: u64
 	if with_header {

@@ -262,7 +262,7 @@ Operation :: enum u32 {
 	// **Arguments**
 	//
 	// - `log`: the log handle, with **Write**. Each program has it in its context at `CONTEXT_LOG`.
-	// - `address`, `length`: the text, at most 4096 bytes, in memory that the program can read. A text longer
+	// - `address`, `length`: the text, at most `LOG_TEXT_BYTES_MOST` bytes, in memory that the program can read. A text longer
 	//   than `LOG_TEXT_CAPACITY` continues in the next records (`Log_Record`, `more`).
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
 	// - `channel`, `channel`: the name of the channel, 16 bytes in two values. The name is the bytes before
@@ -277,7 +277,7 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
-	// - `Bad_Address`: `length` is above 4096, or the program cannot read the text and its runs.
+	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the program cannot read the text and its runs.
 	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
 	// - `No_Budget`: the budget of the program accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
@@ -401,7 +401,7 @@ Operation :: enum u32 {
 	//   the program, and for the `OWN_LOG_PAGES` pages of its own log ring, which return to it when the
 	//   slot of the program is free. The program keeps it: it pays for its first thread at `Program_Start`, and for each
 	//   page table of the program after.
-	// - `name`, `name_length`: the name of the program, at most 31 bytes, in memory that the program can
+	// - `name`, `name_length`: the name of the program, at most `PROGRAM_NAME_BYTES_MOST` bytes, in memory that the program can
 	//   read: the reports and the log show it. Each byte is a printable character of ASCII or the
 	//   space (32 to 126): a name starts each line of the log on the serial port.
 	//
@@ -410,7 +410,7 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `Bad_Address`: `name_length` is above 31, or the program cannot read the name.
+	// - `Bad_Address`: `name_length` is above `PROGRAM_NAME_BYTES_MOST`, or the program cannot read the name.
 	// - `Bad_Operation`: a byte of the name is outside 32 to 126.
 	// - `No_Budget`: the budget has no program slot or no page left, or it cannot pay the page tables or
 	//   the own log ring.
@@ -638,11 +638,13 @@ Operation :: enum u32 {
 	// **Arguments**
 	//
 	// - `machine`: the machine handle, with **Stop**.
-	// - `code`: the code of the stop; the machine gives its low 8 bits to its host.
+	// - `code`: the code of the stop, from 0 to `MACHINE_STOP_CODE_MOST`: the machine gives it to its host.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Stop**.
+	// - `Bad_Operation`: `code` is above `MACHINE_STOP_CODE_MOST`. A code that the host cannot receive
+	//   whole is refused: else a code of 256 would end the machine with 0, the code of a normal end.
 	Thread_Create  = 16, // (budget, entry, stack, parameter, weight, request) -> thread handle.
 	// Starts a new thread of this program, and gives a handle to it with **Give**, **Read**, **Write**,
 	// **Control** and **Inspect**. The thread is ready at once: it starts at `entry` with `parameter` in its
@@ -716,7 +718,8 @@ Operation :: enum u32 {
 	// 2. its stop count (`Thread_Control`);
 	// 3. the bytes of the extended state area of a thread on this machine;
 	// 4. its components: the bits of XCR0 (0 x87, 1 SSE, 2 AVX, 5 to 7 AVX-512);
-	// 5. 1 when the area has the header of `xsave` at byte 512, 0 when it is the 512 bytes of `fxsave`.
+	// 5. its `Extended_State_Layout`: `With_Header` when the area has the header of `xsave` at byte 512,
+	//    `Legacy` when it is the 512 bytes of `fxsave`.
 	//
 	// **Statuses**
 	//
@@ -1012,7 +1015,7 @@ Operation :: enum u32 {
 	// ```odin
 	// changed, status := system.memory_protect(ranges[:], {})
 	// ```
-	Fault_Handler_Set = 30, // (thread, end, kinds: Fault_Kinds, program).
+	Fault_Handler_Set = 30, // (thread, end: Fault_Handler_Action, kinds: Fault_Kinds, program).
 	// Makes a thread of this program the fault handler of the program: the faults of the chosen kinds of
 	// the other threads of the program become records of the
 	// [fault ring](docs/ARCHITECTURE.md#the-fault-ring) in the thread record of the handler, in place of a
@@ -1024,7 +1027,8 @@ Operation :: enum u32 {
 	//
 	// - `thread`: 0 for the calling thread, or a thread handle with **Control** of a live thread of this
 	//   program.
-	// - `end`: 1 to end the delivery: each fault stops the program again. 0 to set the handler.
+	// - `end`: a `Fault_Handler_Action`: `End` (1) ends the delivery, and each fault stops the program
+	//   again; `Set` (0) sets the handler.
 	// - `kinds`: the `Fault_Kinds` to deliver, or 0 for page faults only, so that a handler of pages never
 	//   gets a kind that it does not know. Only the kinds of `FAULT_KINDS_DELIVERED`.
 	// - `program`: 0, or a program handle with **Debug** of another program. Then the thread becomes the
@@ -1032,7 +1036,7 @@ Operation :: enum u32 {
 	//   debugger. The faults of the kinds `Debug` and `Breakpoint` of that program become records of the ring
 	//   of this thread, before the fault handler of the program itself, and each faulting thread waits for a
 	//   `Fault_Answer` with the same handle. `kinds` is then 0 or the whole of
-	//   `FAULT_KINDS_DEBUGGER`: the debugger takes both kinds. `end` 1 ends the debugging (the detach). A program has one debugger at a
+	//   `FAULT_KINDS_DEBUGGER`: the debugger takes both kinds. `end` `End` ends the debugging (the detach). A program has one debugger at a
 	//   time, and a thread is the debug handler of one program and not the fault handler of its own.
 	//
 	// The debugging ends at the detach, when the debug handler thread ends, when the last handle of the
@@ -1049,14 +1053,14 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `end` is above 1; a kind that the kernel never delivers; kinds with the end of the
+	// - `Bad_Operation`: `end` names no `Fault_Handler_Action`; a kind that the kernel never delivers; kinds with the end of the
 	//   delivery; with `program`, kinds that are not 0 and not the whole of `FAULT_KINDS_DEBUGGER`.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**; `program` is not a
 	//   program handle with **Debug**.
 	// - `Bad_State`: the thread is not a live thread of this program; the thread is the debug handler of a
 	//   program and would become the fault handler of its own, or the reverse; with `program`: the program is
 	//   the caller, it stopped, it has another debugger, the thread is the debug handler of another program,
-	//   or, for `end` 1, the caller is not its debugger.
+	//   or, for `End`, the caller is not its debugger.
 	//
 	// ```odin
 	// status := system.fault_handler_set(kinds = {.Page_Fault, .Breakpoint})
@@ -2026,6 +2030,13 @@ fault_kinds_of_debugger_argument :: proc "contextless" (argument: u64) -> (mask:
 	return FAULT_KINDS_DEBUGGER, true
 }
 
+// What `Fault_Handler_Set` does, in its argument `end`. Its word crosses
+// the command record, so each value is explicit.
+Fault_Handler_Action :: enum u64 {
+	Set = 0, // The thread becomes the fault handler of the program, or the debug handler of the program of `program`.
+	End = 1, // The delivery ends: each fault stops the program again. With `program`: the debugging ends (the detach).
+}
+
 // What a faulting access was: the bits of the error code of the processor.
 Fault_Access_Bit :: enum u64 {
 	Present = 0, // The page has a translation: the access was not permitted. Without it: the page has no frame (not committed, or no mapping).
@@ -2541,6 +2552,14 @@ EXTENDED_STATE_MXCSR_OFFSET :: 24
 EXTENDED_STATE_LEGACY_BYTES :: 512 // The area of fxsave, and the first part of the area of xsave.
 EXTENDED_STATE_HEADER_BYTES :: 64 // At EXTENDED_STATE_LEGACY_BYTES: XSTATE_BV, then XCOMP_BV and reserved bytes.
 
+// The layout of the extended state area of a thread on this machine: the
+// result 5 of `Thread_State`. Its word crosses the completion record, so
+// each value is explicit; a reader takes it through `member_of_word`.
+Extended_State_Layout :: enum u64 {
+	Legacy      = 0, // The EXTENDED_STATE_LEGACY_BYTES bytes of fxsave, with no header.
+	With_Header = 1, // The header of xsave at EXTENDED_STATE_LEGACY_BYTES, then the components of XCR0.
+}
+
 // extended_state_refusal says what a write of an extended state area
 // refuses: the conditions under which xrstor or fxrstor fault on it, in the
 // standard form. area holds the bytes of the area of this machine;
@@ -2857,6 +2876,10 @@ Memory_Flag :: enum u64 {
 }
 // The flags of one `Memory_Create`. Example: `{.Frames_Now}`.
 Memory_Flags :: bit_set[Memory_Flag;u64]
+// The flags that `Memory_Create` knows, as the word of its argument: a word
+// with another bit gives `Bad_Operation`, so that a later kernel can give
+// that bit a meaning.
+MEMORY_FLAGS_KNOWN :: u64(1) << u64(Memory_Flag.Frames_Now) | u64(1) << u64(Memory_Flag.Contiguous) | u64(1) << u64(Memory_Flag.Uncommitted) | u64(1) << u64(Memory_Flag.Large_Pages)
 
 LARGE_PAGE_PAGES :: 512 // The pages of 4096 bytes of one large page (2 MiB): one entry of the page directory of the processor.
 RANGE_TABLE_CAPACITY :: 256 // The ranges of one Memory_Commit or Memory_Protect. More gives `Bad_Operation`.
@@ -2891,6 +2914,8 @@ Commit_Flag :: enum u64 {
 }
 // The flags of one `Memory_Commit`: `{}` commits, `{.Decommit}` decommits.
 Commit_Flags :: bit_set[Commit_Flag;u64]
+// The flags that `Memory_Commit` knows, as the word of its argument.
+COMMIT_FLAGS_KNOWN :: u64(1) << u64(Commit_Flag.Decommit)
 
 // A flag of `Memory_Map` and of `Memory_Protect`: the access that a mapping
 // gives. No flag is read only. A page is never writable and executable.
@@ -2901,6 +2926,12 @@ Map_Flag :: enum u64 {
 }
 // The flags of one `Memory_Map` or `Memory_Protect`. Example: `{.Write}`.
 Map_Flags :: bit_set[Map_Flag;u64]
+// The flags that `Memory_Map` and `Memory_Protect` know, as the word of
+// their argument.
+MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access)
+
+// The largest code of `Machine_Stop`: the host receives one byte.
+MACHINE_STOP_CODE_MOST :: 255
 
 // The code of a program that the kernel stopped. `Program_State` gives the
 // code; `Program_Stop` takes any other code from the program that stops a
@@ -3218,6 +3249,9 @@ LOG_CHANNEL_CAPACITY :: 16
 LOG_RUN_CAPACITY :: 8
 // The value runs that one Log operation takes, after its text.
 LOG_CALL_RUN_LIMIT :: 32
+// The bytes of the text of one Log operation. A longer text gives
+// `Bad_Address`. The kernel copies the text whole before it checks it.
+LOG_TEXT_BYTES_MOST :: 4096
 // 128 pages: 2047 records. A reader that starts late copies the newest 2046
 // of them.
 LOG_PAGES :: 128
@@ -3234,6 +3268,9 @@ LOG_RECORDS_OF_THE_KERNEL :: 64
 LOG_RECORDS_OF_A_PROGRAM :: 1000
 // The program slots of the kernel.
 PROGRAM_SLOTS_OF_THE_MACHINE :: 64
+// The bytes of the name of a program (`Program_Create`). The kernel keeps
+// the name with a zero byte after it.
+PROGRAM_NAME_BYTES_MOST :: 31
 // The log records of each second of the whole machine: the amount of the
 // root budget, which divides it among every budget, a program of normal use
 // in each program slot. The serial port can lose the lines of a flood of
@@ -3292,7 +3329,7 @@ Log_Record :: struct {
 	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`.
 	run_count:      u8, // The value runs of the text: runs[:run_count].
 	reserved:       u8, // 0.
-	name:           [32]u8, // The name of the program, or "kernel".
+	name:           [PROGRAM_NAME_BYTES_MOST + 1]u8, // The name of the program, or "kernel".
 	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the program gave no channel.
 	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
 	text:       [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
@@ -3455,7 +3492,7 @@ Boot_Report :: struct {
 Program_Report :: struct {
 	state:        Program_State, // `None` for a slot with no program.
 	code:         u32, // The stop code: 0 while the program runs.
-	name:         [32]u8, // The name that `Program_Create` gave; zero bytes after it.
+	name:         [PROGRAM_NAME_BYTES_MOST + 1]u8, // The name that `Program_Create` gave; zero bytes after it.
 	mapped_pages: u64, // The pages of all its mappings.
 	handle_count: u64, // The handles in its handle table.
 	run_time:     u64, // Milliseconds of processor time.

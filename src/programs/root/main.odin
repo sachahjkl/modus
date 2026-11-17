@@ -727,6 +727,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
 	system.log(ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	// The kernel refuses a stop code that the host cannot receive whole,
+	// with its error record, and changes nothing: the line after the two
+	// calls says that the machine runs on.
+	refused_codes := [2]u64{op.MACHINE_STOP_CODE_MOST + 1, max(u64)}
+	for code in refused_codes {
+		refusal: errors.Error_Record
+		_, refused := system.call_with_error(&refusal, .Machine_Stop, u64(machine), code)
+		if refused != .Bad_Operation || refusal.kind != i64(errors.Kind.Bad_Value) || refusal.argument != 2 || refusal.value != i64(code) || refusal.limit != op.MACHINE_STOP_CODE_MOST {
+			fail("Machine_Stop did not refuse a code past one byte with its error record", refused)
+		}
+	}
+	system.log("root: Machine_Stop refused the codes ", refused_codes[0], " and ", refused_codes[1], " with Bad_Operation and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must")
 	debug_image_take(ctx)
 	// The screen first: a failure of the check below stays on it.
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {

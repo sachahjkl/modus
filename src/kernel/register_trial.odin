@@ -51,7 +51,7 @@ register_trial_self_test :: proc "contextless" () {
 	before := model_specific_register_read(MSR_KERNEL_GS_BASE)
 	if !model_specific_register_trial_write(MSR_KERNEL_GS_BASE, SELF_TEST_ADDRESS_NOT_CANONICAL) {
 		log("kernel: self test: the processor refused the write to the register ", Hex(MSR_KERNEL_GS_BASE), " in a register trial, and the kernel went on after it: as it must")
-		machine_stop(0)
+		machine_stop(.Normal_End)
 	}
 	model_specific_register_write(MSR_KERNEL_GS_BASE, before)
 }

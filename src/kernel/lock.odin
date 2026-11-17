@@ -108,7 +108,7 @@ lock_order_check :: proc "contextless" (cpu: ^Processor, kind: op.Lock_Kind) {
 lock_order_broken :: proc "contextless" (taken, held: op.Lock_Kind) -> ! {
 	fault_report_begin()
 	log("kernel: the lock order is broken: a lock ", op.LOCK_KIND_NAMES[taken], " was taken while a lock ", op.LOCK_KIND_NAMES[held], " is held")
-	machine_stop(3)
+	machine_stop(.Invariant_Broken)
 }
 
 // lock_counts_sum gives the counts of all the processors.
@@ -124,7 +124,7 @@ lock_counts_sum :: proc "contextless" () -> (sum: [op.LOCK_KIND_CAPACITY]op.Lock
 
 // The control lock (docs/ARCHITECTURE.md, "Locks of the kernel"). A close
 // under it can end the last handle to a program: the stop of that program
-// waits in `stops_pending` until control_unlock, so that a stop never runs
+// waits in `stops_pending` until control_free, so that a stop never runs
 // inside the program locks of the path that closed the handle.
 control_lock: Lock
 stops_pending: u64 // Bit n: program n has no handle. Control lock.

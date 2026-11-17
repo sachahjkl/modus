@@ -369,10 +369,10 @@ read_table_pages :: proc "contextless" (program: ^Program, address: u64, count: 
 	return pages
 }
 
-@(private = "file")
 // read_commit_needed gives the pages that a commit of a table of ranges
 // asks (the pages that are not committed) and the pages that the budget of
 // the object holds; held is false when the record must not name them.
+@(private = "file")
 read_commit_needed :: proc "contextless" (program: ^Program, handle: u64, ranges_address: u64, count: u64) -> (needed, pages: u64, held: bool) {
 	at, taken := caller_lock(program)
 	defer program_unlock(at, taken)
@@ -483,16 +483,16 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 		for kind in op.Lock_Kind {
 			if lock_ready && lock_held(kind) {
 				log("kernel: diagnose runs with a lock ", op.LOCK_KIND_NAMES[kind], " held")
-				machine_stop(3)
+				machine_stop(.Invariant_Broken)
 			}
 		}
 	}
 	record.operation = i64(command.kind)
-	if command.kind == 0 || command.kind > u32(max(op.Operation)) {
+	operation, known := op.member_of_word(op.Operation, u64(command.kind))
+	if !known || operation == .None {
 		record_set(&record, .Unknown_Operation, .None, 0, u64(command.kind), u64(max(op.Operation)), 0)
 		return record
 	}
-	operation := op.Operation(command.kind)
 	program := &programs[program_index]
 	v := command.values
 	explained := false
@@ -535,10 +535,10 @@ diagnose_command :: proc "contextless" (program_index: u32, command: ring.Record
 	}
 	named := command
 	named.kind &~= op.COMMAND_NAMES_ERROR_DETAILS
-	if named.kind == 0 || named.kind > u32(max(op.Operation)) {
+	operation, known := op.member_of_word(op.Operation, u64(named.kind))
+	if !known || operation == .None {
 		return diagnose(program_index, command, status) // Unknown_Operation, with the kind that the program sent.
 	}
-	operation := op.Operation(named.kind)
 	// The dispatch refused the command before the operation: the last value
 	// is an argument of this operation, or the operation runs before the
 	// dispatch. It is not a table, and nothing is written there.
@@ -743,8 +743,7 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 		// registers, Control for a write of the schedule or of the
 		// placement. A command of the schedule or of the placement
 		// also takes the machine handle, with Schedule and Inspect.
-		if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
-			command := op.Thread_Control_Command(v[2])
+		if command, command_known := op.member_of_word(op.Thread_Control_Command, v[2]); n == 0 && command_known {
 			rights = op.thread_control_rights(command)
 			machine_rights, by_machine_number := op.thread_control_machine_rights(command)
 			if op.thread_control_names_a_program(command) {
@@ -775,8 +774,18 @@ read_pays_for :: proc "contextless" (budget: u32, region: u32) -> bool {
 	return regions[region].budget == budget
 }
 
-// budget_ask gives what an operation asks of a budget, and what the budget
-// holds of it.
+// memory_create_cost gives the pages that a Memory_Create with these pages
+// and flags takes from its budget: the kinds of the object as execute reads
+// them from the flags (a Large_Pages object is contiguous), and the cost
+// that region_create charges for that kind.
+@(private = "file")
+memory_create_cost :: proc "contextless" (page_count: u64, flags_word: u64) -> u64 {
+	flags := transmute(op.Memory_Flags)flags_word
+	return region_create_cost(page_count, contiguous = .Contiguous in flags || .Large_Pages in flags, uncommitted = .Uncommitted in flags)
+}
+
+// budget_explain gives what an operation asks of a budget, and what the
+// budget holds of it.
 @(private = "file")
 budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	if operation == .Log {
@@ -823,8 +832,7 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	if .Read not_in rights {
 		#partial switch operation {
 		case .Memory_Create:
-			flags := transmute(op.Memory_Flags)v[2]
-			record_set(record, .Budget_Hidden, .Pages, 1, v[0], region_cost(v[1], .Contiguous in flags), 0)
+			record_set(record, .Budget_Hidden, .Pages, 1, v[0], memory_create_cost(v[1], v[2]), 0)
 		case .Program_Create:
 			record_set(record, .Budget_Hidden, .Programs, 1, v[0], 1, 0)
 		case .Thread_Create:
@@ -839,8 +847,7 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	argument := 1
 	#partial switch operation {
 	case .Memory_Create:
-		flags := transmute(op.Memory_Flags)v[2]
-		unit, asked, held = .Pages, region_cost(v[1], .Contiguous in flags), holds.pages
+		unit, asked, held = .Pages, memory_create_cost(v[1], v[2]), holds.pages
 	case .Program_Create:
 		unit, asked, held = .Programs, 1, holds.programs
 		if holds.programs != 0 {
@@ -890,16 +897,16 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	#partial switch operation {
 	case .Log:
 		// The text, then its value runs, at the address.
-		if v[2] > 4096 {
-			record_set(record, .Too_Long, .Bytes, 3, v[2], 4096, 0)
+		if v[2] > op.LOG_TEXT_BYTES_MOST {
+			record_set(record, .Too_Long, .Bytes, 3, v[2], op.LOG_TEXT_BYTES_MOST, 0)
 		} else if v[6] <= op.LOG_CALL_RUN_LIMIT && !read_range(program, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call)) {
 			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call), 0)
 		} else {
 			return false
 		}
 	case .Program_Create:
-		if v[2] > 31 {
-			record_set(record, .Too_Long, .Bytes, 3, v[2], 31, 0)
+		if v[2] > op.PROGRAM_NAME_BYTES_MOST {
+			record_set(record, .Too_Long, .Bytes, 3, v[2], op.PROGRAM_NAME_BYTES_MOST, 0)
 		} else if !read_range(program, v[1], v[2]) {
 			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2], 0)
 		} else {
@@ -947,8 +954,10 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		}
 		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, 0)
 	case .Inspect:
-		kind := op.Inspect_Kind(v[1])
-		size := kind <= max(op.Inspect_Kind) ? INSPECT_SIZES[kind] : 0
+		size: u64
+		if kind, kind_known := op.member_of_word(op.Inspect_Kind, v[1]); kind_known {
+			size = INSPECT_SIZES[kind]
+		}
 		if v[4] < size {
 			record_set(record, .Too_Small, .Bytes, 5, v[4], size, 0)
 		} else if !read_range(program, v[3], size, true) {
@@ -1173,10 +1182,13 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		}
 		record_set(record, .Full, .Budgets, 0, 0, BUDGET_CAPACITY - 1, 0)
 	case .Device_Create:
+		device_kind, device_kind_known := op.member_of_word(op.Device_Kind, v[1])
 		switch {
-		case op.Device_Kind(v[1]) == .Message && read_machine_full().messages:
+		case !device_kind_known:
+			return false
+		case device_kind == .Message && read_machine_full().messages:
 			record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
-		case (op.Device_Kind(v[1]) == .Memory || op.Device_Kind(v[1]) == .Display_Memory) && read_regions_full():
+		case (device_kind == .Memory || device_kind == .Display_Memory) && read_regions_full():
 			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
 		case:
 			return false
@@ -1244,7 +1256,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 	case .Inspect:
-		if op.Inspect_Kind(v[1]) != .Pages {
+		if kind, kind_known := op.member_of_word(op.Inspect_Kind, v[1]); !kind_known || kind != .Pages {
 			break
 		}
 		page_report: op.Page_Report
@@ -1263,8 +1275,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 	case .Memory_Create:
 		flags := transmute(op.Memory_Flags)v[2]
 		switch {
-		case v[2] & ~u64(0b1111) != 0:
-			record_set(record, .Bad_Flags, .None, 3, v[2], 0b1111, 0)
+		case v[2] & ~op.MEMORY_FLAGS_KNOWN != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], op.MEMORY_FLAGS_KNOWN, 0)
 		case .Uncommitted in flags && flags != {.Uncommitted}:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 1 << u64(op.Memory_Flag.Uncommitted), 0) // Uncommitted goes alone.
 		case .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0:
@@ -1276,8 +1288,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		}
 		return true
 	case .Memory_Map:
-		if v[3] & ~u64(0b111) != 0 {
-			record_set(record, .Bad_Flags, .None, 4, v[3], 0b111, 0)
+		if v[3] & ~op.MAP_FLAGS_KNOWN != 0 {
+			record_set(record, .Bad_Flags, .None, 4, v[3], op.MAP_FLAGS_KNOWN, 0)
 		} else {
 			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute: no page is both.
 		}
@@ -1288,8 +1300,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			record_set(record, .Too_Small, .Records, 4, 0, 1, 0)
 		case v[3] > op.RANGE_TABLE_CAPACITY:
 			record_set(record, .Too_Long, .Records, 4, v[3], op.RANGE_TABLE_CAPACITY, 0)
-		case v[4] & ~u64(1) != 0:
-			record_set(record, .Bad_Flags, .None, 5, v[4], 1, 0)
+		case v[4] & ~op.COMMIT_FLAGS_KNOWN != 0:
+			record_set(record, .Bad_Flags, .None, 5, v[4], op.COMMIT_FLAGS_KNOWN, 0)
 		case:
 			if pages := read_table_pages(program, v[2], v[3], size_of(op.Page_Range), offset_of(op.Page_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
 				record_set(record, .Too_Long, .Pages, 3, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
@@ -1304,8 +1316,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			record_set(record, .Too_Small, .Records, 2, 0, 1, 0)
 		case v[1] > op.RANGE_TABLE_CAPACITY:
 			record_set(record, .Too_Long, .Records, 2, v[1], op.RANGE_TABLE_CAPACITY, 0)
-		case v[2] & ~u64(0b111) != 0:
-			record_set(record, .Bad_Flags, .None, 3, v[2], 0b111, 0)
+		case v[2] & ~op.MAP_FLAGS_KNOWN != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], op.MAP_FLAGS_KNOWN, 0)
 		case:
 			// The entries that the call changes, as the kernel counts them:
 			// one for each large page, the present pages of a whole mapping.
@@ -1329,13 +1341,13 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// of processors has the set that it had to stay inside in the place
 		// of the largest value: the set of the thread, its limit, or the
 		// processors of the machine.
-		if cpu := processor_self(); cpu.thread_write_refusal != .None {
-			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, cpu.thread_write_refused_limit, u64(cpu.thread_write_refusal))
+		if operation_facts := &processor_self().operation; operation_facts.thread_write_refusal != .None {
+			record_set(record, .Bad_Value, .None, 4, operation_facts.thread_write_refused_value, operation_facts.thread_write_refused_limit, u64(operation_facts.thread_write_refusal))
 			return true
 		}
 		// A command of the thread counters on a machine with no counter
 		// plan: the value is the operation, as for a guest.
-		if v[2] <= u64(max(op.Thread_Control_Command)) && op.thread_control_counts_the_caller(op.Thread_Control_Command(v[2])) && counter_plan.vendor == .None {
+		if command, command_known := op.member_of_word(op.Thread_Control_Command, v[2]); command_known && op.thread_control_counts_the_caller(command) && counter_plan.vendor == .None {
 			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
 			return true
 		}
@@ -1346,10 +1358,11 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 	case .Fault_Handler_Set:
+		action, action_known := op.member_of_word(op.Fault_Handler_Action, v[1])
 		switch {
-		case v[1] > 1:
-			record_set(record, .Bad_Value, .None, 2, v[1], 1, 0)
-		case v[1] == 1:
+		case !action_known:
+			record_set(record, .Bad_Value, .None, 2, v[1], u64(max(op.Fault_Handler_Action)), 0)
+		case action == .End:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 0, 0) // The end of the delivery takes no kinds.
 		case v[3] != 0:
 			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DEBUGGER, 0) // The debugger of a program takes the two traps only.
@@ -1373,8 +1386,14 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// Display_Memory over a range of device memory that does not hold
 		// the framebuffer of the firmware: the record gives the address
 		// and, as its limit, the address of that framebuffer.
-		if op.Device_Kind(v[1]) == .Display_Memory && device_range(v[2], v[3]) && !display_memory_range(v[2], v[3]) {
+		if device_kind, device_kind_known := op.member_of_word(op.Device_Kind, v[1]); device_kind_known && device_kind == .Display_Memory && device_range(v[2], v[3]) && !display_memory_range(v[2], v[3]) {
 			record_set(record, .Bad_Value, .None, 3, v[2], boot_record.framebuffer.address, 0)
+			return true
+		}
+	case .Machine_Stop:
+		// A code that the host cannot receive whole.
+		if v[1] > op.MACHINE_STOP_CODE_MOST {
+			record_set(record, .Bad_Value, .None, 2, v[1], op.MACHINE_STOP_CODE_MOST, 0)
 			return true
 		}
 	case .Fault_Answer:
@@ -1389,7 +1408,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// thread, which is the full weight unless the holder of the machine
 		// lowered it: the value that the operation checked, kept on the
 		// processor.
-		weight_limit := u64(processor_self().thread_create_weight_limit)
+		weight_limit := u64(processor_self().operation.thread_create_weight_limit)
 		switch {
 		case v[4] > weight_limit:
 			record_set(record, .Bad_Value, .None, 5, v[4], weight_limit, 0)

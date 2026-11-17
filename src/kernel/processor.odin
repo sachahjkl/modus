@@ -185,15 +185,14 @@ Processor :: struct {
 	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
 	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.
 	programs_held: u64, // Bit n: the processor holds the lock of program n.
-	control:       bool, // The operation that runs holds the control lock (enter.odin).
-	retry:         bool, // The operation needs the control lock: it runs again with it.
 	ports_serial:  u64, // The ports_serial of the program whose ports are open (ports_switch).
 	record_serial: u32, // The serial of the thread whose record address is in the gs register of programs.
-	// The stops that the operation in progress made (stop_wait).
-	operation:     bool, // A kernel operation of the current thread runs (command_run).
-	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
-	stopped_programs: u64, // Bit n: program n had a thread on a processor.
-	stopped_serials:  [PROGRAM_CAPACITY]u32,
+	// The kernel operation of the current thread that runs here (enter.odin).
+	operation:     Operation_In_Progress,
+	// The serial of program n when the operation stopped it: read only for
+	// a bit of operation.stopped_programs, so the reset of the record at
+	// each command does not write it.
+	stopped_serials: [PROGRAM_CAPACITY]u32,
 	// The event ring of this processor (events.odin): only this processor
 	// writes these fields and the ring, while observed_kinds is not 0; the
 	// control path writes them only while it is 0 and after a
@@ -212,7 +211,7 @@ Processor :: struct {
 	range_table:   [op.RANGE_TABLE_CAPACITY]op.Page_Range,
 	// Records too large for the kernel stack, for the operation that runs on
 	// this processor.
-	log_text:       [4096]u8,
+	log_text:       [op.LOG_TEXT_BYTES_MOST]u8,
 	log_runs:       [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call,
 	// The copy of an own log ring that Log_Read makes under the log lock,
 	// then gives to the caller after the lock: a copy to memory of a
@@ -230,19 +229,6 @@ Processor :: struct {
 	// writes: copied from the caller once, checked here, then copied to the
 	// thread, so the caller cannot change it between the check and the use.
 	extended_state_written: Extended_State_Area,
-	// The part and the value that a write of Thread_Control on this
-	// processor refused: the error record of the operation takes them from
-	// here, not from a second read of the memory of the caller, which the
-	// caller can change between the two reads.
-	thread_write_refusal:       op.Thread_Write_Refusal,
-	thread_write_refused_value: u64,
-	thread_write_refused_limit: u64, // The most that the refused value can be. 0: the part has no range.
-	// The limit of a new thread that the last Thread_Create on this
-	// processor checked the weight against: the error record of a refusal
-	// takes it from here, not from a second read, which a write of the
-	// holder of the machine can change between the operation and the
-	// record.
-	thread_create_weight_limit: u32,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
@@ -418,8 +404,7 @@ CR4_FS_GS_BASE :: 1 << 16
 
 // DR7 with no breakpoint on (bit 10 is always 1), and DR6 with no status
 // (its reserved bits are 1).
-DR7_NO_BREAKPOINT :: 0x400
-#assert(DR7_NO_BREAKPOINT == op.DEBUG_CONTROL_NO_BREAKPOINT)
+DR7_NO_BREAKPOINT :: op.DEBUG_CONTROL_NO_BREAKPOINT
 DR6_CLEAR :: 0xFFFF_0FF0
 
 // The processors refuse sgdt, sidt, sldt, smsw and str to programs
@@ -534,7 +519,7 @@ processor_start :: proc "contextless" () {
 	cpu := processor_create(0, apic_id())
 	if cpu == nil {
 		log("kernel: no memory for the record of the processor")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 	processors[0] = cpu
 	processor_count = 1

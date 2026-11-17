@@ -6,8 +6,10 @@ import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
-// The serial port is the log of the kernel. It is the only device that the
-// kernel has code for, apart from the processor and its interrupt controller.
+// The log of the kernel: its records, the own log ring of each program, the
+// serial writer that writes their lines on the serial port, and the stop of
+// the machine. The serial port is the only device that the kernel has code
+// for, apart from the processor and its interrupt controller.
 
 SERIAL_PORT :: 0x3F8
 DEBUG_EXIT_PORT :: 0xF4 // The isa-debug-exit device of QEMU: a write ends the machine.
@@ -30,7 +32,7 @@ serial_start :: proc "contextless" () {
 
 log_bytes :: proc "contextless" (bytes: []u8) {
 	for b in bytes {
-		for port_read_8(SERIAL_PORT + 5) & 0x20 == 0 {}
+		for port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {}
 		port_write_8(SERIAL_PORT, b)
 	}
 }
@@ -107,8 +109,14 @@ serial_measured_bytes: u64
 serial_measured_cycles: u64
 serial_measured_tick_bytes: u64
 serial_measured_idle_bytes: u64
-// 0: the measure is not ready; 1: ready, the next tick writes it; 2: written.
-serial_measure_state: u32
+serial_measure_state: Serial_Measure_State
+// Where the measure of the serial port is. Atomic: each writer of a byte
+// notes it, and the tick of the first processor writes it once.
+Serial_Measure_State :: enum u32 {
+	Measuring, // The measure is not ready: the drain counts each byte.
+	Ready, // The bytes are counted: the next tick writes the line.
+	Written, // The line is on the log.
+}
 // A tick drains the log from the first tick on. Before it, each writer of a
 // record drains at once: the timer does not run yet, and a hang of the
 // start must still show its lines.
@@ -177,7 +185,7 @@ fault_report_begin :: proc "contextless" () {
 	intrinsics.atomic_store(&log_serial_only, true)
 	if intrinsics.atomic_add(&log_fault_report_depth, 1) != 0 {
 		log_bytes(transmute([]u8)string("\r\nkernel: a fault inside the report of a fault of the kernel\r\n"))
-		machine_stop(2)
+		machine_stop(.Fault)
 	}
 	line_is_whole := false
 	if intrinsics.atomic_load(&serial_writer) != self && serial_writer_take(self, FAULT_REPORT_WAIT_MILLISECONDS) {
@@ -569,7 +577,7 @@ serial_lag_note :: proc "contextless" () {
 // cycles of its port write, until the measure is ready.
 @(private = "file")
 serial_measure_note :: proc "contextless" (cycles: u64, mode: Serial_Drain_Mode) {
-	if intrinsics.atomic_load(&serial_measure_state) != 0 {
+	if intrinsics.atomic_load(&serial_measure_state) != .Measuring {
 		return
 	}
 	intrinsics.atomic_add(&serial_measured_cycles, cycles)
@@ -579,7 +587,7 @@ serial_measure_note :: proc "contextless" (cycles: u64, mode: Serial_Drain_Mode)
 		intrinsics.atomic_add(&serial_measured_tick_bytes, 1)
 	}
 	if intrinsics.atomic_add(&serial_measured_bytes, 1) + 1 >= SERIAL_MEASURE_BYTES {
-		intrinsics.atomic_store(&serial_measure_state, 1)
+		intrinsics.atomic_store(&serial_measure_state, Serial_Measure_State.Ready)
 	}
 }
 
@@ -725,7 +733,7 @@ serial_tick :: proc "contextless" (cpu: ^Processor) {
 		intrinsics.atomic_store(&serial_tick_drains, true)
 	}
 	serial_drain_of_a_processor(cpu)
-	if _, ready := intrinsics.atomic_compare_exchange_strong(&serial_measure_state, 1, 2); ready {
+	if _, ready := intrinsics.atomic_compare_exchange_strong(&serial_measure_state, Serial_Measure_State.Ready, Serial_Measure_State.Written); ready {
 		bytes := intrinsics.atomic_load(&serial_measured_bytes)
 		cycles := max(intrinsics.atomic_load(&serial_measured_cycles), 1)
 		frequency := max(cycle_frequency, 1)
@@ -954,8 +962,26 @@ log_record :: proc "contextless" (program: u32, program_serial: u32, owner: ^Pro
 	word_wake(physical_of(&log_head.written), max(u64))
 }
 
-// machine_stop ends the machine under QEMU, or halts the processor.
-machine_stop :: proc "contextless" (code: u8) -> ! {
+// machine_stop ends the machine under QEMU, or halts the processor. It is
+// inlined, so each caller calls machine_stop_with_code: the measure of the
+// kernel stack names that one edge.
+machine_stop :: #force_inline proc "contextless" (reason: Machine_Stop_Reason) -> ! {
+	machine_stop_with_code(u8(reason))
+}
+
+// Why the kernel stops the machine: the code that the host receives. The
+// tool reads the code, so each value is explicit. The operation
+// Machine_Stop gives its own code (machine_stop_with_code).
+Machine_Stop_Reason :: enum u8 {
+	Normal_End       = 0, // No program is left, or a self test of the start ended as it must.
+	Start_Failed     = 1, // The kernel cannot start: a record, a table or a part of the processor is missing or wrong.
+	Fault            = 2, // A fault of the kernel or of the machine: an exception in the kernel, a machine check.
+	Invariant_Broken = 3, // A check of the kernel found a broken rule: the lock order, a count, a lock that an operation asked for while it held it.
+}
+
+// machine_stop_with_code stops the machine with a code for the host: a
+// reason of the kernel, or the code of Machine_Stop.
+machine_stop_with_code :: proc "contextless" (code: u8) -> ! {
 	// Each other processor stops at its next kernel entry.
 	if processor_count > 1 {
 		intrinsics.atomic_store(&machine_stopping, true)

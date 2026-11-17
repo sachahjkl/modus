@@ -80,7 +80,7 @@ table_pages :: proc "contextless" (counts: []u64) -> (sum: u64) {
 // one page for each page, the slots keep only their protection. The program
 // lock keeps the faults of the program out between the two steps (a fault
 // takes it).
-memory_commit :: proc "contextless" (program: ^Program, region_index: u32, ranges: []op.Page_Range, decommit: bool) -> (changed: u64, status: op.Status) {
+memory_commit :: proc "contextless" (program: ^Program, region_index: u32, ranges: []op.Page_Range, decommit: bool) -> (changed: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	if !region.uncommitted {
 		return 0, .Bad_Operation
@@ -273,7 +273,7 @@ protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -
 // A range covers the pages of one mapping of this program; Write needs a
 // mapping made with Write, Execute one made with Execute; a part of a
 // mapping needs an object with a frame list named only by this program.
-protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u8, status: op.Status) {
+protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u8, status: Operation_Outcome) {
 	if .Write in flags && .Execute in flags || .No_Access in flags && flags != {.No_Access} {
 		return mappings, .Bad_Operation
 	}
@@ -388,7 +388,7 @@ protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_R
 // memory_protect changes the protection of the pages of the ranges, then
 // makes each processor that uses the page table of the program forget the
 // old translations: one processor_sync for the table.
-memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: op.Status) {
+memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: Operation_Outcome) {
 	places := protect_check(program, ranges, flags) or_return
 	walked: u64
 	for range, index in ranges {

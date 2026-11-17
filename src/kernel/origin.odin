@@ -61,7 +61,7 @@ origin_attach :: proc "contextless" (holding: Holding, origin: Holding) -> bool 
 	}
 	lock_take(&origin_lock, .Origin)
 	defer lock_free(&origin_lock, .Origin)
-	if revoking && !processor_self().control {
+	if revoking && !processor_self().operation.control {
 		return false
 	}
 	link := &origins[holding]

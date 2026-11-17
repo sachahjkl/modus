@@ -85,13 +85,14 @@ import op "modus:contract/operation"
 // thread_control runs the operation Thread_Control. The caller holds the
 // program lock of the program of the calling thread, and the control lock
 // when the operation asked for it.
-thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7]u64) -> op.Status {
+thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	caller_program_index := threads[caller_index].program
 	caller_program := &programs[caller_program_index]
+	// The record of the operation starts with no refusal (command_run).
 	cpu := processor_self()
-	cpu.thread_write_refusal, cpu.thread_write_refused_value, cpu.thread_write_refused_limit = .None, 0, 0
-	command := op.Thread_Control_Command(v[2])
-	if command == .None || v[2] > u64(max(op.Thread_Control_Command)) {
+	operation := &cpu.operation
+	command, command_known := op.member_of_word(op.Thread_Control_Command, v[2])
+	if !command_known || command == .None {
 		return .Bad_Operation
 	}
 	if op.thread_control_names_a_program(command) {
@@ -137,9 +138,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// No handle keeps the place for this thread: a place serves a
 			// new thread only under the control lock (thread_create), so
 			// with it the serial names one thread until the operation ends.
-			if need_control() {
-				return STATUS_RETRY
-			}
+			require_control() or_return
 			target_index = u32(place)
 			if threads[target_index].serial != serial {
 				return .Bad_State // The thread of that number ended, and the place serves another one.
@@ -151,9 +150,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			if .Debug not_in named.rights {
 				return .No_Right
 			}
-			if need_control() {
-				return STATUS_RETRY
-			}
+			require_control() or_return
 			by_debugger = true
 			owner = named.object
 		} else {
@@ -172,9 +169,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// lock order allows only with the control lock. The program of
 			// a thread changes only under the control lock (thread_finish).
 			if intrinsics.atomic_load(&threads[target_index].program) != caller_program_index {
-				if need_control() {
-					return STATUS_RETRY
-				}
+				require_control() or_return
 				owner = threads[target_index].program
 			}
 		}
@@ -250,7 +245,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			registers: op.Thread_Registers
 			user_copy(&registers, rawptr(uintptr(v[3])), size)
 			if refusal, value := op.thread_registers_refusal(&registers); refusal != .None {
-				cpu.thread_write_refusal, cpu.thread_write_refused_value = refusal, value
+				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
 				return .Bad_Operation
 			}
 			thread_frame_write(thread, &registers)
@@ -269,7 +264,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			written^ = thread.extended_state
 			user_copy(written, rawptr(uintptr(v[3])), size)
 			if refusal, value := extended_state_write_refusal(written); refusal != .None {
-				cpu.thread_write_refusal, cpu.thread_write_refused_value = refusal, value
+				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
 				return .Bad_Operation
 			}
 			thread.extended_state = written^
@@ -299,7 +294,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		} else {
 			user_copy(&breakpoints, rawptr(uintptr(v[3])), size)
 			if refusal, value := op.thread_breakpoints_refusal(&breakpoints); refusal != .None {
-				cpu.thread_write_refusal, cpu.thread_write_refused_value = refusal, value
+				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
 				return .Bad_Operation
 			}
 			thread_breakpoints_write(thread, &breakpoints)
@@ -340,7 +335,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		// accepts are the values that the thread gets.
 		schedule: op.Thread_Schedule
 		if command == .Read_Schedule {
-			read_status: op.Status
+			read_status: Operation_Outcome
 			schedule, read_status = thread_schedule_read(thread)
 			if read_status != .Ok {
 				return read_status
@@ -371,7 +366,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 				refusal, refused, most = write_refusal, u64(write_refusal == .Request ? schedule.request : schedule.weight), u64(write_most)
 			}
 			if refusal != .None {
-				cpu.thread_write_refusal, cpu.thread_write_refused_value, cpu.thread_write_refused_limit = refusal, refused, most
+				operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, refused, most
 				return .Bad_Operation
 			}
 		}
@@ -386,7 +381,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		// accepts are the sets that the thread gets.
 		placement: op.Thread_Placement
 		if command == .Read_Placement {
-			read_status: op.Status
+			read_status: Operation_Outcome
 			placement, read_status = thread_placement_read(thread)
 			if read_status != .Ok {
 				return read_status
@@ -398,7 +393,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			if write_status == .Bad_Operation {
 				// The refused set, and the set that it had to stay inside.
 				refused := refusal == .Processors_Limit ? placement.processors_limit : placement.processors
-				cpu.thread_write_refusal, cpu.thread_write_refused_value, cpu.thread_write_refused_limit = refusal, refused, most
+				operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, refused, most
 			}
 			if write_status != .Ok {
 				return write_status
@@ -418,7 +413,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 // the control lock and the program lock of the program: a creation by a
 // thread of that program holds the control lock too, so it comes wholly
 // before the write or wholly after it (creation_weight_limit).
-program_schedule_control :: proc "contextless" (caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> op.Status {
+program_schedule_control :: proc "contextless" (caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if v[0] == 0 {
 		return .Bad_Handle
 	}
@@ -441,9 +436,7 @@ program_schedule_control :: proc "contextless" (caller_program: ^Program, comman
 	// A slot serves a new program only under the control lock
 	// (program_create): with it the serial names one program until the
 	// operation ends.
-	if need_control() {
-		return STATUS_RETRY
-	}
+	require_control() or_return
 	index := u32(slot)
 	taken := program_lock(index)
 	defer program_unlock(index, taken)
@@ -461,8 +454,8 @@ program_schedule_control :: proc "contextless" (caller_program: ^Program, comman
 		user_copy(&schedule, rawptr(uintptr(v[3])), size)
 		after, refusal := op.program_schedule_after_write(schedule)
 		if refusal != .None {
-			cpu := processor_self()
-			cpu.thread_write_refusal, cpu.thread_write_refused_value, cpu.thread_write_refused_limit = refusal, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
+			operation := &processor_self().operation
+			operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
 			return .Bad_Operation
 		}
 		intrinsics.atomic_store(&program.new_thread_weight_limit, after.new_thread_weight_limit)
@@ -489,7 +482,7 @@ thread_schedule_ends :: #force_inline proc "contextless" (thread: ^Thread) -> bo
 // thread_schedule_read gives the weight, the request and the two weight
 // limits of a thread, all of one moment: they change together under the
 // run lock of its home. The caller holds the program lock of the thread.
-thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Thread_Schedule, status: op.Status) {
+thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Thread_Schedule, status: Operation_Outcome) {
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
@@ -531,7 +524,7 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Th
 // The sum of the weights of the list stays exact: the old weight of a
 // thread of the list leaves it and the new one enters it. The list keeps
 // its order, and the thread keeps its state, its home and its processor.
-thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Thread_Schedule, by_machine: bool) -> (status: op.Status, refusal: op.Thread_Write_Refusal, most: u32) {
+thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Thread_Schedule, by_machine: bool) -> (status: Operation_Outcome, refusal: op.Thread_Write_Refusal, most: u32) {
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
@@ -573,7 +566,7 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 // thread_placement_read gives the set of processors of a thread and the
 // limit of that set, both of one moment: they change together under the
 // run lock of its home. The caller holds the program lock of the thread.
-thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.Thread_Placement, status: op.Status) {
+thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.Thread_Placement, status: Operation_Outcome) {
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
@@ -635,7 +628,7 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 // A pick by another processor can change the home between the read of the
 // home and the take of the locks: then the locks are freed and the choice
 // starts again.
-thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Thread_Placement, by_machine: bool, is_caller: bool) -> (status: op.Status, refusal: op.Thread_Write_Refusal, most: u64) {
+thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Thread_Placement, by_machine: bool, is_caller: bool) -> (status: Operation_Outcome, refusal: op.Thread_Write_Refusal, most: u64) {
 	every_processor := machine_processors()
 	held := op.Thread_Placement {
 		processors       = intrinsics.atomic_load(&thread.processors),
@@ -733,7 +726,7 @@ thread_of_number :: proc "contextless" (program_index: u32, number: u64) -> u32 
 // interrupt, and the operation returns after it left that processor
 // (stop_wait), so that the registers are complete when the caller reads
 // them. The calling thread stops at the end of its kernel entry.
-thread_control_stop :: proc "contextless" (index: u32, results: ^[7]u64) -> op.Status {
+thread_control_stop :: proc "contextless" (index: u32, results: ^[7]u64) -> Operation_Outcome {
 	thread := &threads[index]
 	home := run_lock(thread)
 	if thread.state == .None || thread.state == .Stopped || intrinsics.atomic_load(&thread.stop_requested) || thread.control_stops >= op.THREAD_STOP_COUNT_LIMIT {
@@ -759,7 +752,7 @@ thread_control_stop :: proc "contextless" (index: u32, results: ^[7]u64) -> op.S
 		// The interrupt makes the thread enter the kernel, whose end does
 		// not continue it.
 		apic_send(processors[running - 1].apic_id, VECTOR_WAKE)
-		self.stopped_thread, self.stopped_thread_serial = index, serial
+		self.operation.stopped_thread, self.operation.stopped_thread_serial = index, serial
 	}
 	results[0] = u64(count)
 	return .Ok
@@ -768,7 +761,7 @@ thread_control_stop :: proc "contextless" (index: u32, results: ^[7]u64) -> op.S
 // thread_control_resume takes 1 from the stop count of a thread. At 0, a
 // thread that is Ready and on no processor enters the queue of its home, as
 // at the end of a wait.
-thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64) -> op.Status {
+thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64) -> Operation_Outcome {
 	home := run_lock(thread)
 	if thread.control_stops == 0 {
 		run_unlock(home)
@@ -852,4 +845,3 @@ thread_frame_write :: proc "contextless" (thread: ^Thread, registers: ^op.Thread
 #assert(op.THREAD_STACK_SELECTOR == SELECTOR_USER_DATA)
 #assert(op.THREAD_FLAGS_ALLOWED == RETURN_FLAGS_OF_A_PROGRAM | USER_FLAGS)
 #assert(op.THREAD_FLAGS_REQUIRED == USER_FLAGS)
-#assert(op.USER_END == USER_END)

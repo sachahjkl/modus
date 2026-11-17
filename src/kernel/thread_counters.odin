@@ -175,7 +175,7 @@ thread_counters_unload :: proc "contextless" (thread: ^Thread) {
 // its counts are in the registers of this processor. The caller checked
 // the command (op.thread_control_counts_the_caller). The caller holds the
 // program lock of the calling program.
-thread_counters_control :: proc "contextless" (caller_index: u32, caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> op.Status {
+thread_counters_control :: proc "contextless" (caller_index: u32, caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	thread := &threads[caller_index]
 	// A stop only takes a capability away and gives nothing, so it needs no
 	// handle and no right: a thread whose right was revoked can still stop

@@ -46,7 +46,8 @@ command_takes_error_details :: proc "contextless" (operation: Operation) -> bool
 // argument_value_problem says what the form of a parameter refuses in its
 // value, from the values of the command alone: a count above its limit
 // (`Too_Long`), a flag outside the flags of the form (`Bad_Flags`), a choice
-// above its largest value or 0 where 0 names nothing (`Bad_Value`). `limit`
+// above its largest value or 0 where 0 names nothing, a bounded value above
+// its limit (`Bad_Value`). `limit`
 // is the bound that the value passed. `None`: the form refuses nothing in
 // it. A handle, an address and a plain value are never refused here.
 //
@@ -75,6 +76,10 @@ argument_value_problem :: proc "contextless" (operation: Operation, index: int, 
 		if value > parameter.limit || value == 0 && !choice_zero_names_something(operation, index) {
 			return .Bad_Value, parameter.limit
 		}
+	case .Bounded:
+		if value > parameter.limit {
+			return .Bad_Value, parameter.limit
+		}
 	}
 	return .None, 0
 }
@@ -88,7 +93,7 @@ argument_value_problem :: proc "contextless" (operation: Operation, index: int, 
 //
 // The cases: the budget of `Memory_Commit` with `Decommit`; the thread of
 // `Thread_Control` with a command out of range; the thread of
-// `Fault_Handler_Set` with an end other than 0.
+// `Fault_Handler_Set` with an end other than `Set`.
 argument_is_read :: proc "contextless" (operation: Operation, index: int, values: [7]u64) -> bool {
 	if index < 0 || index >= len(values) {
 		return false
@@ -105,11 +110,12 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 	case .Thread_Control:
 		// The command decides what the thread argument names; with no
 		// command, the operation returns before it.
-		return index != 0 || values[2] != 0 && values[2] <= u64(max(Thread_Control_Command))
+		command, known := member_of_word(Thread_Control_Command, values[2])
+		return index != 0 || known && command != .None
 	case .Fault_Handler_Set:
-		// The end of the delivery, or a wrong end, returns before the
-		// thread is read.
-		return index != 0 || values[1] == 0
+		// The end of the delivery, or a word of no action, returns before
+		// the thread is read.
+		return index != 0 || values[1] == u64(Fault_Handler_Action.Set)
 	}
 	return true
 }
@@ -132,7 +138,7 @@ count_limit_holds :: proc "contextless" (operation: Operation, index: int, value
 }
 
 // choice_zero_names_something says if 0 is a value that the operation takes
-// for a choice: the level Info of `Log`, and the end 0 (set the handler) of
+// for a choice: the level Info of `Log`, and the action `Set` of
 // `Fault_Handler_Set`. Each other choice names nothing with 0.
 @(private = "file")
 choice_zero_names_something :: proc "contextless" (operation: Operation, index: int) -> bool {

@@ -6,14 +6,17 @@ import "base:intrinsics"
 import op "modus:contract/operation"
 import "modus:contract/processor_counters"
 
-// The objects, the handle tables, the programs and the scheduler
-// (docs/ARCHITECTURE.md, "Handle table"; docs/ARCHITECTURE.md, "Scheduler").
+// The objects, the handle tables, the programs and their threads
+// (docs/ARCHITECTURE.md, "Handle table"). The scheduler is in schedule.odin
+// and strategy.odin.
 // All tables are flat arrays with a fixed capacity. Index 0 of each table is
 // not used, so that 0 means "none".
 
 USER_END :: u64(op.USER_END)
 REGION_CAPACITY :: 2048
-PROGRAM_CAPACITY :: 64
+// The root budget holds the log records of a program of normal use for
+// each program slot: the contract counts the slots of the kernel.
+PROGRAM_CAPACITY :: op.PROGRAM_SLOTS_OF_THE_MACHINE
 HANDLE_CAPACITY :: 128
 MAPPING_CAPACITY :: 128
 
@@ -338,7 +341,7 @@ THREAD_TABLE_CAPACITY :: 256
 Program :: struct {
 	state:        op.Program_State, // None, Created, Ready or Stopped.
 	code:         u32,
-	name:         [32]u8,
+	name:         [op.PROGRAM_NAME_BYTES_MOST + 1]u8, // Zero bytes after the name.
 	table:        u64,
 	references:   u32, // Handles to this program.
 	budget:       u32, // The budget that paid for the slot. It pays for the page tables.
@@ -415,10 +418,6 @@ Program :: struct {
 
 HOLDS_STOPPED :: u64(1) << 32
 
-// An operation that needs the control lock gives this status: enter.odin
-// runs it again with the control lock. No program sees it.
-STATUS_RETRY :: op.Status(0xFFFF)
-
 // program_leave says that a processor left a thread of a program. true:
 // it was the last one after a stop, and the caller cleans the program up.
 program_leave :: proc "contextless" (index: u32) -> bool {
@@ -431,7 +430,7 @@ program_leave :: proc "contextless" (index: u32) -> bool {
 // writes the writer of the record, and the program cannot change a record of
 // its starter: else a program could name its code by the module of another
 // (src/md/features/module_record_writer.md).
-program_module :: proc "contextless" (program: ^Program, record: op.Module_Record, by_the_program: bool) -> op.Status {
+program_module :: proc "contextless" (program: ^Program, record: op.Module_Record, by_the_program: bool) -> Operation_Outcome {
 	if record.size != 0 && (record.base >= op.USER_END || record.size > op.USER_END - record.base) {
 		return .Bad_Address
 	}
@@ -523,7 +522,7 @@ time_region: u32 // The memory object of the time page. It is in each program.
 time_record: ^op.Time_Record
 
 // budget_create moves amounts from a budget to a new budget.
-budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) -> (index: u32, status: op.Status) {
+budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) -> (index: u32, status: Operation_Outcome) {
 	from := &budgets[parent]
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
@@ -609,6 +608,13 @@ region_cost :: proc "contextless" (page_count: u64, contiguous: bool) -> u64 {
 	return contiguous ? page_count : op.memory_cost(page_count)
 }
 
+// region_create_cost gives the pages that region_create takes from a
+// budget for an object of this kind. The error record of a refused
+// Memory_Create names this cost, so it names what the kernel charges.
+region_create_cost :: proc "contextless" (page_count: u64, contiguous: bool, uncommitted: bool) -> u64 {
+	return uncommitted ? uncommitted_base_cost(page_count) : region_cost(page_count, contiguous)
+}
+
 // frame_take gives one page frame, not zero, for a page that a budget
 // reserved or paid (memory.odin, frame_take_held): it cannot fail. The
 // caller holds the frame lock.
@@ -620,14 +626,13 @@ frame_take :: proc "contextless" () -> u64 {
 // region_create makes a memory object. The budget pays for its pages and
 // for its frame list. A contiguous object has all its frames now; another
 // one has its frames at first use, or now with `now`.
-region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false) -> (index: u32, status: op.Status) {
+region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false) -> (index: u32, status: Operation_Outcome) {
 	if page_count == 0 || !contiguous && page_count > op.MEMORY_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
 	// An uncommitted object pays its frame list only, and at least one page:
-	// no budget holds a slot of the table of memory objects for nothing
-	// for nothing.
-	cost := uncommitted ? uncommitted_base_cost(page_count) : region_cost(page_count, contiguous)
+	// no budget holds a slot of the table of memory objects for nothing.
+	cost := region_create_cost(page_count, contiguous, uncommitted)
 	// One section of the frame lock: the budget pays, the slot is taken, the
 	// frames of a contiguous object or of the frame list are taken, the pages
 	// are reserved. The frames are zero filled after the section.
@@ -799,7 +804,7 @@ region_release :: proc "contextless" (index: u32) {
 			if committed_slots != region.committed {
 				intrinsics.atomic_store(&log_serial_only, true)
 				log("kernel: the committed pages of a memory object do not add up: slots ", committed_slots, ", count ", region.committed)
-				machine_stop(3)
+				machine_stop(.Invariant_Broken)
 			}
 		}
 	}
@@ -863,7 +868,7 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 		generation := entry.generation
 		entry = slot
 		entry.generation = generation
-		#partial switch slot.kind {
+		switch slot.kind {
 		case .Memory:
 			intrinsics.atomic_add(&regions[slot.object].references, 1)
 		case .Program:
@@ -881,6 +886,10 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 			// The entry of a message interrupt behind a conventional bridge
 			// follows the program that holds it.
 			iommu_interrupt_owner_changed(slot.object)
+		case .Machine, .Log:
+			// One object of the machine, which never ends: no count.
+		case .None:
+			// A free slot is not a handle: no caller inserts one.
 		}
 		return op.Handle(u32(index + 1) | u32(generation) << 16)
 	}
@@ -888,10 +897,12 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 }
 
 // handle_insert_undo takes back a handle that handle_insert just made and
-// that no program saw: the origin tree refused it during a revocation.
+// that no program saw: the origin tree refused it during a revocation. The
+// tree refuses only a path with no control lock, so the handle is never of
+// a kind that handle_needs_control names.
 handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) {
 	slot := &program.handles[u32(handle) & 0xFFFF]
-	#partial switch slot.kind {
+	switch slot.kind {
 	case .Memory:
 		intrinsics.atomic_sub(&regions[slot.object].references, 1)
 	case .Program:
@@ -900,18 +911,16 @@ handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) 
 		intrinsics.atomic_sub(&threads[slot.object].references, 1)
 	case .Budget:
 		intrinsics.atomic_sub(&budgets[slot.object].references, 1)
-	case .Interrupt:
-		// As handle_close: else the count stays one too high, and a message
-		// interrupt that no handle names is never free again. The caller
-		// holds the control lock, as handle_insert of an interrupt needs.
-		interrupt_references[slot.object] -= 1
-		if interrupt_owner[slot.object] == index_of_program(program) {
-			intrinsics.atomic_store(&interrupt_owner[slot.object], 0)
-		}
-		if interrupt_references[slot.object] == 0 && slot.object >= INTERRUPT_LINES {
-			iommu_message_end(slot.object - INTERRUPT_LINES)
-		}
-		iommu_interrupt_owner_changed(slot.object)
+	case .Interrupt, .Ports:
+		// A give of these holds the control lock, under which the origin
+		// tree refuses nothing: an undo here is a fault of the kernel.
+		fault_report_begin()
+		log("kernel: the origin tree refused a handle of ports or of an interrupt, which a give makes under the control lock: the machine stops")
+		machine_stop(.Invariant_Broken)
+	case .Machine, .Log:
+		// One object of the machine, which never ends: no count.
+	case .None:
+		// handle_insert never makes a free slot.
 	}
 	slot^ = {generation = slot.generation}
 }
@@ -919,11 +928,35 @@ handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) 
 // handle_needs_control says if a handle of this kind changes data of the
 // control lock when it is made or closed.
 handle_needs_control :: proc "contextless" (kind: Object_Kind) -> bool {
-	#partial switch kind {
+	switch kind {
 	case .Memory, .Log, .Machine:
 		return false
+	case .Program, .Thread, .Budget, .Interrupt, .Ports:
+		return true
+	case .None:
+		// No handle: nothing is made or closed. A caller has found the
+		// handle first, so it never asks this.
+		return true
 	}
 	return true
+}
+
+// interrupt_handle_released ends what a handle of an interrupt held: its
+// count, and the owner of the line when the program was the owner. The
+// device of a message interrupt that no handle names sends it no more,
+// before the index can be given to another device; the entry of a message
+// interrupt behind a conventional bridge follows the program that holds it.
+// The caller holds the control lock.
+@(private = "file")
+interrupt_handle_released :: proc "contextless" (program: ^Program, object: u32) {
+	interrupt_references[object] -= 1
+	if interrupt_owner[object] == index_of_program(program) {
+		intrinsics.atomic_store(&interrupt_owner[object], 0)
+	}
+	if interrupt_references[object] == 0 && object >= INTERRUPT_LINES {
+		iommu_message_end(object - INTERRUPT_LINES)
+	}
+	iommu_interrupt_owner_changed(object)
 }
 
 index_of_program :: #force_inline proc "contextless" (program: ^Program) -> u32 {
@@ -940,7 +973,7 @@ ports_changed :: proc "contextless" (program: ^Program) {
 
 // handle_find gives the slot of a handle of a program. The handle must name
 // an object of this kind (.None: any kind) and have each of these rights.
-handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: ^Handle_Slot, status: op.Status) {
+handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: ^Handle_Slot, status: Operation_Outcome) {
 	index := handle & 0xFFFF
 	if index == 0 || index >= HANDLE_CAPACITY || handle >> 32 != 0 {
 		return nil, .Bad_Handle
@@ -960,7 +993,7 @@ handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_
 // the right Events, also the control lock.
 handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	origin_detach(holding_of_handle(program, slot))
-	#partial switch slot.kind {
+	switch slot.kind {
 	case .Memory:
 		// A device of this service reaches the object no more once the
 		// service holds no handle to it, before the object can end.
@@ -986,18 +1019,7 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	case .Budget:
 		budget_release(slot.object)
 	case .Interrupt:
-		interrupt_references[slot.object] -= 1
-		if interrupt_owner[slot.object] == index_of_program(program) {
-			intrinsics.atomic_store(&interrupt_owner[slot.object], 0)
-		}
-		// The device of a message interrupt that no handle names sends it
-		// no more, before the index can be given to another device.
-		if interrupt_references[slot.object] == 0 && slot.object >= INTERRUPT_LINES {
-			iommu_message_end(slot.object - INTERRUPT_LINES)
-		}
-		// The entry of a message interrupt behind a conventional bridge
-		// follows the program that holds it.
-		iommu_interrupt_owner_changed(slot.object)
+		interrupt_handle_released(program, slot.object)
 	case .Ports:
 		slot.kind = .None
 		ports_changed(program)
@@ -1007,15 +1029,19 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		if .Events in slot.rights {
 			event_right_closed(program, slot)
 		}
+	case .Log:
+		// The log never ends: the handle holds nothing to release.
+	case .None:
+		// handle_find gives no free slot: nothing to release.
 	}
 	slot^ = {generation = slot.generation + 1, ended = u8(errors.End.Closed)}
 }
 
-// map puts pages of a region in the address space of a program. origin is
+// map_region puts pages of a region in the address space of a program. origin is
 // the memory handle that a program mapped (origin.odin), or 0.
 // by_the_program: the program maps in itself, and not over a module of its
 // starter.
-map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0, by_the_program := false) -> (result: u64, status: op.Status) {
+map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0, by_the_program := false) -> (result: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	// An object with marks of protection is mapped once: the marks are of
 	// the object, and would reach a second mapping.
@@ -1092,7 +1118,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	// adds no holding, and runs again under the control lock.
 	holding := holding_of_mapping(program, mapping)
 	if !origin_attach(holding, origin) {
-		return 0, STATUS_RETRY
+		return 0, .Needs_Control
 	}
 	present_page_count: u64
 	// The tables that a failed map emptied: freed after its shoot-down.
@@ -1103,7 +1129,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 			if entry == nil {
 				// The status before the free: the freed tables return pages
 				// to the budget.
-				refusal: op.Status = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+				refusal: Operation_Outcome = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 				self := processor_self()
 				for undo in 0 ..< part {
 					undo_address := address + undo * LARGE_PAGE_SIZE
@@ -1135,7 +1161,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		run := min(512 - (run_address >> 12 & 511), count - page)
 		run_first_entry := page_entry_hold(program.table, run_address, run, &program.budget, &freed)
 		if run_first_entry == nil {
-			refusal: op.Status = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+			refusal: Operation_Outcome = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 			// Another thread of the program can have used a page that was
 			// present: as in unmap, each processor forgets the entries. The
 			// runs of the undo are the runs of the map: the same start.
@@ -1413,7 +1439,7 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 present_count_broken :: proc "contextless" (mapping: ^Mapping, walked: u64) -> ! {
 	fault_report_begin()
 	log("kernel: the count of the present pages of a mapping is ", mapping.present_page_count, ", its page table holds ", walked)
-	machine_stop(3)
+	machine_stop(.Invariant_Broken)
 }
 
 // present_pages gives the pages of the mappings of a program that have a
@@ -1467,7 +1493,7 @@ time_page_create :: proc "contextless" () -> bool {
 
 // program_create makes a program with no memory. The budget pays for the
 // slot and for the page tables. The caller holds the control lock.
-program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: op.Status) {
+program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: Operation_Outcome) {
 	if !budgets[budget].live || budgets[budget].amounts.programs == 0 || budgets[budget].amounts.pages == 0 {
 		return 0, .No_Budget
 	}
@@ -1577,7 +1603,7 @@ creation_weight_limit :: proc "contextless" (creator: u32) -> u32 {
 // placement of that thread, for the same reason: the new thread gets it
 // as its set of processors and as its limit; 0 is every processor. The
 // caller holds the control lock.
-thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL, processors_limit: u64 = 0) -> (index: u32, status: op.Status) {
+thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL, processors_limit: u64 = 0) -> (index: u32, status: Operation_Outcome) {
 	// The first instruction and the stack are in the half of the addresses
 	// of a program. The processor refuses to return to an address that is
 	// not canonical, and it refuses in the kernel, after the kernel loaded
@@ -1698,8 +1724,8 @@ thread_stop :: proc "contextless" (index: u32) {
 		if cpu := processors[running - 1]; cpu != processor_self() {
 			apic_send(cpu.apic_id, VECTOR_WAKE)
 			// The operation returns after the thread left its processor.
-			if self := processor_self(); self.operation {
-				self.stopped_thread, self.stopped_thread_serial = index, thread.serial
+			if self := processor_self(); self.operation.running {
+				self.operation.stopped_thread, self.operation.stopped_thread_serial = index, thread.serial
 			}
 		}
 		return
@@ -1818,8 +1844,8 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	if program.state == .None || program.state == .Stopped {
 		// Another stop marked the threads, and some can still be on their
 		// processors: this operation also returns only after they left.
-		if self := processor_self(); program.state == .Stopped && self.operation {
-			self.stopped_programs |= 1 << index
+		if self := processor_self(); program.state == .Stopped && self.operation.running {
+			self.operation.stopped_programs |= 1 << index
 			self.stopped_serials[index] = program.serial
 		}
 		program_unlock(index, taken)
@@ -1877,8 +1903,8 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 		}
 	}
 	// The operation returns after the threads left their processors.
-	if running &~ (1 << self.index) != 0 && self.operation {
-		self.stopped_programs |= 1 << index
+	if running &~ (1 << self.index) != 0 && self.operation.running {
+		self.operation.stopped_programs |= 1 << index
 		self.stopped_serials[index] = program.serial
 	}
 	if intrinsics.atomic_add(&program.holds, HOLDS_STOPPED - 1) + HOLDS_STOPPED - 1 == HOLDS_STOPPED {
@@ -2044,7 +2070,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if from_program && (frame.vector == VECTOR_NON_MASKABLE_INTERRUPT || frame.vector == VECTOR_DOUBLE_FAULT || frame.vector == VECTOR_MACHINE_CHECK) {
 		fault_report_begin()
 		log("kernel: ", EXCEPTION_NAMES[frame.vector], " vector ", frame.vector, " while a program ran, at ", Hex(frame.rip), ": a fault of the machine, not of the program: the machine stops")
-		machine_stop(2)
+		machine_stop(.Fault)
 	}
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
@@ -2055,7 +2081,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		}
 		fault_report_begin()
 		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
-		machine_stop(2)
+		machine_stop(.Fault)
 	}
 	cpu := processor_self()
 	sync_acknowledge(cpu)
@@ -2171,7 +2197,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// hide it in a loop of faults.
 		fault_report_begin()
 		log("kernel: a page table entry of program ", Module_Name{program_name(&programs[thread.program])}, " has a reserved bit: page fault error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(fault_address))
-		machine_stop(2)
+		machine_stop(.Fault)
 	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, fault_address, frame.error):
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.

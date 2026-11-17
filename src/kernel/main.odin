@@ -109,7 +109,7 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	serial_start()
 	if boot.magic != info.MAGIC {
 		log("kernel: the boot record is not valid")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 	boot_record = boot^
 	stage_cycles[.Firmware] = boot.cycles_start
@@ -177,7 +177,7 @@ debug_image_pages :: proc "contextless" (boot: ^info.Boot_Info) -> (pages: u64, 
 root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	fail :: proc "contextless" (text: string) -> ! {
 		log("kernel: cannot start the root service: ", text)
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 	image := info.physical_slice(boot.boot_image, boot.boot_image_size, u8)
 	if len(image) < size_of(info.Image_Header) || (^info.Image_Header)(raw_data(image)).magic != info.IMAGE_MAGIC {

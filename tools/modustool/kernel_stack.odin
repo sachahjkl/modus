@@ -250,7 +250,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		"kernel::log",
 		"kernel::log_in",
 		"kernel::fault_reason",
-		"kernel::machine_stop",
+		"kernel::machine_stop_with_code",
 		"runtime::bounds_check_error_contextless",
 		"runtime::bounds_check_error_contextless.handle_error",
 		"runtime::slice_handle_error_contextless",

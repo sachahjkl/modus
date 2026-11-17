@@ -57,7 +57,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	if bitmap_address == 0 {
 		log("kernel: no memory for the page frame table")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 	frame_bits = ([^]u64)(direct(bitmap_address, u64))[:words]
 	for &word in frame_bits {
@@ -267,7 +267,7 @@ frame_take_held :: proc "contextless" () -> u64 {
 	}
 	if frame == 0 {
 		log("kernel: no page frame for a reserved page")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 	return frame
 }
@@ -383,7 +383,7 @@ frames_check :: proc "contextless" () {
 	if free_bits != free_frames || !marked || free_frames + stacked != budget_pages + reserved_pages - taken {
 		fault_report_begin()
 		log("kernel: the frames do not add up: free bits ", free_bits, ", free frames ", free_frames, ", in stacks ", stacked, ", marked ", u64(marked), ", budgets ", budget_pages, ", reserved ", reserved_pages, ", taken ", taken)
-		machine_stop(3)
+		machine_stop(.Invariant_Broken)
 	}
 }
 
@@ -626,7 +626,7 @@ page_tables_free :: proc "contextless" (table: u64, budget: ^u32, freed: ^Freed_
 page_table_count_broken :: proc "contextless" (what: string) -> ! {
 	fault_report_begin()
 	log("kernel: the page tables of a program do not keep their counts: ", what)
-	machine_stop(3)
+	machine_stop(.Invariant_Broken)
 }
 
 // frame_paid takes one zero page frame that a budget pays for: a page

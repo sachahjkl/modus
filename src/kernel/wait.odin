@@ -36,8 +36,8 @@ wait_bucket :: #force_inline proc "contextless" (word: u64) -> ^Wait_Bucket {
 // wait_register adds the next word of the wait of a thread, if it holds
 // the value: the comparison and the entry are one section of the wait lock.
 // false: the word does not hold the value, and the thread does not wait.
-// The caller makes sure that the page of the word stays (the program lock
-// of the program, or the kernel lock).
+// The caller makes sure that the page of the word stays: it holds the
+// program lock of the program that maps the word.
 wait_register :: proc "contextless" (thread: ^Thread, word: u64, value: u32) -> bool {
 	index := thread_index(thread) * op.WORD_WAIT_CAPACITY + thread.word_count
 	thread.words[thread.word_count] = word
