@@ -63,7 +63,7 @@ fuzz_dmar_check :: proc(table: []u8) -> Fuzz_Verdict {
 	if dmar.unit_count == 0 || dmar.unit_count > iommu.UNIT_CAPACITY || dmar.reserved_range_count > iommu.RESERVED_RANGE_CAPACITY || dmar.scope_count > iommu.SCOPE_CAPACITY {
 		return fuzz_broken(.Contract, "dmar_read gives %d units, %d ranges, %d scopes", dmar.unit_count, dmar.reserved_range_count, dmar.scope_count)
 	}
-	for scope, index in dmar.scopes[:dmar.scope_count] {
+	for &scope, index in dmar.scopes[:dmar.scope_count] {
 		owners := scope.reserved ? dmar.reserved_range_count : dmar.unit_count
 		if scope.path_length == 0 || scope.path_length > iommu.PATH_CAPACITY || u32(scope.owner) >= owners {
 			return fuzz_broken(.Contract, "the scope %d has %d pairs and the owner %d", index, scope.path_length, scope.owner)

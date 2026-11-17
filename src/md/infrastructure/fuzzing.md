@@ -197,6 +197,6 @@ Built after them. Each raw target has a seed of each form and its edges; a gener
 
 The oracle of `remote_answer` named one fault of a border before its first run: `answer_check` accepted a status that names no member of `remote.Status`. It now refuses it, and its host test gives it the largest member plus one and the largest word.
 
-The edges of `support/terminal` are not counted: the instrumented build selects an IR file by the name of the folder of a package, and the package of that folder is `terminal_records`. Its target still runs it; the engine is guided by the other packages of the target.
+The edges of `src/library/support/terminal` are not counted: the instrumented build selects an IR file by the name of the folder of a package, and the package of that folder is `terminal_records`. Its target still runs it; the engine is guided by the other packages of the target.
 
 Left, in this order: the other records between programs (the sentences of the error records, the palette table, the demand cache, the value runs, the text encoding check, the kept stop report, the kept settings) and the TPM answers; the shaping tables of the fonts (`text_shaping`); the search of the processors in the ACPI tables, which reads raw addresses inside the kernel; the kernel operations in a test machine ("The kernel operations"); a scheduled workflow that runs `fuzz all` and keeps its fuzz findings as files of the run; two threads of one operation sequence on two processors.
