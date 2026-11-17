@@ -8,7 +8,7 @@ package quic
 import "modus:contract/errors"
 import "core:encoding/hex"
 import "core:testing"
-import cryptography_module "../../../modules/cryptography"
+import cryptography_module "../../../modules/libraries/cryptography"
 
 // The values of RFC 9001, appendix A. A script that is not in the
 // repository copied each value from the text of the RFC (no value was typed
