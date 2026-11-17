@@ -506,16 +506,18 @@ COMMANDS :: [?]Command {
 	// Checks that each file that the manifest of the origin names is its file
 	// in Odin with the listed changes only. `modustool check` runs it.
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
-	// Checks that each import of each source file of the kernel and of the
-	// contract packages names a package of the base library or of the core
-	// library of the compiler, or a contract package. Each build runs it
-	// before its first compiler starts, and `modustool check` runs it.
+	// Checks that each import of each source file of src/ follows the rule
+	// of its file: a source that is not a test imports no package of the
+	// core library, the kernel and a contract package import no support
+	// package, and a host test that imports a package of the core library
+	// names its build line. Each build runs it before its first compiler
+	// starts, and `modustool check` runs it.
 	// Checks three rules of the system that a reader had to trust: the count
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
 	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a program or a module gives a negative number with no error record, and that no family of integer constants is used as a closed set of choices", run = run_rule_checks},
-	{name = "library-imports", about = "check that each import of each source file of " + SOURCE_FOLDER_KERNEL + " and of " + SOURCE_FOLDER_CONTRACT + " names a package of base:, of core: or under " + CONTRACT_IMPORT_START, run = run_library_imports},
+	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
 	// similarity score from 0 to 1 to each pair that it compares, groups

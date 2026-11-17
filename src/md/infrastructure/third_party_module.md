@@ -115,10 +115,10 @@ One rule is new, and is for an outside module only:
 
 - **Each source that the compiler read is in one of three places**: the folder of the module or a folder under it, the source library `modus`, the libraries of the compiler. The tool reads the list that the compiler writes, after the compile step and before the conversion. A source in another place stops the build with its path.
 - **Why this is complete.** A relative import that leaves the folder of the module (`"../shared"`), an import of the kernel through a path with `..` after the name of the library, and a source library of another name each put a file outside the three places in the list.
-- **What it allows.** A package of the developer in a folder under the folder of the module, with a relative import. The rule of the sources of the system (no relative import at all) is a rule of that repository.
+- **What it allows.** A package of the developer in a folder under the folder of the module, with a relative import. The rule of the sources of the system (a relative import only in a host test and in the copy of the cryptography) is a rule of that repository.
 - Refused: a read of the import lines with the parser before the compile, as for the kernel. It reads files that the compiler does not compile (a host tool of the developer in a folder below), and the list of the compiler is exact.
 
-The rules of the repository of the system that the tool does not apply to an outside module: the rule of the comments, the rule of the names, the rule of the imports of the kernel and of the contract packages, the check of the fixed addresses, the checks of the documents. They are rules for who writes the system.
+The rules of the repository of the system that the tool does not apply to an outside module: the rule of the comments, the rule of the names, the rule of the imports of the sources of the system, the check of the fixed addresses, the checks of the documents. They are rules for who writes the system.
 
 ## The proof in the check, and its limit
 
