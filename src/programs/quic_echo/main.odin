@@ -180,7 +180,7 @@ counters_logged: quic.Server_Counters
 // of the last one: they are on the log with the counts.
 sends_refused: u64
 sends_refused_logged: u64
-send_refusal_last: datagram.Status
+send_refusal_last: u32 // The status word of the last refused Send, as the network service wrote it.
 counters_second: u64
 
 fail :: proc "contextless" (text: string) -> ! {
@@ -664,7 +664,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				free_count += 1
 				if datagram.Status(record.kind) != .Ok {
 					sends_refused += 1
-					send_refusal_last = datagram.Status(record.kind)
+					send_refusal_last = record.kind
 				}
 			}
 		}

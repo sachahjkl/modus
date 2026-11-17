@@ -131,7 +131,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		return
 	}
 	if system.Status(completion.kind) != .Ok {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the root service refused the connection to the store, status ", system.Status(completion.kind))
+		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the root service refused the connection to the store, status word ", u64(completion.kind))
 		return
 	}
 	// The connection lives for the read only: after it, on each path, the

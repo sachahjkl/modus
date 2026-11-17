@@ -490,7 +490,7 @@ palette_go_to :: proc "contextless" () {
 	palette.recent_note(panel, picked)
 	palette_close("")
 	raise(position)
-	send(&clients[index], ring.Record{kind = u32(display.Event_Kind.Go_To), values = {0 = act}})
+	send(&clients[index], .Go_To, {0 = act})
 	system.log_in("surfaces", .Info, "compositor: the palette goes to ", name_text, " in the window ", system.name_of(clients[index].title[:]), ", now in front")
 	palette_entries_refresh()
 }
@@ -584,13 +584,17 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		return
 	}
 	result := &palette_panel.result
-	#partial switch result.outcome {
+	// result_set keeps Shown_In_Panel, Failed and Refused only; each other
+	// outcome closes the panel before this line.
+	switch result.outcome {
 	case .Shown_In_Panel:
 		system.log_in("surfaces", .Info, "compositor: the palette shows ", palette_kind_words[result.kind])
 	case .Failed:
 		system.log_in("surfaces", .Info, "compositor: the palette shows an error")
-	case:
+	case .Refused:
 		system.log_in("surfaces", .Info, "compositor: the palette shows a refusal")
+	case .None, .Shown_In_Console, .Edit_Opened, .Candidates_Ready, .Manual_Opened:
+		system.log_in("surfaces", .Info, "compositor: the palette shows no result")
 	}
 	palette_refresh()
 }
@@ -723,13 +727,14 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			palette_refresh()
 		}
 	case .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After:
+		// The case above holds the four members that move the choice.
 		step := palette.Choice_Step.Previous
-		#partial switch action {
-		case .Choose_Next:
+		switch {
+		case action == .Choose_Next:
 			step = .Next
-		case .Choose_Page_Before:
+		case action == .Choose_Page_Before:
 			step = .Page_Before
-		case .Choose_Page_After:
+		case action == .Choose_Page_After:
 			step = .Page_After
 		}
 		if palette.choice_move(panel, step) {
@@ -1109,7 +1114,9 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool, wheel: in
 	if released {
 		pressed_row := panel.pressed_row
 		panel.pressed_row = palette.NO_ROW
-		#partial switch panel.state {
+		switch panel.state {
+		case .Closed, .Running, .Result:
+			// No row of the panel takes a release in these states.
 		case .Search:
 			pressed_value := palette_pressed_value
 			palette_pressed_value = palette.NO_ROW
@@ -1237,7 +1244,9 @@ palette_refresh :: proc "contextless" () {
 // palette_scroll_part_words gives the words of the log for a part of the
 // scroll bar of the panel.
 palette_scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> string {
-	#partial switch part {
+	switch part {
+	case .None:
+		return "no part"
 	case .Arrow_Back:
 		return "the arrow up"
 	case .Arrow_Forward:
@@ -1246,8 +1255,10 @@ palette_scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part
 		return "the track above the thumb"
 	case .Track_Forward:
 		return "the track under the thumb"
+	case .Thumb:
+		return "the thumb"
 	}
-	return "the thumb"
+	return "no part"
 }
 
 PALETTE_LOG_NAMES :: 4 // The first rows that the log names: the line stays one line of the log.

@@ -342,9 +342,15 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 			flags += {.Needs_Arguments}
 		}
 		destroys := .Destroys in flags && .Needs_Arguments not_in flags
-		// snapshot_take refused each kind past the last member.
+		// snapshot_take refused each kind that names no member, and the copy
+		// does not change: the border here refuses nothing that it took.
+		given_kind, given_kind_ok := palette_table.entry_kind_of_word(u64(given.kind))
+		if !given_kind_ok {
+			given_index += 1
+			continue
+		}
 		kind: Entry_Kind
-		switch given.kind {
+		switch given_kind {
 		case .Export:
 			kind = .Export
 		case .Command:
@@ -353,7 +359,7 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 			kind = .Setting
 		}
 		mark := destroys ? Entry_Mark.Destroys : Entry_Mark.None
-		if given.kind == .Provider_Setting && .In_Use in given.flags {
+		if given_kind == .Provider_Setting && .In_Use in given.flags {
 			// The mark is in the content of the list: a table that moves
 			// it gives a list that the panel draws again.
 			mark = .In_Use

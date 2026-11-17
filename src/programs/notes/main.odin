@@ -313,7 +313,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Pointer:
 				// The pointer reaches the action bar only: the next turn
 				// draws a frame with it.
@@ -331,6 +331,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !outcome.taken {
 					key_run(&window, press)
 				}
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 	}

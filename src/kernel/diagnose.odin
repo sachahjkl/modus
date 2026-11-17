@@ -451,7 +451,10 @@ read_program_state :: proc "contextless" (program: ^Program, handle: u64) -> (sl
 // kind_explains says if an error kind can be the cause of a status.
 @(private = "file")
 kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bool {
-	#partial switch status {
+	switch status {
+	case .Ok, .No_Memory:
+		// No record explains a success, nor a lack of frames.
+		return false
 	case .Bad_Handle:
 		return kind == .Handle_Absent || kind == .Handle_Ended || kind == .Handle_Kind || kind == .No_Target || kind == .Not_Payer
 	case .No_Right:
@@ -497,7 +500,9 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 	program := &programs[program_index]
 	v := command.values
 	explained := false
-	#partial switch status {
+	switch status {
+	case .Ok, .No_Memory:
+		// No record explains a success, nor a lack of frames.
 	case .Bad_Handle, .No_Right:
 		explained = handles_explain(&record, program, operation, v)
 		if !explained && operation == .Handle_Give && v[0] != 0 {
@@ -518,7 +523,10 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 	case .Bad_Operation:
 		explained = value_explain(&record, program, operation, v)
 	}
-	if !explained || !kind_explains(errors.Kind(record.kind), status) {
+	// The kind is the word that an explanation above wrote: it is read
+	// through its border, as each word of a record is.
+	explained_kind, explained_kind_ok := errors.kind_of_word(record.kind)
+	if !explained || !explained_kind_ok || !kind_explains(explained_kind, status) {
 		record = {operation = record.operation}
 		record_set(&record, .Refused, .None, 0, 0, 0, u64(status))
 	}
@@ -715,6 +723,8 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 	}
 	rights := parameter.rights
 	kind := parameter.kind
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Memory_Map:
 		if n == 0 {
@@ -831,6 +841,8 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	// Without Read the record depends on the operation alone, so that it
 	// tells nothing of another program.
 	if .Read not_in rights {
+		// An open choice by design: of the many operations, this diagnosis names
+		// the few that give its status; each other one has no explanation here.
 		#partial switch operation {
 		case .Memory_Create:
 			record_set(record, .Budget_Hidden, .Pages, 1, v[0], memory_create_cost(v[1], v[2]), 0)
@@ -846,6 +858,8 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	unit: errors.Unit
 	asked, held: u64
 	argument := 1
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Memory_Create:
 		unit, asked, held = .Pages, memory_create_cost(v[1], v[2]), holds.pages
@@ -895,6 +909,8 @@ INSPECT_SIZES := [op.Inspect_Kind]u64 {
 
 @(private = "file")
 address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Log:
 		// The text, then its value runs, at the address.
@@ -1060,6 +1076,8 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	address, size: u64
 	argument := 0
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Program_Module:
 		if v[0] != 0 {
@@ -1109,6 +1127,8 @@ starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, prog
 @(private = "file")
 slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	mappings, modules, areas := read_own_full(program)
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Word_Wait:
 		// The words of this entry count too: only a list longer than the
@@ -1149,6 +1169,8 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 	}
 	// A table of the machine is named only where it is the one cause that
 	// the status leaves, and its lock is taken only for that operation.
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Memory_Create:
 		if !read_regions_full() {
@@ -1203,6 +1225,8 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 @(private = "file")
 state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	argument := 0
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Memory_Map, .Handle_Give:
 		// An object with pages of their own protection is not mapped again
@@ -1250,6 +1274,8 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 @(private = "file")
 value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	form := &op.OPERATIONS[operation]
+	// An open choice by design: of the many operations, this diagnosis names
+	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Log:
 		if v[6] > op.LOG_CALL_RUN_LIMIT {

@@ -54,10 +54,10 @@ value_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry, value: int) ->
 	if given == nil {
 		return false
 	}
-	if given.kind == .Provider_Setting {
+	if given.kind == u8(palette_table.Entry_Kind.Provider_Setting) {
 		return .In_Use in given.flags
 	}
-	return given.kind == .Setting && int(given.setting) < len(panel.settings_in_use) && panel.settings_in_use[given.setting] == given.setting_value
+	return given.kind == u8(palette_table.Entry_Kind.Setting) && int(given.setting) < len(panel.settings_in_use) && panel.settings_in_use[given.setting] == given.setting_value
 }
 
 // value_chosen gives the value that Enter sets on a setting row: the value

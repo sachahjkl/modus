@@ -211,7 +211,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	buttons: u32
 	for {
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Key:
 				if !event.pressed {
 					continue
@@ -246,6 +246,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						toggle(index)
 					}
 				}
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 		now := system.time()

@@ -30,6 +30,7 @@
 package locker
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:support/lockers"
 import "modus:support/system"
 
@@ -143,7 +144,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			continue
 		}
 		seen = command
-		mode := slot.mode
+		// The program locks writes the mode: a word that names no mode is
+		// refused with a line and a stop, never read as a mode.
+		mode, mode_ok := enum_word.member_of_word(lockers.Mode, u64(slot.mode))
+		if !mode_ok {
+			system.log("locker: the board names the mode ", u64(slot.mode), ", which names no mode")
+			system.stop(2)
+		}
 		start := slot.start
 		end := slot.end
 		limit := slot.limit
@@ -153,7 +160,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			intrinsics.cpu_relax()
 		}
 		count: u64
-		#partial switch mode {
+		switch mode {
+		case .Wait:
+			// No work until the next command.
 		case .Entries:
 			count = entries(own, end, limit)
 		case .Faults:

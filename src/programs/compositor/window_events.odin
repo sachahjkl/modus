@@ -69,19 +69,23 @@ window_queue_memory_open :: proc "contextless" (index: int) {
 // window_event_send gives an event to a window. The records that wait for
 // the window go first; when its ring is full, the event waits in the queue
 // of the window, and a move of the pointer replaces the move that waits.
-window_event_send :: proc "contextless" (client: ^Client, record: ring.Record) {
+window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Kind, record: ring.Record) {
 	index := client_index(client)
 	queue := &window_queues[index]
 	target := &client.ring.completions
 	if ring.count(target) == ring.capacity(target) {
 		window_queue_memory_open(index)
 	}
-	class := key_path.Record_Class.Other
-	#partial switch display.Event_Kind(record.kind) {
+	class: key_path.Record_Class
+	switch kind {
 	case .Pointer:
 		class = .Pointer
 	case .Key:
 		class = .Key
+	case .None, .Settings_Changed, .Go_To:
+		// The other events wait in order behind the keys; None is never
+		// sent, and the reader refuses it.
+		class = .Other
 	}
 	refused_before := queue.refused[class]
 	result: key_path.Put_Result

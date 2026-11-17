@@ -44,6 +44,7 @@
 // The design: (docs/ARCHITECTURE.md, "The return to a program").
 package return_fault
 
+import "modus:contract/enum_word"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:support/display"
@@ -235,7 +236,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 //   the log, and then draws its window for ever.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	switch Role(ctx.values[VALUE_ROLE]) {
+	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
+	if !role_ok {
+		system.log("return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.stop(1)
+	}
+	switch role {
 	case .Instruction_Address:
 		child_instruction_address(ctx.values[VALUE_WITH_AVX] != 0)
 	case .Stack_Address:

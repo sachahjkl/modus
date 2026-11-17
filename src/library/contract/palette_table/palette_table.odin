@@ -32,6 +32,7 @@
 package palette_table
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -66,6 +67,15 @@ Entry_Kind :: enum u8 {
 	// strategy. The panel shows it as it shows a Setting entry. No page
 	// holds the value in use: the provider says it with the flag In_Use.
 	Provider_Setting = 3,
+}
+
+// entry_kind_of_word is the border of the kind of an entry (Entry.kind):
+// the member, or false for a word that names no kind. snapshot_take refuses
+// a table with such an entry, and each reader of a copy takes the kind
+// through this border again, so no reader holds a kind that the provider
+// did not name.
+entry_kind_of_word :: proc "contextless" (word: u64) -> (kind: Entry_Kind, ok: bool) {
+	return enum_word.member_of_word(Entry_Kind, word)
 }
 
 // The facts of an entry that are true or false.
@@ -113,7 +123,7 @@ value_kind_of_word :: proc "contextless" (word: u64) -> (kind: Value_Kind, ok: b
 // table, and differ only in their value. The provider writes the three, so
 // the panel never parses the name of an entry.
 Entry :: struct {
-	kind:             Entry_Kind, // What the entry is.
+	kind:             u8, // What the entry is: the word of an Entry_Kind, read through entry_kind_of_word.
 	flags:            Entry_Flags, // Its facts.
 	parameter_count:  u8, // Its parameters: 0 to PARAMETER_CAPACITY. 0: the panel runs it with no argument.
 	result:           Value_Kind, // The kind of its result.
@@ -315,7 +325,8 @@ ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys)) | u8(1 << u8(Entry_Flag.In
 
 // entry_problem checks one entry of a copy.
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
-	if entry.kind > max(Entry_Kind) || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} || entry.reserved_end != 0 {
+	entry_kind, entry_kind_ok := entry_kind_of_word(u64(entry.kind))
+	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} || entry.reserved_end != 0 {
 		return .Bad_Kind
 	}
 	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
@@ -331,18 +342,18 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	}
 	// A setting row is made of Setting and Provider_Setting entries only,
 	// and each of its buttons has a name.
-	setting_kind := entry.kind == .Setting || entry.kind == .Provider_Setting
+	setting_kind := entry_kind == .Setting || entry_kind == .Provider_Setting
 	if entry.setting_name_length != 0 && (!setting_kind || entry.value_name_length == 0) || entry.setting_name_length == 0 && entry.value_name_length != 0 {
 		return .Bad_Setting
 	}
-	if entry.kind == .Setting {
+	if entry_kind == .Setting {
 		if entry.parameter_count != 0 || entry.setting > u8(max(settings.Setting)) || u32(entry.setting_value) >= settings.descriptions[settings.Setting(entry.setting)].value_count {
 			return .Bad_Setting
 		}
 	} else if entry.setting != 0 || entry.setting_value != 0 {
 		return .Bad_Setting
 	}
-	if entry.kind == .Provider_Setting && entry.parameter_count != 0 || entry.kind != .Provider_Setting && .In_Use in entry.flags {
+	if entry_kind == .Provider_Setting && entry.parameter_count != 0 || entry_kind != .Provider_Setting && .In_Use in entry.flags {
 		return .Bad_Setting
 	}
 	if entry.name_length == 0 || int(entry.name_length) > NAME_CAPACITY || int(entry.signature_length) > SIGNATURE_CAPACITY || int(entry.about_length) > ABOUT_CAPACITY || int(entry.parameter_count) > PARAMETER_CAPACITY {

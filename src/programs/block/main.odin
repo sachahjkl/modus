@@ -231,9 +231,9 @@ Outcome :: enum {
 }
 
 // submit gives one request to the device. A refusal gives the values of
-// its error record.
-submit :: proc "contextless" (command: ring.Record) -> (status: block.Status, outcome: Outcome, values: [7]u64) {
-	kind := block.Command(command.kind)
+// its error record. kind is the command of the record, which the loop read
+// through its border.
+submit :: proc "contextless" (command: ring.Record, kind: block.Command) -> (status: block.Status, outcome: Outcome, values: [7]u64) {
 	first, count, offset := command.values[0], command.values[1], command.values[2]
 	if kind != .Flush {
 		if region_memory == 0 {
@@ -379,7 +379,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			result := block.Status.Ok
 			values: [7]u64
-			#partial switch block.Command(command.kind) {
+			kind, kind_ok := block.command_of_word(i64(command.kind))
+			if !kind_ok {
+				complete(command.tag, .Bad_Command, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
+				changed += 1
+				continue
+			}
+			switch kind {
+			case .None:
+				result = .Bad_Command
+				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
 			case .Attach:
 				result, values = attach(system.Handle(command.values[0]))
 			case .Info:
@@ -390,16 +399,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				values = {0 = requests_done, 1 = blocks_moved, 2 = system.kernel_entries(), 3 = interrupts}
 			case .Read, .Write, .Flush:
 				outcome: Outcome
-				result, outcome, values = submit(command)
+				result, outcome, values = submit(command, kind)
 				if outcome == .Sent {
 					continue
 				}
 				if outcome == .Full {
 					waiting, has_waiting = command, true
 				}
-			case:
-				result = .Bad_Command
-				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
 			}
 			if has_waiting {
 				break

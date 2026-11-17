@@ -114,7 +114,7 @@ runs_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result: ^[]
 	text_count := min(int(record.text_count), len(record.text))
 	for index in 0 ..< min(int(record.run_count), len(record.runs)) {
 		run := record.runs[index]
-		start, end, ok := value_kinds.value_run_in_text(run, text_count)
+		start, end, kind, ok := value_kinds.value_run_in_text(run, text_count)
 		if !ok {
 			continue
 		}
@@ -122,7 +122,7 @@ runs_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result: ^[]
 		if count^ < len(result^) {
 			row := &result[count^]
 			row^ = {number = number, start = i64(start), length = i64(end - start)}
-			copy(row.kind[:], value_kinds.VALUE_KIND_NAMES[run.kind])
+			copy(row.kind[:], value_kinds.VALUE_KIND_NAMES[kind])
 			count^ += 1
 		}
 	}

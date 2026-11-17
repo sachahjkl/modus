@@ -1,5 +1,6 @@
 package console
 
+import "modus:contract/enum_word"
 import op "modus:contract/operation"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
@@ -119,9 +120,9 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 			return {}, false
 		}
 	}
-	entry.kind = .Export
+	entry.kind = u8(palette_table.Entry_Kind.Export)
 	if item.run != nil {
-		entry.kind = .Command
+		entry.kind = u8(palette_table.Entry_Kind.Command)
 		for name in palette_destroying_commands {
 			if name == item.name {
 				entry.flags += {.Destroys}
@@ -254,7 +255,7 @@ palette_table_write :: proc "contextless" () {
 			if count == palette_table.ENTRY_CAPACITY {
 				break
 			}
-			entry := palette_table.Entry{kind = .Setting, setting = u8(setting), setting_value = u8(value), result = .Integer}
+			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(value), result = .Integer}
 			name := system.Writer{buffer = entry.name[:]}
 			system.write_part(&name, "set ")
 			system.write_part(&name, description.title)
@@ -296,7 +297,7 @@ palette_table_write :: proc "contextless" () {
 		}
 		value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
 		value := palette_strategy_value(&value_buffer, strategy)
-		entry := palette_table.Entry{kind = .Provider_Setting, result = .Integer}
+		entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = .Integer}
 		if strategy == strategy_in_use {
 			entry.flags += {.In_Use}
 		}
@@ -412,7 +413,17 @@ palette_turn :: proc "contextless" () {
 		if !received {
 			return
 		}
-		#partial switch palette_table.Command(record.kind) {
+		// The compositor writes the word: a word that names no command, and
+		// None, are refused with a line, and the next record is read.
+		palette_command, palette_command_ok := enum_word.member_of_word(palette_table.Command, u64(record.kind))
+		if !palette_command_ok || palette_command == .None {
+			system.log("console: the palette sent the command word ", u64(record.kind), ", which names no command: it is refused")
+			continue
+		}
+		switch palette_command {
+		case .None:
+			// Refused above.
+			continue
 		case .Argument:
 			if parameter, argument, ok := palette_table.argument_unpack(record.values); ok {
 				if palette_arguments_tag != record.tag {
@@ -506,15 +517,15 @@ palette_line_run :: proc "contextless" (tag: u32, text: string) {
 
 // palette_choice takes one choice of the compositor.
 palette_choice :: proc "contextless" (record: ring.Record) {
-	mode := record.values[3]
+	mode, mode_ok := enum_word.member_of_word(palette_table.Choose_Mode, record.values[3])
 	entry, named := palette_entry_named(record)
-	if !named || mode > u64(palette_table.Choose_Mode.Run_With_Arguments) {
+	if !named || !mode_ok {
 		palette_refuse(record.tag, "the commands changed: choose again")
 		return
 	}
 	name := string(entry.name[:entry.name_length])
 	palette_manual = false
-	if entry.kind == .Setting || entry.kind == .Provider_Setting {
+	if entry.kind == u8(palette_table.Entry_Kind.Setting) || entry.kind == u8(palette_table.Entry_Kind.Provider_Setting) {
 		// The line of a setting, and of a scheduling strategy, is the
 		// help of its entry, which the console wrote itself.
 		palette_line_run(record.tag, string(entry.about[:entry.about_length]))
@@ -529,7 +540,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 	writer := system.Writer{buffer = text[:]}
 	system.write_part(&writer, name)
 	system.write_part(&writer, "(")
-	if palette_table.Choose_Mode(mode) == .Run_With_Arguments {
+	if mode == .Run_With_Arguments {
 		// Each value has the kind of its parameter, and each parameter
 		// has a value: the console checks them as it checks a line.
 		// The values of a choice are in an array of the size of the form: a
@@ -583,7 +594,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		return
 	}
 	system.write_part(&writer, ")")
-	if palette_table.Choose_Mode(mode) == .Edit || found.parameter_count > 0 {
+	if mode == .Edit || found.parameter_count > 0 {
 		// The input writes the arguments: the caret is between the
 		// parentheses.
 		completion_close()
@@ -897,7 +908,7 @@ palette_line_ended :: proc "contextless" () {
 			palette_table.result_line_end(&writer)
 		}
 	} else {
-		#partial switch value.kind {
+		switch value.kind {
 		case .None:
 			palette_table.result_run(&writer, .Note, "done")
 			palette_table.result_line_end(&writer)
@@ -917,7 +928,8 @@ palette_line_ended :: proc "contextless" () {
 			}
 		case .Record:
 			console_results.draw_record(&sink, value.file, value.detail, value.record)
-		case:
+		case .Handle, .Table, .Bytes:
+			// The panel has no drawer for these: the console window shows them.
 			writer.fits = false
 		}
 		if !writer.fits {

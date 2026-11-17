@@ -144,7 +144,9 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), keys_waiting = i64(keys_waiting_of_all_windows()), keys_refused = i64(key_records_refused), palette = i64(palette_panel.state)}
 		copy(result[0].shape[:len(result[0].shape) - 1], pointer_pictures.SHAPE_NAMES[pointer_shape_under()])
 		copy(result[0].form[:len(result[0].form) - 1], pointer_form_name(pointer_form))
-		#partial switch menu_open {
+		switch menu_open {
+		case .None:
+			// No menu: the field stays empty.
 		case .Programs:
 			copy(result[0].menu[:], "programs")
 		case .Windows:

@@ -156,8 +156,8 @@ failure_draw :: proc "contextless" () {
 		for end < len(notes) && notes[end] != '\n' {
 			end += 1
 		}
-		emit(console_results.FAILURE_START, {tone = .Bad})
-		emit(notes[:end], {tone = .Bad})
+		emit(console_results.FAILURE_START, {tone = u8(terminal.Tone.Bad)})
+		emit(notes[:end], {tone = u8(terminal.Tone.Bad)})
 		emit_end()
 		notes = notes[min(end + 1, len(notes)):]
 	}
@@ -189,9 +189,9 @@ part_style :: proc "contextless" (part: console_results.Part) -> terminal.Style 
 	case .Plain:
 		return {}
 	case .Label, .Note:
-		return {tone = .Dim}
+		return {tone = u8(terminal.Tone.Dim)}
 	case .Failure:
-		return {tone = .Bad}
+		return {tone = u8(terminal.Tone.Bad)}
 	case .Number, .Size, .Time, .Handle, .Type, .Status, .Operation:
 	}
 	return value_kind_style(console_results.part_value_kind(part))

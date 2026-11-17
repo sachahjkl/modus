@@ -328,9 +328,9 @@ Outcome :: enum {
 }
 
 // submit gives one request to the device. A refusal gives the values of
-// its error record.
-submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
-	kind := frame.Command(command.kind)
+// its error record. kind is the command of the record, Send or Receive,
+// which the loop read through its border.
+submit :: proc "contextless" (command: ring.Record, kind: frame.Command) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
 	place, count := command.values[0], command.values[1]
 	if region_memory == 0 {
 		return .No_Region, .Done, errors.ring_fail(command.kind, .Absent, .Region)
@@ -514,7 +514,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			result := frame.Status.Ok
 			values: [7]u64
-			#partial switch frame.Command(command.kind) {
+			kind, kind_ok := frame.command_of_word(i64(command.kind))
+			if !kind_ok {
+				complete(command.tag, .Bad_Command, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
+				changed += 1
+				continue
+			}
+			switch kind {
+			case .None:
+				result = .Bad_Command
+				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
 			case .Attach:
 				result, values = attach(system.Handle(command.values[0]))
 			case .Info:
@@ -525,13 +534,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				values = {0 = frames_sent, 1 = frames_received, 2 = system.kernel_entries(), 3 = interrupts, 4 = bytes_sent, 5 = bytes_received}
 			case .Send, .Receive, .Read_Region_Add, .Read_Region_Remove:
 				outcome: Outcome
-				#partial switch frame.Command(command.kind) {
-				case .Read_Region_Add:
+				switch {
+				case kind == .Read_Region_Add:
 					result, outcome, values = read_region_add(command)
-				case .Read_Region_Remove:
+				case kind == .Read_Region_Remove:
 					result, outcome, values = read_region_remove(command)
 				case:
-					result, outcome, values = submit(command)
+					result, outcome, values = submit(command, kind)
 				}
 				if outcome == .Sent {
 					continue
@@ -539,9 +548,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if outcome == .Full {
 					waiting, has_waiting = command, true
 				}
-			case:
-				result = .Bad_Command
-				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
 			}
 			if has_waiting {
 				break

@@ -320,7 +320,7 @@ setting_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry) -> bool {
 		return false
 	}
 	given := given_of(panel.list, entry)
-	if given == nil || given.kind != .Setting || int(given.setting) >= len(panel.settings_in_use) {
+	if given == nil || given.kind != u8(palette_table.Entry_Kind.Setting) || int(given.setting) >= len(panel.settings_in_use) {
 		return false
 	}
 	return panel.settings_in_use[given.setting] == given.setting_value

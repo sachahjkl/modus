@@ -61,22 +61,22 @@ echo_write :: proc "contextless" (text: string) {
 	count := console_language.line_runs(text, 0, console_language.NO_CARET, console_names, runs[:])
 	parts: [2 * terminal.CODE_RUN_LIMIT + 2]terminal.Run
 	part_count := 0
-	parts[part_count] = {PROMPT, {tone = .Accent}}
+	parts[part_count] = {PROMPT, {tone = u8(terminal.Tone.Accent)}}
 	part_count += 1
 	written := 0 // The bytes of the line in the parts so far.
 	for run in runs[:count] {
 		start := int(run.start)
 		end := start + int(run.length)
 		if start > written {
-			parts[part_count] = {text[written:start], {tone = .Strong}}
+			parts[part_count] = {text[written:start], {tone = u8(terminal.Tone.Strong)}}
 			part_count += 1
 		}
-		parts[part_count] = {text[start:end], {tone = .Strong, code = run.kind}}
+		parts[part_count] = {text[start:end], {tone = u8(terminal.Tone.Strong), code = u8(run.kind)}}
 		part_count += 1
 		written = end
 	}
 	// The rest of the line: past the runs, or the whole line with none.
-	parts[part_count] = {text[written:], {tone = .Strong}}
+	parts[part_count] = {text[written:], {tone = u8(terminal.Tone.Strong)}}
 	part_count += 1
 	terminal.line(&output, ..parts[:part_count])
 }

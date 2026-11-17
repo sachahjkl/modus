@@ -142,13 +142,16 @@ call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolate
 	index := module.export_find(hostile_file, name)
 	function, _ := module.function(hostile_file, index)
 	address, _ := module.export_address(hostile_file, uintptr(hostile_base), index)
-	#partial switch way {
+	switch way {
 	case .Direct:
 		return system.call_direct(hostile_file, address, function, arguments)
 	case .Call_Host:
 		return system.call_isolated(&hostile_host, hostile_file, index, arguments)
+	case .Service:
+		// No service holds the hostile exports: the caller skips this way.
+		return 0, .Refused
 	}
-	return
+	return 0, .Refused
 }
 
 // call runs one export with the same arguments in one way.
@@ -308,7 +311,7 @@ hostile_add :: proc "contextless" (name: string, right: bool, parts: ..system.Pa
 
 // raw_call sends an argument record that this program wrote itself, as a
 // hostile caller does, and gives the status of the completion.
-raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32, size: u64) -> (status: isolated.Status, refusal: errors.Error_Record) {
+raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32, size: u64) -> (status_word: u32, refusal: errors.Error_Record) {
 	connection.tag += 1
 	system.send(&connection.calls.commands, ring.Record{kind = export, tag = connection.tag, values = {0 = 0, 1 = size}})
 	for {
@@ -316,11 +319,11 @@ raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32
 		for record in system.receive(&connection.calls.completions) {
 			if record.tag == connection.tag {
 				// The values of a refusal hold its error record.
-				return isolated.Status(record.kind), transmute(errors.Error_Record)record.values
+				return record.kind, transmute(errors.Error_Record)record.values
 			}
 		}
 		if state, _ := system.program_state(connection.program); state == .Stopped {
-			return isolated.Status(max(u32)), {}
+			return max(u32), {} // A word that names no status: the program stopped.
 		}
 		system.wait_records(&wait, &connection.calls.completions)
 		system.wait_end(&wait)
@@ -372,14 +375,14 @@ run_hostile :: proc "contextless" () {
 	arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(receiver)}
 	arguments[1] = {integer = 2}
 	_, size, _, _, encoded := isolated.encode(sample_file, scale_function, arguments[:2], host.region)
-	refused := isolated.Status.Ok
+	refused := u32(isolated.Status.Ok)
 	refusal: errors.Error_Record
 	if encoded && give_status == .Ok {
 		refused, refusal = raw_call(&host, scale_index, size)
 	}
 	system.handle_revoke(copy_handle)
 	system.close(copy_handle)
-	hostile_add("a Change table lent with Read only", refused == .Bad_Handle && large[63].value == 63, "Bad_Handle; rows unchanged")
+	hostile_add("a Change table lent with Read only", refused == u32(isolated.Status.Bad_Handle) && large[63].value == 63, "Bad_Handle; rows unchanged")
 
 	// A budget lent as the memory of a table: the receiver checks the kind
 	// of the object: a table names a memory object, and no other kind.
@@ -389,13 +392,13 @@ run_hostile :: proc "contextless" () {
 	}
 	arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(receiver)}
 	_, size, _, _, encoded = isolated.encode(sample_file, function, arguments[:1], host.region)
-	refused, refusal = .Ok, {}
+	refused, refusal = u32(isolated.Status.Ok), {}
 	if encoded && budget_status == .Ok {
 		refused, refusal = raw_call(&host, index, size)
 	}
 	system.handle_revoke(budget_copy)
 	system.close(budget_copy)
-	refusal_add("a budget as the memory of a table", refused == .Bad_Handle && errors.Kind(refusal.kind) == .Handle_Kind, &refusal, "sum_values", "readings")
+	refusal_add("a budget as the memory of a table", refused == u32(isolated.Status.Bad_Handle) && errors.Kind(refusal.kind) == .Handle_Kind, &refusal, "sum_values", "readings")
 
 	// A count larger than the call region, written by hand: the refusal is
 	// an error record, so that the caller learns which argument and why.
@@ -403,20 +406,20 @@ run_hostile :: proc "contextless" () {
 	_, size, _, _, encoded = isolated.encode(sample_file, function, arguments[:1], host.region)
 	field := (^isolated.Table_Field)(raw_data(host.region))
 	field.count = 1 << 40
-	refused, refusal = .Ok, {}
+	refused, refusal = u32(isolated.Status.Ok), {}
 	if encoded {
 		refused, refusal = raw_call(&host, index, size)
 	}
-	refusal_add("a count of 2^40 rows", refused == .Bad_Arguments && errors.Kind(refusal.kind) == .Too_Long && refusal.argument == 1, &refusal, "sum_values", "readings")
+	refusal_add("a count of 2^40 rows", refused == u32(isolated.Status.Bad_Arguments) && errors.Kind(refusal.kind) == .Too_Long && refusal.argument == 1, &refusal, "sum_values", "readings")
 
 	// A start that wraps.
 	_, size, _, _, encoded = isolated.encode(sample_file, function, arguments[:1], host.region)
 	field.start = max(u64) - 7
-	refused, refusal = .Ok, {}
+	refused, refusal = u32(isolated.Status.Ok), {}
 	if encoded {
 		refused, refusal = raw_call(&host, index, size)
 	}
-	refusal_add("a start that wraps", refused == .Bad_Arguments && errors.Kind(refusal.kind) == .Out_Of_Range && refusal.argument == 1, &refusal, "sum_values", "readings")
+	refusal_add("a start that wraps", refused == u32(isolated.Status.Bad_Arguments) && errors.Kind(refusal.kind) == .Out_Of_Range && refusal.argument == 1, &refusal, "sum_values", "readings")
 
 	// A direct call of an export with a Table result: call_direct does not
 	// do it, and says so: else it gives the address of the error record

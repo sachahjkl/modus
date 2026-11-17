@@ -170,7 +170,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		system.service_run(&service)
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Key:
 				if event.pressed {
 					switch event.character {
@@ -188,6 +188,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					cells[shown][y][x] = 1
 					board_generation += 1
 				}
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 		now := system.time()

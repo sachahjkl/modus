@@ -87,8 +87,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if has_key && pressed.character == ' ' {
 					paused = !paused
 					if paused {
-						terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = .Warning})
-						terminal.edit(&output, "the lines wait: the key Space continues", style = {tone = .Warning})
+						terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = u8(terminal.Tone.Warning)})
+						terminal.edit(&output, "the lines wait: the key Space continues", style = {tone = u8(terminal.Tone.Warning)})
 						system.log("flood: Space: no more lines after ", number - 1)
 					} else {
 						terminal.edit(&output, "")
@@ -117,13 +117,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		level := levels[number * 7 / 3 % len(levels)]
 		terminal.line(
 			&output,
-			{string(digits[:]), {tone = .Number}},
-			{level.text, {tone = level.tone, flags = level.tone == .Bad ? {.Reverse} : {}}},
-			{names[number / 3 % len(names)], {tone = .Accent}},
+			{string(digits[:]), {tone = u8(terminal.Tone.Number)}},
+			{level.text, {tone = u8(level.tone), flags = level.tone == .Bad ? {.Reverse} : {}}},
+			{names[number / 3 % len(names)], {tone = u8(terminal.Tone.Accent)}},
 			{texts[number * 5 / 2 % len(texts)], {}},
 		)
 		if number % STATUS_LINES == 0 {
-			terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = .Good})
+			terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = u8(terminal.Tone.Good)})
 		}
 	}
 }

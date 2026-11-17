@@ -263,7 +263,13 @@ modules :: proc "c" (program: ^string, result: ^[]Module, error: ^errors.Error_R
 		for byte in item.hash {
 			system.write_bytes(&writer, {digits[byte >> 4], digits[byte & 15]})
 		}
-		copy(row.writer[:], op.module_writer_name(item.writer))
+		// A word that names no writer leaves the field empty, with a line:
+		// the row never says who made a claim that no kernel marked.
+		if module_writer, module_writer_ok := op.module_writer_of_word(item.writer); module_writer_ok {
+			copy(row.writer[:], op.module_writer_name(module_writer))
+		} else {
+			system.log("inspect: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
+		}
 	}
 	return i64(count)
 }

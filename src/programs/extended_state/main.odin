@@ -439,7 +439,9 @@ worker_run :: proc "c" (parameter: rawptr) -> ! {
 // when it saves with xsaveopt; vzeroupper and ymm need AVX.
 part_usable :: proc "contextless" (part: Part) -> bool {
 	with_xsave := facts.leaf_1_ecx & sets.LEAF_1_ECX_OSXSAVE != 0
-	#partial switch part {
+	switch part {
+	case .Loop_Alone, .Fxsave_And_Fxrstor, .Fxsave, .Fxrstor:
+		// The loop and fxsave need no state past what each processor has.
 	case .Xsaveopt_And_Xrstor, .Xsave_And_Xrstor, .Xsaveopt, .Xrstor:
 		return with_xsave
 	case .Xsaveopt_Vzeroupper_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Vzeroupper:

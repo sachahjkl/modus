@@ -450,11 +450,11 @@ program_module :: proc "contextless" (program: ^Program, record: op.Module_Recor
 	if record.size == 0 && (place.size == 0 || place.base != record.base) {
 		return .Bad_Address
 	}
-	if by_the_program && place.size != 0 && place.writer == .Starter {
+	if by_the_program && place.size != 0 && place.writer == u64(op.Module_Writer.Starter) {
 		return .No_Right
 	}
 	written := record
-	written.writer = by_the_program ? .Program : .Starter
+	written.writer = by_the_program ? u64(op.Module_Writer.Program) : u64(op.Module_Writer.Starter)
 	place^ = record.size == 0 ? {} : written
 	return .Ok
 }
@@ -468,7 +468,7 @@ starter_module_meeting :: proc "contextless" (program: ^Program, address: u64, s
 		return nil
 	}
 	for &item in program.modules {
-		if item.size == 0 || item.writer != .Starter {
+		if item.size == 0 || item.writer != u64(op.Module_Writer.Starter) {
 			continue
 		}
 		meets := address >= item.base ? address - item.base < item.size : item.base - address < size
@@ -1242,7 +1242,7 @@ chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: 
 			}
 		}
 		for item in program.modules {
-			if item.size == 0 || item.writer != .Starter {
+			if item.size == 0 || item.writer != u64(op.Module_Writer.Starter) {
 				continue
 			}
 			end := item.base + item.size

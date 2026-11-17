@@ -201,15 +201,17 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_program
 	if counter_plan.vendor == .None {
 		return .Bad_Operation
 	}
-	#partial switch command {
-	case .Start_Counters:
+	// Stop_Counters returned above; each other command of the set comes to
+	// this procedure only by a fault of its caller.
+	switch {
+	case command == .Start_Counters:
 		if thread.counting {
 			thread_counters_unload(thread)
 		}
 		thread.counter_totals = {}
 		thread.counting = true
 		thread_counters_load()
-	case .Read_Counters:
+	case command == .Read_Counters:
 		size := u64(size_of(op.Thread_Counters))
 		if v[4] < size || !user_range(caller_program, v[3], size, true) {
 			return .Bad_Address

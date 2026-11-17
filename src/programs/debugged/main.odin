@@ -52,6 +52,7 @@
 package debugged
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/module"
 import op "modus:contract/operation"
@@ -236,7 +237,11 @@ child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		system.stop(20)
 	}
 	shared := (^Shared)(address)
-	mode := Child_Mode(ctx.values[VALUE_MODE])
+	mode, mode_ok := enum_word.member_of_word(Child_Mode, ctx.values[VALUE_MODE])
+	if !mode_ok {
+		system.log("debugged: the context names the child mode ", ctx.values[VALUE_MODE], ", which names no mode")
+		system.stop(22)
+	}
 	intrinsics.volatile_store(&child_known_value, KNOWN_VALUE)
 	intrinsics.volatile_store(&child_stack_selector, op.THREAD_STACK_SELECTOR)
 	line := COPIED_LINE
@@ -318,7 +323,11 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 		system.stop(20)
 	}
 	shared := (^Shared)(address)
-	mode := Debugger_Mode(ctx.values[VALUE_MODE])
+	mode, mode_ok := enum_word.member_of_word(Debugger_Mode, ctx.values[VALUE_MODE])
+	if !mode_ok {
+		system.log("debugged: the context names the debugger mode ", ctx.values[VALUE_MODE], ", which names no mode")
+		system.stop(23)
+	}
 	target := ctx.handles[GRANT_TARGET]
 	if system.debug_attach(target) != .Ok {
 		system.stop(10)
@@ -707,15 +716,15 @@ cases_of_two_threads :: proc "contextless" () {
 	// too, and detaches. The stop of the child stays: its own Resume finds
 	// it, and gives the count 0.
 	intrinsics.atomic_store(&shared.command, 1)
-	own_stop := wait_until_at_least(&shared.answered, 1) && system.Status(intrinsics.atomic_load(&shared.status)) == .Ok
+	own_stop := wait_until_at_least(&shared.answered, 1) && intrinsics.atomic_load(&shared.status) == u32(system.Status.Ok)
 	count, debugger_stop := system.thread_control_stop(child, worker)
 	detached := system.debug_detach(child)
 	intrinsics.atomic_store(&shared.command, 2)
 	own_resume := wait_until_at_least(&shared.answered, 2)
-	resume_status := system.Status(intrinsics.atomic_load(&shared.status))
+	resume_status := intrinsics.atomic_load(&shared.status) // The word that the child wrote: it is compared, never read as a status.
 	resume_count := intrinsics.atomic_load(&shared.count)
 	system.log("debugged: detail: the stop of the debugger gave the count ", count, "; the Resume of the child gave the status ", u64(resume_status), " and the count ", u64(resume_count))
-	system.log("debugged: a stop of the child on its own thread, then a stop and a detach of the debugger: the thread is still held by the stop of the child", verdict(own_stop && debugger_stop == .Ok && count == 2 && detached == .Ok && own_resume && resume_status == .Ok && resume_count == 0))
+	system.log("debugged: a stop of the child on its own thread, then a stop and a detach of the debugger: the thread is still held by the stop of the child", verdict(own_stop && debugger_stop == .Ok && count == 2 && detached == .Ok && own_resume && resume_status == u32(system.Status.Ok) && resume_count == 0))
 }
 
 // cases_of_the_kernel_copy runs the cases 22 and 23: data breakpoints of
@@ -746,7 +755,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	intrinsics.atomic_store(&shared.go, 1)
 	copied := wait_until_at_least(&shared.stage, 1)
 	no_record := intrinsics.atomic_load(&own.fault_written) == 0
-	logged := system.Status(intrinsics.atomic_load(&shared.status))
+	logged := intrinsics.atomic_load(&shared.status) // The word that the child wrote: it is compared, never read as a status.
 
 	// 23. The load of the stack selector reads the watched word, and the
 	// next instruction is a syscall. The trap comes to the debugger, or
@@ -776,7 +785,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	}
 	code, stopped := wait_for_stop(child)
 	system.log("debugged: detail: Log gave the status ", u64(logged), "; the record of the read of the child: status ", system.Hex(read.error_code), "; the child stopped with the code ", u64(code))
-	system.log("debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came", verdict(copied && logged == .Ok && no_record && read_came && read.kind == .Debug && read.error_code & 1 != 0 && stopped && code == CHILD_RESULT))
+	system.log("debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came", verdict(copied && logged == u32(system.Status.Ok) && no_record && read_came && read.kind == .Debug && read.error_code & 1 != 0 && stopped && code == CHILD_RESULT))
 	system.log("debugged: detail: the trap of the load of the stack selector ", came_to_the_debugger ? string("came to the debugger before the syscall") : string("was held until the kernel entry, and the kernel dropped it"))
 	system.log("debugged: a data breakpoint that a load of the stack selector holds before a syscall: the kernel entry returned", verdict(entered && stopped && code == CHILD_RESULT))
 }
@@ -834,7 +843,12 @@ case_of_the_full_ring :: proc "contextless" () {
 //   ever.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	switch Role(ctx.values[VALUE_ROLE]) {
+	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
+	if !role_ok {
+		system.log("debugged: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.stop(1)
+	}
+	switch role {
 	case .Child:
 		child_run(ctx)
 	case .Second_Debugger:

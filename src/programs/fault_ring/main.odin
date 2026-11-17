@@ -162,12 +162,15 @@ PAGE :: system.PAGE_SIZE
 VALUE_ROLE :: 5
 ROLE_TAG :: u64(0x4641_554C_0000_0000) // "FAUL"
 
-// role_of gives the role that the starter of this program wrote.
-role_of :: proc "contextless" (value: u64) -> Role {
-	if value & 0xFFFF_FFFF_0000_0000 != ROLE_TAG || value & 0xFFFF_FFFF > u64(max(Role)) {
-		return .Parent
+// role_of gives the role that the starter of this program wrote. A value
+// without the tag is the parent: the root service writes other values at
+// that place. A value with the tag whose role word names no role is
+// refused (ok false), never read as the parent.
+role_of :: proc "contextless" (value: u64) -> (role: Role, ok: bool) {
+	if value & 0xFFFF_FFFF_0000_0000 != ROLE_TAG {
+		return .Parent, true
 	}
-	return Role(value & 0xFFFF_FFFF)
+	return enum_word.member_of_word(Role, value & 0xFFFF_FFFF)
 }
 
 Role :: enum u64 {
@@ -886,8 +889,11 @@ kinds_case_right :: proc "contextless" (item: ^Case, code: u32, report: ^op.Stop
 	vector := u32(kind)
 	same_instruction := report.instruction != 0 && page.record_instruction == report.instruction
 	resume := "no answer"
-	if page.resume_status != 0 && page.resume_status - 1 <= u32(max(op.Status)) {
-		resume = op.STATUS_NAMES[op.Status(page.resume_status - 1)]
+	if page.resume_status != 0 {
+		resume = "a word that names no status"
+		if status, status_ok := enum_word.member_of_word(op.Status, u64(page.resume_status - 1)); status_ok {
+			resume = op.STATUS_NAMES[status]
+		}
 	}
 	right := code == op.STOP_CODE_FAULT + vector && report.vector == vector && page.records_seen == 1 && page.record_kind == u64(kind) && page.record_error_code == 0 && same_instruction && page.resume_status == u32(system.Status.Bad_State) + 1
 	system.log("fault_ring: ", item.name, ": ", page.records_seen, " record of the kind ", page.record_kind, ", the error code ", page.record_error_code, ", ", same_instruction ? string("the instruction of the stop report") : string("not the instruction of the stop report"), "; Resume got ", resume, right ? string(": as it must") : string(": WRONG"))
@@ -1615,7 +1621,12 @@ case_log :: proc "contextless" (item: ^Case, code: u32, address: u64) {
 // parent stops with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if role := role_of(ctx.values[VALUE_ROLE]); role != .Parent {
+	role, role_ok := role_of(ctx.values[VALUE_ROLE])
+	if !role_ok {
+		system.log("fault_ring: the context names the role ", ctx.values[VALUE_ROLE] & 0xFFFF_FFFF, ", which names no role")
+		system.stop(1)
+	}
+	if role != .Parent {
 		go := &shared_page().go
 		for intrinsics.atomic_load(go) == 0 {
 			system.word_wait(go, 0)

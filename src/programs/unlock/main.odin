@@ -2017,7 +2017,9 @@ machine_seal_sentence :: proc "contextless" () -> string {
 	}
 	// A new record waits for Enter: the store holds no record yet, and the
 	// window says the form of the one that it shows the recovery key of.
-	#partial switch pending_write {
+	switch pending_write {
+	case .None, .Principal_Created:
+		// No record of the machine waits: the form is the one of the store.
 	case .Machine_Passphrase_Set:
 		form = .Sealed_By_The_Tpm_With_Passphrase
 	case .Machine_Key_Sealed:
@@ -2159,9 +2161,11 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_text(table, x, 12, subject, graphics.colors.text)
 	x = interface.draw_text(table, 12, 48, prompt, graphics.colors.dim)
 	of_the_machine: bool
-	#partial switch mode {
+	switch mode {
 	case .Machine_Unlock, .Machine_Create_First, .Machine_Create_Again, .Machine_Recovery, .Recovery_Shown, .Machine_Reseal_First, .Machine_Reseal_Again, .Machine_Reseal_Result:
 		of_the_machine = true
+	case .Unlock, .Create_First, .Create_Again, .Principal_Recovery, .Principal_Recovery_Shown, .New_Passphrase_First, .New_Passphrase_Again, .Change_Current, .Change_Result, .Write_Result, .Write_Unknown, .Done:
+		// A mode of a named principal.
 	}
 	// The keys of the named principal are sealed by the TPM when its file
 	// has that form, or when a creation will give it that form.
@@ -2170,7 +2174,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	if creating {
 		of_the_principal_tpm = has_tpm && seal_allowed
 	}
-	#partial switch mode {
+	switch mode {
 	case .Recovery_Shown, .Principal_Recovery_Shown, .Write_Unknown:
 		// The recovery key, in the font of the cells: 39 cells of 8 pixels
 		// after a prompt of 14 cells fit in the window. Its element name
@@ -2185,7 +2189,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		// user checks it. At most RECOVERY_TYPED_LIMIT cells: it fits.
 		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.colors.text)
 		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.colors.text)
-	case:
+	case .Unlock, .Create_First, .Create_Again, .Machine_Unlock, .Machine_Create_First, .Machine_Create_Again, .Machine_Reseal_First, .Machine_Reseal_Again, .New_Passphrase_First, .New_Passphrase_Again, .Change_Current, .Done:
 		// One dot for each character typed: the passphrase itself is never
 		// drawn.
 		dots := text_encoding.character_count(typed[:typed_count])
@@ -2363,14 +2367,16 @@ enter :: proc "contextless" (window: ^display.Window) {
 			message, message_failed = principals.passphrase_problem_sentences[problem], true
 		} else {
 			first_count = copy(first[:], typed[:typed_count])
-			#partial switch mode {
+			switch mode {
 			case .Create_First:
 				mode = .Create_Again
 			case .Machine_Create_First:
 				mode = .Machine_Create_Again
 			case .Machine_Reseal_First:
 				mode = .Machine_Reseal_Again
-			case:
+			case .Unlock, .Create_Again, .Machine_Unlock, .Machine_Create_Again, .Machine_Recovery, .Machine_Reseal_Again, .Machine_Reseal_Result, .Recovery_Shown, .Principal_Recovery, .Principal_Recovery_Shown, .New_Passphrase_First, .New_Passphrase_Again, .Change_Current, .Change_Result, .Write_Result, .Write_Unknown, .Done:
+				// A new passphrase after a recovery or in a change: the
+				// other first modes are above.
 				mode = .New_Passphrase_Again
 			}
 			message, message_failed = "type it again", false
@@ -2379,13 +2385,15 @@ enter :: proc "contextless" (window: ^display.Window) {
 		// The mode of the first passphrase, for a second one that differs
 		// and for a creation that failed before it wrote a file.
 		first_mode := Mode.Create_First
-		#partial switch mode {
+		switch mode {
 		case .Machine_Create_Again:
 			first_mode = .Machine_Create_First
 		case .New_Passphrase_Again:
 			first_mode = .New_Passphrase_First
 		case .Machine_Reseal_Again:
 			first_mode = .Machine_Reseal_First
+		case .Unlock, .Create_First, .Create_Again, .Machine_Unlock, .Machine_Create_First, .Machine_Recovery, .Machine_Reseal_First, .Machine_Reseal_Result, .Recovery_Shown, .Principal_Recovery, .Principal_Recovery_Shown, .New_Passphrase_First, .Change_Current, .Change_Result, .Write_Result, .Write_Unknown, .Done:
+			// The creation of a named principal starts again at its first mode.
 		}
 		if string(first[:first_count]) != string(typed[:typed_count]) {
 			message, message_failed = "the two passphrases differ: type a new one", true
@@ -2394,7 +2402,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 			again_mode := mode
 			message, message_failed = "deriving the key", false
 			draw(window)
-			#partial switch again_mode {
+			switch again_mode {
 			case .Machine_Create_Again:
 				machine_create()
 			case .Machine_Reseal_Again:
@@ -2409,7 +2417,8 @@ enter :: proc "contextless" (window: ^display.Window) {
 				} else {
 					principal_reseal()
 				}
-			case:
+			case .Unlock, .Create_First, .Create_Again, .Machine_Unlock, .Machine_Create_First, .Machine_Recovery, .Machine_Reseal_First, .Machine_Reseal_Result, .Recovery_Shown, .Principal_Recovery, .Principal_Recovery_Shown, .New_Passphrase_First, .Change_Current, .Change_Result, .Write_Result, .Write_Unknown, .Done:
+				// The second passphrase of the creation of a named principal.
 				create()
 			}
 			// A procedure that wrote a record or started a session changed
@@ -2705,7 +2714,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Pointer:
 				// The pointer reaches the action bar only: the next turn
 				// draws a frame with it.
@@ -2723,6 +2732,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !outcome.taken {
 					key_run(&window, press)
 				}
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 			if mode == .Done {
 				break

@@ -61,7 +61,9 @@ argument_value_problem :: proc "contextless" (operation: Operation, index: int, 
 	}
 	parameter := OPERATIONS[operation].parameters[index]
 	value := values[index]
-	#partial switch parameter.form {
+	switch parameter.form {
+	case .None, .Value, .Handle, .Handle_Or_Zero, .Address:
+		// The form refuses nothing in the value alone.
 	case .Count:
 		if parameter.limit == 0 || !count_limit_holds(operation, index, values) {
 			return .None, 0
@@ -103,7 +105,11 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 	if parameter.form == .None || parameter.form == .Handle_Or_Zero && values[index] == 0 {
 		return false
 	}
-	#partial switch operation {
+	switch operation {
+	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Program_Create, .Program_Start, .Program_Stop, .Program_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Program_Module, .Strategy_Set, .Memory_Protect, .Fault_Answer, .Events_Set, .Guest_Run, .Log_Read:
+		// Each argument of these is read when its form says so. A new
+		// operation stops the build here, and its author says which of its
+		// arguments it reads.
 	case .Memory_Commit:
 		// A decommit gives pages back to the budget of the object: it reads
 		// no budget handle.
@@ -125,7 +131,10 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 // other values of the command.
 @(private = "file")
 count_limit_holds :: proc "contextless" (operation: Operation, index: int, values: [7]u64) -> bool {
-	#partial switch operation {
+	switch operation {
+	case .None, .Log, .Memory_Map, .Memory_Unmap, .Memory_Size, .Program_Create, .Program_Start, .Program_Stop, .Program_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Program_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Thread_Control, .Guest_Run, .Log_Read:
+		// The limit of the form of each count of these holds alone. A new
+		// operation stops the build here.
 	case .Memory_Create:
 		// A contiguous object has no frame list: its pages have no limit of
 		// the form, only what its budget pays.

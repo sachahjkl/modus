@@ -52,7 +52,7 @@
 //
 // ```odin
 // terminal := terminal_records.open(ctx) or_return
-// terminal_records.line(&terminal, {text = "ready: "}, {text = "3", style = {tone = .Number}})
+// terminal_records.line(&terminal, {text = "ready: "}, {text = "3", style = {tone = u8(terminal_records.Tone.Number)}})
 // ```
 //
 // See [terminal](term:terminal) and [terminal ring](term:terminal-ring).
@@ -241,10 +241,17 @@ Flag :: enum u8 {
 // the kind has one; if not, the color of its tone. The terminal chooses
 // each color but Style.color in the appearance in force when it draws, so
 // a line written before a change of the appearance takes the new colors.
+//
+// The tone and the code kind are bytes, not members: the terminal reads a
+// record that another program wrote, and takes each byte through its
+// border (tone_of_byte, code_kind_of), so it never holds a member that the
+// writer did not name.
+//
+// Example: `{tone = u8(Tone.Number)}` writes a number.
 Style :: struct {
-	tone:       Tone, // What the run is.
+	tone:       u8, // What the run is: the byte of a Tone.
 	flags:      bit_set[Flag;u8], // End_Line, Color, Reverse.
-	code:       Code_Kind, // A Text record: what the run is in a line of code (code_runs.odin).
+	code:       u8, // A Text record: what the run is in a line of code, the byte of a Code_Kind (code_runs.odin).
 	value_kind: u8, // The value kind of the run (modus:contract/value_kinds), or 0: none.
 	color:      u32, // Red, green, blue: 0xRRGGBB.
 }

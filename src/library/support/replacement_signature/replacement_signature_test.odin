@@ -50,7 +50,7 @@ hash_filled :: proc(value: u8) -> (hash: [replacement_list.HASH_SIZE]u8) {
 
 @(private = "file")
 signed_row :: proc(key: ^ed25519.Private_Key, from, to: u8) -> (row: replacement_list.Row) {
-	row = {from = hash_filled(from), to = hash_filled(to), scope = .System}
+	row = {from = hash_filled(from), to = hash_filled(to), scope = u32(replacement_list.Scope.System)}
 	row_sign(&row, key)
 	return
 }
@@ -101,7 +101,7 @@ test_a_signature_covers_the_pair_its_direction_and_its_scope :: proc(t: ^testing
 	testing.expect(t, !row_verifies(&reversed, public_key))
 
 	narrower := row
-	narrower.scope = .Principal
+	narrower.scope = u32(replacement_list.Scope.Principal)
 	narrower.principal = 1
 	testing.expect(t, !row_verifies(&narrower, public_key))
 
@@ -119,7 +119,7 @@ test_the_decision_of_the_root_service :: proc(t: ^testing.T) {
 	rows := [?]replacement_list.Row {
 		signed_row(&key, 1, 2), // Signed by the signing key of the system.
 		signed_row(&other, 1, 4), // Signed by another key.
-		{from = hash_filled(1), to = hash_filled(5), scope = .System}, // No signature.
+		{from = hash_filled(1), to = hash_filled(5), scope = u32(replacement_list.Scope.System)}, // No signature.
 	}
 	list := list_encode(rows[:], context.temp_allocator)
 
@@ -150,7 +150,7 @@ test_the_decision_of_the_root_service :: proc(t: ^testing.T) {
 test_a_row_of_the_scope_of_a_principal_is_not_a_row_of_the_system :: proc(t: ^testing.T) {
 	key, public_key := key_of(t, TEST_SEED)
 	defer ed25519.private_key_clear(&key)
-	row := replacement_list.Row{from = hash_filled(1), to = hash_filled(2), scope = .Principal, principal = 1}
+	row := replacement_list.Row{from = hash_filled(1), to = hash_filled(2), scope = u32(replacement_list.Scope.Principal), principal = 1}
 	row_sign(&row, &key)
 	testing.expect(t, row_verifies(&row, public_key))
 	rows := [1]replacement_list.Row{row}

@@ -188,9 +188,9 @@ join :: proc "contextless" (joined: ^Joined, group: Group) {
 		text_count := min(int(record.text_count), len(record.text))
 		base := joined.count
 		for index in 0 ..< min(int(record.run_count), len(record.runs)) {
-			start, end, ok := value_kinds.value_run_in_text(record.runs[index], text_count)
+			start, end, kind, ok := value_kinds.value_run_in_text(record.runs[index], text_count)
 			if ok && joined.run_count < JOIN_RUN_CAPACITY {
-				joined.runs[joined.run_count] = {base + start, base + end, record.runs[index].kind}
+				joined.runs[joined.run_count] = {base + start, base + end, kind}
 				joined.run_count += 1
 			}
 		}

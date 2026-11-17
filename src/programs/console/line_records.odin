@@ -357,7 +357,7 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 			emit(group_program, value_kind_style(.Module))
 			if group_channel != "" {
 				emit(" ", {})
-				emit(group_channel, {tone = .Accent})
+				emit(group_channel, {tone = u8(terminal.Tone.Accent)})
 			}
 			emit_end()
 		}
@@ -370,7 +370,7 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 			drawn[index] = true
 			plain: terminal.Style
 			if module.field_text(row, level) == "error" {
-				plain.tone = .Bad
+				plain.tone = u8(terminal.Tone.Bad)
 			}
 			output_continuation = LINE_RECORD_INDENT
 			if !open {

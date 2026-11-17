@@ -79,21 +79,24 @@ value_kind_of :: proc "contextless" (value: u8) -> (kind: Value_Kind, ok: bool) 
 
 // A value run of a log record: start and length in bytes of the text of the
 // record. A record has fewer than 256 bytes of text, so a byte holds its
-// start.
+// start. The kind is a byte, not a member: the record comes from the
+// kernel to each reader, which takes the byte through value_run_in_text.
 Value_Run :: struct {
 	start:  u8, // The first byte of the value in the text of the record.
 	length: u8, // The bytes of the value.
-	kind:   Value_Kind, // What the value is.
+	kind:   u8, // What the value is: the byte of a Value_Kind.
 }
 #assert(size_of(Value_Run) == 3)
 
 // A value run of a text that is longer than one record: the text of one Log
 // operation (at most 4096 bytes), or the text that the kernel writes for
-// itself. The kernel cuts these runs at the bounds of the records.
+// itself. The kernel cuts these runs at the bounds of the records. The kind
+// is a byte, not a member: a program writes the runs, and the kernel takes
+// each byte through value_runs_check before it keeps them.
 Value_Run_In_Call :: struct {
 	start:    u16, // The first byte of the value in the text of the call.
 	length:   u16, // The bytes of the value.
-	kind:     Value_Kind, // What the value is.
+	kind:     u8, // What the value is: the byte of a Value_Kind.
 	reserved: u8, // 0.
 }
 #assert(size_of(Value_Run_In_Call) == 6)
@@ -332,7 +335,7 @@ value_run_add :: proc "contextless" (runs: []Value_Run_In_Call, count: ^int, sta
 	if kind == .None || start < 0 || end <= start || end > 0xFFFF || count^ >= len(runs) {
 		return
 	}
-	runs[count^] = {start = u16(start), length = u16(end - start), kind = kind}
+	runs[count^] = {start = u16(start), length = u16(end - start), kind = u8(kind)}
 	count^ += 1
 }
 
@@ -384,7 +387,7 @@ value_runs_check :: proc "contextless" (runs: []Value_Run_In_Call, length: int) 
 		if run.length == 0 || int(run.start) < end || int(run.start) + int(run.length) > length {
 			return false
 		}
-		if run.kind == .None || u8(run.kind) > u8(max(Value_Kind)) {
+		if kind, kind_ok := value_kind_of(run.kind); !kind_ok || kind == .None {
 			return false
 		}
 		// The byte with no use yet is zero, so that it can get a use later.
@@ -426,14 +429,16 @@ value_runs_of_record :: proc "contextless" (runs: []Value_Run_In_Call, record_st
 	return count
 }
 
-// value_run_in_text gives the bytes of a run of a record inside a text of
-// text_count bytes: a run that the record cannot hold gives nothing. A
-// reader of a record calls it before it indexes the text.
-value_run_in_text :: proc "contextless" (run: Value_Run, text_count: int) -> (start, end: int, ok: bool) {
+// value_run_in_text gives the bytes and the kind of a run of a record inside
+// a text of text_count bytes: a run that the record cannot hold, and a byte
+// of a kind that names no kind or None, give nothing. A reader of a record
+// calls it before it indexes the text: it is the border of the kind.
+value_run_in_text :: proc "contextless" (run: Value_Run, text_count: int) -> (start, end: int, kind: Value_Kind, ok: bool) {
 	start = int(run.start)
 	end = start + int(run.length)
-	if run.length == 0 || end > text_count || run.kind == .None || u8(run.kind) > u8(max(Value_Kind)) {
-		return 0, 0, false
+	read, read_ok := value_kind_of(run.kind)
+	if run.length == 0 || end > text_count || !read_ok || read == .None {
+		return 0, 0, .None, false
 	}
-	return start, end, true
+	return start, end, read, true
 }
