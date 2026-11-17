@@ -387,7 +387,7 @@ fuzz_tls_messages_execute :: proc(input: []u8) -> Fuzz_Verdict {
 // role of a configuration: the defaults, and for a server the identifier
 // of the first Initial packet.
 fuzz_tls_transport_parameters :: proc(configuration: ^quic.Tls_Configuration) {
-	parameters := quic.transport_parameters_default()
+	parameters := quic.sent_transport_parameters_default()
 	if configuration.role == .Server {
 		parameters.has_original_destination_connection_id = true
 		parameters.original_destination_connection_id_length = quic.CONNECTION_ID_SIZE
@@ -447,8 +447,10 @@ fuzz_tls_messages_seeds :: proc(seeds: ^[dynamic][]u8) {
 // The transport parameters.
 
 // The input: one byte for the role of the sender (bit 0: the server), then
-// the bytes of the parameters. What the reader accepts, the writer writes,
-// and the reader reads again to the same record.
+// the bytes of the parameters. What the reader accepts, the writer takes:
+// the part of the record that this system sends, which the reader reads
+// again to that part with the defaults of RFC 9000, section 18.2, in the
+// parameters that the writer has no field for.
 fuzz_transport_parameters_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if len(input) == 0 {
 		return FUZZ_PASSED
@@ -459,7 +461,7 @@ fuzz_transport_parameters_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return FUZZ_PASSED
 	}
 	buffer: [quic.TRANSPORT_PARAMETERS_LIMIT]u8
-	length := quic.transport_parameters_write(&parameters, sender, buffer[:])
+	length := quic.transport_parameters_write(&parameters.sent, sender, buffer[:])
 	if length == 0 {
 		return fuzz_broken(.Round_Trip, "the writer refuses parameters that the reader accepted")
 	}
@@ -467,7 +469,7 @@ fuzz_transport_parameters_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if result := quic.transport_parameters_read(buffer[:length], sender, &again); result != .No_Error {
 		return fuzz_broken(.Round_Trip, "the reader refuses what the writer wrote: %v", result)
 	}
-	if again != parameters {
+	if again != quic.transport_parameters_of_sent(parameters.sent) {
 		return fuzz_broken(.Round_Trip, "the parameters read again differ from the parameters read first")
 	}
 	return FUZZ_PASSED
@@ -475,7 +477,7 @@ fuzz_transport_parameters_execute :: proc(input: []u8) -> Fuzz_Verdict {
 
 fuzz_transport_parameters_seeds :: proc(seeds: ^[dynamic][]u8) {
 	for role in quic.Tls_Role {
-		parameters := quic.transport_parameters_default()
+		parameters := quic.sent_transport_parameters_default()
 		if role == .Server {
 			parameters.has_original_destination_connection_id = true
 			parameters.original_destination_connection_id_length = quic.CONNECTION_ID_SIZE

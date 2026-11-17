@@ -279,6 +279,45 @@ a_server_with_no_idle_timeout_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, error.limit, i64(VARIABLE_LENGTH_INTEGER_LARGEST))
 }
 
+// An idle timeout that `max_idle_timeout` cannot carry is refused at the
+// start, for a client and for a server, as a value and not as a size:
+// one over the largest variable-length integer, and the largest value of
+// its type.
+@(test)
+an_idle_timeout_over_the_largest_integer_is_refused :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	generator: random.Generator
+	connections := make([]Connection, 1)
+	defer delete(connections)
+	records := make([]Server_Record, 1)
+	defer delete(records)
+	streams := make([]Stream, 1)
+	defer delete(streams)
+	server := new(Server)
+	defer free(server)
+	connection := new(Connection)
+	defer free(connection)
+	for timeout in ([]u64{VARIABLE_LENGTH_INTEGER_LARGEST + 1, max(u64)}) {
+		configuration := Connection_Configuration{idle_timeout_milliseconds = timeout}
+		configuration.tls = {role = .Client, least_seed_strength = .Processor}
+		error: errors.Error_Record
+		testing.expect(t, !connection_start_client(connection, nil, &configuration, &cryptography, &generator, 0, &error))
+		testing.expect_value(t, connection.state, Connection_State.Closed)
+		testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+		testing.expect_value(t, error.unit, i64(errors.Unit.Milliseconds))
+		testing.expect_value(t, error.argument, 3)
+		testing.expect_value(t, error.limit, i64(VARIABLE_LENGTH_INTEGER_LARGEST))
+
+		configuration.tls.role = .Server
+		error = {}
+		testing.expect(t, !server_init(server, connections, records, streams, &configuration, &cryptography, &generator, SERVER_LIMITS_DEFAULT, &error))
+		testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+		testing.expect_value(t, error.unit, i64(errors.Unit.Milliseconds))
+		testing.expect_value(t, error.argument, 5)
+		testing.expect_value(t, error.limit, i64(VARIABLE_LENGTH_INTEGER_LARGEST))
+	}
+}
+
 // The draining state ends by the clock after three probe timeouts with no
 // backoff, whatever the probes before the close of the peer: a server that
 // probed 16 times, then gets the CONNECTION_CLOSE of the client, ends 3

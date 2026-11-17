@@ -308,6 +308,9 @@ server_init :: proc "contextless" (server: ^Server, connections: []Connection, r
 		errors.fail(error, -1, .Empty, .Milliseconds, 5, 0, i64(VARIABLE_LENGTH_INTEGER_LARGEST), 0)
 		return false
 	}
+	if !connection_idle_timeout_check(configuration, 5, error) {
+		return false
+	}
 	server.streams = streams
 	server.streams_per_connection = len(streams) / len(connections)
 	if !connection_seed_strength_check(configuration, 5, error) {

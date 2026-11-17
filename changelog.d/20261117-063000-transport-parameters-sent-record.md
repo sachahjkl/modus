@@ -1,0 +1,3 @@
+type: Changed
+
+**The transport parameters that a side sends have a record of their own**: `transport_parameters_write` of `support/quic` takes a `Sent_Transport_Parameters`, which has a field only for each parameter that the system sends, so a value that the writer would lose cannot be set. The writer refuses, and writes nothing for, each record that would not read back to itself: an identifier that only a server sends in the record of a client, a server with no `original_destination_connection_id`, an identifier length out of range, and a value that the reader refuses. `transport_parameters_of_sent` gives the record that a reader finds in the bytes.

@@ -570,11 +570,10 @@ a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 	token := retry[retry_header.token_offset:][:retry_header.token_length]
 	// The ClientHello of a client whose transport parameters name an empty
 	// identifier.
-	parameters := transport_parameters_default()
+	parameters := sent_transport_parameters_default()
 	parameters.initial_max_data = STREAM_BUFFER_SIZE
 	parameters.initial_max_stream_data_bidirectional_local = STREAM_BUFFER_SIZE
 	parameters.initial_max_stream_data_bidirectional_remote = STREAM_BUFFER_SIZE
-	parameters.has_initial_source_connection_id = true
 	parameters.initial_source_connection_id_length = 0
 	configuration := harness.client_configuration.tls
 	configuration.transport_parameters_length = transport_parameters_write(&parameters, .Client, configuration.transport_parameters[:])
