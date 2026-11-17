@@ -24,7 +24,7 @@ tpm_service_start :: proc "contextless" () {
 	}
 	slot: ^Started
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			slot = &item
 			break
 		}
@@ -92,12 +92,14 @@ tpm_service_end :: proc "contextless" (item: ^Started) {
 // tpm_grants_give gives a program with the start grant Tpm the ring and the
 // region of the TPM service, when it runs, and the service with the right
 // Read: its stop is then an event of the program, which ends a wait for an
-// answer at once. It gives false when a slot of these is taken.
-tpm_grants_give :: proc "contextless" (grants: ^system.Context_Grants) -> bool {
+// answer at once.
+tpm_grants_give :: proc "contextless" (work: ^Start_Work) {
 	if tpm_ring == 0 || tpm_program == nil {
-		return true
+		return
 	}
-	return system.grant_put(grants, system.GRANT_TPM_RING, {tpm_ring, {.Read, .Write}}) && system.grant_put(grants, system.GRANT_TPM_REGION, {tpm_region, {.Read, .Write}}) && system.grant_put(grants, system.GRANT_TPM_SERVICE, {tpm_program.program, {.Read}})
+	start_grant_put(work, .Tpm_Ring, {tpm_ring, {.Read, .Write}})
+	start_grant_put(work, .Tpm_Region, {tpm_region, {.Read, .Write}})
+	start_grant_put(work, .Tpm_Service, {tpm_program.program, {.Read}})
 }
 
 // tpm_seal_allowed says if a key may be sealed by the TPM: only when the

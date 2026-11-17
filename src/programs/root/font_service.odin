@@ -63,7 +63,7 @@ font_service_start :: proc "contextless" () {
 	}
 	slot: ^Started
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			slot = &item
 			break
 		}

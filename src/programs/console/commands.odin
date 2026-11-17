@@ -2272,7 +2272,12 @@ list_principals :: proc "contextless" (arguments: []Value) -> Value {
 		if system.Status(completion.kind) != .Ok {
 			continue // No record with this number.
 		}
-		state := completion.values[0] <= u64(max(root_ring.Principal_State)) ? root_ring.Principal_State(completion.values[0]) : .Absent
+		// A state that names no member is refused: it is not taken for a
+		// state that the root service did not give.
+		state, state_known := enum_word.member_of_word(root_ring.Principal_State, completion.values[0])
+		if !state_known {
+			return fail("principals: the root service gave a state that names no state of a principal")
+		}
 		principal_name := system.name_unpack({completion.values[1], completion.values[2], completion.values[3], completion.values[4]})
 		row := made_row(&table)
 		made_integer(&table, row, 0, i64(number))

@@ -204,7 +204,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			driver = &item
 			break
 		}

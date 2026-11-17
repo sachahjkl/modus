@@ -473,6 +473,91 @@ root_ring_given :: proc "contextless" (role: bit_set[start_grant.Grant]) -> bool
 	return role & ROOT_RING_GRANTS != {}
 }
 
+// The handles that the root service gives a program of the boot image at
+// its start, by its start grants. Each one has one context slot
+// (system.ROLE_HANDLE_SLOTS); several start grants can give one handle (the
+// machine, the root ring). A start writes a handle only when role_handles
+// gives it, so this mapping is the one that the start follows.
+Role_Handle :: enum u8 {
+	Display, // A program with no grant Terminal: the ring to the compositor.
+	Root_Ring, // A start grant of ROOT_RING_GRANTS.
+	Machine, // Inspect, Stop, Schedule, Events or Counters: one handle with those rights.
+	Image,
+	Log_Records,
+	Service_Ring, // Serve.
+	Terminal_Ring, // Terminal.
+	Terminal_Text, // Terminal.
+	Device_Ring, // Data_Disk, Scratch_Disk or Network_Device: one device service.
+	Date_Page, // Clock.
+	Date_Ports, // Clock.
+	Storage_Ring, // Store, without Acts_For_Principal: its private store at its start.
+	Storage_Region,
+	Storage_Service,
+	Replacements,
+	Datagram_Ring, // Network.
+	Datagram_Region, // Network.
+	Network_Control, // Network_Device.
+	Settings_Page, // Settings.
+	Tpm_Ring, // Tpm.
+	Tpm_Service, // Tpm.
+	Tpm_Region, // Tpm.
+	Client_Table, // Remote_Clients.
+	Log, // Each program: the log.
+}
+
+// role_handles gives the handles that a start gives a role.
+role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handles: bit_set[Role_Handle]) {
+	handles += {.Log}
+	if .Terminal in role {
+		handles += {.Terminal_Ring, .Terminal_Text}
+	} else {
+		handles += {.Display}
+	}
+	if root_ring_given(role) {
+		handles += {.Root_Ring}
+	}
+	if role & {.Inspect, .Stop, .Schedule, .Events, .Counters} != {} {
+		handles += {.Machine}
+	}
+	if .Image in role {
+		handles += {.Image}
+	}
+	if .Log_Records in role {
+		handles += {.Log_Records}
+	}
+	if .Serve in role {
+		handles += {.Service_Ring}
+	}
+	if role & {.Data_Disk, .Scratch_Disk, .Network_Device} != {} {
+		handles += {.Device_Ring}
+	}
+	if .Network_Device in role {
+		handles += {.Network_Control}
+	}
+	if .Clock in role {
+		handles += {.Date_Page, .Date_Ports}
+	}
+	if .Store in role && .Acts_For_Principal not_in role {
+		handles += {.Storage_Ring, .Storage_Region, .Storage_Service}
+	}
+	if .Replacements in role {
+		handles += {.Replacements}
+	}
+	if .Network in role {
+		handles += {.Datagram_Ring, .Datagram_Region}
+	}
+	if .Settings in role {
+		handles += {.Settings_Page}
+	}
+	if .Tpm in role {
+		handles += {.Tpm_Ring, .Tpm_Service, .Tpm_Region}
+	}
+	if .Remote_Clients in role {
+		handles += {.Client_Table}
+	}
+	return handles
+}
+
 // sender_allowed says if a program with these start grants can send a
 // command. A refused command gets `No_Grant` (sender_refusal) and runs
 // nothing. For Connect with the grant Connect and not Root_Ring, the root
@@ -506,6 +591,34 @@ sender_refusal :: proc "contextless" (command: Root_Command) -> [7]u64 {
 		return errors.ring_fail(u32(command), .No_Grant, .Connection, 1)
 	}
 	return errors.ring_fail(u32(command), .No_Grant, .Root_Commands)
+}
+
+// replace_refusal gives the error record of a refused Replace whose cause
+// the state shows, from the status of the change of the table: `by` past
+// the entries of the boot image, a name that names no module, a module
+// that replaces itself, a full table. entry_count is the count of the
+// entries of the boot image, name_in_image says if a module has the name,
+// and capacity is the count of the records of the table. named false: no
+// such cause, and the caller writes the record Refused with the status.
+// A refusal of the signature of a row is a cause that only the root
+// service knows, and it writes that record itself.
+replace_refusal :: proc "contextless" (status: op.Status, by: u64, entry_count: u64, name_in_image: bool, capacity: i64) -> (record: [7]u64, named: bool) {
+	kind := u32(Root_Command.Replace)
+	switch {
+	case status == .No_Right:
+		// The sender lacks the start grant Replace.
+		return sender_refusal(.Replace), true
+	case status == .Bad_Handle && by > entry_count:
+		return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(by, 1 << 62)), i64(min(entry_count, 1 << 62))), true
+	case status == .Bad_Handle && !name_in_image:
+		return errors.ring_fail(kind, .Absent, .Modules, 1), true
+	case status == .Bad_Operation:
+		// A module does not replace itself.
+		return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(by, 1 << 62))), true
+	case status == .No_Slot:
+		return errors.ring_fail(kind, .Full, .Records, 0, 0, capacity), true
+	}
+	return {}, false
 }
 
 // member_of_word is the border of a word of a root command: the member, or

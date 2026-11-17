@@ -23,6 +23,7 @@ package root
 // nickname to its next file.
 
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import program_page "modus:contract/disk_program_page"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -547,7 +548,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	}
 	slot: ^Started
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			slot = &item
 			break
 		}
@@ -669,11 +670,11 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		return action_status
 	}
 	number := record.values[5]
-	if number > u64(max(start_grant.Grant)) {
+	asked, known := enum_word.member_of_word(start_grant.Grant, number)
+	if !known {
 		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(number, 1 << 62)), i64(max(start_grant.Grant)))
 		return .Bad_Operation
 	}
-	asked := start_grant.Grant(number)
 	asked_name := start_grant.GRANT_NAMES[asked]
 	grant, answer := disk_program.grant_by_command(asked)
 	switch answer {

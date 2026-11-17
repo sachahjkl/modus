@@ -259,13 +259,19 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	kind := u32(command)
 	of_the_system := name_is_a_system_part(name)
 	switch command {
-	case .None, .Replace, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
 		// A grant of the role that the command needs, and that the program
 		// lacks or lost by a revocation.
 		if status == .No_Right {
 			return root_ring.sender_refusal(command)
+		}
+	case .Replace:
+		// replace calls this for each refusal that is not a refusal of a
+		// signed row.
+		if record, named := root_ring.replace_refusal(status, value, u64(len(system.image_entries(image))), len(system.image_find(image, name)) != 0, system.REPLACEMENT_CAPACITY); named {
+			return record
 		}
 	case .Start:
 		if status == .Bad_Operation && of_the_system {

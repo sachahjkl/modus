@@ -459,6 +459,16 @@ Started :: struct {
 	// one caller `remote`, and the debugging of one must not be ended or
 	// taken through the connection of the other. 0: a caller with no row.
 	debug_for_row:   int,
+	// A start holds this place while it builds the program, before the
+	// program runs: a start that the start runs (a service on demand) takes
+	// another place. release clears it with the place.
+	reserved:        bool,
+}
+
+// place_is_free says if a place of the table of the programs holds no
+// program and no start that builds one.
+place_is_free :: proc "contextless" (item: ^Started) -> bool {
+	return item.program == 0 && !item.reserved
 }
 
 // A connection: one caller can call the exports of one service.
@@ -945,7 +955,16 @@ root_loop_pass :: proc "contextless" () {
 // or a stop from the desktop.
 control_ring_serve :: proc "contextless" () {
 	for record in system.receive(&control.completions) {
-		#partial switch display.Control(record.kind) {
+		control_word, known := enum_word.member_of_word(display.Control, u64(record.kind))
+		if !known {
+			system.log_in("programs", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which names no control")
+			continue
+		}
+		switch control_word {
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove:
+			// This service sends these to the compositor, and takes none
+			// from it.
+			system.log_in("programs", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which this service sends and does not take")
 		case .Start:
 			// The desktop starts a program in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})

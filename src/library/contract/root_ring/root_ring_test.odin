@@ -33,13 +33,12 @@ command_of_word_refuses_a_word_that_names_no_command :: proc(t: ^testing.T) {
 	}
 }
 
-// The test that a disk program breaks first: its nickname is the name of a
-// privileged program (console, unlock, remote), and it sends each command.
-// The rule reads no name, so the nickname gives nothing; the grants that a
-// command can give a disk program are outside ROOT_RING_GRANTS, so the
-// program has no root ring, and each command is refused even if it had
-// one. Each start grant alone that gives no ring is tried, then all of
-// them together, then no grant.
+// A role with no start grant of ROOT_RING_GRANTS has no root ring, and
+// sends no command: each start grant alone outside them is tried, then all
+// of them together, then the grant Store alone, then no grant. The rule
+// takes no name. That a command gives a disk program no grant of a root
+// ring is the test no_command_gives_a_disk_program_a_root_ring of
+// modus:support/disk_program.
 @(test)
 a_program_with_no_ring_grant_sends_no_command :: proc(t: ^testing.T) {
 	without_a_ring: bit_set[start_grant.Grant]
@@ -136,6 +135,54 @@ a_record_of_an_unknown_command_names_no_command :: proc(t: ^testing.T) {
 	testing.expect_value(t, root_argument_name(i64(Root_Command.Remote_Client), 1), "key")
 	testing.expect_value(t, root_argument_name(i64(Root_Command.Remote_Client), 2), "action")
 	testing.expect_value(t, root_argument_name(i64(Root_Command.Start), 2), "")
+}
+
+// The records of a refused Replace. The edges come first: `by` one past
+// the entries and the largest word, a name that names no module, a module
+// that replaces itself, a full table, a sender with no grant Replace. Then
+// the statuses that the state does not explain give no record of their
+// own, last.
+@(test)
+a_refused_replace_names_its_cause :: proc(t: ^testing.T) {
+	ENTRIES :: 12
+	CAPACITY :: 32
+	expect_record :: proc(t: ^testing.T, record: [7]u64, named: bool, kind: errors.Kind, unit: errors.Unit, argument: i64, value: i64, limit: i64) {
+		testing.expect(t, named)
+		read := errors.completion_record(record)
+		testing.expect_value(t, errors.Kind(read.kind), kind)
+		testing.expect_value(t, errors.Unit(read.unit), unit)
+		testing.expect_value(t, read.operation, i64(Root_Command.Replace))
+		testing.expect_value(t, read.argument, argument)
+		testing.expect_value(t, read.value, value)
+		testing.expect_value(t, read.limit, limit)
+	}
+	record, named := replace_refusal(.Bad_Handle, ENTRIES + 1, ENTRIES, true, CAPACITY)
+	expect_record(t, record, named, .Bad_Value, .None, 2, ENTRIES + 1, ENTRIES)
+	record, named = replace_refusal(.Bad_Handle, max(u64), ENTRIES, false, CAPACITY)
+	expect_record(t, record, named, .Bad_Value, .None, 2, 1 << 62, ENTRIES)
+	// `by` inside the entries, and the name of no module.
+	record, named = replace_refusal(.Bad_Handle, ENTRIES, ENTRIES, false, CAPACITY)
+	expect_record(t, record, named, .Absent, .Modules, 1, 0, 0)
+	record, named = replace_refusal(.Bad_Handle, 0, ENTRIES, false, CAPACITY)
+	expect_record(t, record, named, .Absent, .Modules, 1, 0, 0)
+	record, named = replace_refusal(.Bad_Operation, 3, ENTRIES, true, CAPACITY)
+	expect_record(t, record, named, .Bad_Value, .None, 2, 3, 0)
+	record, named = replace_refusal(.No_Slot, 3, ENTRIES, true, CAPACITY)
+	expect_record(t, record, named, .Full, .Records, 0, 0, CAPACITY)
+	record, named = replace_refusal(.No_Right, 3, ENTRIES, true, CAPACITY)
+	testing.expect(t, named)
+	testing.expect_value(t, record, sender_refusal(.Replace))
+	// No cause that the state shows: a chain, a name and an entry that
+	// both exist, a success.
+	unexplained := [?]struct {
+		status:        op.Status,
+		name_in_image: bool,
+	}{{.Bad_State, true}, {.Bad_Handle, true}, {.Ok, true}}
+	for case_of in unexplained {
+		record, named = replace_refusal(case_of.status, 3, ENTRIES, case_of.name_in_image, CAPACITY)
+		testing.expectf(t, !named, "the status %v names a cause", case_of.status)
+		testing.expect_value(t, record, [7]u64{})
+	}
 }
 
 // The border of each root command that the root service reads, as it

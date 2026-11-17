@@ -3,6 +3,8 @@ package system
 import "base:intrinsics"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/root_ring"
+import "modus:contract/start_grant"
 
 // The context slots of a program that the root service starts: the one
 // table of the handles 0 to 13 and of the values 0 to 8 and 13, whose roles
@@ -140,6 +142,50 @@ GRANT_VALUE_TERMINAL_MEASURE :: 6
 // The value 13 of a program with the grant Tpm: 1 when a seal by the TPM is
 // allowed, as the firmware verified the boot program.
 GRANT_VALUE_SEAL_ALLOWED :: 13
+
+// The context slot of each handle that the root service gives at a start
+// (root_ring.Role_Handle). The table is whole: a new handle does not
+// compile until its row names its slot.
+@(rodata)
+ROLE_HANDLE_SLOTS := [root_ring.Role_Handle]int {
+	.Display         = GRANT_DISPLAY,
+	.Root_Ring       = GRANT_ROOT,
+	.Machine         = GRANT_MACHINE,
+	.Image           = GRANT_IMAGE,
+	.Log_Records     = GRANT_LOG_RECORDS,
+	.Service_Ring    = GRANT_SERVICE,
+	.Terminal_Ring   = GRANT_TERMINAL_RING,
+	.Terminal_Text   = GRANT_TERMINAL_TEXT,
+	.Device_Ring     = GRANT_DEVICE_RING,
+	.Date_Page       = GRANT_DATE_PAGE,
+	.Date_Ports      = GRANT_DATE_PORTS,
+	.Storage_Ring    = GRANT_STORAGE_RING,
+	.Storage_Region  = GRANT_STORAGE_REGION,
+	.Storage_Service = GRANT_STORAGE_SERVICE,
+	.Replacements    = GRANT_REPLACEMENTS,
+	.Datagram_Ring   = GRANT_DATAGRAM_RING,
+	.Datagram_Region = GRANT_DATAGRAM_REGION,
+	.Network_Control = GRANT_NETWORK_CONTROL,
+	.Settings_Page   = GRANT_SETTINGS_PAGE,
+	.Tpm_Ring        = GRANT_TPM_RING,
+	.Tpm_Service     = GRANT_TPM_SERVICE,
+	.Tpm_Region      = GRANT_TPM_REGION,
+	.Client_Table    = GRANT_CLIENT_TABLE,
+	.Log             = op.CONTEXT_LOG,
+}
+
+// role_slot_taken_twice says if two handles of a role take one context
+// slot, and the first such slot: a start of that role is refused. It reads
+// the same mapping that a start writes by.
+role_slot_taken_twice :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (slot: int, twice: bool) {
+	trial: Context_Grants
+	for handle in root_ring.role_handles(role) {
+		if !grant_put(&trial, ROLE_HANDLE_SLOTS[handle], {handle = 1}) {
+			return ROLE_HANDLE_SLOTS[handle], true
+		}
+	}
+	return 0, false
+}
 
 // The handles that a starter writes into the context of a program, with
 // the slots that it took. A slot takes one handle: a second write to it is

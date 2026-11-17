@@ -104,6 +104,12 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	work.role = role_of(name)
 	grants := work.role.grants
+	// A role whose handles meet in one context slot does not start, before
+	// any service starts for it.
+	if slot, twice := system.role_slot_taken_twice(grants); twice {
+		grant_slot_refused(name, slot)
+		return .Bad_State
+	}
 	// A program with an endpoint: the network service starts first.
 	if .Network in grants {
 		network_service() or_return
@@ -138,7 +144,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // reads.
 start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			work.slot = &item
 			break
 		}
@@ -148,6 +154,10 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	slot := work.slot
 	slot^ = {}
+	// The steps that follow can start another program (a service on demand
+	// at the connection to the private store): that start takes another
+	// place.
+	slot.reserved = true
 	copy(slot.name[:len(slot.name) - 1], work.name)
 	slot.principal = work.principal
 	slot.role = work.role
@@ -160,6 +170,10 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 start_abandon :: proc "contextless" (work: ^Start_Work) {
 	if work.slot != nil {
 		release(work.slot)
+	}
+	// The place of the terminal holds nothing yet: only its mark.
+	if work.view != nil && work.view.program == 0 {
+		work.view^ = {}
 	}
 	if work.driver != nil {
 		system.call(.Program_Stop, u64(work.driver.program), 0)
@@ -177,11 +191,16 @@ start_handles_close :: proc "contextless" (work: ^Start_Work) {
 	}
 }
 
-// start_grant_put writes one handle into the context of the program. The
-// first slot that a second grant takes is kept: the start then fails
-// before the program runs (start_program_load).
-start_grant_put :: proc "contextless" (work: ^Start_Work, slot: int, grant: system.Grant) {
-	if !system.grant_put(&work.grants, slot, grant) && !work.slot_refused {
+// start_grant_put writes one handle of the role into the context of the
+// program, at the context slot of system.ROLE_HANDLE_SLOTS. A handle that
+// root_ring.role_handles does not give the role is refused as a taken
+// slot, so the start follows the one mapping that the tests read. The
+// first refused slot is kept: the start then fails before the program
+// runs (start_program_load).
+start_grant_put :: proc "contextless" (work: ^Start_Work, handle: root_ring.Role_Handle, grant: system.Grant) {
+	slot := system.ROLE_HANDLE_SLOTS[handle]
+	given := handle in root_ring.role_handles(work.role.grants)
+	if (!given || !system.grant_put(&work.grants, slot, grant)) && !work.slot_refused {
 		work.slot_refused = true
 		work.refused_slot = slot
 	}
@@ -203,17 +222,14 @@ start_mapping_add :: proc "contextless" (work: ^Start_Work, what: string, mappin
 // each step writes the handles, the values and the mappings of one part.
 start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if work.device_ring != 0 {
-		start_grant_put(work, system.GRANT_DEVICE_RING, {work.device_ring, {.Read, .Write}})
+		start_grant_put(work, .Device_Ring, {work.device_ring, {.Read, .Write}})
 	}
 	start_values_of_the_name(work)
 	if .Tpm in work.role.grants {
-		if !tpm_grants_give(&work.grants) && !work.slot_refused {
-			work.slot_refused = true
-			work.refused_slot = system.GRANT_TPM_RING
-		}
+		tpm_grants_give(work)
 		work.values[system.GRANT_VALUE_SEAL_ALLOWED] = u64(tpm_seal_allowed())
 	}
-	start_grant_put(work, op.CONTEXT_LOG, log_grant(work.role))
+	start_grant_put(work, .Log, log_grant(work.role))
 	start_store_give(work) or_return
 	start_view_give(work) or_return
 	start_rings_give(work) or_return
@@ -255,9 +271,9 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if status != .Ok {
 		return status
 	}
-	start_grant_put(work, system.GRANT_STORAGE_RING, {work.store_ring, {.Read, .Write}})
-	start_grant_put(work, system.GRANT_STORAGE_REGION, {work.store_region, {.Read, .Write}})
-	start_grant_put(work, system.GRANT_STORAGE_SERVICE, {storage_service.program, {.Read}})
+	start_grant_put(work, .Storage_Ring, {work.store_ring, {.Read, .Write}})
+	start_grant_put(work, .Storage_Region, {work.store_region, {.Read, .Write}})
+	start_grant_put(work, .Storage_Service, {storage_service.program, {.Read}})
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			work.values[system.GRANT_VALUE_STORAGE_FILE_SIZE] = item.size
@@ -274,7 +290,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	if .Terminal in work.role.grants {
 		for &item in started {
-			if item.program == 0 && &item != work.slot {
+			if place_is_free(&item) && &item != work.slot {
 				work.view = &item
 				break
 			}
@@ -282,16 +298,17 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 		if work.view == nil {
 			return .No_Slot
 		}
+		work.view.reserved = true
 		work.shared[0] = system.memory_create(ring.pages(terminal.RING_CAPACITY)) or_return
 		work.shared[1] = system.memory_create(terminal.TEXT_PAGES) or_return
-		start_grant_put(work, system.GRANT_TERMINAL_RING, {work.shared[0], {.Read, .Write}})
-		start_grant_put(work, system.GRANT_TERMINAL_TEXT, {work.shared[1], {.Read, .Write}})
+		start_grant_put(work, .Terminal_Ring, {work.shared[0], {.Read, .Write}})
+		start_grant_put(work, .Terminal_Text, {work.shared[1], {.Read, .Write}})
 		return .Ok
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
 	work.slot.client = system.give(compositor, work.shared[0], {.Read, .Write}) or_return
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client)}})
-	start_grant_put(work, system.GRANT_DISPLAY, {work.shared[0], {.Read, .Write}})
+	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Ok
 }
 
@@ -303,16 +320,16 @@ start_rings_give :: proc "contextless" (work: ^Start_Work) -> (status: system.St
 	grants := work.role.grants
 	if root_ring.root_ring_given(grants) {
 		slot.requests_memory, slot.requests = system.ring_create() or_return
-		start_grant_put(work, system.GRANT_ROOT, {slot.requests_memory, {.Read, .Write}})
+		start_grant_put(work, .Root_Ring, {slot.requests_memory, {.Read, .Write}})
 	}
 	if .Network_Device in grants {
 		slot.network_memory, slot.network = system.ring_create() or_return
-		start_grant_put(work, system.GRANT_NETWORK_CONTROL, {slot.network_memory, {.Read, .Write}})
+		start_grant_put(work, .Network_Control, {slot.network_memory, {.Read, .Write}})
 	}
 	if .Network in grants {
 		work.endpoint_ring, work.endpoint_region = endpoint_open(slot, work.name) or_return
-		start_grant_put(work, system.GRANT_DATAGRAM_RING, {work.endpoint_ring, {.Read, .Write}})
-		start_grant_put(work, system.GRANT_DATAGRAM_REGION, {work.endpoint_region, {.Read, .Write}})
+		start_grant_put(work, .Datagram_Ring, {work.endpoint_ring, {.Read, .Write}})
+		start_grant_put(work, .Datagram_Region, {work.endpoint_region, {.Read, .Write}})
 	}
 	return .Ok
 }
@@ -339,31 +356,31 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 		work.machine_rights += {.Counters}
 	}
 	if work.machine_rights != {} {
-		start_grant_put(work, system.GRANT_MACHINE, {machine, work.machine_rights})
+		start_grant_put(work, .Machine, {machine, work.machine_rights})
 	}
 	if .Log_Records in grants {
-		start_grant_put(work, system.GRANT_LOG_RECORDS, {system.context_record().handles[op.ROOT_LOG_RECORDS], {.Read}})
+		start_grant_put(work, .Log_Records, {system.context_record().handles[op.ROOT_LOG_RECORDS], {.Read}})
 	}
 	if .Image in grants {
-		start_grant_put(work, system.GRANT_IMAGE, {image_memory, {.Read}})
+		start_grant_put(work, .Image, {image_memory, {.Read}})
 		work.values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
 	}
 	if .Replacements in grants {
-		start_grant_put(work, system.GRANT_REPLACEMENTS, {replacement_memory, {.Read}})
+		start_grant_put(work, .Replacements, {replacement_memory, {.Read}})
 	}
 	if .Remote_Clients in grants {
-		start_grant_put(work, system.GRANT_CLIENT_TABLE, {client_table_memory, {.Read}})
+		start_grant_put(work, .Client_Table, {client_table_memory, {.Read}})
 	}
 	if .Settings in grants {
-		start_grant_put(work, system.GRANT_SETTINGS_PAGE, {settings_memory, {.Read, .Write}})
+		start_grant_put(work, .Settings_Page, {settings_memory, {.Read, .Write}})
 		work.values[settings.VALUE_BOOT_PASS] = u64(settings_boot_pass)
 	}
 	if .Clock in grants {
-		start_grant_put(work, system.GRANT_DATE_PAGE, {date_memory, {.Read, .Write}})
+		start_grant_put(work, .Date_Page, {date_memory, {.Read, .Write}})
 		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), 0x70, 2)
 		if ports_status == .Ok {
 			work.clock_ports = system.Handle(results[0])
-			start_grant_put(work, system.GRANT_DATE_PORTS, {work.clock_ports, {}})
+			start_grant_put(work, .Date_Ports, {work.clock_ports, {}})
 		}
 	}
 }
@@ -408,7 +425,7 @@ start_service_give :: proc "contextless" (work: ^Start_Work) -> (status: system.
 	}
 	slot := work.slot
 	slot.service_memory, slot.service = system.ring_create() or_return
-	start_grant_put(work, system.GRANT_SERVICE, {slot.service_memory, {.Read, .Write}})
+	start_grant_put(work, .Service_Ring, {slot.service_memory, {.Read, .Write}})
 	work.values[system.GRANT_VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	work.values[system.GRANT_VALUE_FILE_SIZE] = entry.size
 	start_mapping_add(work, "the file of the service", {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE})

@@ -37,7 +37,7 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^
 	case decision == .List_Not_Valid:
 		values^ = errors.ring_fail(replace_command, .Refused, .None, 2, i64(by), 0, i64(status))
 	case:
-		values^ = refusal(.Replace, name, by, status)
+		values^ = root_command_refusal(.Replace, name, by, status)
 	}
 	return status
 }

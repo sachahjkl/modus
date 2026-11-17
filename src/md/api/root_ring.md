@@ -47,7 +47,10 @@ The root ring is the border between the root service and each program that asks 
 - **The order of the steps is a rule.** The border comes first, then the sender, then the command. A refusal of the sender never says whether the name exists.
 - **A disk program has no root ring.** The test that breaks the design first is a disk program whose nickname is the name of a privileged program (`console`, `unlock`, `remote`), which sends each command: `root_ring_test.odin` tries each start grant outside `ROOT_RING_GRANTS`, alone and together, and each command is refused.
 - **The terminal text is the handle 4.** It was the handle 7, which is the call ring of the private store: a role with the grants Terminal and Store would have lost its store. The log service, the one holder of Log_Records, has a window.
-- **The error record of `Machine_Passphrase` and `Machine_Seal` with Secure Boot off** is `Refused` with the unit Principals: the general rule of `No_Right` no longer comes before it.
+- **The error record of `Machine_Seal` with Secure Boot off** is `Refused` with the unit Principals: the general rule of `No_Right` no longer comes before it. `Machine_Passphrase` never reads Secure Boot, and its records did not change.
+- **The records of a refused `Replace`** that the state explains (`by` past the entries, a name of no module, a module that replaces itself, a full table, no grant Replace) are the pure procedure `root_ring.replace_refusal`, which a host test calls; a refusal of a signed row is written by `replace` itself.
+- **One mapping from a role to its handles.** `root_ring.role_handles` gives the handles of a role, and `system.ROLE_HANDLE_SLOTS` the context slot of each. The start writes a handle by that mapping only, and refuses a handle that the mapping does not give, so the test of the tool that reads each case of `grants_of` checks what the start does.
+- **A nested start never takes the place of a start that runs.** `start_place_take` marks the place that it takes (`Started.reserved`) before any step that can start another program, such as a service that starts on demand at the connection to the private store; each search of a free place skips a marked place, and `release` clears it.
 
 ## State
 
