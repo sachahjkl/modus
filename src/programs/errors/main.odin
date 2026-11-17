@@ -55,9 +55,11 @@
 //
 // **A full completion queue.** The program fills the completion queue of
 // its kernel ring and leaves it unread: the kernel keeps the next command
-// unrun in the command queue and ends the entry with no wait, a kernel call
-// of the library is refused with `Busy` and does not run, and after the
-// read each answer has come once, in order, and the kept command runs once.
+// unrun in the command queue and ends the entry with no wait, also on the
+// word of a `Word_Wait` of the same entry; a kernel call of the library is
+// refused with `Busy` and does not run; a wait of the library ends at once
+// and pushes nothing; and after the read each answer has come once, in
+// order, and the kept command runs once.
 //
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
@@ -355,35 +357,47 @@ kernel_details_check :: proc "contextless" () {
 	}
 }
 
+KERNEL_RING_FIRST_TAG :: u32(1)
+
 // kernel_ring_check fills the completion queue of the kernel ring of this
 // thread and checks that no answer is lost
 // (src/md/api/kernel_ring_completion_room.md). The commands are None, which
-// changes nothing, so each answer differs by its tag only. One command more
-// closes a handle: the kernel must leave it unrun while the queue is full,
-// end the entry with no wait, and run it once after the answers are read.
-// A kernel call of the library while records wait must be refused, and its
-// command, the close of another handle, must not run. system.log enters the
-// kernel ring too: each line comes after the ring is empty again.
-KERNEL_RING_FIRST_TAG :: u32(1)
-
+// changes nothing, so each answer differs by its tag only; they leave one
+// place. The next entry holds a Word_Wait on a word that keeps its value,
+// which takes the last place, then a close of a handle: the kernel must
+// leave the close unrun, end the entry with no wait on the registered word,
+// and run the close once after the answers are read. While records wait, a
+// kernel call of the library must be refused, and its command, the close
+// of another handle, must not run; a wait of the library must end at once
+// and push nothing. system.log enters the kernel ring too: each line comes
+// after the ring is empty again. These pushes write the kernel ring
+// itself, on purpose: each one is checked.
 kernel_ring_check :: proc "contextless" () {
 	held_memory, held_created := system.memory_create(1)
 	refused_memory, refused_created := system.memory_create(1)
+	defer system.close(refused_memory)
 	if held_created != .Ok || refused_created != .Ok {
+		system.close(held_memory)
 		system.log("errors: WRONG: the case of a full completion queue has no memory: ", held_created, " ", refused_created)
 		return
 	}
 	kernel := system.kernel_ring()
 	capacity := ring.capacity(&kernel.completions)
-	for number in 0 ..< capacity {
-		ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None), tag = KERNEL_RING_FIRST_TAG + number})
+	pushes_taken := ring.empty(&kernel.commands) && ring.empty(&kernel.completions)
+	for number in 0 ..< capacity - 1 {
+		pushes_taken &&= ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None), tag = KERNEL_RING_FIRST_TAG + number})
 	}
 	system.enter(0)
-	filled := ring.full(&kernel.completions) && ring.empty(&kernel.commands)
-	// The command past the capacity, and an entry that asks for a wait: the
-	// hang bound only ends the wait of a kernel that would wait.
-	held_tag := KERNEL_RING_FIRST_TAG + capacity
-	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Handle_Close), tag = held_tag, values = {0 = u64(held_memory)}})
+	filled := ring.count(&kernel.completions) == capacity - 1 && ring.empty(&kernel.commands)
+	// The last place goes to the Word_Wait, and the close is held behind it:
+	// with a wait, the entry would sleep on the word, which keeps its value.
+	// The hang bound only ends the wait of a kernel that would wait.
+	unchanged: u32
+	wait_words := [1]op.Word{{address = u64(uintptr(&unchanged)), value = 0}}
+	wait_tag := KERNEL_RING_FIRST_TAG + capacity - 1
+	held_tag := wait_tag + 1
+	pushes_taken &&= ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), tag = wait_tag, values = {0 = u64(uintptr(&wait_words)), 1 = len(wait_words)}})
+	pushes_taken &&= ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Handle_Close), tag = held_tag, values = {0 = u64(held_memory)}})
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	entered := system.enter(deadline)
 	held := entered < deadline && ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
@@ -391,7 +405,10 @@ kernel_ring_check :: proc "contextless" () {
 	_, refused_status := system.call_with_error(&refusal, .Handle_Close, u64(refused_memory))
 	refused := refused_status == .Bad_Operation && errors.Kind(refusal.kind) == .Busy && refusal.value == i64(capacity) + 1
 	refused &&= ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
-	// Each answer once, in the order of the commands.
+	waited := system.word_wait(&unchanged, 0, deadline)
+	wait_ended := waited < deadline && ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
+	// Each answer once, in the order of the commands: the None commands,
+	// then the Word_Wait.
 	answers_in_order := true
 	for number in 0 ..< capacity {
 		answer, popped := ring.pop(&kernel.completions)
@@ -407,7 +424,9 @@ kernel_ring_check :: proc "contextless" () {
 	_, refused_after := system.memory_size(refused_memory)
 	held_ran &&= held_after == .Bad_Handle
 	refused &&= refused_after == .Ok
-	system.close(refused_memory)
+	if !pushes_taken {
+		system.log("errors: WRONG: the kernel ring refused a push of the case of a full completion queue")
+	}
 	if filled && held {
 		system.log("errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must")
 	} else {
@@ -417,6 +436,11 @@ kernel_ring_check :: proc "contextless" () {
 		system.log("errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must")
 	} else {
 		system.log("errors: WRONG: a kernel call on a kernel ring that holds records gave ", refused_status, " and the kind ", refusal.kind)
+	}
+	if wait_ended {
+		system.log("errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must")
+	} else {
+		system.log("errors: WRONG: a wait of the library on a kernel ring that holds records waited or pushed its command")
 	}
 	if answers_in_order && held_ran {
 		system.log("errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must")

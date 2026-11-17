@@ -8,7 +8,8 @@
 // `error: ^errors.Error_Record` as its last parameter, written only when the
 // operation fails. The parts, by file:
 //
-// - `system.odin`: the kernel entry (`call`, `call_with_error`), the time,
+// - `system.odin`: the kernel entry (`call`, `call_with_error`,
+//   `commands_call`), the time,
 //   the memory (`memory_create`, `memory_map`, `memory_commit`,
 //   `memory_protect`), the handles (`give`, `handle_state`, `close`), the
 //   rings (`ring_create`, `ring_open`), the threads (`thread_start`,
@@ -133,26 +134,16 @@ call_with_error :: proc "contextless" (error: ^errors.Error_Record, operation: o
 }
 
 // command_call executes one command record of the kernel ring, as
-// call_with_error.
-//
-// It uses an empty kernel ring only: a command or a completion that waits
-// in the ring belongs to code that writes the ring itself, and this call
-// neither reads it nor runs before it. It then gives `Bad_Operation` with an
-// error record `Busy`, and its command does not run. An answer with another
-// tag than its command gives `Bad_Operation` with an error record `Refused`
-// (src/md/api/kernel_ring_completion_room.md).
+// call_with_error, through commands_call.
 @(private = "package")
 command_call :: proc "contextless" (error: ^errors.Error_Record, command: ring.Record) -> (results: [7]u64, status: Status) {
-	kernel := kernel_ring()
-	tag, pushed := kernel_command_push(&kernel, command, error)
-	if !pushed {
-		return {}, .Bad_Operation
+	commands := [1]ring.Record{command}
+	completions: [1]ring.Record
+	_, status = commands_call(commands[:], completions[:], 0, error)
+	if status != .Ok {
+		return {}, status
 	}
-	enter(0)
-	completion, taken := kernel_completion_take(&kernel, tag, command.kind, error)
-	if !taken {
-		return {}, .Bad_Operation
-	}
+	completion := completions[0]
 	if completion.kind != u32(Status.Ok) {
 		refused, refusal := status_of_word(completion.kind)
 		if error != nil {
@@ -163,55 +154,110 @@ command_call :: proc "contextless" (error: ^errors.Error_Record, command: ring.R
 	return completion.values, .Ok
 }
 
-// kernel_command_tag is the tag of the last command that command_call
-// pushed. Each call takes the next one, so the answer that it reads names
-// its own command.
+// commands_call executes a batch of command records of the kernel ring in
+// one kernel entry, which waits until deadline when it is not 0 (as
+// `enter`), and writes the completion of each command at the same place of
+// completions. It gives the time. A status that is not Ok is a refusal of
+// the batch by this library, with no command run, or an answer that is not
+// the answer of its command; the status of each command is the kind of its
+// completion.
+//
+// It is the one path of this library into the kernel ring, and it uses an
+// empty kernel ring only: a command or a completion that waits in the ring
+// belongs to code that writes the ring itself, and this call neither reads
+// it nor runs before it. It then gives `Bad_Operation` with an error record
+// `Busy`, and no command runs. An answer with another tag than its command
+// gives `Bad_Operation` with an error record `Refused`
+// (src/md/api/kernel_ring_completion_room.md).
+//
+// ```odin
+// commands := [2]ring.Record{{kind = u32(op.Operation.Word_Wake), values = {0 = word, 1 = 1}}, {kind = u32(op.Operation.Word_Wait), values = {0 = words, 1 = 1}}}
+// completions: [2]ring.Record
+// now, status := system.commands_call(commands[:], completions[:], deadline)
+// ```
+commands_call :: proc "contextless" (commands: []ring.Record, completions: []ring.Record, deadline: u64 = 0, error: ^errors.Error_Record = nil) -> (now: u64, status: Status) {
+	kernel := kernel_ring()
+	first_tag, pushed := kernel_commands_push(&kernel, commands, len(completions), error)
+	if !pushed {
+		return time(), .Bad_Operation
+	}
+	now = enter(deadline)
+	if !kernel_completions_take(&kernel, first_tag, commands, completions, error) {
+		return now, .Bad_Operation
+	}
+	return now, .Ok
+}
+
+// kernel_command_tag is the tag of the last command that commands_call
+// pushed. Each batch takes the next tags, so each answer that it reads
+// names its own command.
 @(private = "file")
 kernel_command_tag: u32
 
-// kernel_command_push writes one command into an empty kernel ring with a
-// new tag. false: the ring holds a command or a completion, or the push was
-// refused; nothing is written, and error gets a record `Busy` with the
-// records that wait. A pure part of command_call, so the host tests it.
+// kernel_commands_push writes a batch of commands into an empty kernel
+// ring, with consecutive new tags from first_tag. false: nothing is written,
+// and error gets its record: an empty batch (`Too_Small`), a batch past the
+// capacity of the ring (`Too_Long`), completions with fewer places than the
+// batch (`Too_Small`, argument 2), or a ring that holds a command or a
+// completion (`Busy`, with the records that wait). A pure part of
+// commands_call, so the host tests it.
 @(private = "package")
-kernel_command_push :: proc "contextless" (kernel: ^ring.Ring, command: ring.Record, error: ^errors.Error_Record) -> (tag: u32, pushed: bool) {
-	if !ring.empty(&kernel.commands) || !ring.empty(&kernel.completions) {
-		kernel_ring_busy(kernel, command.kind, error)
-		return 0, false
-	}
-	tagged := command
-	tagged.tag = intrinsics.atomic_add(&kernel_command_tag, 1) + 1
-	if !ring.push(&kernel.commands, tagged) {
-		kernel_ring_busy(kernel, command.kind, error)
-		return 0, false
-	}
-	return tagged.tag, true
-}
-
-// kernel_completion_take takes the answer of the command with the tag and
-// the kind. false: no completion, or one with another tag; error gets a
-// record `Refused`. With the ring empty before the push, only a write into
-// this ring by another thread of the program gives that.
-@(private = "package")
-kernel_completion_take :: proc "contextless" (kernel: ^ring.Ring, tag: u32, kind: u32, error: ^errors.Error_Record) -> (completion: ring.Record, taken: bool) {
-	popped, ok := ring.pop(&kernel.completions)
-	if !ok || popped.tag != tag {
-		if error != nil {
-			error^ = {kind = i64(errors.Kind.Refused), operation = i64(kind &~ op.COMMAND_NAMES_ERROR_DETAILS), found = i64(Status.Bad_Operation)}
-		}
-		return {}, false
-	}
-	return popped, true
-}
-
-// kernel_ring_busy writes the record of a kernel ring that holds records:
-// the records that wait, and none allowed.
-@(private = "file")
-kernel_ring_busy :: proc "contextless" (kernel: ^ring.Ring, kind: u32, error: ^errors.Error_Record) {
-	if error != nil {
+kernel_commands_push :: proc "contextless" (kernel: ^ring.Ring, commands: []ring.Record, completion_places: int, error: ^errors.Error_Record) -> (first_tag: u32, pushed: bool) {
+	capacity_of_ring := int(ring.capacity(&kernel.commands))
+	refusal: errors.Error_Record
+	switch {
+	case len(commands) == 0:
+		refusal = {kind = i64(errors.Kind.Too_Small), unit = i64(errors.Unit.Records), argument = 1, value = 0, limit = 1}
+	case len(commands) > capacity_of_ring:
+		refusal = {kind = i64(errors.Kind.Too_Long), unit = i64(errors.Unit.Records), argument = 1, value = i64(len(commands)), limit = i64(capacity_of_ring)}
+	case completion_places < len(commands):
+		refusal = {kind = i64(errors.Kind.Too_Small), unit = i64(errors.Unit.Records), argument = 2, value = i64(completion_places), limit = i64(len(commands))}
+	case !ring.empty(&kernel.commands) || !ring.empty(&kernel.completions):
 		waiting := u64(ring.count(&kernel.commands)) + u64(ring.count(&kernel.completions))
-		error^ = {kind = i64(errors.Kind.Busy), unit = i64(errors.Unit.Requests), operation = i64(kind &~ op.COMMAND_NAMES_ERROR_DETAILS), value = i64(waiting)}
+		refusal = {kind = i64(errors.Kind.Busy), unit = i64(errors.Unit.Requests), operation = i64(commands[0].kind &~ op.COMMAND_NAMES_ERROR_DETAILS), value = i64(waiting)}
 	}
+	if refusal.kind != i64(errors.Kind.None) {
+		if error != nil {
+			error^ = refusal
+		}
+		return 0, false
+	}
+	first_tag = intrinsics.atomic_add(&kernel_command_tag, u32(len(commands))) + 1
+	// The ring is empty and the batch fits it, so each push takes its record
+	// while only its own thread writes the ring. A refused push means that
+	// another thread wrote it: the records before stay, and the batch does
+	// not enter the kernel.
+	for command, index in commands {
+		tagged := command
+		tagged.tag = first_tag + u32(index)
+		if !ring.push(&kernel.commands, tagged) {
+			if error != nil {
+				error^ = {kind = i64(errors.Kind.Busy), unit = i64(errors.Unit.Requests), operation = i64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), value = i64(ring.count(&kernel.commands))}
+			}
+			return 0, false
+		}
+	}
+	return first_tag, true
+}
+
+// kernel_completions_take takes the answer of each command of a batch, in
+// its order, into completions. false: an answer is absent or has another
+// tag than its command; error gets a record `Refused` that names the
+// operation of that command. With the ring empty before the push, only a
+// write into this ring by another thread of the program gives that.
+@(private = "package")
+kernel_completions_take :: proc "contextless" (kernel: ^ring.Ring, first_tag: u32, commands: []ring.Record, completions: []ring.Record, error: ^errors.Error_Record) -> bool {
+	for command, index in commands {
+		popped, ok := ring.pop(&kernel.completions)
+		if !ok || popped.tag != first_tag + u32(index) {
+			if error != nil {
+				error^ = {kind = i64(errors.Kind.Refused), operation = i64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), found = i64(Status.Bad_Operation)}
+			}
+			return false
+		}
+		completions[index] = popped
+	}
+	return true
 }
 
 // time gives the milliseconds since boot. It reads the time page: it does

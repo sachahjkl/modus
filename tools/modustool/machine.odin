@@ -2945,6 +2945,7 @@ scenario := [?]Step {
 	// (src/md/api/kernel_ring_completion_room.md).
 	{kind = .Wait, text = "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must"},
 	{kind = .Wait, text = "errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must"},
+	{kind = .Wait, text = "errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must"},
 	{kind = .Wait, text = "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (one log record, 152
