@@ -19,8 +19,9 @@
 // does not change its capacity. Memory that is all zero is an empty ring.
 //
 // Choose the capacity for the largest burst of the writer. When a queue is
-// full, the writer waits, drops the record, or refuses: a full queue slows
-// the writer to the speed of the reader.
+// full, `push` writes nothing and says so: the writer waits for room, or it
+// refuses the request that it serves and says so. No record is dropped in
+// silence: a full queue slows the writer to the speed of the reader.
 //
 // Who uses it: the kernel (the kernel ring of each thread), every service
 // (its rings to its callers) and every program. The parts:
@@ -130,7 +131,10 @@ pages :: proc "contextless" (capacity: u32) -> u64 {
 // calls, ok := ring.open(address, ring.pages(64))
 // ```
 open :: proc "contextless" (memory: rawptr, page_count: u64) -> (ring: Ring, ok: bool) {
-	if memory == nil || page_count < PAGE_COUNT {
+	// The count of the record pages is bounded before the product: a count
+	// of pages near the top of the type would make the capacity wrap to a
+	// small power of two, or to 0 and a mask of every bit.
+	if memory == nil || page_count < PAGE_COUNT || page_count - 1 > CAPACITY_LIMIT / CAPACITY {
 		return {}, false
 	}
 	capacity := (page_count - 1) * CAPACITY
