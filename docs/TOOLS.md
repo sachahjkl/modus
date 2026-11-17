@@ -1066,6 +1066,32 @@ The table is in the tool (`test_parts`, `tools/modustool/test_parts.odin`), and 
 | `fails` | The machine of a start that fails: a boot image with no compositor | `fails` |
 | `shortage` | The machine of the shortage of frames | `shortage` |
 
+### A step that fails
+
+A step that ends at its bound says only that a line did not come. So when a step of a machine fails while QEMU runs, the first act of the tool, before the picture of the firmware and before it stops QEMU, is to read the state of each processor:
+
+1. Through the machine protocol, it stops the machine if it runs, sends `info registers -a` and `info cpus` to the monitor of QEMU (`human-monitor-command`), then lets the machine run again. The stop gives the registers of each processor at one moment.
+2. It writes the two texts as the monitor printed them in a file beside the log of the machine: `build/test_output_tpm_key_4_processors.txt` for `build/test_output_tpm_key_4.txt`.
+3. It prints, in one write:
+
+```
+modustool: the processors of build/test_output_tpm_key_4.txt at the failure: build/test_output_tpm_key_4_processors.txt
+    processor 0, halted, at 0xffffffff80012345: the kernel: idle_wait + 0x1
+    processor 1, running, at 0x7e8c2a0: no known code
+    processor 2, running, at 0x7f6a1000: the firmware, in system management mode
+    processor 3, halted, at 0xfffffff0: the firmware
+```
+
+The instruction address is RIP in 64-bit code, and the base of CS plus EIP in the other modes. Halted is the field `HLT` of the registers. The tool names the code of an address in this order:
+
+- **The firmware, in system management mode**, when the field `SMM` is 1: that memory is the firmware's alone.
+- **A program**, at privilege level 3.
+- **The kernel**, from `KERNEL_BASE` up: the procedure and the source line come from the debug object of the kernel module of the boot volume, at the address less `KERNEL_BASE`, as the tool names a frame "module + offset" of a stack trace. With no debug object, the line gives the offset.
+- **The firmware**: its flash, which QEMU maps under 4 GiB with the sizes of the code file and of the variable store of the machine, and the copy of the end of the flash under 1 MiB. A processor that waits for its start is at the reset vector, in the flash.
+- **No known code**: any other address. The firmware also runs code that it copied to memory, and the boot program is where the firmware loaded it; the tool knows neither range, so such an address is no known code. The registers in the file still give it.
+
+This read never makes a test fail, and never hides the first fault: the line of the failed step comes first. If QEMU ended or does not answer, the tool writes one line, "modustool: the processors of <log> at the failure: none: ...", and goes on. A text that the reader of the tool refuses gives one line with the fault, and the file keeps the text. A host test gives the reader damaged texts first (`tools/modustool/processor_state_test.odin`).
+
 ### The disk of the disk programs
 
 The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with the store `programs`, whose root tree holds the module files and, for the test, a disk grant table, and the store `programs.principal.1` of the named principal 1, with a module file and a disk grant table. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
