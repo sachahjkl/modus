@@ -74,9 +74,7 @@ square_pictures: [WORKER_COUNT]graphics.Canvas
 // The one picture memory of the draw tables: the pixels of the four
 // squares follow each other, so the drawing module reads each square there.
 picture_memories: [1][]graphics.Color
-records_now, records_before: [64]interface.Draw_Record
-text_now, text_before: [512]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(64, 512)
 
 // The center of the path of the constant of each Julia set, and its tint.
 @(rodata)
@@ -163,7 +161,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("threads: a thread added the numbers to 1000: ", sum.result)
 
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	for &worker, index in workers {
 		// A square shows the background until its thread draws it.
 		square_pictures[index] = {pixels = raw_data(square_pixels[index][:]), width = SQUARE, height = SQUARE, stride = SQUARE}
@@ -177,8 +174,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	picture_memories[0] = ([^]graphics.Color)(&square_pixels[0][0])[:WORKER_COUNT * SQUARE * SQUARE]
-	drawing.now.picture_memories = picture_memories[:]
-	drawing.before.picture_memories = picture_memories[:]
+	window_memory.drawing.now.picture_memories = picture_memories[:]
+	window_memory.drawing.before.picture_memories = picture_memories[:]
 	ready := false
 	for {
 		for event in display.next_event(&window) {
@@ -196,7 +193,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		drawn := 0
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
 		interface.draw_text(table, MARGIN, 8, "One program. Each square is one thread.", graphics.colors.text)
 		for &worker, index in workers {
@@ -226,7 +223,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			ready = true
 			system.log("threads: ok, ", u64(WORKER_COUNT), " threads draw in one surface")
 		}
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window, system.time() + FRAME_TIME)
 	}
 }

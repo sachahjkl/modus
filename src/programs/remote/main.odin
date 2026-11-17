@@ -1361,7 +1361,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		now := system.time()
 		if has_window {
-			interface.window_events(&drawing, &window)
+			interface.window_events(&window_memory.drawing, &window)
 			// The window changes at most ten times in one second: a burst of
 			// calls does not wait for the drawing. This service never
 			// waits for the compositor: while the compositor did not take
@@ -1377,7 +1377,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !draw_logged && counts.calls >= 1000 {
 					draw_logged = true
 					system.log("remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
-					system.log("remote: the interface: ", u64(drawing.now.record_count), " records, ", u64(drawing.damage.count), " damage rectangles; build ", drawing.build_time / 1000, " us, difference ", drawing.difference_time / 1000, " us, draw ", drawing.draw_time / 1000, " us")
+					system.log("remote: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
 				}
 			}
 		}

@@ -47,9 +47,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1554, programs = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 LINE :: 22
 ANSWER_X :: 384
@@ -173,37 +171,37 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		if drawing.now.records == nil {
-			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+		frame := interface.window_frame_start(&window_memory, &window)
+		// Each line is a line of a table: its text 3 pixels under its top.
+		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "this program holds two handles from the root service:", graphics.colors.dim)
+		// A handle: its object, then its right in the color of a right that
+		// the program holds.
+		handles := [2][2]string{{"the machine, with the right ", "Inspect"}, {"the boot image, with the right ", "Read"}}
+		for handle in handles {
+			line := interface.column_take(&column, LINE)
+			text_y := line.y + (line.height - interface.line_height({})) / 2
+			x := interface.draw_text(frame.table, line.x + 16, text_y, handle[0], graphics.colors.text)
+			interface.cell_text(&frame, {x, line.y, line.x + line.width - x, line.height}, handle[1], graphics.colors.program)
 		}
-		frame := interface.window_frame_begin(&drawing, &window)
-		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
-		y := 12
-		interface.draw_text(table, 12, y, "this program holds two handles from the root service:", graphics.colors.dim)
-		y += LINE
-		x := interface.draw_text(table, 28, y, "the machine, with the right ", graphics.colors.text)
-		interface.draw_text(table, x, y, "Inspect", graphics.colors.program)
-		y += LINE
-		x = interface.draw_text(table, 28, y, "the boot image, with the right ", graphics.colors.text)
-		interface.draw_text(table, x, y, "Read", graphics.colors.program)
-		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program asks", graphics.colors.dim)
-		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.colors.dim)
-		y += LINE
+		interface.column_take(&column, LINE / 2)
+		sizes := [2]interface.Size{interface.pixels(ANSWER_X - 12), interface.share()}
+		cells: [2]interface.Area
+		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
+		interface.cell_text(&frame, cells[0], "the program asks", graphics.colors.dim)
+		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
 		for attempt, index in attempts[:attempt_count] {
-			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
-			}
-			interface.draw_text(table, 12, y, attempt.text, graphics.colors.text)
+			row := interface.column_take(&column, LINE)
+			interface.table_band(&frame, {row.x - 6, row.y, row.width + 12, row.height}, index)
+			interface.row_split(row, sizes[:], cells[:])
+			interface.cell_text(&frame, cells[0], attempt.text, graphics.colors.text)
 			// The expected answer, a refusal too, is the expected answer of
 			// the rules; another answer is a check that did not pass. The
 			// words of the answer say whether it is a refusal.
 			color := attempt.status == attempt.expected ? graphics.colors.program : graphics.colors.failed
-			interface.draw_text(table, ANSWER_X, y, answer(attempt.status), color)
-			y += LINE
+			interface.cell_text(&frame, cells[1], answer(attempt.status), color)
 		}
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

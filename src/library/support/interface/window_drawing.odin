@@ -333,6 +333,40 @@ window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Rec
 	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}}
 }
 
+// What a program keeps to draw one window, in one record of its own
+// memory: the drawing, and the memory of its two draw tables. RECORDS is
+// the capacity of each table in records, TEXT in bytes of text. A table
+// with a grid starts at an address that is a multiple of 4, so TEXT is a
+// multiple of 4: the second text table then starts at such an address too.
+Window_Memory :: struct($RECORDS, $TEXT: int) where RECORDS > 0 && TEXT > 0 && TEXT % 4 == 0 {
+	drawing:                     Window_Drawing,
+	records_now, records_before: [RECORDS]Draw_Record,
+	text_now, text_before:       [TEXT]u8,
+}
+
+// window_memory_drawing gives the drawing of a window memory, with its two
+// tables in the memory of the record. A global record cannot hold slices of
+// itself before the program runs, so each call gives the slices again: the
+// same slices each time, and the other fields of the drawing (the input,
+// the state, the picture memories) stay as they are.
+window_memory_drawing :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT)) -> ^Window_Drawing {
+	memory.drawing.now.records = memory.records_now[:]
+	memory.drawing.now.text = memory.text_now[:]
+	memory.drawing.before.records = memory.records_before[:]
+	memory.drawing.before.text = memory.text_before[:]
+	return &memory.drawing
+}
+
+// window_frame_start starts a frame of a window whose drawing is in a
+// window memory: window_frame_begin, after the tables are given. It draws
+// no background: the draw of a frame paints the background color under
+// each rectangle first (draw_damage_on_surface), so a rectangle of that
+// color over the window would draw no pixel. A window with the grid of
+// points of the rules draws it with background.
+window_frame_start :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT), window: ^display.Window = nil) -> Frame {
+	return window_frame_begin(window_memory_drawing(memory), window)
+}
+
 // window_events takes the events of a window into the input of the next
 // frame, until the input has KEY_CAPACITY keys. It gives true if an event
 // came, and also when the last frame was left out and the compositor took

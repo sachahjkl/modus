@@ -48,9 +48,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1406, programs = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 LINE :: 22
 WIDTH :: 640
@@ -191,12 +189,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 
-		if drawing.now.records == nil {
-			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-		}
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		y := 12
 		interface.draw_text(table, 12, y, "a budget has a limit of processor time for each second.", graphics.colors.dim)
 		y += LINE
@@ -226,7 +220,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		line: [96]u8
 		interface.draw_text(table, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.colors.dim)
 		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.colors.program : graphics.colors.failed)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)
 	}

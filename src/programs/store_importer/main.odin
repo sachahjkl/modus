@@ -39,9 +39,7 @@ HEIGHT :: 48
 // The title that the program asks for. The compositor does not take it.
 TITLE_ASKED :: "console"
 
-records_now, records_before: [8]interface.Draw_Record
-text_now, text_before: [256]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(8, 256)
 
 // The entry of store_importer: it calls the import one time, writes the
 // line, shows the result in its window, then reads the events of its
@@ -60,13 +58,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.sleep(system.WAIT_FOREVER)
 		}
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	for {
-		frame := interface.window_frame_begin(&drawing, &window)
-		interface.draw_rectangle(frame.table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+		frame := interface.window_frame_start(&window_memory, &window)
 		x := interface.draw_text(frame.table, 16, 16, "triple(14) = ", graphics.colors.dim)
 		interface.draw_unsigned(frame.table, x, 16, u64(result), graphics.colors.text)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		// The window is drawn again after each event, as a change of the
 		// settings changes the font; another event gives the same picture.
 		display.wait(&window)

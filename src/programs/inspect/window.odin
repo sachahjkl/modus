@@ -40,9 +40,7 @@ BAND_HEIGHT :: 40
 // The window is built with the interface package (docs/INTERFACE.md): its
 // draw table holds the records of a frame, and a sample that changes few
 // values damages only their places.
-records_now, records_before: [2048]interface.Draw_Record
-text_now, text_before: [32768]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(2048, 32768)
 frame_table: ^interface.Draw_Table // The table of the frame that draw builds.
 
 kind_color :: proc "contextless" (kind: addresses.Kind) -> graphics.Color {
@@ -154,10 +152,7 @@ list_place :: proc "contextless" (x, y: int) -> (position: int, inside: bool) {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	frame_table = frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	draw_list(&frame)
@@ -177,11 +172,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 			draw_threads(&frame)
 		}
 	}
-	damage := interface.window_frame_end(&drawing, &frame, window)
+	damage := interface.window_frame_end(&window_memory.drawing, &frame, window)
 	samples_drawn += 1
 	damage_total += u64(damage)
 	if system.measure_run() && samples_drawn == 20 {
-		system.log("inspect: the interface: ", u64(drawing.now.record_count), " records; 20 frames with ", damage_total, " damage rectangles in all; the last frame: build ", drawing.build_time / 1000, " us, difference ", drawing.difference_time / 1000, " us, draw ", drawing.draw_time / 1000, " us")
+		system.log("inspect: the interface: ", u64(window_memory.drawing.now.record_count), " records; 20 frames with ", damage_total, " damage rectangles in all; the last frame: build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
 	}
 }
 

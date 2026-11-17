@@ -63,9 +63,7 @@ import "modus:support/network"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 GATEWAY :: 0x0A000202 // 10.0.2.2: the gateway, and the echo server of the test.
 LOCAL :: 0x0A00020F // 10.0.2.15
@@ -531,12 +529,8 @@ measure_burst :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	interface.draw_text_wrapped(table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.colors.dim)
 	interface.draw_text(table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
 	interface.draw_text(table, LEFT + ANSWER_X, 16 + LINE + 4, "the network answers", graphics.colors.dim)
@@ -580,7 +574,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 		interface.case_lines(&frame, &measures_column, 1, item.name, item.value, ANSWER_X, graphics.colors.dim, measured ? graphics.colors.text : graphics.colors.dim, LINE)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The entry of net: it runs the cases of its endpoint once, then the

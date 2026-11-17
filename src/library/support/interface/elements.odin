@@ -173,14 +173,39 @@ table_header :: proc "contextless" (frame: ^Frame, cells: []Area, titles: []stri
 
 // bar draws a value against a maximum: the track, and the full part from
 // 125 % of its color at the top to 78 % at the bottom (docs/DESIGN.md,
-// section 3). A value above 0 has a full part of 2 pixels at least.
+// section 3). A value above 0 has a full part of 2 pixels at least, and
+// the full part never passes the track.
 bar :: proc "contextless" (frame: ^Frame, area: Area, value, maximum: u64, color: graphics.Color) {
 	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, graphics.colors.track)
-	full_width := int(min(value, max(maximum, 1)) * u64(area.width) / max(maximum, 1))
+	// The product of a value and a width must not wrap: a value and its
+	// maximum lose their low bits together until the maximum fits in 32
+	// bits, and a width is under 2^20 pixels.
+	shown, most := min(value, max(maximum, 1)), max(maximum, 1)
+	for most >= 1 << 32 {
+		shown, most = shown >> 1, most >> 1
+	}
+	full_width := int(shown * u64(clamp(area.width, 0, 1 << 20)) / most)
 	if value > 0 {
-		full_width = max(full_width, 2)
+		full_width = min(max(full_width, 2), area.width)
 	}
 	draw_vertical_gradient(frame.table, area.x, area.y, full_width, area.height, graphics.shade(color, 125), graphics.shade(color, 78))
+}
+
+BAR_WITH_VALUE_THICKNESS :: 10 // The height of the bar of bar_with_value, in the middle of its line.
+BAR_WITH_VALUE_GAP :: 8 // From the end of the bar of bar_with_value to its value.
+
+// bar_with_value draws a bar and its value on one line of a table: the bar
+// takes bar_width pixels at the left of the area, BAR_WITH_VALUE_THICKNESS
+// high in the middle of the line, and the value, in the font of the cells,
+// takes the rest of the area after a gap. The value is cut to its room, so
+// it never passes the area: the caller gives the area the width of the
+// largest value that it shows. A bar wider than the area is cut to it.
+bar_with_value :: proc "contextless" (frame: ^Frame, area: Area, bar_width: int, value, maximum: u64, color: graphics.Color) {
+	shown_width := clamp(bar_width, 0, max(area.width, 0))
+	bar(frame, {area.x, area.y + (area.height - BAR_WITH_VALUE_THICKNESS) / 2, shown_width, BAR_WITH_VALUE_THICKNESS}, value, maximum, color)
+	value_x := area.x + shown_width + BAR_WITH_VALUE_GAP
+	builder: Text_Builder
+	cell_text(frame, {value_x, area.y, area.x + area.width - value_x, area.height}, number_text(&builder, value), graphics.colors.text)
 }
 
 // bar_parts draws parts of one total side by side on a track, each in its

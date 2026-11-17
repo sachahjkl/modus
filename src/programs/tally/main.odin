@@ -36,9 +36,7 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 WIDTH :: 400
 HEIGHT :: 214
@@ -138,10 +136,7 @@ reset :: proc "c" () -> i64 {
 
 // draw builds a frame of the window with the interface package.
 draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.action_bar_input_take(&frame, &bar)
 	facts_end := draw_records(frame.table, service)
 	// The key of the window, in its action bar (docs/INTERFACE.md, "4.4
@@ -152,7 +147,7 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 	bar_left := facts_end + 16
 	items := bar_items()
 	bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar, {alignment = .Right})
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if bar_result.ran {
 		key_run(bar_result.run)
 		bar_acted = true
@@ -180,7 +175,6 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 // draw_records draws the window under its action bar, and gives the x
 // after the counts of the service, on the line of the bar.
 draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^system.Service) -> (facts_end: int) {
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	buffer: [24]u8
 	x := interface.draw_text(table, 12, 10, "count ", graphics.colors.dim)
 	// The count is the data of the module, in the memory of the program
@@ -248,7 +242,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			#partial switch event.kind {
 			case .Pointer:
 				// The pointer reaches the action bar only.
-				interface.input_add(&drawing.input, event)
+				interface.input_add(&window_memory.drawing.input, event)
 			case .Key:
 				if !event.pressed {
 					continue

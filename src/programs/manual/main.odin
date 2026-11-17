@@ -69,9 +69,7 @@ import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 // The page, and the action bar with its open list (about 120 records).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 8192)
 
 CELL_WIDTH :: graphics.CELL_WIDTH
 CELL_HEIGHT :: graphics.CELL_HEIGHT
@@ -421,10 +419,7 @@ page_build :: proc "contextless" () {
 
 // draw builds a frame of the window with the interface package.
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	// A press on the action bar, or while its list is open, is the bar's:
 	// the scroll bar under the list does not take it.
 	interface.action_bar_input_take(&frame, &bar)
@@ -435,7 +430,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// The action bar, last: its list opens over the text.
 	items := bar_items()
 	bar_result := interface.action_bar(&frame, bar_area(), items[:], &bar)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if moved.changed {
 		first_line = moved.first
 		text_moved_by_scroll_bar = true
@@ -514,7 +509,6 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 
 draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.colors.card_top)
 	entries := system.image_entries(image)
 	first_row := list_first_row()
@@ -852,7 +846,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		step_time, step_due := interface.window_scroll_bar_wake(&drawing)
+		step_time, step_due := interface.window_scroll_bar_wake(&window_memory.drawing)
 		if step_due {
 			deadline = min(deadline, step_time)
 		}
@@ -864,7 +858,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Settings_Changed:
 				// A new font: each record is the same, each pixel of text is
 				// not. The next frame of each picture is whole.
-				interface.draw_whole_window_next(&drawing)
+				interface.draw_whole_window_next(&window_memory.drawing)
 				// The widths of the words changed with the font: the rows
 				// of the page are made again, at the same place.
 				// The focus stays on its link.
@@ -889,13 +883,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Pointer:
 				// The scroll bar of the text and the action bar take the
 				// pointer from the input of the next frame.
-				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &drawing.input) {
+				interface.input_add(&window_memory.drawing.input, event)
+				if interface.scroll_bar_wants_frame(&window_memory.drawing.state, &window_memory.drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &window_memory.drawing.input) {
 					changed = true
 				} else {
 					// A notch over no view moves nothing, and does not wait
 					// for a later frame.
-					drawing.input.wheel -= event.wheel
+					window_memory.drawing.input.wheel -= event.wheel
 				}
 				down := event.buttons & display.BUTTON_LEFT != 0
 				// A press on the action bar, or anywhere while its list is

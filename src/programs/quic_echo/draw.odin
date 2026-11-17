@@ -16,13 +16,7 @@ COUNTED_Y :: 116 + CONNECTIONS_HEIGHT + 8 // The card of the counts, under it.
 // The card of the counts holds seven rows, three of them with a sentence of two lines.
 #assert(HEIGHT - COUNTED_Y - 8 - graphics.CARD_TITLE - 8 >= 7 * LINE + 3 * graphics.LINE_HEIGHT)
 
-records_now, records_before: [768]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
-
-drawing_prepare :: proc "contextless" () {
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-}
+window_memory: interface.Window_Memory(768, 16384)
 
 state_text :: proc "contextless" (connection: ^quic.Connection) -> string {
 	switch connection.state {
@@ -50,14 +44,14 @@ number_text :: proc "contextless" (builder: ^interface.Text_Builder, value: u64,
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 	if weak_seed {
 		content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "NO KEY", "the random seed of this program is weaker than \"processor\"", graphics.colors.failed)
 		column := interface.column_of(content)
 		interface.label_value_line(&frame, interface.column_take(&column, LINE), "error", "Seed_Too_Weak: this server makes no key, and listens on nothing", graphics.colors.failed, 120)
-		interface.window_frame_end(&drawing, &frame, window)
+		interface.window_frame_end(&window_memory.drawing, &frame, window)
 		return
 	}
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE SERVER", "QUIC in this program, over a listen grant of UDP", graphics.colors.program)
@@ -114,5 +108,5 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.label_value_lines(&frame, &column, "over the budget", number_text(&builder, counters.over_budget + counters.over_address_budget + counters.address_table_full, " datagrams of new identifiers, dropped before any cryptography"), 200, graphics.colors.text, LINE)
 	interface.label_value_lines(&frame, &column, "refused by a limit", number_text(&builder, counters.refused_remote_limit + counters.refused_handshake_limit + counters.refused_full, " Initials (each try of a client counts): one address, the handshakes, a full table"), 200, graphics.colors.text, LINE)
 	interface.label_value_lines(&frame, &column, "datagrams", number_text(&builder, counters.datagrams, " received"), 200, graphics.colors.text, LINE)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }

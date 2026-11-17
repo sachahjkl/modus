@@ -59,9 +59,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7745, programs = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 MEASURE_TIME :: 300 // Milliseconds of one measure, in a measure run.
 PAIR_TIME :: 500 // Milliseconds of one measure of the word wait, in a measure run.
@@ -370,16 +368,12 @@ row :: proc "contextless" (table: ^interface.Draw_Table, y: int, label: string, 
 
 // draw builds a frame of the window with the interface package.
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	draw_records(frame.table)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	y := LEFT
 	measured := system.measure_run()
 	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `modustool measure`.", graphics.colors.dim)

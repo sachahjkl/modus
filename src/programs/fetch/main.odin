@@ -62,9 +62,7 @@ CALL_TAG :: 100_000
 // The window is built with the interface package (docs/INTERFACE.md): a
 // table of cases, each with the lines that its answer needs
 // (docs/INTERFACE.md, "The text in a box").
-records_now, records_before: [256]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(256, 8192)
 
 WIDTH :: 976
 CASE_CAPACITY :: 10
@@ -422,12 +420,8 @@ megabytes :: proc "contextless" (buffer: []u8, kilobytes: u64) -> string {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	draw_table := frame.table
-	interface.draw_rectangle(draw_table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	interface.draw_text_wrapped(draw_table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.colors.dim)
 	interface.draw_text(draw_table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
 	interface.draw_text(draw_table, LEFT + ANSWER_X, 16 + LINE + 4, "the answer", graphics.colors.dim)
@@ -440,7 +434,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	interface.cases_rest_line(&frame, {LEFT, HEIGHT - 16 - LINE, WIDTH - 2 * LEFT, LINE}, not_shown, "the log has a line \"fetch: \" for each")
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The random generator of this program, from the seed of its starter.

@@ -116,9 +116,7 @@ credit_authors: [PERSON_COUNT]interface.Text_Builder // "Picture: <author>", mad
 shapes: [PERSON_COUNT]Card_Shape
 row_heights: [ROW_COUNT]int // Each card of a row has the height of the tallest one.
 
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 chosen: int // The chosen card.
 first_row: int // The first row of the view.
@@ -374,25 +372,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	portraits_prepare()
 	picture_memories[0] = portrait_pixels[:]
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	drawing.now.picture_memories = picture_memories[:]
-	drawing.before.picture_memories = picture_memories[:]
+	window_memory.drawing.now.picture_memories = picture_memories[:]
+	window_memory.drawing.before.picture_memories = picture_memories[:]
 	logged := false
 	for {
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		drawn := build(&frame)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		// A frame that the compositor did not take is drawn at the next
 		// wake: the line says what the screen has.
-		if !logged && !drawing.late {
+		if !logged && !window_memory.drawing.late {
 			logged = true
-			system.log("hall_of_fame: ok, the first frame drew ", u64(drawn), " of the ", u64(PERSON_COUNT), " people in ", drawing.draw_time / 1000, " us")
+			system.log("hall_of_fame: ok, the first frame drew ", u64(drawn), " of the ", u64(PERSON_COUNT), " people in ", window_memory.drawing.draw_time / 1000, " us")
 		}
 		deadline: u64 = system.WAIT_FOREVER
-		if time, due := interface.window_scroll_bar_wake(&drawing); due {
+		if time, due := interface.window_scroll_bar_wake(&window_memory.drawing); due {
 			deadline = time
 		}
 		display.wait(&window, deadline)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }
