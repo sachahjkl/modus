@@ -385,8 +385,10 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	b := &renderer.builder
 	opening := strings.trim_space(lines[start])
 	language := strings.trim_space(opening[3:])
-	if language == "mermaid" {
-		site_not_rendered(renderer, start + first_line_number, "a mermaid diagram, shown as its text")
+	// A source comment is rendered alone, in a page or in a cell: it has no
+	// picture, so its diagram stays text.
+	if language == SITE_DIAGRAM_LANGUAGE && renderer.comment && renderer.site != nil {
+		site_not_rendered(renderer, start + first_line_number, "a mermaid diagram of a source comment, shown as its text")
 	}
 	indent := strings.index(lines[start], "```")
 	index := start + 1
@@ -405,6 +407,14 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	// body is their text form for a reader of the raw Markdown.
 	if keys, is_layout := byte_layout_fence_keys(language); is_layout && !renderer.comment && renderer.site != nil {
 		byte_layout_fence_write(renderer, keys, strings.to_string(code_text), start + first_line_number)
+		if index >= len(lines) {
+			site_not_rendered(renderer, start + first_line_number, "a fence with no end, shown to the end of the file")
+		}
+		return index + 1
+	}
+	// A diagram of a guide: its picture in its place (site_diagram.odin).
+	if language == SITE_DIAGRAM_LANGUAGE && !renderer.comment && renderer.site != nil {
+		site_diagram_fence_write(renderer, strings.to_string(code_text), start + first_line_number)
 		if index >= len(lines) {
 			site_not_rendered(renderer, start + first_line_number, "a fence with no end, shown to the end of the file")
 		}
