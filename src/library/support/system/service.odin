@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
@@ -103,7 +104,7 @@ service_wait :: proc "contextless" (wait: ^Wait, service: ^Service) {
 // ring: the member, or false for a kind that names no command, None
 // included. It reads and changes no state.
 service_command_of_record :: proc "contextless" (command: ring.Record) -> (service_command: isolated.Service_Command, ok: bool) {
-	read := member_of_word(isolated.Service_Command, u64(command.kind)) or_return
+	read := enum_word.member_of_word(isolated.Service_Command, u64(command.kind)) or_return
 	return read, read != .None
 }
 

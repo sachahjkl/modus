@@ -1,6 +1,7 @@
 #+build !freestanding
 package operation
 
+import "modus:contract/enum_word"
 import "core:testing"
 import "modus:contract/errors"
 
@@ -183,12 +184,12 @@ a_stop_code_past_one_byte :: proc(t: ^testing.T) {
 // past the last layout names none.
 @(test)
 each_extended_state_layout_reads_back :: proc(t: ^testing.T) {
-	_, past_ok := member_of_word(Extended_State_Layout, u64(max(Extended_State_Layout)) + 1)
+	_, past_ok := enum_word.member_of_word(Extended_State_Layout, u64(max(Extended_State_Layout)) + 1)
 	testing.expect(t, !past_ok)
-	_, largest_ok := member_of_word(Extended_State_Layout, max(u64))
+	_, largest_ok := enum_word.member_of_word(Extended_State_Layout, max(u64))
 	testing.expect(t, !largest_ok)
 	for layout in Extended_State_Layout {
-		read, ok := member_of_word(Extended_State_Layout, u64(layout))
+		read, ok := enum_word.member_of_word(Extended_State_Layout, u64(layout))
 		testing.expect(t, ok)
 		testing.expect_value(t, read, layout)
 	}

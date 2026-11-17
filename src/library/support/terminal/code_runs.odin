@@ -14,6 +14,7 @@ package terminal_records
 // A run gives a color, never text: a run that is refused, or a row with
 // more runs than CODE_RUN_LIMIT, leaves the text whole and plain.
 
+import "modus:contract/enum_word"
 import "modus:contract/ring"
 import "modus:support/graphics"
 import "modus:support/system"
@@ -80,7 +81,7 @@ code_kind_classes := [Code_Kind]graphics.Code_Class {
 // code_kind_of is the border of the kind of a byte that a program wrote:
 // the member, or false for a byte that names none.
 code_kind_of :: proc "contextless" (value: u8) -> (kind: Code_Kind, ok: bool) {
-	return system.member_of_word(Code_Kind, u64(value))
+	return enum_word.member_of_word(Code_Kind, u64(value))
 }
 
 // code_kind_color gives the color of a kind on a dark surface, or plain

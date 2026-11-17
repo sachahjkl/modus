@@ -37,6 +37,7 @@
 // [compositor](term:compositor).
 package display
 
+import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:support/graphics"
@@ -516,7 +517,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 // event, or false for a kind that names no event, None included. It reads
 // and changes no state, so a host test gives it each refused kind.
 event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok: bool) {
-	kind := system.member_of_word(Event_Kind, u64(record.kind)) or_return
+	kind := enum_word.member_of_word(Event_Kind, u64(record.kind)) or_return
 	event.kind = kind
 	switch kind {
 	case .None:

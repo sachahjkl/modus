@@ -1,5 +1,6 @@
 package kernel
 
+import "modus:contract/enum_word"
 import "base:intrinsics"
 import op "modus:contract/operation"
 
@@ -91,7 +92,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	// The record of the operation starts with no refusal (command_run).
 	cpu := processor_self()
 	operation := &cpu.operation
-	command, command_known := op.member_of_word(op.Thread_Control_Command, v[2])
+	command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2])
 	if !command_known || command == .None {
 		return .Bad_Operation
 	}

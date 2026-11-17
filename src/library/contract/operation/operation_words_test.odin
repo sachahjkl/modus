@@ -1,6 +1,7 @@
 #+build !freestanding
 package operation
 
+import "modus:contract/enum_word"
 import "core:testing"
 
 // An enumeration with a hole in its numbering and no member at 0: a test of
@@ -17,22 +18,22 @@ Enumeration_With_A_Hole :: enum u64 {
 a_word_of_no_member_is_refused :: proc(t: ^testing.T) {
 	words := [?]u64{u64(Enumeration_With_A_Hole.First) - 1, u64(Enumeration_With_A_Hole.First) + 1, u64(Enumeration_With_A_Hole.Third) + 1, max(u64)}
 	for word in words {
-		_, ok := member_of_word(Enumeration_With_A_Hole, word)
+		_, ok := enum_word.member_of_word(Enumeration_With_A_Hole, word)
 		testing.expect(t, !ok, "a word of no member is refused")
 	}
-	_, operation_ok := member_of_word(Operation, u64(max(Operation)) + 1)
+	_, operation_ok := enum_word.member_of_word(Operation, u64(max(Operation)) + 1)
 	testing.expect(t, !operation_ok)
-	_, device_ok := member_of_word(Device_Kind, u64(max(Device_Kind)) + 1)
+	_, device_ok := enum_word.member_of_word(Device_Kind, u64(max(Device_Kind)) + 1)
 	testing.expect(t, !device_ok)
-	_, inspect_ok := member_of_word(Inspect_Kind, u64(max(Inspect_Kind)) + 1)
+	_, inspect_ok := enum_word.member_of_word(Inspect_Kind, u64(max(Inspect_Kind)) + 1)
 	testing.expect(t, !inspect_ok)
-	_, answer_ok := member_of_word(Fault_Answer_Kind, u64(max(Fault_Answer_Kind)) + 1)
+	_, answer_ok := enum_word.member_of_word(Fault_Answer_Kind, u64(max(Fault_Answer_Kind)) + 1)
 	testing.expect(t, !answer_ok)
-	_, action_ok := member_of_word(Fault_Handler_Action, u64(max(Fault_Handler_Action)) + 1)
+	_, action_ok := enum_word.member_of_word(Fault_Handler_Action, u64(max(Fault_Handler_Action)) + 1)
 	testing.expect(t, !action_ok)
-	_, command_ok := member_of_word(Thread_Control_Command, u64(max(Thread_Control_Command)) + 1)
+	_, command_ok := enum_word.member_of_word(Thread_Control_Command, u64(max(Thread_Control_Command)) + 1)
 	testing.expect(t, !command_ok)
-	_, largest_ok := member_of_word(Thread_Control_Command, max(u64))
+	_, largest_ok := enum_word.member_of_word(Thread_Control_Command, max(u64))
 	testing.expect(t, !largest_ok)
 }
 
@@ -41,13 +42,13 @@ a_word_of_no_member_is_refused :: proc(t: ^testing.T) {
 // 2^32 + 1 the strategy Round_Robin).
 @(test)
 a_word_past_the_width_of_the_enumeration_is_refused :: proc(t: ^testing.T) {
-	_, level_ok := member_of_word(Log_Level, u64(max(u8)) + 1)
+	_, level_ok := enum_word.member_of_word(Log_Level, u64(max(u8)) + 1)
 	testing.expect(t, !level_ok)
-	_, level_largest_ok := member_of_word(Log_Level, max(u64))
+	_, level_largest_ok := enum_word.member_of_word(Log_Level, max(u64))
 	testing.expect(t, !level_largest_ok)
-	_, strategy_ok := member_of_word(Strategy, u64(max(u32)) + 1 + u64(Strategy.Round_Robin))
+	_, strategy_ok := enum_word.member_of_word(Strategy, u64(max(u32)) + 1 + u64(Strategy.Round_Robin))
 	testing.expect(t, !strategy_ok)
-	_, operation_ok := member_of_word(Operation, u64(max(u32)) + 1 + u64(Operation.Log))
+	_, operation_ok := enum_word.member_of_word(Operation, u64(max(u32)) + 1 + u64(Operation.Log))
 	testing.expect(t, !operation_ok)
 }
 
@@ -55,22 +56,22 @@ a_word_past_the_width_of_the_enumeration_is_refused :: proc(t: ^testing.T) {
 @(test)
 each_member_reads_back_from_its_word :: proc(t: ^testing.T) {
 	for member in Enumeration_With_A_Hole {
-		read, ok := member_of_word(Enumeration_With_A_Hole, u64(member))
+		read, ok := enum_word.member_of_word(Enumeration_With_A_Hole, u64(member))
 		testing.expect(t, ok)
 		testing.expect_value(t, read, member)
 	}
 	for member in Log_Level {
-		read, ok := member_of_word(Log_Level, u64(member))
+		read, ok := enum_word.member_of_word(Log_Level, u64(member))
 		testing.expect(t, ok)
 		testing.expect_value(t, read, member)
 	}
 	for member in Fault_Handler_Action {
-		read, ok := member_of_word(Fault_Handler_Action, u64(member))
+		read, ok := enum_word.member_of_word(Fault_Handler_Action, u64(member))
 		testing.expect(t, ok)
 		testing.expect_value(t, read, member)
 	}
 	for member in Device_Kind {
-		read, ok := member_of_word(Device_Kind, u64(member))
+		read, ok := enum_word.member_of_word(Device_Kind, u64(member))
 		testing.expect(t, ok)
 		testing.expect_value(t, read, member)
 	}

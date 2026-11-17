@@ -131,6 +131,7 @@
 //      instruction address 0. The line says which.
 package fault_ring
 
+import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/fixed_addresses"
 import "modus:contract/module"
@@ -1032,7 +1033,7 @@ child_controls :: proc "contextless" () -> ! {
 	// 23. Extended states that the processor refuses.
 	control(spinner.handle, 0, .Stop)
 	state, _ := system.call(.Thread_State, u64(spinner.handle))
-	layout, layout_known := system.member_of_word(op.Extended_State_Layout, state[4])
+	layout, layout_known := enum_word.member_of_word(op.Extended_State_Layout, state[4])
 	if !layout_known {
 		system.log("fault_ring: Thread_State gave the layout ", state[4], ", which names no layout: WRONG")
 	}

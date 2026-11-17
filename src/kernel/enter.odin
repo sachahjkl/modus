@@ -1,5 +1,6 @@
 package kernel
 
+import "modus:contract/enum_word"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
@@ -254,7 +255,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[2] > op.LOG_TEXT_BYTES_MOST || !user_range(program, v[1], v[2] + run_bytes, false) {
 			return .Bad_Address
 		}
-		level, level_known := op.member_of_word(op.Log_Level, v[3])
+		level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
 		if !level_known {
 			return .Bad_Operation
 		}
@@ -758,7 +759,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Device_Create:
 		_ = handle_find(program, v[0], .Machine, {.Devices}) or_return
 		require_control() or_return
-		device_kind, device_kind_known := op.member_of_word(op.Device_Kind, v[1])
+		device_kind, device_kind_known := enum_word.member_of_word(op.Device_Kind, v[1])
 		if !device_kind_known {
 			return .Bad_Operation
 		}
@@ -848,7 +849,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Inspect:
 		_ = handle_find(program, v[0], .Machine, {.Inspect}) or_return
-		inspect_kind, inspect_kind_known := op.member_of_word(op.Inspect_Kind, v[1])
+		inspect_kind, inspect_kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1])
 		if !inspect_kind_known {
 			return .Bad_Operation
 		}
@@ -1102,7 +1103,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The fault ring (fault_ring.odin): the program names one of its
 		// own threads. The handler of the faults of a program is a thread
 		// of that program.
-		action, action_known := op.member_of_word(op.Fault_Handler_Action, v[1])
+		action, action_known := enum_word.member_of_word(op.Fault_Handler_Action, v[1])
 		if v[3] != 0 {
 			// The debugger of another program: the thread takes the debug
 			// exceptions and the breakpoints of that program. Two programs:
@@ -1145,7 +1146,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return fault_handler_set(program_index, handler, kinds)
 
 	case .Fault_Answer:
-		answer, answer_known := op.member_of_word(op.Fault_Answer_Kind, v[2])
+		answer, answer_known := enum_word.member_of_word(op.Fault_Answer_Kind, v[2])
 		if !answer_known || answer == .None {
 			return .Bad_Operation
 		}
@@ -1219,7 +1220,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Strategy_Set:
 		_ = handle_find(program, v[0], .Machine, {.Schedule}) or_return
-		strategy, strategy_known := op.member_of_word(op.Strategy, v[1])
+		strategy, strategy_known := enum_word.member_of_word(op.Strategy, v[1])
 		if !strategy_known || strategy == .None {
 			return .Bad_Operation
 		}
@@ -1249,7 +1250,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if command.kind & op.COMMAND_NAMES_ERROR_DETAILS != 0 {
 			named := command
 			named.kind &~= op.COMMAND_NAMES_ERROR_DETAILS
-			if operation, known := op.member_of_word(op.Operation, u64(named.kind)); known && op.command_takes_error_details(operation) {
+			if operation, known := enum_word.member_of_word(op.Operation, u64(named.kind)); known && op.command_takes_error_details(operation) {
 				return execute(index, named, results)
 			}
 		}

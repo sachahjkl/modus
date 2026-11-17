@@ -58,6 +58,7 @@
 // See [terminal](term:terminal) and [terminal ring](term:terminal-ring).
 package terminal_records
 
+import "modus:contract/enum_word"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -224,7 +225,7 @@ Tone :: enum u8 {
 // program wrote: the member, or false for a byte that names no tone. The
 // terminal then draws the run in the color of plain text.
 tone_of_byte :: proc "contextless" (value: u8) -> (tone: Tone, ok: bool) {
-	return system.member_of_word(Tone, u64(value))
+	return enum_word.member_of_word(Tone, u64(value))
 }
 
 // A flag of the style of a run.
@@ -469,7 +470,7 @@ list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, fir
 	if values[0] >= LIST_ROWS {
 		return
 	}
-	icon, icon_ok := system.member_of_word(List_Icon, values[4])
+	icon, icon_ok := enum_word.member_of_word(List_Icon, values[4])
 	if !icon_ok {
 		keeping.pending[values[0]] = {}
 		keeping.rows_refused += 1
@@ -600,7 +601,7 @@ input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: b
 // record, or false for a kind that names no input, None included. It reads
 // and changes no state, so a host test gives it each refused kind.
 input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Record, ok: bool) {
-	kind := system.member_of_word(Input, u64(record.kind)) or_return
+	kind := enum_word.member_of_word(Input, u64(record.kind)) or_return
 	switch kind {
 	case .None:
 		return {}, false

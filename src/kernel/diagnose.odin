@@ -1,5 +1,6 @@
 package kernel
 
+import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -488,7 +489,7 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 		}
 	}
 	record.operation = i64(command.kind)
-	operation, known := op.member_of_word(op.Operation, u64(command.kind))
+	operation, known := enum_word.member_of_word(op.Operation, u64(command.kind))
 	if !known || operation == .None {
 		record_set(&record, .Unknown_Operation, .None, 0, u64(command.kind), u64(max(op.Operation)), 0)
 		return record
@@ -535,7 +536,7 @@ diagnose_command :: proc "contextless" (program_index: u32, command: ring.Record
 	}
 	named := command
 	named.kind &~= op.COMMAND_NAMES_ERROR_DETAILS
-	operation, known := op.member_of_word(op.Operation, u64(named.kind))
+	operation, known := enum_word.member_of_word(op.Operation, u64(named.kind))
 	if !known || operation == .None {
 		return diagnose(program_index, command, status) // Unknown_Operation, with the kind that the program sent.
 	}
@@ -743,7 +744,7 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 		// registers, Control for a write of the schedule or of the
 		// placement. A command of the schedule or of the placement
 		// also takes the machine handle, with Schedule and Inspect.
-		if command, command_known := op.member_of_word(op.Thread_Control_Command, v[2]); n == 0 && command_known {
+		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); n == 0 && command_known {
 			rights = op.thread_control_rights(command)
 			machine_rights, by_machine_number := op.thread_control_machine_rights(command)
 			if op.thread_control_names_a_program(command) {
@@ -955,7 +956,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, 0)
 	case .Inspect:
 		size: u64
-		if kind, kind_known := op.member_of_word(op.Inspect_Kind, v[1]); kind_known {
+		if kind, kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1]); kind_known {
 			size = INSPECT_SIZES[kind]
 		}
 		if v[4] < size {
@@ -1182,7 +1183,7 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		}
 		record_set(record, .Full, .Budgets, 0, 0, BUDGET_CAPACITY - 1, 0)
 	case .Device_Create:
-		device_kind, device_kind_known := op.member_of_word(op.Device_Kind, v[1])
+		device_kind, device_kind_known := enum_word.member_of_word(op.Device_Kind, v[1])
 		switch {
 		case !device_kind_known:
 			return false
@@ -1256,7 +1257,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 	case .Inspect:
-		if kind, kind_known := op.member_of_word(op.Inspect_Kind, v[1]); !kind_known || kind != .Pages {
+		if kind, kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1]); !kind_known || kind != .Pages {
 			break
 		}
 		page_report: op.Page_Report
@@ -1347,7 +1348,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		}
 		// A command of the thread counters on a machine with no counter
 		// plan: the value is the operation, as for a guest.
-		if command, command_known := op.member_of_word(op.Thread_Control_Command, v[2]); command_known && op.thread_control_counts_the_caller(command) && counter_plan.vendor == .None {
+		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known && op.thread_control_counts_the_caller(command) && counter_plan.vendor == .None {
 			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
 			return true
 		}
@@ -1358,7 +1359,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 	case .Fault_Handler_Set:
-		action, action_known := op.member_of_word(op.Fault_Handler_Action, v[1])
+		action, action_known := enum_word.member_of_word(op.Fault_Handler_Action, v[1])
 		switch {
 		case !action_known:
 			record_set(record, .Bad_Value, .None, 2, v[1], u64(max(op.Fault_Handler_Action)), 0)
@@ -1386,7 +1387,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// Display_Memory over a range of device memory that does not hold
 		// the framebuffer of the firmware: the record gives the address
 		// and, as its limit, the address of that framebuffer.
-		if device_kind, device_kind_known := op.member_of_word(op.Device_Kind, v[1]); device_kind_known && device_kind == .Display_Memory && device_range(v[2], v[3]) && !display_memory_range(v[2], v[3]) {
+		if device_kind, device_kind_known := enum_word.member_of_word(op.Device_Kind, v[1]); device_kind_known && device_kind == .Display_Memory && device_range(v[2], v[3]) && !display_memory_range(v[2], v[3]) {
 			record_set(record, .Bad_Value, .None, 3, v[2], boot_record.framebuffer.address, 0)
 			return true
 		}

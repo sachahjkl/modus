@@ -1,5 +1,6 @@
 package operation
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 
 // The table of error details of a kernel command (docs/MODULE_CONTRACT.md,
@@ -110,7 +111,7 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 	case .Thread_Control:
 		// The command decides what the thread argument names; with no
 		// command, the operation returns before it.
-		command, known := member_of_word(Thread_Control_Command, values[2])
+		command, known := enum_word.member_of_word(Thread_Control_Command, values[2])
 		return index != 0 || known && command != .None
 	case .Fault_Handler_Set:
 		// The end of the delivery, or a word of no action, returns before
