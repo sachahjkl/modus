@@ -8,8 +8,9 @@ import "core:testing"
 // A small tree with a kernel, two contract packages, one support package and
 // the manifest of the cryptography of Odin, at the folders of the tool: the
 // check reads them there. Each file is one import that the rule allows. The
-// tree holds each folder of src/ that the check walks: a folder that it names
-// and the tree lacks stops the read of the whole tree.
+// tree holds each folder of src/ that the check walks, and an empty folder
+// of the tool: a folder that it names and the tree lacks stops the read of
+// the whole tree.
 @(private = "file")
 library_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "library_imports_test_*", context.temp_allocator)
@@ -18,6 +19,7 @@ library_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	for name in folders {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
+	_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, LIBRARY_IMPORTS_TOOL_FOLDER))
 	for name in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_CONTRACT + "/record/inner", SOURCE_FOLDER_SUPPORT + "/sentence", SOURCE_FOLDER_SUPPORT + "/cryptography"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
@@ -94,10 +96,11 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 	}
 
 	// A relative path names a folder of the repository: a host test of a
-	// source of the system and a file of the copy reach a module there. A
-	// source that is not a test imports no relative path.
+	// source of the system and a file of the copy reach a folder there, as
+	// the runtime. Where the path lands is another rule. A source that is not
+	// a test imports no relative path.
 	for form in ([]Library_Source_Form{system_test, copied_source}) {
-		for path in ([]string{"../sentence", "./ref", "../../../modules/cryptography"}) {
+		for path in ([]string{"../sentence", "./ref", "../../../runtime"}) {
 			testing.expectf(t, library_import_is_allowed(path, form), "%q is an import of %v", path, form)
 		}
 	}
@@ -185,6 +188,7 @@ library_imports_of_an_allowed_tree :: proc(t: ^testing.T) {
 	testing.expect_value(t, reading.test_count, 1)
 	testing.expect_value(t, reading.copy_count, 0)
 	testing.expect_value(t, reading.import_count, 8)
+	testing.expect_value(t, reading.tool_count, 0)
 }
 
 // The two imports that the compiler refused when the kernel had the
@@ -262,7 +266,7 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	// whose relative path lands beside the kernel, not in it.
 	clean := library_tree_make(t)
 	defer os.remove_all(clean)
-	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/beside_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../modules/cryptography\"\nimport \"../../../kernel_notes\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/beside_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../runtime\"\nimport \"../../../kernel_notes\"\n")
 	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/iommu")
 	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors")
 	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/devices.odin", "package kernel\n\nimport iommu \"" + part + "\"\n")
@@ -274,17 +278,95 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
 }
 
+// A relative import never lands in the folder of a module from outside it.
+// Each is refused with its line: from a host test of a support package, to
+// the module, to a folder under it, to src/modules itself, to the folder of
+// a group, and by a path that starts with "./"; from a host test of another
+// module; and from files of tools/, at the top and inside a `when`. The
+// last case: a relative import to the runtime, a foreign import of its
+// assembly, a folder beside src/modules whose name starts the same, a host
+// test of a module that reaches a folder of its own module, and a file of
+// tools/ that holds the refused line only inside a text.
+@(test)
+library_relative_import_into_a_module_is_refused :: proc(t: ^testing.T) {
+	root := library_tree_make(t)
+	defer os.remove_all(root)
+	library_tree_folder_make(root, SYSTEM_MODULE_SOURCES + "console")
+	library_tree_folder_make(root, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool")
+	refused := []struct {
+		file:   string,
+		source: string,
+		text:   string,
+	} {
+		{SOURCE_FOLDER_SUPPORT + "/sentence/peer_test.odin", "", "\"../../../modules/libraries/cryptography\""},
+		{SOURCE_FOLDER_SUPPORT + "/sentence/inner_test.odin", "", "\"../../../modules/libraries/cryptography/inner\""},
+		{SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin", "", "\"../../../modules\""},
+		{SOURCE_FOLDER_SUPPORT + "/sentence/group_test.odin", "", "\"../../../modules/libraries\""},
+		{SOURCE_FOLDER_SUPPORT + "/sentence/dot_test.odin", "", "\"./../../../modules/libraries/cryptography\""},
+		{SYSTEM_MODULE_SOURCES + "console/main_test.odin", "", "\"../../libraries/cryptography\""},
+		{LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin", "package modustool\n\nimport \"core:fmt\"\nimport cryptography_module \"../../src/modules/libraries/cryptography\"\n", "\"../../src/modules/libraries/cryptography\""},
+		{LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/inside_when.odin", "package modustool\n\nimport \"core:fmt\"\n\nwhen false {\n\timport \"../../src/modules/system/console\"\n}\n", "\"../../src/modules/system/console\""},
+	}
+	for item in refused {
+		source := item.source
+		if source == "" {
+			source = strings.concatenate({LIBRARY_HOST_BUILD_LINE, "\npackage sentence\n\nimport \"core:testing\"\nimport ", item.text, "\n"}, context.temp_allocator)
+		}
+		library_tree_file_write(root, item.file, source)
+	}
+	reading, read_ok := library_import_breaches_of_tree(root)
+	testing.expect(t, read_ok)
+	testing.expectf(t, len(reading.breaches[:]) == len(refused), "%v", reading.breaches[:])
+	testing.expect_value(t, reading.tool_count, 2)
+	for item in refused {
+		breach, found := breach_of_file(reading.breaches[:], item.file)
+		if !testing.expectf(t, found, "%s is not refused", item.file) {
+			continue
+		}
+		testing.expect_value(t, breach.reason, Library_Import_Breach_Reason.Relative_Import_Into_A_Module)
+		testing.expect_value(t, breach.text, item.text)
+		testing.expect_value(t, breach_count_of_file(reading.breaches[:], item.file), 1)
+	}
+	peer, peer_found := breach_of_file(reading.breaches[:], LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin")
+	if testing.expect(t, peer_found, "the file of the tool is not refused") {
+		testing.expect_value(t, peer.line, 4)
+		sentence := library_import_breach_sentence(peer)
+		testing.expect(t, strings.contains(sentence, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin:4: the import \"../../src/modules/libraries/cryptography\" is refused"), sentence)
+		testing.expect(t, strings.contains(sentence, PRIVATE_IMPORT_START + "<module>/<part>"), sentence)
+	}
+	inside_when, when_found := breach_of_file(reading.breaches[:], LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/inside_when.odin")
+	testing.expect(t, when_found && inside_when.line == 6, "the import of the tool inside a `when` is not read")
+
+	// The last case.
+	clean := library_tree_make(t)
+	defer os.remove_all(clean)
+	library_tree_folder_make(clean, SYSTEM_MODULE_SOURCES + "console")
+	library_tree_folder_make(clean, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool")
+	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/memory_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"../../../runtime\"\nimport \"../../../modules_notes\"\n\nforeign import memory \"../../../runtime/memory_for_host_tests.asm\"\n")
+	library_tree_file_write(clean, SYSTEM_MODULE_SOURCES + "console/main_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage console\n\nimport \"core:testing\"\nimport \"./history\"\nimport \"../console/lines\"\n")
+	library_tree_file_write(clean, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin", "package modustool\n\nimport \"core:fmt\"\nimport \"" + PRIVATE_IMPORT_START + "cryptography/cryptography_primitives\"\n\nforeign import memory \"../../src/runtime/memory_for_host_tests.asm\"\n\nFIXTURE :: `\nimport \"../../src/modules/libraries/cryptography\"\n`\n")
+	accepted, accepted_ok := library_import_breaches_of_tree(clean)
+	testing.expect(t, accepted_ok)
+	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
+	testing.expect_value(t, accepted.tool_count, 1)
+}
+
 // A private part is imported from the folder of its module and from the
 // private parts of the same module only. Each other importer is refused with
 // its line: another module, a support package and its host test, a private
 // part of another module, a contract package; and a path that names no
-// module of the table, or a module and no part. The last case: the module,
-// a private part of the same module and its host test import it.
+// module of the table, or a module and no part; and a source of a support
+// package that imports a private part of a module of the group libraries.
+// The last case: the module, a private part of the same module and its host
+// test import it, and a host test of a support package imports a private
+// part of a module of the group libraries, which it stands in for.
 @(test)
 library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
 	part :: PRIVATE_IMPORT_START + "console/line_cutter"
+	library_part :: PRIVATE_IMPORT_START + "cryptography/cryptography_primitives"
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/seal.odin", "package sentence\n\nimport \"" + library_part + "\"\n")
 	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
 	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/compositor/panel")
 	library_tree_folder_make(root, SYSTEM_MODULE_SOURCES + "compositor")
@@ -299,7 +381,7 @@ library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^test
 	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/cut.odin", "package ring\n\nimport \"" + part + "\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	testing.expectf(t, len(reading.breaches[:]) == 7, "%v", reading.breaches[:])
+	testing.expectf(t, len(reading.breaches[:]) == 8, "%v", reading.breaches[:])
 	other, other_found := breach_of_file(reading.breaches[:], SYSTEM_MODULE_SOURCES + "compositor/main.odin")
 	testing.expect(t, other_found, "the module that imports a private part of another module is not named")
 	testing.expect_value(t, other.line, 3)
@@ -307,7 +389,7 @@ library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^test
 	testing.expect_value(t, other.reason, Library_Import_Breach_Reason.Private_Part_Of_Another_Module)
 	sentence := library_import_breach_sentence(other)
 	testing.expect(t, strings.contains(sentence, SYSTEM_MODULE_SOURCES + "compositor/main.odin:3: the import \"" + part + "\" is refused"), sentence)
-	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", SYSTEM_MODULE_SOURCES + "console/unknown.odin", SYSTEM_MODULE_SOURCES + "console/short.odin"}) {
+	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/seal.odin", SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", SYSTEM_MODULE_SOURCES + "console/unknown.odin", SYSTEM_MODULE_SOURCES + "console/short.odin"}) {
 		breach, found := breach_of_file(reading.breaches[:], file)
 		testing.expectf(t, found && breach.reason == .Private_Part_Of_Another_Module && breach_count_of_file(reading.breaches[:], file) == 1, "%s: the import is not refused one time as a private part of another module", file)
 	}
@@ -326,6 +408,7 @@ library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^test
 	library_tree_file_write(clean, SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + part + "\"\n")
 	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + part + "\"\n")
 	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage history\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/seal_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + library_part + "\"\n")
 	accepted, accepted_ok := library_import_breaches_of_tree(clean)
 	testing.expect(t, accepted_ok)
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])

@@ -100,7 +100,19 @@ A format that only the kernel reads is not a contract, even when the hardware or
 **The chosen form: a third part of the library, `src/library/private/<module>/<part>`, imported as `modus:private/<module>/<part>`.** The tool holds the border.
 
 - It needs nothing from the compiler: no new flag, no new setting of a language server. The compiler accepts the import in each file; the check of the imports refuses it outside its module.
-- The tool imports a private part with the same line as its module. The tool is a second reader of five of the sixteen private parts: it writes the disk images of the storage service (`storage_mount`, `storage_object`, `storage_tree`), places a click on the bar of the compositor (`bar`), and signs the rows of a replacement (`replacement_signature`). The fuzzer names a package by the same path.
+- The tool imports a private part with the same line as its module. The tool is a second reader of six of the seventeen private parts: it writes the disk images of the storage service (`storage_mount`, `storage_object`, `storage_tree`), places a click on the bar of the compositor (`bar`), signs the rows of a replacement (`replacement_signature`), and runs the cryptography of its QUIC peers (`cryptography_primitives`). The fuzzer names a package by the same path.
+
+### The code of a library module that a host program calls
+
+A host program cannot load a module, so the code of an export that a host program calls is a private part of its module: `cryptography_primitives` holds the code of the exports of the module `cryptography`, each under the same name and with the same signature, and the module exports each one with a call. The peers of the tool and the host tests of `quic`, which fill `quic.Cryptography` with these procedures, import the part. The module keeps its names, its signatures and its error records, so its description and the hash of its exports stay. `argon2id` stays in the module, because no host program calls it and its cost record is a record of the description.
+
+- **A host test may import a private part of a module of the group `libraries`.** A host test is no owner, and such a test stands in for the module whose exports its package calls through its import slots. A private part of a module of another group stays refused in a host test of another module or package.
+- **A relative import never lands in a module folder** from a file outside that folder, in `src` or in `tools`. The compiler accepts it in a host test and in the tool, and it makes the code of one module a library of another reader, beside its import slots.
+
+Refused forms:
+
+- **The code in a support package of its own.** One module alone compiles it in; the tool and the host tests are no owners, so the package has one owner, and the owner rule refuses it.
+- **The relative import of the module folder, as before.** It names a module by its path, which a move of the module group changes, and it hides from the check of the imports a reader of the module.
 - The word `private` tells a third party that the package is not for it, in the import line itself.
 
 Refused forms:
@@ -217,11 +229,11 @@ Refused forms:
 
 What changed: the command of the flake compiled the whole tool at each call (`odin run`). It now runs a binary that is compiled once for each change of its sources.
 
-**In the check of the flake.** The tool is a derivation of its own, `modustoolBinary`. Its source is the set of files that its compile reads: the `.odin` files that are not tests of `tools/modustool`, of `src/library`, of each folder under `src/kernel` (the kernel parts, not the kernel), of `src/modules/libraries/cryptography` (the peer imports it by a relative path), and the font that a fuzz target loads (`resources/fonts/commit_mono.ttf`). The check `boot-test` and the release shell run its binary. Nix builds it again only when one of those files changes: a change of a guide, a test or a program does not compile the tool. The binary is compiled with `-define:TOOL_BUILDS_ITSELF=false`, and never compiles itself: its sources are the inputs of its derivation.
+**In the check of the flake.** The tool is a derivation of its own, `modustoolBinary`. Its source is the set of files that its compile reads: the `.odin` files that are not tests of `tools/modustool`, of `src/library`, of each folder under `src/kernel` (the kernel parts, not the kernel), and the font that a fuzz target loads (`resources/fonts/commit_mono.ttf`). The check `boot-test` and the release shell run its binary. Nix builds it again only when one of those files changes: a change of a guide, a test or a program does not compile the tool. The binary is compiled with `-define:TOOL_BUILDS_ITSELF=false`, and never compiles itself: its sources are the inputs of its derivation.
 
 **In the development shell.** The command `modustool` runs `build/tool/modustool`. When the file is absent, the command compiles it first. Before each command, the binary compares the build key of its sources with the key of its build record, `build/tool/modustool.build_record`, as the incremental build does for a module ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The incremental build"). When the two keys differ, it compiles the tool again, then runs the new binary with the same arguments and ends with its status. The key covers:
 
-- the list of the files that the compiler read (`-export-dependencies`): the sources of the tool, of the two source libraries, of `src/modules/libraries/cryptography`, of the libraries of the compiler, and the files of `#load`;
+- the list of the files that the compiler read (`-export-dependencies`): the sources of the tool, of the two source libraries, of the libraries of the compiler, and the files of `#load`;
 - every other file of the folder of each of those sources, so a new file in a package is a change;
 - the command of the compiler with each flag, and the program `odin` (its path in the store, its size and its time).
 
@@ -256,14 +268,15 @@ The tool holds each rule at the start of each build, and in `modustool check` ([
 - The kernel and a kernel part import a contract package or a kernel part only. A contract package imports no support package and no private part.
 - `kernel:` is refused in each file of `src/` outside `src/kernel`, and so is a relative path that lands in `src/kernel`.
 - A source of a kernel part is pure: each package variable is `@(rodata)`, no variable is `@(static)` or `@(thread_local)`, and it holds no foreign import or block, no asm template and no intrinsic that reads the machine.
-- A private part `modus:private/<module>/...` is imported only by a file of the folder of the module `<module>` or of another private part of the same module. A name of `<module>` that names no row of the table of the modules is refused.
+- A private part `modus:private/<module>/...` is imported only by a file of the folder of the module `<module>` or of another private part of the same module, and by a host test when `<module>` is in the module group `libraries`. A name of `<module>` that names no row of the table of the modules is refused.
 - The owners of a package of the library are the bodies of code (the kernel, the boot program, each module) whose chain of imports reaches it. A support package has two owners or more. A private part has its module as its one owner. A contract package that the kernel alone owns is refused: it is a kernel part. The tool is not an owner: it builds the system and is not a part of it. A refusal names the one owner, so the message says where the package goes.
 - A path with `..` or with a part `.` after the name of a library is refused. A relative import is refused in a source; a host test and a file of the copy of the cryptography of Odin reach a folder of the repository by one.
+- A relative import that lands in the folder of a module, `src/modules/<group>/<module>` or under it, is refused in each file of `src` outside that folder and in each file of `tools`. The check resolves the path from the folder of the file. A foreign import, such as the assembly of `src/runtime` that a host test links, is not this rule.
 - A file that the parser cannot read whole is refused as a file.
 
 **Why this is complete**: if no file of `src/` imports outside its list, no chain of imports from the kernel reaches a support package, and no source that a build of the system reads reaches the host.
 
-**The test that breaks this design on its first day**: a support package that only one module imports, a private part of `console` that `compositor` imports, a kernel part that a module imports or that a host test of the library reaches by a relative path, and a kernel part with a package variable that is not `@(rodata)` or a variable marked `@(static)`. The build must stop and name each file. A host test of the tool holds each case on a small tree.
+**The test that breaks this design on its first day**: a support package that only one module imports, a private part of `console` that `compositor` imports, a kernel part that a module imports or that a host test of the library reaches by a relative path, a module that a host test or the tool reaches by a relative path, and a kernel part with a package variable that is not `@(rodata)` or a variable marked `@(static)`. The build must stop and name each file. A host test of the tool holds each case on a small tree.
 
 **What the contract-only compile gave up.** A contract package that no module and no host test imports is compiled by no command. Today two contract packages have no importer in `src`: the tool reads `operation_sequence`, the format of a sequence of the fuzzing of the kernel operations, and `release`, the version numbers. The owner rule does not refuse them, because the kernel does not own them; the compile of the tool compiles each.
 

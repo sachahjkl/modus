@@ -123,6 +123,8 @@ A call from `src/library/support/quic`, through its procedure table `quic.Crypto
 
 `src/modules/libraries/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
 
+The code of each export but `argon2id` is the private part `src/library/private/cryptography/cryptography_primitives`, with the same names and signatures; each export of the module calls it. A host program cannot load a module, so the QUIC peers of the tool and the host tests of `quic` fill `quic.Cryptography` from that part, and run the code that the module ships. The hash of the module names that code too, because the module compiles the part in.
+
 | Export | Parameters | Result |
 |---|---|---|
 | `seal_with_chacha20_poly1305`, `seal_with_aes_128_gcm` | key, nonce (12), additional data, text, result, error | The sealed text and its tag of 16 bytes |
