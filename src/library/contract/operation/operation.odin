@@ -1672,16 +1672,28 @@ Module_Writer :: enum u64 {
 // `inspect.modules()` and of `manual.running()` has this size.
 MODULE_WRITER_NAME_CAPACITY :: 8
 
+// module_writer_of_word reads the word of a writer. A word that names no
+// writer is refused: a reader that took it for a writer would say who made
+// a claim that no kernel marked.
+module_writer_of_word :: proc "contextless" (word: u64) -> (writer: Module_Writer, ok: bool) {
+	for member in Module_Writer {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // module_writer_name gives the word of a writer in a row of a table:
-// "program" or "starter". A value out of the enumeration gives "unknown".
-// Each word fits MODULE_WRITER_NAME_CAPACITY bytes.
+// "program" or "starter". Each word fits MODULE_WRITER_NAME_CAPACITY bytes.
 module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
-	#partial switch writer {
+	switch writer {
 	case .Program:
 		return "program"
 	case .Starter:
 		return "starter"
 	}
+	// Only a cast that skipped module_writer_of_word reaches this line.
 	return "unknown"
 }
 
@@ -2228,14 +2240,23 @@ thread_control_names_a_program :: proc "contextless" (command: Thread_Control_Co
 // and never the bytes that its program holds. Control also gives the write
 // of the placement, which only narrows: a holder that can end a thread can
 // also give it fewer processors, which is less.
+//
+// The switch names each command, so that a new command gets no rights by a
+// default: its author chooses them.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
-	#partial switch command {
+	switch command {
 	case .Write_Registers, .Write_Extended_State, .Read_Memory:
 		return {.Inspect, .Write}
 	case .Write_Schedule, .Write_Placement:
 		return {.Control}
+	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+		return {.Inspect}
 	}
-	return {.Inspect}
+	// Only a cast that skipped the border of the command reaches this line:
+	// every right, with the bits of no right, which no handle holds. The
+	// result is a requirement, never a grant: a caller that used it as the
+	// rights of a handle or as a mask would give every right.
+	return transmute(Rights)max(u32)
 }
 
 // thread_control_machine_rights says if a command of Thread_Control also
@@ -2254,10 +2275,13 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 // machine handle only, with the same rights: a read of any program is a
 // report of the machine.
 thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Command) -> (rights: Rights, taken: bool) {
-	#partial switch command {
+	switch command {
 	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
 		return {.Schedule, .Inspect}, true
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters:
+		return {}, false
 	}
+	// Only a cast that skipped the border of the command reaches this line.
 	return {}, false
 }
 
@@ -2269,11 +2293,14 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 // and writes a thread; the share of a thread and its processors are not a
 // part of debugging, and the thread counters are of the calling thread.
 thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
-	#partial switch command {
+	switch command {
 	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 		return false
+	case .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory:
+		return true
 	}
-	return true
+	// Only a cast that skipped the border of the command reaches this line.
+	return false
 }
 
 // thread_control_needs_the_debugger says if a command of Thread_Control
@@ -2786,16 +2813,28 @@ memory_list_pages :: proc "contextless" (page_count: u64) -> u64 {
 	case page_count <= MEMORY_LIST_ENTRIES:
 		return 1
 	}
-	return 1 + (page_count + MEMORY_LIST_ENTRIES - 1) / MEMORY_LIST_ENTRIES
+	// The division rounds up with no sum: a count near the top of the type
+	// would wrap the sum to a few list pages.
+	list_pages := 1 + page_count / MEMORY_LIST_ENTRIES
+	if page_count % MEMORY_LIST_ENTRIES != 0 {
+		list_pages += 1
+	}
+	return list_pages
 }
 
 // memory_cost gives the pages that Memory_Create takes from a budget for an
 // object of `page_count` pages that is not contiguous and not
-// `Uncommitted`: the pages and the list pages.
+// `Uncommitted`: the pages and the list pages. A cost past the type is the
+// largest value: no budget holds it, so the cost of a count that a caller
+// asks for and that no object has never wraps to a small one.
 //
 // Example: `memory_cost(16)` is 17; `memory_cost(4)` is 4.
 memory_cost :: proc "contextless" (page_count: u64) -> u64 {
-	return page_count + memory_list_pages(page_count)
+	list_pages := memory_list_pages(page_count)
+	if page_count > max(u64) - list_pages {
+		return max(u64)
+	}
+	return page_count + list_pages
 }
 
 // A flag of `Memory_Create`: how the pages of a new memory object get their
@@ -3350,12 +3389,22 @@ Boot_Range :: struct {
 // boot_range_add adds a run of memory to a report. The runs come by
 // address. A run that continues the last one, with the same kind, joins it.
 // A run after the first `BOOT_RANGE_CAPACITY` runs is counted in
-// `firmware_ranges` and not kept.
+// `firmware_ranges` and not kept. A run of no page is counted and not kept:
+// it holds no memory. A join whose end would pass the last address, or be
+// exactly 2^64, is refused, and the run is a run of its own: the end of
+// the last run would wrap to a low address and join a run that does not
+// follow it. No physical memory is at the top, so the refusal of an end of
+// 2^64 loses nothing.
 boot_range_add :: proc "contextless" (report: ^Boot_Report, start, page_count, kind: u64) {
 	report.firmware_ranges += 1
-	if report.range_count != 0 {
+	if page_count == 0 {
+		return
+	}
+	if report.range_count != 0 && report.range_count <= BOOT_RANGE_CAPACITY {
 		last := &report.ranges[report.range_count - 1]
-		if last.kind == kind && last.start + last.page_count * 4096 == start {
+		last_end_fits := last.page_count <= (max(u64) - last.start) / 4096
+		pages_fit := page_count <= (max(u64) - last.start) / 4096 - last.page_count
+		if last_end_fits && pages_fit && last.kind == kind && last.start + last.page_count * 4096 == start {
 			last.page_count += page_count
 			return
 		}

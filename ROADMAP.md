@@ -13,6 +13,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A command push that the ring refuses is never ignored.** The kernel keeps the completion of a command that finds the completion queue of its program full, or refuses the command with a status that the program reads, and `system.command_call` gives `Bad_Operation` for a command that its kernel ring refuses. A program that leaves its completions unread then loses no answer in silence.
 - **Byte layouts of the other formats.** The guides show the records of the kernel operations, the fault ring and the disk formats of the storage service byte by byte, as the guide of the module contract shows the module file. [Design](src/md/features/byte_layout.md)
 - **A serial port that keeps every line of a flood.** A principal who debugs a flood of log lines sees every line on the serial port, and not a count of the lines that it lost. [Design](src/md/features/log_side_channels.md)
 - **No defence against a cut int1 once the hosts run Linux 7.3.** The kernel stops reading the bytes of a program at a debug exception with no status, when every host of the test machines runs Linux 7.3 or later, whose KVM no longer gives a cut `int1` again. A debug exception then costs no read of the program, and the kernel keeps no rule for one bug of one hypervisor.

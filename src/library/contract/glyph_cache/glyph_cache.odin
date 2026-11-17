@@ -153,12 +153,12 @@ Problem_Kind :: enum u8 {
 	Bad_Magic, // The file does not start with MAGIC.
 	Bad_Version, // Another version.
 	Bad_Size, // file_size is not the size of the file.
-	Bad_Count, // A count is 0 or above its limit, the count of the characters is not CHARACTER_COUNT, or a size does not start where the sizes before it end.
+	Bad_Count, // A count is 0 or above its limit, the count of the characters is not CHARACTER_COUNT, a size does not start where the sizes before it end, or a reserved field of the header or of a size is not 0.
 	Bad_Cell, // A cell size or a baseline is out of its limits.
 	Bad_Words, // The words are not where the header says.
 	Bad_Glyph, // A glyph has rows outside its line, a width or a left side out of the limits, or words outside the words.
 	Bad_Advance, // An advance is negative or above ADVANCE_LIMIT.
-	Bad_Pair, // A pair names a character outside the cache, is out of order or twice, or has an adjustment above ADVANCE_LIMIT.
+	Bad_Pair, // A pair names a character outside the cache, is out of order or twice, has an adjustment above ADVANCE_LIMIT, or has a reserved field that is not 0.
 	Bad_Flags, // A flag that this reader does not know, or a filter past FILTER_COUNT.
 	Bad_Name, // font_name has a byte outside 32 to 126 before its end, no zero byte, or a byte after its end.
 	Proportional, // A valid cache of a proportional font, where a reader needs the cache of a font of cells.
@@ -225,6 +225,11 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 	if header.reserved_first != 0 {
 		return {}, {kind = .Bad_Count, value = u64(header.reserved_first), limit = 0}
 	}
+	// A reserved field that is not 0 is refused, so that a later version can
+	// give it a meaning that no reader of this version takes for nothing.
+	if header.reserved != 0 {
+		return {}, {kind = .Bad_Count, value = u64(header.reserved), limit = 0}
+	}
 	if header.size_count == 0 || header.size_count > SIZE_LIMIT {
 		return {}, {kind = .Bad_Count, value = u64(header.size_count), limit = SIZE_LIMIT}
 	}
@@ -265,6 +270,9 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 		}
 		if int(size.first_glyph) != glyph_count {
 			return {}, {kind = .Bad_Count, index = u32(index), value = u64(size.first_glyph), limit = u64(glyph_count)}
+		}
+		if size.reserved != 0 {
+			return {}, {kind = .Bad_Count, index = u32(index), value = u64(size.reserved), limit = 0}
 		}
 		glyph_count += int(size.position_count) * character_count
 	}
@@ -309,6 +317,10 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 			key := int(pair.left) << 8 | int(pair.right)
 			if int(pair.left) >= character_count || int(pair.right) >= character_count || key <= previous || pair.adjustment < -ADVANCE_LIMIT || pair.adjustment > ADVANCE_LIMIT {
 				return {}, {kind = .Bad_Pair, index = u32(index * int(header.pair_count) + offset), value = u64(key), limit = u64(previous + 1)}
+			}
+			// Its own record, so that a reader sees the field and not an order.
+			if pair.reserved != 0 {
+				return {}, {kind = .Bad_Pair, index = u32(index * int(header.pair_count) + offset), value = u64(pair.reserved), limit = 0}
 			}
 			previous = key
 		}
