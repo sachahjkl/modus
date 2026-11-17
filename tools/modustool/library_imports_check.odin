@@ -497,7 +497,7 @@ library_private_import_is_allowed :: proc(file, path: string) -> bool {
 	if !found {
 		return false
 	}
-	return strings.has_prefix(file, source + "/") || strings.has_prefix(file, SOURCE_FOLDER_PRIVATE + "/" + module_name + "/")
+	return strings.has_prefix(file, join(source, "/")) || strings.has_prefix(file, join(SOURCE_FOLDER_PRIVATE, "/", module_name, "/"))
 }
 
 // library_package_node gives the package of the library that a path inside
@@ -532,12 +532,12 @@ library_owner_unit_of :: proc(file: string) -> (unit: string, is_package: bool) 
 		return rest, true
 	}
 	for build in module_builds {
-		if !build.kernel && strings.has_prefix(file, build.source + "/") {
+		if !build.kernel && strings.has_prefix(file, join(build.source, "/")) {
 			return build.name, false
 		}
 	}
 	for folder in ([]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME}) {
-		if strings.has_prefix(file, folder + "/") {
+		if strings.has_prefix(file, join(folder, "/")) {
 			return folder, false
 		}
 	}

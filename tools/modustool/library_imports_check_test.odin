@@ -284,7 +284,7 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	part := PRIVATE_IMPORT_START + "console/line_cutter"
+	part :: PRIVATE_IMPORT_START + "console/line_cutter"
 	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
 	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/compositor/panel")
 	library_tree_folder_make(root, SOURCE_FOLDER_PROGRAMS + "/compositor")
@@ -363,7 +363,7 @@ library_support_package_with_one_owner_is_refused :: proc(t: ^testing.T) {
 		breach, found := breach_of_file(owners, folder)
 		testing.expectf(t, found && breach.reason == .Support_Package_With_One_Owner && breach.text == "console", "%s: %v", folder, breach)
 		sentence := library_import_breach_sentence(breach)
-		testing.expect(t, strings.contains(sentence, folder + ": only console reaches this support package") && strings.contains(sentence, SOURCE_FOLDER_PRIVATE + "/<module>/"), sentence)
+		testing.expect(t, strings.contains(sentence, join(folder, ": only console reaches this support package")) && strings.contains(sentence, SOURCE_FOLDER_PRIVATE + "/<module>/"), sentence)
 	}
 	unused, unused_found := breach_of_file(owners, SOURCE_FOLDER_PRIVATE + "/console/unused")
 	testing.expect(t, unused_found && unused.reason == .Private_Part_Without_Its_Module && unused.text == "", "the private part that its module does not reach is not refused")
