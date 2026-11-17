@@ -416,7 +416,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a program by its name: a service, a private store, a right of the machine.
 
-The root service decides the start grants of a program from its name (its row of `program_roles`) one time, at its start, and keeps them in its program role. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
+The root service takes the start grants of a program from its row of `program_roles` at its start, and keeps them in its program role. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
 
 Example: `debug("notes")` is refused: "the grant Store of the program refuses it".
 
@@ -440,7 +440,7 @@ Do not use: permission, access right, token.
 
 A program role is what the root service gives a program at its start: its start grants and the terms beside them, kept with the program while it runs.
 
-The root service reads the role of a program of the boot image one time, at its start, from its name (`role_of` in `src/programs/root/roles.odin`): its row in the one table `program_roles`, with its start grants, the services that it can connect to, the blocks of its private store, the size of its terminal. Each rule after the start reads that role, never the name. A disk program has the role of the row of its nickname in the disk grant table.
+At its start, the root service reads the role of a program of the boot image from its row in the table `program_roles`: its start grants, the services that it can connect to, the blocks of its private store, the size of its terminal. Each rule after the start reads that role, never the name. A disk program has the role of the row of its nickname in the disk grant table.
 
 Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
 

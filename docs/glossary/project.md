@@ -790,7 +790,7 @@ Do not use: packet diagram, struct diagram, byte map.
 
 A guide diagram is a picture in SVG that the tool draws, when it builds the site, from a fence `mermaid` of a guide: a flowchart or a sequence diagram.
 
-It shows the parts of the system and their order, or a flow in time, in the page of the guide, with the colors of the site and no script. The tool reads a stated subset of the text form of mermaid, measures each label with the font that the site serves for the diagrams, and lays out the boxes and the lines itself. A diagram that it cannot draw stops the build of the site with its file and its line. The text of the diagram stays under the picture. A guide diagram is not a byte layout: a byte layout draws the bytes of a record from the code.
+It shows the parts of the system and their order, or a flow in time, with the colors of the site and no script. The tool reads a stated subset of mermaid, measures each label with the font of the diagrams, and lays out the boxes and the lines. A diagram that it cannot draw stops the build of the site with its line. The text of the diagram stays under the picture. It is not a byte layout, which draws a record from the code.
 
 The design: `docs/SITE.md`, "The diagrams".
 
@@ -930,7 +930,7 @@ Do not use: cache key, fingerprint, input hash (for the whole key).
 
 A build record is the small text file that the tool writes after it built one thing: its build key, the hash of each output, and the list of the files that the compiler read.
 
-A module has one for each step of its build, in `build/modules/`; a boot volume has one in `build/boot/`; the binary of the tool has one in `build/tool/`. At the next build, the tool computes the build key again from the recorded files as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error.
+A module has one for each step of its build, in `build/modules/`; a boot volume has one in `build/boot/`; the binary of the tool has one in `build/tool/`. At the next build, the tool computes the key again from the recorded files, and keeps the outputs when the key and each hash of an output are the same. A record that is absent or damaged is no record: the tool builds, with no error.
 
 It is not the measure record and not the line of the reproducible build that the site quotes.
 
