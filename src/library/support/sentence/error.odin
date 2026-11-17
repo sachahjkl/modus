@@ -74,7 +74,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	}
 	switch kind {
 	case .None:
-		write_part(writer, "no error")
+		// The sentence is read after a call that failed: a record of zeros
+		// says that the callee wrote none, never that no error occurred.
+		write_part(writer, "the call failed, and it wrote no error record")
 	case .Empty:
 		subject(writer, record, argument)
 		write_part(writer, " is empty; it must have 1 to ")

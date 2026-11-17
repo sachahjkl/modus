@@ -99,6 +99,14 @@ service_wait :: proc "contextless" (wait: ^Wait, service: ^Service) {
 	}
 }
 
+// service_command_of_record is the border of a command of the service
+// ring: the member, or false for a kind that names no command, None
+// included. It reads and changes no state.
+service_command_of_record :: proc "contextless" (command: ring.Record) -> (service_command: isolated.Service_Command, ok: bool) {
+	read := member_of_word(isolated.Service_Command, u64(command.kind)) or_return
+	return read, read != .None
+}
+
 // service_run adds and removes the connections that the root service
 // names, then executes the calls that wait. It gives the count of calls.
 service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
@@ -113,14 +121,14 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 		ring_memory, region_memory := Handle(command.values[0]), Handle(command.values[1])
 		// A word that names no command holds no handle that this program
 		// knows of: it closes nothing.
-		service_command, known := member_of_word(isolated.Service_Command, u64(command.kind))
+		service_command, known := service_command_of_record(command)
 		if !known {
 			log_in("programs", .Warning, "service: the root service sent a command of the kind ", u64(command.kind), ", which names no service command: it is refused")
 			continue
 		}
 		switch service_command {
 		case .None:
-			log_in("programs", .Warning, "service: the root service sent the service command None: it is refused")
+			// service_command_of_record refuses None.
 		case .Connect:
 			if !connection_add(service, ring_memory, region_memory, name_unpack({command.values[2], command.values[3], command.values[4], command.values[5]}), command.values[6]) {
 				close(ring_memory)

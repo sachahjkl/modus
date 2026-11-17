@@ -2,6 +2,7 @@
 package system
 
 import "modus:contract/errors"
+import "modus:contract/isolated"
 import "modus:contract/ring"
 import "core:testing"
 
@@ -24,6 +25,27 @@ status_of_word_refuses_a_word_that_names_no_status :: proc(t: ^testing.T) {
 		status, refusal := status_of_word(u32(member))
 		testing.expect_value(t, status, member)
 		testing.expect_value(t, refusal, errors.Error_Record{})
+	}
+}
+
+// The root service writes the kind of each command of the service ring. A
+// kind that names no command is refused first: None, one past the last
+// command, a word of the high bit, the largest word. Then each command
+// comes back from its own kind.
+@(test)
+service_command_of_record_refuses_a_kind_that_names_no_command :: proc(t: ^testing.T) {
+	refused_kinds := [?]u32{u32(isolated.Service_Command.None), u32(max(isolated.Service_Command)) + 1, 1 << 31, max(u32)}
+	for kind in refused_kinds {
+		_, ok := service_command_of_record(ring.Record{kind = kind})
+		testing.expectf(t, !ok, "the kind %d names no service command, and it is taken", kind)
+	}
+	for member in isolated.Service_Command {
+		if member == .None {
+			continue
+		}
+		read, ok := service_command_of_record(ring.Record{kind = u32(member)})
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
 	}
 }
 

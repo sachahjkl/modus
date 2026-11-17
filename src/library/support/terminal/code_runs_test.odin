@@ -59,6 +59,22 @@ code_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	testing.expect_value(t, code_kind_color(.Text_Unfinished, 0), code_kind_color(.Text, 0))
 }
 
+// A tone byte of a Style that names no tone is refused: one past the last
+// tone, and the largest byte. Each tone comes back from its own byte.
+@(test)
+tone_of_byte_refuses_a_byte_that_names_no_tone :: proc(t: ^testing.T) {
+	refused_bytes := [?]u8{u8(max(Tone)) + 1, 200, max(u8)}
+	for value in refused_bytes {
+		_, ok := tone_of_byte(value)
+		testing.expectf(t, !ok, "the byte %d names no tone, and it is taken", value)
+	}
+	for member in Tone {
+		tone, ok := tone_of_byte(u8(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, tone, member)
+	}
+}
+
 // A byte that names no kind is refused: one past the last kind, and the
 // largest byte. Each kind comes back from its own byte.
 @(test)
@@ -143,6 +159,25 @@ code_runs_kind_of_each_byte :: proc(t: ^testing.T) {
 	for kind, place in expected {
 		testing.expectf(t, code_runs_kind_at(&runs, place, &cursor) == kind, "the byte %d", place)
 	}
+}
+
+// The runs of a row whose icon names no icon go with the refused row: the
+// next row of that number, in this list or in a later one, is plain.
+@(test)
+the_runs_of_a_refused_row_do_not_wait :: proc(t: ^testing.T) {
+	keeping: List_Keeping
+	name := "monitor.count"
+	runs := [3]Code_Run{{0, 7, .Module, 0}, {7, 1, .Operator, 0}, {8, 5, .Function, 0}}
+	bytes := transmute([12]u8)runs
+	list_keep_code_runs(&keeping, {0 = u64(Kind.List_Row), 1 = 1}, bytes[:], nil)
+	list_keep_row(&keeping, {0 = 1, 1 = 13, 4 = u64(max(List_Icon)) + 1}, transmute([]u8)name, nil)
+	testing.expect_value(t, keeping.rows_refused, 1)
+	testing.expect_value(t, keeping.pending[1].count, 0)
+	list_keep_row(&keeping, {0 = 1, 1 = 13}, transmute([]u8)name, nil)
+	list_keep_show(&keeping, {0 = 2, 1 = NO_CHOICE})
+	testing.expect_value(t, keeping.shown.rows[1].code.count, 0)
+	testing.expect_value(t, keeping.shown.rows[1].length, len(name))
+	testing.expect_value(t, keeping.runs_refused, 0)
 }
 
 // A list row takes the runs that came for its number before it; a row with

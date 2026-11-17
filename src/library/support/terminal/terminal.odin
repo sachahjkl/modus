@@ -219,6 +219,13 @@ Tone :: enum u8 {
 	Number  = 7, // A number.
 }
 
+// tone_of_byte is the border of the tone byte of a Style that another
+// program wrote: the member, or false for a byte that names no tone. The
+// terminal then draws the run in the color of plain text.
+tone_of_byte :: proc "contextless" (value: u8) -> (tone: Tone, ok: bool) {
+	return system.member_of_word(Tone, u64(value))
+}
+
 // A flag of the style of a run.
 Flag :: enum u8 {
 	End_Line = 0, // The line ends after this run.
@@ -453,15 +460,17 @@ List_Keeping :: struct {
 // places, values[4] its icon. The text is in two parts (the text region
 // starts again at its first byte). A number past the rows is not kept. An
 // icon that names no List_Icon is refused: the row is not kept, its runs
-// wait for the next List_Row, and the refusal is counted. The row takes the
-// runs of code that came for its number since its last List_Row, when they
-// fit its text; if not, it is plain and the refusal is counted.
+// are dropped with it, so they never reach a row of a later list, and the
+// refusal is counted. The row takes the runs of code that came for its
+// number since its last List_Row, when they fit its text; if not, it is
+// plain and the refusal is counted.
 list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, first, second: []u8) {
 	if values[0] >= LIST_ROWS {
 		return
 	}
 	icon, icon_ok := system.member_of_word(List_Icon, values[4])
 	if !icon_ok {
+		keeping.pending[values[0]] = {}
 		keeping.rows_refused += 1
 		return
 	}

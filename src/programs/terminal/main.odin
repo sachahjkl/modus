@@ -509,7 +509,7 @@ style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 	}
 	colors := own_colors()
 	plain := colors.tones[.Default]
-	if tone, tone_ok := system.member_of_word(terminal.Tone, u64(u8(style.tone))); tone_ok {
+	if tone, tone_ok := terminal.tone_of_byte(u8(style.tone)); tone_ok {
 		plain = colors.tones[tone]
 	}
 	if value_kind, value_kind_ok := value_kinds.value_kind_of(style.value_kind); value_kind_ok && value_kind != .None {
