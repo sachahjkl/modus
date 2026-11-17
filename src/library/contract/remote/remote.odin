@@ -36,6 +36,7 @@
 package remote
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 
@@ -335,8 +336,11 @@ answer_write :: proc "contextless" (out: []u8, header: Answer, result: []u8) -> 
 
 // answer_check reads a whole call answer: the bytes of its stream up to the
 // end. result is the bytes after the header. ok is false when the bytes
-// are not exactly a header and the total that it names, or when the total
-// is larger than a call region.
+// are not exactly a header and the total that it names, when the total is
+// larger than a call region, or when the status names no member of Status:
+// it is the border of that word, so the host never switches on a status
+// that the remote service did not name. Each refusal gives the zero header
+// and no result: a caller never reads a field of a refused answer.
 answer_check :: proc "contextless" (bytes: []u8) -> (header: Answer, result: []u8, ok: bool) {
 	if len(bytes) < ANSWER_SIZE {
 		return {}, nil, false
@@ -344,7 +348,10 @@ answer_check :: proc "contextless" (bytes: []u8) -> (header: Answer, result: []u
 	header = read(bytes, Answer)
 	rest := u64(len(bytes) - ANSWER_SIZE)
 	if u64(header.total) != rest || u64(header.total) > REGION_SIZE {
-		return header, nil, false
+		return {}, nil, false
+	}
+	if _, known := enum_word.member_of_word(Status, u64(header.status)); !known {
+		return {}, nil, false
 	}
 	return header, bytes[ANSWER_SIZE:], true
 }

@@ -91,6 +91,7 @@ Remote_Call_Outcome :: enum u32 {
 	Key_Refused, // `remote` presented another key than the pinned one, or the call named another one: the reason gives both.
 	Bad_Socket_Call, // The bytes on the socket of the calls are not a header and the request that it counts.
 	Client_Refused, // `remote` refused the key of this client in the handshake (access_denied): no principal allowed it, or the session of its principal is locked. No call ran.
+	Answer_Unknown_Status, // The answer has the size that its header names, and a status that names no remote.Status.
 }
 
 Remote_Call :: struct {
@@ -864,7 +865,8 @@ remote_case_answer :: proc(result: Remote_Call_Result, status: remote.Status) ->
 	}
 	checked, _, ok := remote.answer_check(result.answer)
 	if !ok {
-		return {}, fmt.tprintf("an answer of %d bytes that is not a header and the bytes that it names", len(result.answer))
+		_, reason := answer_refusal_cause(result.answer)
+		return {}, fmt.tprintf("an answer of %d bytes: %s", len(result.answer), reason)
 	}
 	if checked.status != status {
 		return checked, fmt.tprintf("an answer with the status %v, not %v", checked.status, status)

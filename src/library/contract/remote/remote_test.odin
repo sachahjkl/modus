@@ -211,11 +211,26 @@ answer_refusals :: proc(t: ^testing.T) {
 	testing.expect(t, !ok, "shorter than the header")
 	header := (^Answer)(&out[0])
 	header.total = 2999
-	_, _, ok = answer_check(bytes)
-	testing.expect(t, !ok, "more bytes than the total")
+	refused, refused_result, refused_total := answer_check(bytes)
+	testing.expect(t, !refused_total, "more bytes than the total")
+	testing.expect(t, refused == (Answer{}) && refused_result == nil, "a refusal of the total gives no header and no result, as each refusal")
 	header.total = REGION_SIZE + 1
 	_, _, ok = answer_check(bytes)
 	testing.expect(t, !ok, "a total larger than a call region")
+	// The status is a word of the remote service: one past the largest
+	// member, and the largest word, name no status. The bytes stay.
+	header.total = 3000
+	for word in ([]u32{u32(max(Status)) + 1, max(u32)}) {
+		(^u32)(&out[offset_of(Answer, status)])^ = word
+		before := out
+		checked, result, refused_ok := answer_check(bytes)
+		testing.expectf(t, !refused_ok, "the status %d names no status", word)
+		testing.expect(t, checked == (Answer{}) && result == nil, "a refused answer gives no header and no result")
+		testing.expect(t, before == out, "answer_check changes no byte")
+	}
+	(^u32)(&out[offset_of(Answer, status)])^ = u32(max(Status))
+	_, _, ok = answer_check(bytes)
+	testing.expect(t, ok, "the largest status is a status")
 }
 
 // The framing of a call on a stream: a request of REQUEST_LIMIT bytes is

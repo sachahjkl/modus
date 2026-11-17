@@ -1,12 +1,14 @@
 package modustool
 
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/remote"
 import "core:encoding/hex"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -490,8 +492,7 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	transport.answer_bytes = len(answer_part)
 	checked, part, valid := remote.answer_check(answer_part)
 	if !valid {
-		transport.outcome = .Answer_Too_Large
-		transport.reason = "the answer is not a header and the bytes that it names"
+		transport.outcome, transport.reason = answer_refusal_cause(answer_part)
 		return {}, nil, transport, false
 	}
 	copy(client.result, part)
@@ -515,6 +516,22 @@ socket_call :: proc(client: ^Call_Client, request: []u8) -> (received: []u8, ok:
 	call_socket_end_sending(connection)
 	count, _ := call_socket_receive_all(connection, client.received, CALL_TIME_LIMIT)
 	return client.received[:count], true
+}
+
+// answer_refusal_cause names why answer_check refused an answer. The
+// reader gives no cause, so the tool reads the two words again: a whole
+// answer whose status names no status has a cause of its own, and every
+// other refusal is an answer that is not its header and its total.
+answer_refusal_cause :: proc(bytes: []u8) -> (outcome: Remote_Call_Outcome, reason: string) {
+	if len(bytes) >= remote.ANSWER_SIZE {
+		header: remote.Answer
+		mem.copy(&header, raw_data(bytes), size_of(header))
+		_, known := enum_word.member_of_word(remote.Status, u64(header.status))
+		if !known && u64(header.total) == u64(len(bytes) - remote.ANSWER_SIZE) && header.total <= remote.REGION_SIZE {
+			return .Answer_Unknown_Status, fmt.tprintf("the answer has the status %d, which names no status of the remote protocol", u32(header.status))
+		}
+	}
+	return .Answer_Too_Large, "the answer is not a header and the bytes that it names"
 }
 
 // call_run makes one call and gives what the tool prints.
