@@ -98,7 +98,9 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 		}
 		return nil, false
 	}
-	return ([^]u8)(address)[:system.memory_size(memory) * system.PAGE_SIZE], true
+	// The map took the handle, so the kernel gives its size: a refusal maps no byte.
+	pages, _ := system.memory_size(memory)
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
 }
 
 // fill writes a value in each byte of a memory object, and gives the count
@@ -168,9 +170,11 @@ span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> i64 {
 spoil :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 	address, status := system.memory_map(memory.handle, {.Write})
 	if status == .Ok {
-		bytes := ([^]u8)(address)[:system.memory_size(memory.handle) * system.PAGE_SIZE]
-		bytes[0] = 0xFF
-		system.memory_unmap(raw_data(bytes))
+		// The map took the handle, so the kernel gives its size.
+		if pages, _ := system.memory_size(memory.handle); pages > 0 {
+			([^]u8)(address)[0] = 0xFF
+		}
+		system.memory_unmap(address)
 	}
 	return i64(status)
 }

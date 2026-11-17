@@ -1,7 +1,41 @@
 #+build !freestanding
 package terminal_records
 
+import "modus:contract/ring"
 import "core:testing"
+
+// The terminal writes the kind of each input record. A kind that names no
+// input is refused first: None, one past the last kind, the largest kind.
+// A refused record gives the zero record. Then each input comes back with
+// its values, the first row of the list cut to the largest i32.
+@(test)
+input_of_record_refuses_a_kind_that_names_no_input :: proc(t: ^testing.T) {
+	refused_kinds := [?]u32{u32(Input.None), u32(max(Input)) + 1, 1 << 31, max(u32)}
+	for kind in refused_kinds {
+		record := ring.Record{kind = kind, tag = max(u32)}
+		for &value in record.values {
+			value = max(u64)
+		}
+		given, ok := input_of_record(record)
+		testing.expectf(t, !ok, "the kind %d names no input, and it is taken", kind)
+		testing.expect_value(t, given, Input_Record{})
+	}
+	key_record := ring.Record{kind = u32(Input.Key), tag = 0x1C}
+	key_record.values[0] = 0x11_0000 // Past the last code point: no character.
+	key_record.values[1] = 2
+	given, ok := input_of_record(key_record)
+	testing.expect(t, ok)
+	testing.expect_value(t, given, Input_Record{kind = .Key, key = {code = 0x1C, character = 0, modifiers = 2}})
+	list_record := ring.Record{kind = u32(Input.List_First)}
+	list_record.values[0] = max(u64)
+	given, ok = input_of_record(list_record)
+	testing.expect(t, ok)
+	testing.expect_value(t, given, Input_Record{kind = .List_First, list_first = int(max(i32))})
+	list_record.values[0] = 3
+	given, ok = input_of_record(list_record)
+	testing.expect(t, ok)
+	testing.expect_value(t, given, Input_Record{kind = .List_First, list_first = 3})
+}
 
 // The form of a hint line for a width: the long form when it fits, the
 // short form when the long one does not, each cut to the width.
@@ -70,19 +104,26 @@ list_rows_go_to_one_list :: proc(t: ^testing.T) {
 	testing.expect_value(t, keeping.shown.chosen, -1)
 }
 
-// A row keeps the icon that its program names; a number that names no icon
-// is no icon; a row with no icon after a row with one has none.
+// A number that names no icon refuses its row: the row is not kept, and
+// the refusal is counted. A row keeps the icon that its program names; a
+// row with no icon after a row with one has none.
 @(test)
 list_row_keeps_the_icon_of_its_kind :: proc(t: ^testing.T) {
 	keeping: List_Keeping
 	name := "monitor"
-	list_keep_row(&keeping, {0 = 0, 1 = 7, 4 = u64(List_Icon.Module)}, transmute([]u8)name, nil)
 	list_keep_row(&keeping, {0 = 1, 1 = 7, 4 = u64(max(List_Icon)) + 1}, transmute([]u8)name, nil)
-	list_keep_row(&keeping, {0 = 2, 1 = 7, 4 = max(u64)}, transmute([]u8)name, nil)
-	list_keep_show(&keeping, {0 = 3, 1 = NO_CHOICE})
+	list_keep_row(&keeping, {0 = 2, 1 = 7, 4 = 1 << 32}, transmute([]u8)name, nil)
+	list_keep_row(&keeping, {0 = 3, 1 = 7, 4 = max(u64)}, transmute([]u8)name, nil)
+	testing.expect_value(t, keeping.rows_refused, 3)
+	for row in keeping.next {
+		testing.expect_value(t, row.length, 0)
+	}
+	list_keep_row(&keeping, {0 = 0, 1 = 7, 4 = u64(List_Icon.Module)}, transmute([]u8)name, nil)
+	list_keep_row(&keeping, {0 = 1, 1 = 7, 4 = u64(max(List_Icon))}, transmute([]u8)name, nil)
+	list_keep_show(&keeping, {0 = 2, 1 = NO_CHOICE})
+	testing.expect_value(t, keeping.rows_refused, 3)
 	testing.expect_value(t, keeping.shown.rows[0].icon, List_Icon.Module)
-	testing.expect_value(t, keeping.shown.rows[1].icon, List_Icon.None)
-	testing.expect_value(t, keeping.shown.rows[2].icon, List_Icon.None)
+	testing.expect_value(t, keeping.shown.rows[1].icon, max(List_Icon))
 	list_keep_row(&keeping, {0 = 0, 1 = 7}, transmute([]u8)name, nil)
 	list_keep_show(&keeping, {0 = 1, 1 = NO_CHOICE})
 	testing.expect_value(t, keeping.shown.rows[0].icon, List_Icon.None)

@@ -51,9 +51,6 @@ import "modus:contract/glyph_cache"
 import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a program maps the settings page.
-GLYPH_CACHE_ADDRESS :: fixed_addresses.GLYPH_CACHE_ADDRESS // Where a program maps the glyph cache with grid fit.
-GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: fixed_addresses.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS // The glyph cache with no grid fit.
-GLYPH_CACHE_BOLD_ADDRESS :: fixed_addresses.GLYPH_CACHE_BOLD_ADDRESS // The glyph cache of the bold weight.
 GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
 VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The program `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
 KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.

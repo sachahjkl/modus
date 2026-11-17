@@ -965,8 +965,10 @@ controlled :: proc "contextless" (record: ring.Record) {
 		// Give: this service gives the region to the frame service, with
 		// Read only, so that the device reads the data of each send there.
 		needed := system.Rights{.Read, .Write, .Give}
-		if free >= 0 && region_kind == .Memory && region_through && needed <= region_rights && system.memory_size(region_handle) == datagram.REGION_PAGES {
-			region_address, region_status = system.memory_map(region_handle, {.Write})
+		if free >= 0 && region_kind == .Memory && region_through && needed <= region_rights {
+			if region_pages, size_status := system.memory_size(region_handle); size_status == .Ok && region_pages == datagram.REGION_PAGES {
+				region_address, region_status = system.memory_map(region_handle, {.Write})
+			}
 		}
 		opened: ring.Ring
 		ring_status := system.Status.Bad_Handle
@@ -990,7 +992,9 @@ controlled :: proc "contextless" (record: ring.Record) {
 			refused: bool
 			if values, refused = system.region_refusal(region_handle, control_memory, ADD); refused {
 				values[3] = 2 // The argument: the region.
-			} else if size := system.memory_size(region_handle); size != datagram.REGION_PAGES {
+			} else if size, size_status := system.memory_size(region_handle); size_status != .Ok {
+				values = errors.ring_fail(ADD, .Refused, .None, 2, i64(region_handle), 0, i64(size_status))
+			} else if size != datagram.REGION_PAGES {
 				values = errors.ring_fail(ADD, .Bad_Value, .Pages, 2, i64(size), datagram.REGION_PAGES)
 			} else if values, refused = system.region_refusal(handle, control_memory, ADD); !refused {
 				values = errors.ring_fail(ADD, .Refused, .None, 0, 0, 0, i64(region_status != .Ok ? region_status : ring_status))

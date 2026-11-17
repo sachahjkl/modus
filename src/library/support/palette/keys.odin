@@ -239,12 +239,14 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 		}
 		return chosen == .Destroys_Then_Sends || chosen == .Form_Destroys ? State.Running : State.Closed
 	case .Back:
-		#partial switch state {
+		switch state {
 		case .Confirm:
 			// The question of a form goes back to the form, with its fields.
 			return chosen == .Form_Destroys ? State.Arguments : State.Search
 		case .Result, .Arguments:
 			return .Search
+		case .Closed, .Search, .Running:
+			// Nothing is before these states: a running line goes on.
 		}
 		return state
 	case .Submit, .Submit_All:
@@ -278,7 +280,9 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 // adoption chooses the first entry (Panel.typed_since_list).
 typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (drawn: bool, text_changed: bool) {
 	edit_key := line_editor.Edit_Key.None
-	#partial switch key {
+	switch key {
+	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter:
+		// No edit of the typed part: the line editor refuses Edit_Key.None.
 	case .Left:
 		edit_key = .Left
 	case .Right:
@@ -356,13 +360,21 @@ result_set :: proc "contextless" (panel: ^Panel, outcome: u64, kind: u64, memory
 	}
 	result := &panel.result
 	result.count = 0
-	result.kind = kind <= u64(max(palette_table.Value_Kind)) ? palette_table.Value_Kind(kind) : .None
-	switch palette_table.Outcome(outcome) {
+	// The two words come from the provider: a word that names no member
+	// is an answer that the panel refuses.
+	result_kind, result_kind_ok := palette_table.value_kind_of_word(kind)
+	given, given_ok := palette_table.outcome_of_word(outcome)
+	if !result_kind_ok || !given_ok {
+		result_sentence(panel, "the provider gave an answer that the panel refuses")
+		return
+	}
+	result.kind = result_kind
+	switch given {
 	case .Shown_In_Console, .Edit_Opened, .Manual_Opened:
 		panel.state = .Closed
 		return
 	case .Shown_In_Panel, .Failed, .Refused:
-		result.outcome = palette_table.Outcome(outcome)
+		result.outcome = given
 		count, ok := palette_table.result_copy(memory, length, &result.runs)
 		if ok && count > 0 {
 			result.count = count

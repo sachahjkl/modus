@@ -90,24 +90,44 @@ COMMAND_NAMES := [Command]string {
 	.Statistics = "Statistics",
 }
 
+// The names of the values of each command, from value 1. A command with
+// no named value has none.
+@(rodata)
+ARGUMENT_NAMES := [Command][]string {
+	.None       = {},
+	.Attach     = {"region"},
+	.Info       = {},
+	.Read       = {"first", "count", "place"},
+	.Write      = {"first", "count", "place"},
+	.Flush      = {},
+	.Statistics = {},
+}
+
+// command_of_word is the border of the command word of a record or of an
+// error record: the member, or false for a word that names none.
+command_of_word :: proc "contextless" (word: i64) -> (command: Command, ok: bool) {
+	for member in Command {
+		if i64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // command_name gives the name of a command from an error record, or "an
 // unknown command" for a number out of `Command`.
 command_name :: proc "contextless" (command: i64) -> string {
-	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
+	member, ok := command_of_word(command)
+	return ok ? COMMAND_NAMES[member] : "an unknown command"
 }
 
-// argument_name gives the name of a value of a command, from 1.
+// argument_name gives the name of a value of a command, from 1, or "" for
+// a command or a value that has no name.
 argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
-	if argument < 1 || argument > 7 {
+	member, ok := command_of_word(command)
+	if !ok {
 		return ""
 	}
-	#partial switch Command(command) {
-	case .Attach:
-		names := [?]string{"region"}
-		return argument <= len(names) ? names[argument - 1] : ""
-	case .Read, .Write:
-		names := [?]string{"first", "count", "place"}
-		return argument <= len(names) ? names[argument - 1] : ""
-	}
-	return ""
+	names := ARGUMENT_NAMES[member]
+	return argument >= 1 && argument <= i64(len(names)) ? names[argument - 1] : ""
 }

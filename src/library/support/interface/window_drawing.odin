@@ -295,7 +295,14 @@ when DRAWING_THROUGH_MODULE {
 		drawing.module_refusal_logged = true
 		record := drawing.module_error
 		cause := "the module gave an error kind that this line has no words for"
-		#partial switch errors.Kind(record.kind) {
+		kind, kind_ok := errors.kind_of_word(record.kind)
+		if !kind_ok {
+			cause = "the module gave a word that names no error kind"
+		}
+		// Each kind is named, so that a new kind of the drawing module gets
+		// its words here or joins this list by a choice.
+		switch kind {
+		case .None, .Empty, .Bad_Flags, .Bad_Byte, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Absent, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .Refused, .No_Answer, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Not_Authentic, .Seed_Too_Weak, .Exists, .Starter_Module:
 		case .Too_Long:
 			cause = "a table has more records or bytes than the module takes"
 		case .Bad_Value:

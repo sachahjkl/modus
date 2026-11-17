@@ -200,6 +200,63 @@ families_by_the_last_word_characters_and_computed_values_are_refused :: proc(t: 
 	testing.expect_value(t, choice_family_text("MODE", .First), "MODE_")
 }
 
+// The negative answers of an export, compared with a value named like a
+// choice: a negated literal, a negated constant, a conversion of a
+// negation, a difference below 0. Each is a member. The values past the
+// limit on the negative side, and a negation of a value past it, are not
+// members.
+@(private = "file")
+NEGATIVE_CHOICES :: `package negatives
+
+ERROR_NAME :: -1
+ERROR_FULL :: -(2)
+THREE :: 3
+ERROR_ABSENT :: -THREE
+ERROR_GONE :: i64(-4)
+ERROR_LATE :: THREE - 8
+ERROR_HUGE :: -256
+ERROR_HUGER :: -0x7FFF_FFFF_FFFF_FFFF
+
+answer_text :: proc "contextless" (answer: i64) -> string {
+	switch answer {
+	case ERROR_NAME, ERROR_FULL:
+		return "a"
+	case ERROR_HUGE, ERROR_HUGER:
+		return "b"
+	}
+	if answer == ERROR_ABSENT || answer == ERROR_GONE || answer == ERROR_LATE {
+		return "c"
+	}
+	return ""
+}
+`
+
+@(test)
+a_family_of_negative_answers_is_refused :: proc(t: ^testing.T) {
+	sources := []Export_Source{{path = "src/programs/negatives/main.odin", text = NEGATIVE_CHOICES}}
+	families, ok := choice_families_of_sources(sources)
+	testing.expect(t, ok)
+	testing.expect_value(t, len(families), 1)
+	if len(families) != 1 {
+		return
+	}
+	family := families[0]
+	testing.expect_value(t, family.word, "ERROR")
+	testing.expect_value(t, family.word_place, Choice_Word_Place.First)
+	expected := [?]string{"ERROR_ABSENT", "ERROR_FULL", "ERROR_GONE", "ERROR_LATE", "ERROR_NAME"}
+	testing.expect_value(t, len(family.members), len(expected))
+	for name in expected {
+		found := false
+		for member in family.members {
+			found ||= member == name
+		}
+		testing.expectf(t, found, "%s is a member of the family", name)
+	}
+	for member in family.members {
+		testing.expectf(t, member != "ERROR_HUGE" && member != "ERROR_HUGER", "%s is past the limit, and it is a member", member)
+	}
+}
+
 // A source that the parser refuses stops the check: it is never read as a
 // source with no family.
 @(test)

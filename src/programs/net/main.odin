@@ -606,7 +606,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The datagram region: the root service made it, with the ring.
 	region_memory := ctx.handles[datagram.GRANT_REGION]
 	address, map_status := system.memory_map(region_memory, {.Write})
-	if map_status != .Ok || system.memory_size(region_memory) < REGION_PAGES {
+	region_pages, size_status := system.memory_size(region_memory)
+	if map_status != .Ok || size_status != .Ok || region_pages < REGION_PAGES {
 		system.log("net: no datagram region")
 		system.stop(1)
 	}

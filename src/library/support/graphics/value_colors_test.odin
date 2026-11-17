@@ -41,13 +41,14 @@ value_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	}
 }
 
-// The kind None and a byte past the kinds have the plain color, or the text
-// color of the appearance with no plain color: a record from another program
-// never gives a color that the table does not hold.
+// The kind None has the plain color, or the text color of the appearance
+// with no plain color. A byte past the kinds never reaches the table: its
+// border refuses it (value_kinds.value_kind_of).
 @(test)
 value_kind_none_is_plain :: proc(t: ^testing.T) {
+	_, past_the_kinds_ok := value_kinds.value_kind_of(200)
+	testing.expect(t, !past_the_kinds_ok)
 	testing.expect_value(t, value_kind_color(.None, .Dark, DARK_DIM), Color(DARK_DIM))
-	testing.expect_value(t, value_kind_color(value_kinds.value_kind_of(200), .Dark, DARK_DIM), Color(DARK_DIM))
 	testing.expect_value(t, value_kind_color(.None, .Light), color_tokens_of(.Light).text)
 	testing.expect_value(t, value_kind_color(.None, .Dark), color_tokens_of(.Dark).text)
 	testing.expect_value(t, value_kind_color(.Size, .Dark), shade(DARK_MEMORY, 100))

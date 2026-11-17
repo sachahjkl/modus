@@ -118,7 +118,9 @@ scroll_bar_identity :: proc "contextless" () -> interface.Element_Identity {
 // that the pointer moves.
 scroll_bar_area :: proc "contextless" (panel: ^Panel, panel_x, panel_y: int) -> (area: interface.Area, shown: bool) {
 	total := 0
-	#partial switch panel.state {
+	switch panel.state {
+	case .Closed, .Confirm, .Running, .Result:
+		// No rows: no scroll bar.
 	case .Search:
 		if panel.list != nil && !panel.form.active {
 			total = panel.list.row_count
@@ -155,7 +157,9 @@ view_scrolled :: proc "contextless" (panel: ^Panel) -> bool {
 	if !moved.changed {
 		return false
 	}
-	#partial switch panel.state {
+	switch panel.state {
+	case .Closed, .Confirm, .Running, .Result:
+		// scroll_bar_area shows no scroll bar in these states.
 	case .Search:
 		list := panel.list
 		if list == nil || list.row_count <= LIST_ROWS {

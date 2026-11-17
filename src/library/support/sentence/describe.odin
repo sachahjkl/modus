@@ -113,7 +113,13 @@ direction_name :: proc "contextless" (direction: module.Direction) -> string {
 // errors.
 write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type, detail: u32, direction: module.Direction) {
 	name := direction_name(direction)
-	#partial switch type {
+	// A description is input that nobody checked: a byte that names no
+	// type matches no case, and write_type says so.
+	if type > max(module.Type) {
+		write_type(writer, file, type, detail)
+		return
+	}
+	switch type {
 	case .Table:
 		write_part(writer, "Table(")
 		write_type(writer, file, .Record, detail)
@@ -124,7 +130,7 @@ write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: m
 		write_part(writer, "Bytes(")
 		write_part(writer, name)
 		write_part(writer, ")")
-	case:
+	case .None, .Integer, .Text, .Record, .Handle:
 		write_type(writer, file, type, detail)
 	}
 }

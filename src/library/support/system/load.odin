@@ -526,7 +526,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 	}
 	if status != .Ok {
 		place_unmap(space, item)
-		#partial switch error.stage {
+		switch error.stage {
 		case .Check, .Bind:
 			// The import of the slot, and its replacement if the loader applied one.
 			error.module = named_of(space.source, item.hash)
@@ -540,7 +540,8 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 			}
 		case .Read, .Room:
 			error.module = named_of(space.source, item.hash)
-		case:
+		case .None, .Find, .Cycle, .Map, .Unmap:
+			// No stage of this load said why: a kernel operation of the map failed.
 			error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
 		}
 		return false
@@ -984,7 +985,13 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		}
 	}
 	described :: proc "contextless" (writer: ^Writer, value: ^module.Described) {
-		#partial switch value.type {
+		// The record can come from another program: a byte that names no
+		// type matches no case, and write_parameter_type says so.
+		if value.type > max(module.Type) {
+			write_parameter_type(writer, nil, value.type, value.detail, value.direction)
+			return
+		}
+		switch value.type {
 		case .None:
 			write_part(writer, "nothing")
 		case .Record:
@@ -1010,7 +1017,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 					write_part(writer, u64(value.detail))
 				}
 			}
-		case:
+		case .Text, .Handle, .Bytes:
 			write_parameter_type(writer, nil, value.type, value.detail, value.direction)
 		}
 	}

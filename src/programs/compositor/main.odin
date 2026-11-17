@@ -474,7 +474,9 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 	screen_page_count = 1
 	page_pixels := screen.stride * screen.height
 	registers := ctx.handles[GRANT_DISPLAY_REGISTERS]
-	if registers != 0 && system.memory_size(ctx.handles[GRANT_FRAMEBUFFER]) * system.PAGE_SIZE >= u64(bochs_display.PAGE_COUNT * page_pixels * size_of(graphics.Color)) {
+	// A refused handle has no pages: the screen keeps one page.
+	framebuffer_pages, _ := system.memory_size(ctx.handles[GRANT_FRAMEBUFFER])
+	if registers != 0 && framebuffer_pages * system.PAGE_SIZE >= u64(bochs_display.PAGE_COUNT * page_pixels * size_of(graphics.Color)) {
 		if address, status := system.memory_map(registers); status == .Ok {
 			display_registers = rawptr(uintptr(address) + bochs_display.DISPLAY_REGISTERS_OFFSET)
 			if bochs_display.screen_pages(display_registers, u64(screen.width), u64(screen.height), u64(screen.stride)) == bochs_display.PAGE_COUNT {
@@ -864,8 +866,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	// A surface has two pictures: the program draws one while this service
 	// reads the other. Memory for less is refused.
-	size := system.memory_size(memory) * system.PAGE_SIZE
-	if size < display.PICTURE_COUNT * width * height * size_of(graphics.Color) {
+	pages, size_status := system.memory_size(memory)
+	size := pages * system.PAGE_SIZE
+	if size_status != .Ok || size < display.PICTURE_COUNT * width * height * size_of(graphics.Color) {
 		return
 	}
 	address, status := system.memory_map(memory, {}) // Read only.

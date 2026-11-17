@@ -133,7 +133,9 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 	field := &form.fields[form.current]
 	kind := form.given.parameters[form.current]
 	edit_key := line_editor.Edit_Key.None
-	#partial switch key {
+	switch key {
+	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter:
+		// No edit of the field: the line editor refuses Edit_Key.None.
 	case .Left:
 		edit_key = .Left
 	case .Right:

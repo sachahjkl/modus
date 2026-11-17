@@ -80,7 +80,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	case .Reset_Not_Done:
 		fail("the device did not finish its reset")
 	}
-	if system.memory_size(queues) < pci.QUEUE_PAGES {
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
 		fail("the memory of the queue is too small")
 	}
 	address, map_status := system.memory_map(queues, {.Write})

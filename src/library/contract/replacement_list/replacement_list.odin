@@ -58,6 +58,17 @@ Scope :: enum u32 {
 	Principal = 2, // The programs of the session of one principal. The signing key of that principal signs it.
 }
 
+// scope_of_word is the border of the scope word of a row of the file: the
+// member, or false for a word that names none.
+scope_of_word :: proc "contextless" (word: u32) -> (scope: Scope, ok: bool) {
+	for member in Scope {
+		if u32(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // The first 16 bytes of the list.
 Header :: struct {
 	magic:     u64, // `MAGIC`.
@@ -134,7 +145,13 @@ rows :: proc "contextless" (list: []u8) -> (result: []Row, problem: List_Problem
 	for &row, index in result {
 		// A value of the file can be outside the enumeration: only the two
 		// known scopes pass.
-		#partial switch row.scope {
+		scope, scope_ok := scope_of_word(u32(row.scope))
+		if !scope_ok {
+			return nil, .Scope
+		}
+		switch scope {
+		case .None:
+			return nil, .Scope
 		case .System:
 			if row.principal != 0 {
 				return nil, .Scope
@@ -143,8 +160,6 @@ rows :: proc "contextless" (list: []u8) -> (result: []Row, problem: List_Problem
 			if row.principal == 0 {
 				return nil, .Scope
 			}
-		case:
-			return nil, .Scope
 		}
 		if row.from == {} || row.to == {} || row.from == row.to {
 			return nil, .Same_Hash

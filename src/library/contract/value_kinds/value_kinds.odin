@@ -66,10 +66,15 @@ VALUE_KIND_NAMES := [Value_Kind]string {
 	.Variable  = "variable",
 }
 
-// value_kind_of gives the kind of a byte that another party wrote: a value
-// past the kinds is None.
-value_kind_of :: proc "contextless" (value: u8) -> Value_Kind {
-	return value <= u8(max(Value_Kind)) ? Value_Kind(value) : Value_Kind.None
+// value_kind_of is the border of the kind of a byte that another party
+// wrote: the member, or false for a byte that names none.
+value_kind_of :: proc "contextless" (value: u8) -> (kind: Value_Kind, ok: bool) {
+	for member in Value_Kind {
+		if u8(member) == value {
+			return member, true
+		}
+	}
+	return {}, false
 }
 
 // A value run of a log record: start and length in bytes of the text of the
@@ -175,13 +180,16 @@ time_in :: proc "contextless" (unit: Duration_Unit) -> Integer_Unit {
 // one of the contract: None with the unit 0, a Size with a Size_Unit, a
 // Time with a Duration_Unit.
 integer_unit_valid :: proc "contextless" (integer_unit: Integer_Unit) -> bool {
-	#partial switch integer_unit.kind {
+	switch integer_unit.kind {
 	case .None:
 		return integer_unit.unit == 0
 	case .Size:
 		return integer_unit.unit <= u8(max(Size_Unit))
 	case .Time:
 		return integer_unit.unit <= u8(max(Duration_Unit))
+	case .Number, .Handle, .Value, .Grant, .Status, .Type, .Operation, .Command, .Module, .File, .Guide, .Term, .Version, .Yes, .No, .Procedure, .Constant, .Variable:
+		// An integer unit is a size or a time: the other kinds have no unit.
+		return false
 	}
 	return false
 }
@@ -193,11 +201,12 @@ integer_unit_text :: proc "contextless" (integer_unit: Integer_Unit) -> string {
 	if !integer_unit_valid(integer_unit) {
 		return ""
 	}
-	#partial switch integer_unit.kind {
+	switch integer_unit.kind {
 	case .Size:
 		return SIZE_UNIT_TEXTS[Size_Unit(integer_unit.unit)]
 	case .Time:
 		return DURATION_UNIT_TEXTS[Duration_Unit(integer_unit.unit)]
+	case .None, .Number, .Handle, .Value, .Grant, .Status, .Type, .Operation, .Command, .Module, .File, .Guide, .Term, .Version, .Yes, .No, .Procedure, .Constant, .Variable:
 	}
 	return ""
 }
@@ -223,8 +232,9 @@ integer_unit_of_detail :: proc "contextless" (detail: u32) -> (integer_unit: Int
 	if detail & 0xFF00_00FF != 0 {
 		return {}, false
 	}
-	integer_unit = {kind = value_kind_of(u8(detail >> 8)), unit = u8(detail >> 16)}
-	if u8(detail >> 8) > u8(max(Value_Kind)) || !integer_unit_valid(integer_unit) {
+	kind := value_kind_of(u8(detail >> 8)) or_return
+	integer_unit = {kind = kind, unit = u8(detail >> 16)}
+	if !integer_unit_valid(integer_unit) {
 		return {}, false
 	}
 	return integer_unit, true

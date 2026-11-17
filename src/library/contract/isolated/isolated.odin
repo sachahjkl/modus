@@ -276,6 +276,24 @@ field_size :: proc "contextless" (type: module.Type) -> u64 {
 	return 0
 }
 
+// result_field_size gives the bytes of the field of a result in the
+// argument record. ok is false for a type that is no result (Handle,
+// Bytes), and for a byte of the description that names no type: no case
+// takes it.
+@(private)
+result_field_size :: proc "contextless" (type: module.Type) -> (size: u64, ok: bool) {
+	switch type {
+	case .None, .Integer:
+		return 0, true
+	case .Text, .Table:
+		return size_of(Slice), true
+	case .Record:
+		return 8, true
+	case .Handle, .Bytes:
+	}
+	return 0, false
+}
+
 // record_size gives the size of the argument record of an export.
 // ok is false when the description has a type that this code does not know.
 record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok: bool) {
@@ -293,15 +311,8 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 		}
 		size += field
 	}
-	#partial switch function.result {
-	case .None, .Integer:
-	case .Text, .Table:
-		size += size_of(Slice)
-	case .Record:
-		size += 8
-	case:
-		return 0, false
-	}
+	result_field := result_field_size(function.result) or_return
+	size += result_field
 	if function.error_record != 0 {
 		// A Record result gives no integer result, so a failure has no sign.
 		if function.result == .Record {
@@ -351,7 +362,9 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 	field := u64(0)
 	next := size // Where the bytes of the next Text go.
 	for type, index in function.parameters[:function.parameter_count] {
-		#partial switch type {
+		switch type {
+		case .None:
+			// record_size refused a parameter of no type.
 		case .Integer:
 			store(region, field, arguments[index].integer)
 		case .Text:
@@ -393,7 +406,11 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		intrinsics.mem_zero(raw_data(region[next:]), ERROR_RECORD_SIZE)
 		next += ERROR_RECORD_SIZE
 	}
-	#partial switch function.result {
+	switch function.result {
+	case .None, .Integer:
+		// No buffer: the result is in the completion.
+	case .Handle, .Bytes:
+		// record_size refused these results.
 	case .Text:
 		result = {start = next, count = u64(len(region)) - next}
 		store(region, field, result)
@@ -503,7 +520,9 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	field := u64(0)
 	for type, index in function.parameters[:function.parameter_count] {
 		argument := i64(index + 1)
-		#partial switch type {
+		switch type {
+		case .None:
+			// record_size refused a parameter of no type.
 		case .Integer:
 			call.arguments[index] = load(record[:], field, u64)
 		case .Text:
@@ -549,7 +568,11 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		field += field_size(type)
 	}
 	index := function.parameter_count
-	#partial switch function.result {
+	switch function.result {
+	case .None, .Integer:
+		// No buffer: the result is in the completion.
+	case .Handle, .Bytes:
+		// record_size refused these results.
 	case .Text:
 		slice := load(record[:], field, Slice)
 		if slice.start > limit || slice.count > limit - slice.start {

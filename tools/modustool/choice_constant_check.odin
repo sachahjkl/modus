@@ -29,8 +29,9 @@ CHOICE_VALUE_DEPTH_LIMIT :: 16
 // this system.
 CHOICE_CONSTANT_SKIPPED_FOLDER :: SOURCE_FOLDER_SUPPORT + "/cryptography"
 
-// The largest value of a constant that can be a member of a family: a
-// larger value is a mask, an address, a magic number or a size.
+// The largest magnitude of a constant that can be a member of a family, on
+// each side of 0: a larger value is a mask, an address, a magic number or
+// a size. A negative member is an answer of an export (ERROR_NAME :: -3).
 CHOICE_VALUE_LIMIT :: 255
 
 // The members of a family that the code must use as choices before the
@@ -195,7 +196,7 @@ choice_families_of_sources :: proc(sources: []Export_Source) -> (families: []Cho
 	}
 	for key, value in declared {
 		folder := key[:strings.index_byte(key, ' ')]
-		if number, is_integer := small_integer_of(declared, folder, value, 0); is_integer && number <= CHOICE_VALUE_LIMIT {
+		if number, is_integer := small_integer_of(declared, folder, value, 0); is_integer && number >= -CHOICE_VALUE_LIMIT && number <= CHOICE_VALUE_LIMIT {
 			constants[key] = true
 		}
 	}
@@ -494,11 +495,17 @@ imports_of :: proc(file: ^ast.File, folder: string) -> map[string]string {
 
 // small_integer_of reads the value of a constant: an integer literal, a
 // character literal, a conversion of a value to an integer type, a
-// constant of the same package, or an operation of the arithmetic or of
-// the bits on such values (B :: A + 1, C :: KEY_EXTENDED | 0x53). Another
-// value, a negative one included, is not read.
+// constant of the same package, a negation of such a value (the negative
+// answers of an export, ERROR_NAME :: -3), or an operation of the
+// arithmetic or of the bits on such values (B :: A + 1, C :: KEY_EXTENDED
+// | 0x53). A literal past the largest i64, and a shift of a negative value
+// or past the bits, are not read.
+//
+// The syntax tree of Odin has a closed set of nodes and of operators: the
+// switches below read the few that a constant of a choice can have, and a
+// value of any other form is not read, so they stay partial.
 @(private = "file")
-small_integer_of :: proc(declared: map[string]^ast.Expr, folder: string, expression: ^ast.Expr, depth: int) -> (value: u64, ok: bool) {
+small_integer_of :: proc(declared: map[string]^ast.Expr, folder: string, expression: ^ast.Expr, depth: int) -> (value: i64, ok: bool) {
 	if expression == nil || depth > CHOICE_VALUE_DEPTH_LIMIT {
 		return 0, false
 	}
@@ -507,14 +514,23 @@ small_integer_of :: proc(declared: map[string]^ast.Expr, folder: string, express
 		#partial switch item.tok.kind {
 		case .Integer:
 			digits, _ := strings.remove_all(item.tok.text, "_")
-			return strconv.parse_u64(digits)
+			parsed := strconv.parse_u64(digits) or_return
+			return i64(parsed), parsed <= u64(max(i64))
 		case .Rune:
 			text := item.tok.text
 			if len(text) < 3 {
 				return 0, false
 			}
 			character, _, _, read := strconv.unquote_char(text[1:len(text) - 1], '\'')
-			return u64(character), read && character >= 0
+			return i64(character), read && character >= 0
+		}
+	case ^ast.Unary_Expr:
+		operand := small_integer_of(declared, folder, item.expr, depth + 1) or_return
+		#partial switch item.op.kind {
+		case .Sub:
+			return -operand, true
+		case .Add:
+			return operand, true
 		}
 	case ^ast.Call_Expr:
 		callee, is_name := item.expr.derived.(^ast.Ident)
@@ -535,7 +551,7 @@ small_integer_of :: proc(declared: map[string]^ast.Expr, folder: string, express
 		case .Add:
 			return left + right, true
 		case .Sub:
-			return left - right, left >= right
+			return left - right, true
 		case .Mul:
 			return left * right, true
 		case .Or:
@@ -545,9 +561,9 @@ small_integer_of :: proc(declared: map[string]^ast.Expr, folder: string, express
 		case .Xor:
 			return left ~ right, true
 		case .Shl:
-			return left << right, right < 64
+			return left << uint(right), left >= 0 && right >= 0 && right < 63
 		case .Shr:
-			return left >> right, right < 64
+			return left >> uint(right), left >= 0 && right >= 0 && right < 64
 		}
 	}
 	return 0, false

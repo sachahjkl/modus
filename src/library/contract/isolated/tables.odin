@@ -372,7 +372,9 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 	function := function
 	next := record_size(function) or_else 0
 	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-		#partial switch type {
+		switch type {
+		case .None, .Integer, .Handle:
+			// The field of the argument record holds the whole value.
 		case .Text:
 			next += u64(len(arguments[index].text))
 		case .Record:

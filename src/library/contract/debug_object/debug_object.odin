@@ -230,8 +230,6 @@ REGISTER_COUNT :: 17
 // word 8 bytes after is the return address.
 FRAME_POINTER_REGISTER :: 6
 STACK_POINTER_REGISTER :: 7 // `rsp`.
-FRAME_CALLER_FRAME_POINTER_OFFSET :: 0 // From the frame pointer: the frame pointer of the caller.
-FRAME_RETURN_ADDRESS_OFFSET :: 8 // From the frame pointer: the return address.
 
 // Where the value of a variable is, in a range of instructions.
 Location_Kind :: enum u8 {
@@ -574,7 +572,7 @@ check_types_and_variables :: proc "contextless" (parts: Tables) -> Fault {
 		if !name_is_valid(parts.strings, value.name_offset, value.name_count, true) || u64(value.element) >= type_count {
 			return .Type_Form
 		}
-		#partial switch value.kind {
+		switch value.kind {
 		case .Record, .Union, .Slice, .String:
 			if u64(value.first) + u64(value.count) > u64(len(parts.fields)) {
 				return .Type_Form
@@ -583,6 +581,8 @@ check_types_and_variables :: proc "contextless" (parts: Tables) -> Fault {
 			if u64(value.first) + u64(value.count) > u64(len(parts.values)) {
 				return .Type_Form
 			}
+		case .None, .Signed_Integer, .Unsigned_Integer, .Boolean, .Float, .Pointer, .Array, .Procedure_Address, .Other:
+			// These kinds name no fields and no values.
 		}
 	}
 	for &field in parts.fields {

@@ -241,16 +241,16 @@ stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> grap
 	if !red_first {
 		return order
 	}
-	#partial switch order {
+	switch order {
 	case .Red_Green_Blue:
 		return .Blue_Green_Red
 	case .Blue_Green_Red:
 		return .Red_Green_Blue
+	case .None:
 	}
 	return order
 }
 
-CARD_TITLE :: graphics.CARD_TITLE // The height of the title of a card.
 CARD_MARGIN :: graphics.CARD_MARGIN // The margin inside a card.
 
 // The interface font of the boot display (docs/DESIGN.md, section 5): the

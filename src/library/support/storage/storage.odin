@@ -56,27 +56,52 @@ GRANT_REGION :: 8 // Memory: the call region.
 GRANT_SERVICE :: 9 // The storage service, with the right Read: its state.
 VALUE_FILE_SIZE :: 3 // The size of the file of the storage service.
 
-// A place of the connection (docs/STORAGE.md, "Places").
-Place :: i64
+// A place of the connection (docs/STORAGE.md, "Places"). It is distinct:
+// a generation, a size or a count is not a place.
+Place :: distinct i64
 ROOT :: Place(0) // The root of the connection: the tree of the store, or the tree of a share.
 FILE_ADDRESS :: fixed_addresses.STORAGE_FILE_ADDRESS // Where the root service maps that file.
 
 // The answer of an export of the storage service that is not a generation
-// or a size: one of these numbers. The error record of the call says more
-// (src/library/contract/errors): the client gives it to its program.
-ERROR_NO_STORE :: -1 // The caller has no grant of a store.
-ERROR_NO_BUDGET :: -2 // The store would have more blocks than its limit.
-ERROR_NAME :: -3 // A name is empty, too long, has a zero byte or a byte '/', or is "." or "..".
-ERROR_TOO_LARGE :: -4 // The data of a write of a whole object has more bytes than the call region; or an object would pass 4 TiB.
-ERROR_FULL :: -5 // No place for one more object or store, or no free block on the disk.
-ERROR_DISK :: -6 // The block service reported an error.
-ERROR_ABSENT :: -7 // The tree has no object with this name, or the place names no tree any more.
-ERROR_DAMAGED :: -8 // A block of the object, or a node of a tree of the store, has a wrong check.
-ERROR_NO_VERSION :: -9 // The object has no version of this generation.
-ERROR_ACTS_FOR_PRINCIPAL :: -10 // The call names another store, and the caller does not act for the principal.
-ERROR_EXISTS :: -11 // The tree has an entry with this name already.
-ERROR_PLACE :: -12 // The place is not a place of this connection, or the connection reads only.
-ERROR_PENDING :: -13 // The object has no pending change on this connection, or another change of the object came first.
+// or a size: one of these negative results. The error record of the call
+// says more (src/library/contract/errors): the client gives it to its
+// program. The values are the words of the result of the export: the
+// service writes i64(member), and a reader takes the word with
+// export_error_of_result.
+Export_Error :: enum i64 {
+	No_Store           = -1, // The caller has no grant of a store.
+	No_Budget          = -2, // The store would have more blocks than its limit.
+	Name               = -3, // A name is empty, too long, has a zero byte or a byte '/', or is "." or "..".
+	Too_Large          = -4, // The data of a write of a whole object has more bytes than the call region; or an object would pass 4 TiB.
+	Full               = -5, // No place for one more object or store, or no free block on the disk.
+	Disk               = -6, // The block service reported an error.
+	Absent             = -7, // The tree has no object with this name, or the place names no tree any more.
+	Damaged            = -8, // A block of the object, or a node of a tree of the store, has a wrong check.
+	No_Version         = -9, // The object has no version of this generation.
+	Acts_For_Principal = -10, // The call names another store, and the caller does not act for the principal.
+	Exists             = -11, // The tree has an entry with this name already.
+	Place              = -12, // The place is not a place of this connection, or the connection reads only.
+	Pending            = -13, // The object has no pending change on this connection, or another change of the object came first.
+}
+
+// export_error_of_result is the border of the result of a failed export:
+// the member, or false for a result that names none (0, a positive result,
+// a negative result past the last member).
+export_error_of_result :: proc "contextless" (result: i64) -> (answer: Export_Error, ok: bool) {
+	for member in Export_Error {
+		if i64(member) == result {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+// export_failed_with says if a call failed with one answer: the status
+// Failed and the result of that member.
+export_failed_with :: proc "contextless" (status: Status, result: i64, answer: Export_Error) -> bool {
+	read, ok := export_error_of_result(result)
+	return status == .Failed && ok && read == answer
+}
 
 // One connection to the storage service, in the memory of the program. One
 // thread uses it at a time: a call uses the call region whole.
@@ -111,6 +136,10 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 	if client.ring_memory == 0 || client.region_memory == 0 {
 		return {}, false
 	}
+	region_pages, size_status := system.memory_size(client.region_memory)
+	if size_status != .Ok {
+		return {}, false
+	}
 	status: system.Status
 	if client.calls, status = system.ring_open(client.ring_memory); status != .Ok {
 		return {}, false
@@ -119,7 +148,7 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 	if map_status != .Ok {
 		return {}, false
 	}
-	client.region = ([^]u8)(address)[:system.memory_size(client.region_memory) * system.PAGE_SIZE]
+	client.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 	file_address := uintptr(FILE_ADDRESS)
 	client.file = ([^]u8)(file_address)[:ctx.values[VALUE_FILE_SIZE]]
 	if module.validate(client.file) != .None {
@@ -224,7 +253,7 @@ call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments:
 		if completion.tag != sent.tag {
 			continue
 		}
-		if isolated.Status(completion.kind) != .Ok {
+		if completion.kind != u32(isolated.Status.Ok) {
 			return 0, nil, .Refused, true
 		}
 		if i64(completion.values[0]) < 0 && sent.error_place.count != 0 {
@@ -272,7 +301,7 @@ write :: proc "contextless" (client: ^Client, place: Place, name: string, data: 
 // remove removes the entry `name` under a place, in one commit: an object
 // and its versions, or a tree and all under it. The result is the
 // generation of the commit, or a negative number with the status Failed and
-// the error record (ERROR_ABSENT: no entry with this name).
+// the error record (Export_Error.Absent: no entry with this name).
 remove :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	generation, _, status = call(client, "remove", arguments[:], error)
@@ -287,10 +316,10 @@ read :: proc "contextless" (client: ^Client, place: Place, name: string, result:
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	size: i64
 	size, _, status = call(client, "size", arguments[:], error)
-	if status == .Failed && size == ERROR_DAMAGED {
+	if export_failed_with(status, size, .Damaged) {
 		return nil, false, .Damaged
 	}
-	if status == .Failed && size == ERROR_ABSENT {
+	if export_failed_with(status, size, .Absent) {
 		return nil, false, .Ok // No such object: found is false.
 	}
 	if status != .Ok {
@@ -299,7 +328,7 @@ read :: proc "contextless" (client: ^Client, place: Place, name: string, result:
 	text: []u8
 	answer: i64
 	answer, text, status = call(client, "read", arguments[:], error)
-	if status == .Failed && answer == ERROR_DAMAGED {
+	if export_failed_with(status, answer, .Damaged) {
 		return nil, false, .Damaged
 	}
 	if status != .Ok {
@@ -328,7 +357,7 @@ read_range :: proc "contextless" (client: ^Client, place: Place, name: string, o
 	count: i64
 	text: []u8
 	count, text, status = call(client, "read_range", arguments[:], error)
-	if status == .Failed && count == ERROR_DAMAGED {
+	if export_failed_with(status, count, .Damaged) {
 		return nil, .Damaged
 	}
 	if status != .Ok {
@@ -394,7 +423,7 @@ open_tree :: proc "contextless" (client: ^Client, place: Place, name: string, er
 
 // open_store gives a place on the root of another store, for a caller
 // that can name it (the export open_store): a caller that acts for the
-// principal. Another caller gets Failed with ERROR_ACTS_FOR_PRINCIPAL.
+// principal. Another caller gets Failed with Export_Error.Acts_For_Principal.
 open_store :: proc "contextless" (client: ^Client, store: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: Status) {
 	arguments := [1]isolated.Argument{{text = transmute([]u8)store}}
 	result: i64
@@ -523,6 +552,10 @@ open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, s
 	client.region_memory = region_memory
 	client.service = service
 	client.file = file
+	region_pages, size_status := system.memory_size(region_memory)
+	if size_status != .Ok {
+		return {}, false
+	}
 	status: system.Status
 	if client.calls, status = system.ring_open(ring_memory); status != .Ok {
 		return {}, false
@@ -531,7 +564,7 @@ open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, s
 	if map_status != .Ok {
 		return {}, false
 	}
-	client.region = ([^]u8)(address)[:system.memory_size(region_memory) * system.PAGE_SIZE]
+	client.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 	return client, true
 }
 
