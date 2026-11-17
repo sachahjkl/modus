@@ -61,7 +61,10 @@ LINE :: interface.TABLE_LINE
 WIDTH :: 896
 HEIGHT :: 320
 
-VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
+// The value of the context that gives the role of a child. Not the value 0:
+// the root service writes there the size of the boot image of the grant
+// Image, which the parent holds, so a role there would read a size.
+VALUE_ROLE :: 7
 VALUE_WITH_AVX :: 1 // 1: the child of the instruction address holds ymm values.
 
 // The last page below the half of a program, and the address of its last

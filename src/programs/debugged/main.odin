@@ -64,7 +64,10 @@ import "modus:support/system"
 // thread of its own that only waits.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1860, programs = 3, threads = 6}
 
-VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
+// The value of the context that gives the role of a child. Not the value 0:
+// the root service writes there the size of the boot image of the grant
+// Image, which the parent holds, so a role there would read a size.
+VALUE_ROLE :: 7
 VALUE_MODE :: 1 // What a child or a second debugger does: a Child_Mode or a Debugger_Mode.
 VALUE_ADDRESS :: 2 // A second debugger: the address of the procedure of the child where it sets its breakpoint.
 
