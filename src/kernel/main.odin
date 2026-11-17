@@ -124,6 +124,7 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	processors_start(boot)
 	stage_end(.Kernel_Processors)
 	log("kernel: ", u64(processor_count), " processors")
+	stolen_time_log()
 	log("kernel: free memory ", Size{free_frames * PAGE_SIZE >> 20, .Mebibytes})
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
 	// Before any device service: from translation on, a device reaches only

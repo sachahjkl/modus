@@ -794,6 +794,16 @@ The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
 
 Do not use: safe MSR access, rdmsr_safe, exception fixup.
 
+### Stolen time
+
+Stolen time is the time in which the host ran no code of a processor of the machine, while the cycle counter of that processor went on.
+
+Under KVM, each processor registers the steal-time record of KVM at its start, and the host writes there the nanoseconds that it took from that processor. The kernel subtracts the stolen time of a run from the processor time that it charges to the thread, to its budgets and to its strategy, never below 0. A real machine has none. It is not the idle time of a processor: a processor that waits for an interrupt has no thread to charge.
+
+The design: `src/md/features/stolen_time.md`.
+
+Do not use: hypervisor overhead, wasted time.
+
 ### Thread counters
 
 The thread counters are the counts of four events of the processor for the code of one thread, in user mode only, since its last start (`op.Thread_Counters`): the instructions retired, the cycles, the cache misses and the branch misses.

@@ -31,7 +31,9 @@
 //
 // **What it does not prove.** The bars are measures: a loaded host gives a
 // thread less time than its limit, and the check reads only that no budget
-// used more than its limit.
+// used more than its limit. Under KVM the kernel does not charge the
+// [stolen time](term:stolen-time), so a loaded host does not raise a bar
+// past its limit.
 package limits
 
 import "base:intrinsics"
