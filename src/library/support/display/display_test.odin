@@ -5,6 +5,50 @@ import "modus:contract/ring"
 import "modus:support/key_path"
 import "core:testing"
 
+// The root service, the input service and each window write the kind of a
+// record that the compositor reads: None, one past the last member and the
+// largest word are refused, and give None. Then each member but None comes
+// back from its word.
+@(test)
+ring_words_of_the_compositor_refuse_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	controls_refused := [?]u32{u32(Control.None), u32(max(Control)) + 1, max(u32)}
+	for word in controls_refused {
+		read, ok := control_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no control, and it is taken", word)
+		testing.expect_value(t, read, Control.None)
+	}
+	inputs_refused := [?]u32{u32(Input.None), u32(max(Input)) + 1, max(u32)}
+	for word in inputs_refused {
+		read, ok := input_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no input, and it is taken", word)
+		testing.expect_value(t, read, Input.None)
+	}
+	commands_refused := [?]u32{u32(Command.None), u32(max(Command)) + 1, max(u32)}
+	for word in commands_refused {
+		read, ok := command_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no command, and it is taken", word)
+		testing.expect_value(t, read, Command.None)
+	}
+	for member in Control {
+		if member != .None {
+			read, ok := control_of_ring_word(u32(member))
+			testing.expect(t, ok && read == member)
+		}
+	}
+	for member in Input {
+		if member != .None {
+			read, ok := input_of_ring_word(u32(member))
+			testing.expect(t, ok && read == member)
+		}
+	}
+	for member in Command {
+		if member != .None {
+			read, ok := command_of_ring_word(u32(member))
+			testing.expect(t, ok && read == member)
+		}
+	}
+}
+
 // The compositor writes the kind of each input record. A kind that names no
 // event is refused first: None, one past the last member, the largest kind.
 // A refused record gives the zero event, so nothing of it reaches a program.

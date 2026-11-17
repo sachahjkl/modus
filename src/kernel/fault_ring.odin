@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import op "modus:contract/operation"
 
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"). A program names
@@ -87,7 +88,10 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 	vector := thread.frame.vector
 	program_index := thread.program
 	program := &programs[program_index]
-	if vector >= 64 {
+	// A vector that names no kind of fault has no record: no handler and no
+	// debugger can ask for it, and the record holds a kind, never a vector.
+	fault_kind, fault_kind_known := enum_word.member_of_word(op.Fault_Kind, vector)
+	if !fault_kind_known {
 		return .Stops_The_Program
 	}
 	kind_bit := u64(1) << vector
@@ -223,7 +227,7 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 		address     = address,
 		access      = access,
 		instruction = thread.frame.rip,
-		kind        = op.Fault_Kind(vector),
+		kind        = fault_kind,
 		error_code  = thread.frame.error,
 	}
 	written^ += 1

@@ -213,7 +213,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait)
 		system.service_run(&service)
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Key:
 				if !event.pressed {
 					continue
@@ -250,6 +250,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					graphics.line(paper(), last_x, last_y - PALETTE_HEIGHT, event.x, y - PALETTE_HEIGHT, erase ? 12 : 3, erase ? COLOR_PAPER : color)
 				}
 				last_x, last_y, drawing = event.x, y, true
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 	}

@@ -516,7 +516,14 @@ running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: [
 				if record.replaces != {} {
 					hash_text(record.replaces, &row.replaces)
 				}
-				text_put(row.writer[:], op.module_writer_name(record.writer))
+				// The kernel writes the word. A word that names no writer
+				// gives an empty writer and a line: the row never says who
+				// made a claim that no kernel marked.
+				if writer, writer_ok := op.module_writer_of_word(record.writer); writer_ok {
+					text_put(row.writer[:], op.module_writer_name(writer))
+				} else {
+					system.log("information: the module record at ", record.base, " of the program slot ", slot, " has the writer word ", record.writer, ", which names no writer")
+				}
 			}
 			count += 1
 		}

@@ -204,7 +204,9 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		return .Bad_State, false
 	}
 	file, _, problem_of_the_nickname := disk_program.start_file(table, name, hash)
-	#partial switch problem_of_the_nickname {
+	switch problem_of_the_nickname {
+	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key:
+		// start_file gives only None, No_File and Other_File: the start goes on.
 	case .No_File:
 		values^ = disk_refused(name, errors.ring_fail(kind, .Absent, .Grants, 2), "the nickname has no row in the disk grant table of principal ", asker.principal, ": name the hash of its file")
 		return .Bad_Handle, false
@@ -825,11 +827,11 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 		return .No_Right
 	}
 	setting := record.values[4]
-	if setting > u64(max(disk_program.Persistence)) || nickname == "" && setting == u64(disk_program.Persistence.Global) {
+	persistence, persistence_ok := enum_word.member_of_word(disk_program.Persistence, setting)
+	if !persistence_ok || nickname == "" && persistence == .Global {
 		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(setting, 1 << 62)), i64(max(disk_program.Persistence)))
 		return .Bad_Operation
 	}
-	persistence := disk_program.Persistence(setting)
 	table := disk_grant_table_of(caller.principal)
 	if table == nil {
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)

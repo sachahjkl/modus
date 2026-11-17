@@ -460,12 +460,12 @@ next_second :: proc "contextless" () {
 storm_write :: proc "contextless" (log: u64, text: string) -> bool {
 	for {
 		_, status := system.call(.Log, log, u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0, 0)
-		#partial switch status {
+		switch status {
 		case .Ok:
 			return true
 		case .No_Budget:
 			next_second()
-		case:
+		case .Bad_Operation, .Bad_Handle, .Bad_Address, .No_Memory, .No_Slot, .Bad_State, .No_Right:
 			return false
 		}
 	}

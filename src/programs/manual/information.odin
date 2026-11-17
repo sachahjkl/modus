@@ -42,13 +42,15 @@ catalog :: proc "contextless" () -> information.Catalog {
 // report: Refused (-3), with the status.
 @(private = "file")
 table_count :: proc "contextless" (count: int, problem: information.Problem, error: ^errors.Error_Record) -> i64 {
-	#partial switch problem.kind {
+	switch problem.kind {
 	case .None:
 		return i64(count)
 	case .No_Module:
 		return errors.fail(error, -1, .Absent, .Modules, 1)
 	case .Refused:
 		return errors.fail(error, -3, .Refused, .None, 0, 0, 0, i64(problem.value))
+	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Slot, .Direction:
+		// Each of these is a fault of the module file.
 	}
 	return errors.fail(error, -2, .Malformed, .None, 1, i64(problem.kind), 0, i64(problem.offset))
 }

@@ -988,8 +988,14 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			if record.tag != request_tag {
 				continue
 			}
-			status := system.Status(record.kind)
-			#partial switch status {
+			// The root service writes the word: a word that names no status
+			// is the refusal of status_of_word, and its record.
+			status, status_refusal := system.status_of_word(record.kind)
+			if status_refusal.kind != 0 {
+				status_refusal.argument = remote.FIELD_SERVICE
+				return nil, status_refusal
+			}
+			switch status {
 			case .Ok:
 			case .Bad_Handle:
 				// No service runs with this name.
@@ -1003,7 +1009,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 				refused := errors.completion_record(record.values)
 				refused.argument = remote.FIELD_SERVICE
 				return nil, refused
-			case:
+			case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .No_Budget:
 				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(status))
 			}
 			connection = free

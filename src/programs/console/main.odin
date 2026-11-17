@@ -478,7 +478,7 @@ edit_show :: proc "contextless" () {
 			length := text_encoding.character_encode(shown_key, character[:])
 			system.write_part(&writer, string(character[:length]))
 		}
-		style.tone = .Warning
+		style.tone = u8(terminal.Tone.Warning)
 	} else {
 		system.write_part(&writer, PROMPT)
 		system.write_part(&writer, line_editor.line_text(&line))

@@ -4,6 +4,26 @@ package terminal_records
 import "modus:contract/ring"
 import "core:testing"
 
+// The program of a terminal writes the kind of each record of the terminal
+// ring: None, one past the last kind and the largest word are refused, and
+// give None. Then each kind but None comes back from its word.
+@(test)
+kind_of_ring_word_refuses_a_word_that_names_no_record :: proc(t: ^testing.T) {
+	refused := [?]u32{u32(Kind.None), u32(max(Kind)) + 1, max(u32)}
+	for word in refused {
+		read, ok := kind_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no record, and it is taken", word)
+		testing.expect_value(t, read, Kind.None)
+	}
+	for member in Kind {
+		if member != .None {
+			read, ok := kind_of_ring_word(u32(member))
+			testing.expect(t, ok)
+			testing.expect_value(t, read, member)
+		}
+	}
+}
+
 // The terminal writes the kind of each input record. A kind that names no
 // input is refused first: None, one past the last kind, the largest kind.
 // A refused record gives the zero record. Then each input comes back with

@@ -44,6 +44,7 @@
 // The design: (docs/ARCHITECTURE.md, "The return to a program").
 package return_fault
 
+import "modus:contract/enum_word"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:support/display"
@@ -60,7 +61,10 @@ LINE :: interface.TABLE_LINE
 WIDTH :: 896
 HEIGHT :: 320
 
-VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
+// The value of the context that gives the role of a child. Not the value 0:
+// the root service writes there the size of the boot image of the grant
+// Image, which the parent holds, so a role there would read a size.
+VALUE_ROLE :: 7
 VALUE_WITH_AVX :: 1 // 1: the child of the instruction address holds ymm values.
 
 // The last page below the half of a program, and the address of its last
@@ -235,7 +239,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 //   the log, and then draws its window for ever.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	switch Role(ctx.values[VALUE_ROLE]) {
+	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
+	if !role_ok {
+		system.log("return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.stop(1)
+	}
+	switch role {
 	case .Instruction_Address:
 		child_instruction_address(ctx.values[VALUE_WITH_AVX] != 0)
 	case .Stack_Address:

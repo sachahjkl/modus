@@ -42,6 +42,7 @@
 package pointers
 
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import "modus:contract/pointer_pictures"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -210,9 +211,12 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 		// A track behind each size of each form, with the lines of the hot
 		// spot: the dark form on a dark track, the light form on a light one.
 		x := area.x + 8
+		// The theme file holds the word of the shape: a word that names no
+		// shape draws no track.
+		entry_shape, entry_shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, u64(entry.shape))
 		for form in forms_of(theme.file) {
-			form_entry, found := pointer_pictures.shape_entry_of(theme.file, form, pointer_pictures.Pointer_Shape(entry.shape))
-			if !found {
+			form_entry, found := pointer_pictures.shape_entry_of(theme.file, form, entry_shape)
+			if !entry_shape_ok || !found {
 				continue
 			}
 			for size in 0 ..< form_entry.size_count {
@@ -248,9 +252,12 @@ pictures_draw :: proc "contextless" (canvas: graphics.Canvas) {
 	for entry, index in pointer_pictures.shape_entries(theme.file, .Dark) {
 		area := tile_area(index)
 		x := area.x + 8
+		// The theme file holds the word of the shape: a word that names no
+		// shape draws no track.
+		entry_shape, entry_shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, u64(entry.shape))
 		for form in forms_of(theme.file) {
-			form_entry, found := pointer_pictures.shape_entry_of(theme.file, form, pointer_pictures.Pointer_Shape(entry.shape))
-			if !found {
+			form_entry, found := pointer_pictures.shape_entry_of(theme.file, form, entry_shape)
+			if !entry_shape_ok || !found {
 				continue
 			}
 			for size in 0 ..< form_entry.size_count {
@@ -314,7 +321,10 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	// Over a tile, the pointer takes the shape of the tile.
 	shape := pointer_pictures.Pointer_Shape.Arrow
 	if under >= 0 && themes[shown].valid {
-		shape = pointer_pictures.Pointer_Shape(pointer_pictures.shape_entries(themes[shown].file, .Dark)[under].shape)
+		// A tile whose word names no shape keeps the arrow.
+		if tile_shape, tile_shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, u64(pointer_pictures.shape_entries(themes[shown].file, .Dark)[under].shape)); tile_shape_ok {
+			shape = tile_shape
+		}
 	}
 	if shape != asked_shape {
 		asked_shape = shape

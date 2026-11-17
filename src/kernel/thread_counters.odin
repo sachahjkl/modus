@@ -201,7 +201,11 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_program
 	if counter_plan.vendor == .None {
 		return .Bad_Operation
 	}
-	#partial switch command {
+	// Stop_Counters returned above; each other command of the set comes to
+	// this procedure only by a fault of its caller.
+	switch command {
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Stop_Counters:
+		return .Bad_Operation
 	case .Start_Counters:
 		if thread.counting {
 			thread_counters_unload(thread)
@@ -231,8 +235,6 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_program
 		}
 		user_copy(rawptr(uintptr(v[3])), &counters, size)
 		results[0] = size
-	case:
-		return .Bad_Operation
 	}
 	return .Ok
 }

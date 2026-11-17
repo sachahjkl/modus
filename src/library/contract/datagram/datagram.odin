@@ -363,6 +363,32 @@ COMMAND_NAMES := [Command]string {
 	.Validate = "Validate",
 }
 
+// command_of_ring_word is the border of the kind of a command record of the
+// datagram ring of an endpoint: the command, or false for a word that names
+// no command, None included. The network service answers a refusal with
+// Bad_Command and the record Unsupported. It reads and changes no state.
+command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
+	for member in Command {
+		if u32(member) == word && member != .None {
+			return member, true
+		}
+	}
+	return .None, false
+}
+
+// control_of_ring_word is the border of the kind of a record of the control
+// ring of the network service, which the root service writes: the control,
+// or false for a word that names no control, None included. It reads and
+// changes no state.
+control_of_ring_word :: proc "contextless" (word: u32) -> (control: Control, ok: bool) {
+	for member in Control {
+		if u32(member) == word && member != .None {
+			return member, true
+		}
+	}
+	return .None, false
+}
+
 // command_name gives the name of a command from an error record, or "an
 // unknown command".
 command_name :: proc "contextless" (command: i64) -> string {

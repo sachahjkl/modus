@@ -29,6 +29,7 @@
 // (docs/ARCHITECTURE.md, "U9. Base library").
 package system
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -1006,7 +1007,14 @@ guest_run :: proc "contextless" (program: Handle, registers: ^op.Guest_Registers
 	if status != .Ok {
 		return {}, status
 	}
-	return {kind = op.Guest_Exit_Kind(results[0]), a = results[1], b = results[2], c = results[3], next = results[4], code = results[5], information = results[6]}, .Ok
+	// The kernel writes the kind as a word: a word that names no kind is the
+	// refusal Bad_Operation with the record Bad_Value, never an exit.
+	kind, kind_ok := enum_word.member_of_word(op.Guest_Exit_Kind, results[0])
+	if !kind_ok {
+		errors.fail(error, 0, .Bad_Value, .None, 0, i64(results[0]), i64(max(op.Guest_Exit_Kind)))
+		return {}, .Bad_Operation
+	}
+	return {kind = kind, a = results[1], b = results[2], c = results[3], next = results[4], code = results[5], information = results[6]}, .Ok
 }
 
 // event_ring gives the head and the records of the event ring of one

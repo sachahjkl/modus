@@ -312,12 +312,14 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 			return errors.ring_fail(kind, .Absent, .Grants, 2)
 		}
 	case .Principal_Create:
-		#partial switch status {
+		switch status {
 		case .Bad_Operation:
 			return errors.ring_fail(kind, .Bad_Value, .None, 1)
 		case .Bad_State:
 			// One named principal: several are not built.
 			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
+		case .Ok, .Bad_Handle, .Bad_Address, .No_Memory, .No_Slot, .No_Right, .No_Budget:
+			// The general record of the status follows.
 		}
 	case .Principal_Lock:
 		if status == .Bad_State {
@@ -332,7 +334,9 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
 		}
 	case .Machine_Passphrase, .Machine_Seal:
-		#partial switch status {
+		switch status {
+		case .Ok, .Bad_Operation, .Bad_Address, .No_Memory, .No_Budget:
+			// The general record of the status follows.
 		case .Bad_State:
 			// The machine has a record of its machine key: a change is not
 			// built.

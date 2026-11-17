@@ -24,13 +24,13 @@ hash_filled :: proc(value: u8) -> (hash: [HASH_SIZE]u8) {
 }
 
 @(private = "file")
-row_of :: proc(from, to: u8, scope: Scope = .System, principal: u32 = 0) -> Row {
+row_of :: proc(from, to: u8, scope: u32 = u32(Scope.System), principal: u32 = 0) -> Row {
 	return {from = hash_filled(from), to = hash_filled(to), scope = scope, principal = principal}
 }
 
 @(test)
 test_a_valid_list_gives_its_rows :: proc(t: ^testing.T) {
-	list := [?]Row{row_of(1, 2), row_of(1, 3), row_of(1, 2, .Principal, 1)}
+	list := [?]Row{row_of(1, 2), row_of(1, 3), row_of(1, 2, u32(Scope.Principal), 1)}
 	found, problem := rows(list_of(list[:]))
 	testing.expect_value(t, problem, List_Problem.None)
 	testing.expect_value(t, len(found), 3)
@@ -78,12 +78,12 @@ test_the_reader_refuses_each_fault_of_a_row :: proc(t: ^testing.T) {
 		problem: List_Problem,
 	}
 	cases := [?]Case {
-		{row_of(1, 2, .None), .Scope},
-		{row_of(1, 2, Scope(7)), .Scope},
-		{row_of(1, 2, Scope(u32(max(Scope)) + 1)), .Scope},
-		{row_of(1, 2, Scope(max(u32))), .Scope},
-		{row_of(1, 2, .System, 1), .Scope},
-		{row_of(1, 2, .Principal, 0), .Scope},
+		{row_of(1, 2, u32(Scope.None)), .Scope},
+		{row_of(1, 2, 7), .Scope},
+		{row_of(1, 2, u32(max(Scope)) + 1), .Scope},
+		{row_of(1, 2, max(u32)), .Scope},
+		{row_of(1, 2, u32(Scope.System), 1), .Scope},
+		{row_of(1, 2, u32(Scope.Principal), 0), .Scope},
 		{row_of(1, 1), .Same_Hash},
 		{row_of(0, 2), .Same_Hash},
 		{row_of(1, 0), .Same_Hash},
@@ -98,9 +98,26 @@ test_the_reader_refuses_each_fault_of_a_row :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, List_Problem.Repeated)
 }
 
+// The scope of a row is a word of a file: one past the last scope and the
+// largest word name no scope. Each scope then comes back from its own word;
+// None is a member, which `rows` refuses after the border.
+@(test)
+test_scope_of_word_refuses_a_word_that_names_no_scope :: proc(t: ^testing.T) {
+	refused := [?]u32{u32(max(Scope)) + 1, 256, max(u32)}
+	for word in refused {
+		_, ok := scope_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no scope, and it is taken", word)
+	}
+	for member in Scope {
+		read, ok := scope_of_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
+}
+
 @(test)
 test_row_find_names_one_pair_in_one_scope :: proc(t: ^testing.T) {
-	list := [?]Row{row_of(1, 2), row_of(1, 3, .Principal, 1)}
+	list := [?]Row{row_of(1, 2), row_of(1, 3, u32(Scope.Principal), 1)}
 	row, found := row_find(list[:], hash_filled(1), hash_filled(2), .System, 0)
 	testing.expect(t, found)
 	testing.expect_value(t, row.to, hash_filled(2))
@@ -115,7 +132,7 @@ test_row_find_names_one_pair_in_one_scope :: proc(t: ^testing.T) {
 
 @(test)
 test_the_signed_message_holds_each_field :: proc(t: ^testing.T) {
-	message := signed_message(hash_filled(1), hash_filled(2), .Principal, 0x0403_0201)
+	message := signed_message(hash_filled(1), hash_filled(2), u32(Scope.Principal), 0x0403_0201)
 	testing.expect_value(t, string(message[:len(SIGNATURE_LABEL)]), SIGNATURE_LABEL)
 	testing.expect_value(t, message[len(SIGNATURE_LABEL)], 0)
 	testing.expect_value(t, message[32], 1)
@@ -125,7 +142,7 @@ test_the_signed_message_holds_each_field :: proc(t: ^testing.T) {
 	testing.expect_value(t, message[tail + 4], 0x01)
 	testing.expect_value(t, message[tail + 7], 0x04)
 	// Each field changes the message: the pair, its direction, the scope.
-	testing.expect(t, message != signed_message(hash_filled(2), hash_filled(1), .Principal, 0x0403_0201))
-	testing.expect(t, message != signed_message(hash_filled(1), hash_filled(2), .System, 0x0403_0201))
-	testing.expect(t, message != signed_message(hash_filled(1), hash_filled(2), .Principal, 1))
+	testing.expect(t, message != signed_message(hash_filled(2), hash_filled(1), u32(Scope.Principal), 0x0403_0201))
+	testing.expect(t, message != signed_message(hash_filled(1), hash_filled(2), u32(Scope.System), 0x0403_0201))
+	testing.expect(t, message != signed_message(hash_filled(1), hash_filled(2), u32(Scope.Principal), 1))
 }

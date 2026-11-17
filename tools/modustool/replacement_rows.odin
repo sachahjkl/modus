@@ -61,7 +61,7 @@ replacement_list_of_the_build :: proc(modules: []Image_File, key: ^Signing_Key) 
 		if !from_found || !to_found {
 			continue
 		}
-		row := replacement_list.Row{from = from, to = to, scope = .System}
+		row := replacement_list.Row{from = from, to = to, scope = u32(replacement_list.Scope.System)}
 		replacement_signature.row_sign(&row, item.signed_by_another_key ? &another_key : &key.private_key)
 		if replacement_signature.row_verifies(&row, key.public_key) == item.signed_by_another_key {
 			fmt.eprintfln("modustool: the replacement row %s by %s does not verify as it must under the signing key of the system", item.from, item.to)

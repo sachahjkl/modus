@@ -120,7 +120,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		if run_status != .Ok {
 			fail("guest_demo: failed: Guest_Run gave ", run_status)
 		}
-		#partial switch exit.kind {
+		switch exit.kind {
 		case .Port_Write:
 			written_port, written_value = exit.a, exit.c
 			writes += 1
@@ -138,7 +138,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 			if interrupted > INTERRUPTED_RUNS_LIMIT {
 				fail("guest_demo: failed: the guest did not reach its hlt in ", u64(INTERRUPTED_RUNS_LIMIT), " runs")
 			}
-		case:
+		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other:
 			fail("guest_demo: failed: an exit of kind ", u64(exit.kind), ", exit code ", system.Hex(exit.code), ", information ", system.Hex(exit.information), ", at ", system.Hex(registers.rip))
 		}
 	}

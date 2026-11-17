@@ -10,6 +10,7 @@ package compositor
 // there. An animated shape wakes the compositor at the time of its next
 // frame, and only while it shows.
 
+import "modus:contract/enum_word"
 import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
@@ -245,12 +246,15 @@ pointer_wake :: proc "contextless" () -> u64 {
 }
 
 // pointer_shape_request takes the display command Pointer_Shape of a
-// program: the shape of its surface. A number out of the enum is ignored.
+// program: the shape of its surface. A word that names no shape is
+// refused, with a line: the surface keeps its shape.
 pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Record) {
-	if record.values[0] > u64(max(pointer_pictures.Pointer_Shape)) {
+	shape, shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, record.values[0])
+	if !shape_ok {
+		system.log_in("surfaces", .Warning, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", record.values[0], ", which names no shape: it is refused")
 		return
 	}
-	client.pointer_shape = pointer_pictures.Pointer_Shape(record.values[0])
+	client.pointer_shape = shape
 	system.log_in("surfaces", .Info, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", pointer_pictures.SHAPE_NAMES[client.pointer_shape], " over its surface")
 }
 

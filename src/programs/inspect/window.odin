@@ -64,11 +64,13 @@ kind_color :: proc "contextless" (kind: addresses.Kind) -> graphics.Color {
 }
 
 state_color :: proc "contextless" (state: op.Program_State) -> graphics.Color {
-	#partial switch state {
+	switch state {
 	case .Stopped:
 		return graphics.colors.failed
 	case .Created:
 		return graphics.colors.boot_program
+	case .None, .Ready, .Waiting:
+		// A program that runs, or waits, has the color of a program.
 	}
 	return graphics.colors.program
 }

@@ -586,7 +586,7 @@ completion_show :: proc "contextless" () {
 	completion.hint_count = copy(completion.hint_shown[:], both[:both_count])
 	completion.hint_long_count = long.count
 	completion.hint_marked = marked
-	terminal.hint(&output, {system.written(&long), marked[.Long][0], marked[.Long][1] - marked[.Long][0]}, {system.written(&short), marked[.Short][0], marked[.Short][1] - marked[.Short][0]}, {tone = .Dim})
+	terminal.hint(&output, {system.written(&long), marked[.Long][0], marked[.Long][1] - marked[.Long][0]}, {system.written(&short), marked[.Short][0], marked[.Short][1] - marked[.Short][0]}, {tone = u8(terminal.Tone.Dim)})
 }
 
 // The icon that the terminal draws before a name of the completion list,

@@ -1490,7 +1490,10 @@ tree_usage_node :: proc "contextless" (one: ^tree.Walk, _: Pointer) -> bool {
 
 tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) {
 	entry := (^Entry)(raw_data(value))^
-	#partial switch entry.kind {
+	// The kind is a word of the disk: a word past the last kind runs no
+	// case, as None does, and the entry counts nothing.
+	switch entry.kind {
+	case .None:
 	case .Tree:
 		tree_usage_state.trees += 1
 		tree_usage_walk(entry.pointer, tree_usage_state.nesting + 1)
