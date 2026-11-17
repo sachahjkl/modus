@@ -7,6 +7,7 @@ The steps and their lines are in [`docs/TOOLS.md`](../../../docs/TOOLS.md), "How
 ## Constraints
 
 - **The test runs the bytes that ship.** A module is named by its hash. A program that draws other code in a test build is another module, and a test of it says nothing of the module that a principal runs. So no part of this design is a build setting.
+  - **One exception: the fuzzing of the kernel operations.** It needs the edge counters of the kernel, so it runs an instrumented kernel on a test volume of its own, as the self tests of the kernel run on volumes of their own; the release image refuses every test volume. The rule still decides what a finding is: a fault of the kernel counts only when the same operation sequence faults the kernel of the main volume too, the kernel that ships. A fault that only the instrumented kernel shows is a fault of the instrumentation ([fuzzing.md](fuzzing.md), "The kernel operations").
 - **No new contract between two programs.** A log line is no contract: no program reads it, and only the tool depends on its form. A record of the display ring, a setting of the settings page and an export of the compositor are contracts, and each one would need a version and a reader in the system.
 - **A test waits for a condition, never for a time.** The tool waits for the line that places the element, with the hang bound.
 - **The log is shared and read by principals.** A frame that changes nothing writes nothing. A line holds no secret that a principal types, and no fact about it such as its length.
