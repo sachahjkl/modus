@@ -84,15 +84,12 @@ DEFAULT_MAX_UDP_PAYLOAD_SIZE :: 65527
 // and `active_connection_id_limit`.
 //
 // A zero record is not the record of an absent parameter: start from
-// `sent_transport_parameters_default`. The value of a connection identifier is its first `_length`
-// bytes; the writer refuses a byte that is not 0 after them, and a length with a `has_` field that
-// is false.
+// `sent_transport_parameters_default`. Each connection identifier is a `Connection_Identifier`,
+// and an optional one is a `Maybe` of it, so no record holds an identifier that the write would
+// lose: the writer refuses only a role that names the wrong parameters.
 Sent_Transport_Parameters :: struct {
-	original_destination_connection_id:        [CONNECTION_ID_LIMIT]u8, // A server only: the Destination Connection ID of the first Initial packet of the client, before any Retry.
-	original_destination_connection_id_length: int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`.
-	has_original_destination_connection_id:    bool, // The parameter is there. A server must set it and a client must not: the writer refuses each other record, and a read refuses a server without it.
-	initial_source_connection_id:              [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of the first Initial packet of the side. The receiver compares it with the identifier that the packets carried.
-	initial_source_connection_id_length:       int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`. An identifier of no byte is valid. The writer always sends it.
+	original_destination_connection_id:        Maybe(Connection_Identifier), // A server only: the Destination Connection ID of the first Initial packet of the client, before any Retry. A server must give it and a client must not: the writer refuses each other record, and a read refuses a server without it.
+	initial_source_connection_id:              Connection_Identifier, // The Source Connection ID of the first Initial packet of the side. The receiver compares it with the identifier that the packets carried. An identifier of no byte is valid. The writer always sends it, and a read refuses bytes without it.
 	max_idle_timeout:                          u64, // Milliseconds; 0: no idle timeout from this side. The idle timeout of the connection is the smaller of the two values that are not 0.
 	max_udp_payload_size:                      u64, // The largest UDP payload that the side takes, in bytes. The writer and the reader refuse a value under `SMALLEST_MAX_UDP_PAYLOAD_SIZE`.
 	initial_max_data:                          u64, // The first limit of the bytes that the other side can send on all the streams together.
@@ -100,9 +97,7 @@ Sent_Transport_Parameters :: struct {
 	initial_max_stream_data_bidirectional_remote: u64, // The first limit of the bytes that the other side can send on a bidirectional stream that the other side opens.
 	initial_max_streams_bidirectional:         u64, // The count of bidirectional streams that the other side can open. The writer and the reader refuse a count over `STREAMS_LIMIT`.
 	disable_active_migration:                  bool, // The side takes no packet of this connection from another address or port.
-	retry_source_connection_id:                [CONNECTION_ID_LIMIT]u8, // A server after a Retry: the Source Connection ID of its Retry packet.
-	retry_source_connection_id_length:         int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`.
-	has_retry_source_connection_id:            bool, // The parameter is there. Only a server sets it: the writer refuses a client with it. The caller of a read checks that it is there after a Retry, and only then.
+	retry_source_connection_id:                Maybe(Connection_Identifier), // A server after a Retry: the Source Connection ID of its Retry packet. Only a server gives it: the writer refuses a client with it. The caller of a read checks that it is there after a Retry, and only then.
 }
 
 // The transport parameters of the peer, as `transport_parameters_read` decodes and checks them: every parameter that this library knows.
@@ -115,7 +110,6 @@ Sent_Transport_Parameters :: struct {
 // `transport_parameters_default`.
 Transport_Parameters :: struct {
 	using sent:                                Sent_Transport_Parameters, // The parameters that this library also writes.
-	has_initial_source_connection_id:          bool, // A read sets it, and refuses bytes without the parameter.
 	initial_max_stream_data_unidirectional:    u64, // The first limit of a unidirectional stream that the other side opens.
 	initial_max_streams_unidirectional:        u64, // The count of unidirectional streams that the other side can open. A read refuses a count over `STREAMS_LIMIT`.
 	ack_delay_exponent:                        u64, // The power of 2 that scales the ACK Delay field of the ACK frames of the side.
@@ -150,14 +144,12 @@ transport_parameters_default :: proc "contextless" () -> Transport_Parameters {
 
 // transport_parameters_of_sent gives the record that `transport_parameters_read` finds in the bytes that `transport_parameters_write` wrote from `sent`.
 //
-// The fields of `sent` keep their values, `has_initial_source_connection_id` is true because the
-// writer always sends that parameter, and each parameter that the writer does not send has its
-// default (RFC 9000, section 18.2). The result has a meaning only for a record that the writer
+// The fields of `sent` keep their values, and each parameter that the writer does not send has
+// its default (RFC 9000, section 18.2). The result has a meaning only for a record that the writer
 // takes: a record that it refuses has no bytes to read.
 transport_parameters_of_sent :: proc "contextless" (sent: Sent_Transport_Parameters) -> Transport_Parameters {
 	parameters := transport_parameters_default()
 	parameters.sent = sent
-	parameters.has_initial_source_connection_id = true
 	return parameters
 }
 
@@ -184,17 +176,16 @@ transport_parameters_of_sent :: proc "contextless" (sent: Sent_Transport_Paramet
 //    `initial_max_stream_data_bidi_remote` and `initial_max_streams_bidi`: always, a value of 0 too;
 // 5. `initial_source_connection_id`: always, with its length, which can be 0;
 // 6. `disable_active_migration`: when it is true;
-// 7. `retry_source_connection_id`: a server, when its `has_` field is true.
+// 7. `retry_source_connection_id`: a server, when the record gives it.
 //
 // So `transport_parameters_read` of the bytes gives `transport_parameters_of_sent(parameters^)`.
 //
 // **What it refuses**, before it writes a byte, so the buffer is unchanged: each record whose bytes
-// would not read back to that record. That is a client with `has_original_destination_connection_id`
-// or `has_retry_source_connection_id`, a server without `has_original_destination_connection_id`, a
-// connection identifier whose length is under 0 or over `CONNECTION_ID_LIMIT`, or not 0 when its
-// `has_` field is false, or that has a byte that is not 0 after its length, `max_udp_payload_size`
-// under `SMALLEST_MAX_UDP_PAYLOAD_SIZE`, `initial_max_streams_bidi` over `STREAMS_LIMIT`, and an
-// integer over `VARIABLE_LENGTH_INTEGER_LARGEST`.
+// would not read back to that record. That is a client that gives `original_destination_connection_id`
+// or `retry_source_connection_id`, a server that does not give `original_destination_connection_id`,
+// `max_udp_payload_size` under `SMALLEST_MAX_UDP_PAYLOAD_SIZE`, `initial_max_streams_bidi` over
+// `STREAMS_LIMIT`, and an integer over `VARIABLE_LENGTH_INTEGER_LARGEST`. A connection identifier
+// needs no check: `Connection_Identifier` holds only the identifiers that a read gives back.
 //
 // **Result**: the count of bytes. **0** for a refused record, and when the buffer has no room: the
 // buffer then holds a part of the encoding, which the caller must not send.
@@ -213,8 +204,8 @@ transport_parameters_write :: proc "contextless" (parameters: ^Sent_Transport_Pa
 		frame_write_integer(writer, u64(len(value)))
 		frame_write_bytes(writer, value)
 	}
-	if parameters.has_original_destination_connection_id {
-		bytes(&writer, PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID, parameters.original_destination_connection_id[:parameters.original_destination_connection_id_length])
+	if original, has_original := parameters.original_destination_connection_id.?; has_original {
+		bytes(&writer, PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID, connection_identifier_bytes(&original))
 	}
 	if parameters.max_idle_timeout != 0 {
 		integer(&writer, PARAMETER_MAX_IDLE_TIMEOUT, parameters.max_idle_timeout)
@@ -226,12 +217,12 @@ transport_parameters_write :: proc "contextless" (parameters: ^Sent_Transport_Pa
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_LOCAL, parameters.initial_max_stream_data_bidirectional_local)
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_REMOTE, parameters.initial_max_stream_data_bidirectional_remote)
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAMS_BIDIRECTIONAL, parameters.initial_max_streams_bidirectional)
-	bytes(&writer, PARAMETER_INITIAL_SOURCE_CONNECTION_ID, parameters.initial_source_connection_id[:parameters.initial_source_connection_id_length])
+	bytes(&writer, PARAMETER_INITIAL_SOURCE_CONNECTION_ID, connection_identifier_bytes(&parameters.initial_source_connection_id))
 	if parameters.disable_active_migration {
 		bytes(&writer, PARAMETER_DISABLE_ACTIVE_MIGRATION, nil)
 	}
-	if parameters.has_retry_source_connection_id {
-		bytes(&writer, PARAMETER_RETRY_SOURCE_CONNECTION_ID, parameters.retry_source_connection_id[:parameters.retry_source_connection_id_length])
+	if retry_source, has_retry_source := parameters.retry_source_connection_id.?; has_retry_source {
+		bytes(&writer, PARAMETER_RETRY_SOURCE_CONNECTION_ID, connection_identifier_bytes(&retry_source))
 	}
 	if writer.failed {
 		return 0
@@ -244,36 +235,20 @@ transport_parameters_write :: proc "contextless" (parameters: ^Sent_Transport_Pa
 // write, or give bytes that `transport_parameters_read` refuses.
 @(private)
 sent_transport_parameters_valid :: proc "contextless" (parameters: ^Sent_Transport_Parameters, role: Tls_Role) -> bool {
-	// A reader keeps the first `length` bytes of an identifier and nothing
-	// of an absent one, so each other byte is a value that the write loses.
-	identifier_valid :: proc "contextless" (identifier: []u8, length: int, present: bool) -> bool {
-		if length < 0 || length > len(identifier) || (!present && length != 0) {
-			return false
-		}
-		for value in identifier[length:] {
-			if value != 0 {
-				return false
-			}
-		}
-		return true
-	}
+	_, has_original := parameters.original_destination_connection_id.?
+	_, has_retry_source := parameters.retry_source_connection_id.?
 	switch role {
 	case .Client:
 		// Only a server sends these two parameters (RFC 9000, section 18.2).
-		if parameters.has_original_destination_connection_id || parameters.has_retry_source_connection_id {
+		if has_original || has_retry_source {
 			return false
 		}
 	case .Server:
 		// A reader refuses a server that does not name the first identifier
 		// that its client chose (RFC 9000, section 7.3).
-		if !parameters.has_original_destination_connection_id {
+		if !has_original {
 			return false
 		}
-	}
-	if !identifier_valid(parameters.original_destination_connection_id[:], parameters.original_destination_connection_id_length, parameters.has_original_destination_connection_id) ||
-	   !identifier_valid(parameters.initial_source_connection_id[:], parameters.initial_source_connection_id_length, true) ||
-	   !identifier_valid(parameters.retry_source_connection_id[:], parameters.retry_source_connection_id_length, parameters.has_retry_source_connection_id) {
-		return false
 	}
 	if parameters.max_udp_payload_size < SMALLEST_MAX_UDP_PAYLOAD_SIZE || parameters.initial_max_streams_bidirectional > STREAMS_LIMIT {
 		return false
@@ -373,24 +348,19 @@ transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, 
 			}
 		}
 		switch identifier {
-		case PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID:
-			if len(value) > CONNECTION_ID_LIMIT {
+		case PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID, PARAMETER_INITIAL_SOURCE_CONNECTION_ID, PARAMETER_RETRY_SOURCE_CONNECTION_ID:
+			named, named_ok := connection_identifier_make(value)
+			if !named_ok {
 				return .Transport_Parameter_Error
 			}
-			parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], value)
-			parameters.has_original_destination_connection_id = true
-		case PARAMETER_INITIAL_SOURCE_CONNECTION_ID:
-			if len(value) > CONNECTION_ID_LIMIT {
-				return .Transport_Parameter_Error
+			switch identifier {
+			case PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID:
+				parameters.original_destination_connection_id = named
+			case PARAMETER_INITIAL_SOURCE_CONNECTION_ID:
+				parameters.initial_source_connection_id = named
+			case PARAMETER_RETRY_SOURCE_CONNECTION_ID:
+				parameters.retry_source_connection_id = named
 			}
-			parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], value)
-			parameters.has_initial_source_connection_id = true
-		case PARAMETER_RETRY_SOURCE_CONNECTION_ID:
-			if len(value) > CONNECTION_ID_LIMIT {
-				return .Transport_Parameter_Error
-			}
-			parameters.retry_source_connection_id_length = copy(parameters.retry_source_connection_id[:], value)
-			parameters.has_retry_source_connection_id = true
 		case PARAMETER_STATELESS_RESET_TOKEN:
 			if len(value) != STATELESS_RESET_TOKEN_SIZE {
 				return .Transport_Parameter_Error
@@ -464,12 +434,12 @@ transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, 
 	}
 	// Each side gives the identifier of its first packet; a server gives the
 	// identifier that the client chose (RFC 9000, section 7.3).
-	if !parameters.has_initial_source_connection_id || (sender == .Server && !parameters.has_original_destination_connection_id) {
+	if int(PARAMETER_INITIAL_SOURCE_CONNECTION_ID) not_in seen || (sender == .Server && int(PARAMETER_ORIGINAL_DESTINATION_CONNECTION_ID) not_in seen) {
 		return .Transport_Parameter_Error
 	}
 	// A server that chose an empty connection identifier gives no preferred
 	// address (RFC 9000, section 18.2): a client could not name it there.
-	if has_preferred_address && parameters.initial_source_connection_id_length == 0 {
+	if has_preferred_address && parameters.initial_source_connection_id.length == 0 {
 		return .Transport_Parameter_Error
 	}
 	return .No_Error

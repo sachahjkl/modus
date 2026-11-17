@@ -737,8 +737,8 @@ versions_and_an_empty_retry_token :: proc(t: ^testing.T) {
 	negotiation := []u8{0x80, 0, 0, 0, 0, 1, 0xAA, 1, 0xBB, 0, 0, 0, 1}
 	testing.expect(t, header_read(negotiation, 0, 0, &header, &error))
 	testing.expect_value(t, header.type, Packet_Type.Version_Negotiation)
-	testing.expect_value(t, header.destination_connection_id_length, 1)
-	testing.expect_value(t, header.source_connection_id_length, 1)
+	testing.expect_value(t, header.destination_connection_id.length, 1)
+	testing.expect_value(t, header.source_connection_id.length, 1)
 	unknown := []u8{0xC0, 0xFF, 0x00, 0x00, 0x1D, 2, 0xAA, 0xAA, 0, 0x99}
 	testing.expect(t, header_read(unknown, 0, 0, &header, &error))
 	testing.expect_value(t, header.type, Packet_Type.Unknown_Version)

@@ -327,12 +327,12 @@ cases_run :: proc "contextless" () {
 	text: [32]u8
 	// 1. The grant.
 	info, has_info := call(.Info, CALL_TAG + 1, {})
-	grant := datagram.grant_unpack(info.values[6])
+	grant, grant_known := datagram.grant_unpack(info.values[6])
 	first := u16(info.values[1])
 	block := u16(grant.tcp && !grant.listen ? datagram.PORT_BLOCK : 1)
 	writer := system.Writer{buffer = text[:]}
 	network.address_write(&writer, grant.address)
-	note("the grant", has_info && grant.tcp && !grant.listen && grant.address == REMOTE && grant.port == REMOTE_PORT && block == datagram.PORT_BLOCK, "TCP to ", system.written(&writer), " port ", u64(grant.port), " only, from the local ports ", u64(first), " to ", u64(first) + u64(block) - 1)
+	note("the grant", has_info && grant_known && grant.tcp && !grant.listen && grant.address == REMOTE && grant.port == REMOTE_PORT && block == datagram.PORT_BLOCK, "TCP to ", system.written(&writer), " port ", u64(grant.port), " only, from the local ports ", u64(first), " to ", u64(first) + u64(block) - 1)
 	table.local_address = u32(info.values[0])
 	table.port_first = first
 	table.port_count = block

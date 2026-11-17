@@ -76,6 +76,7 @@
 // (docs/NETWORK.md, "The listen grant of UDP").
 package network_service
 
+import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/frame"
@@ -431,8 +432,8 @@ not_granted :: proc "contextless" (command: u32, argument: i64, address: u32, po
 // program that wrote it.
 header_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, header: []u8, count: int, now: u64) -> bool {
 	SEND :: u32(datagram.Command.Send)
-	local := network.read_16(header, 0)
-	port := network.read_16(header, 2)
+	local := byte_order.read_u16_big_endian(header, 0)
+	port := byte_order.read_u16_big_endian(header, 2)
 	grant := endpoint.grant
 	in_block := local >= endpoint.local_port && local - endpoint.local_port < endpoint.port_count
 	if !in_block {
@@ -440,7 +441,7 @@ header_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u3
 		return false
 	}
 	if !endpoint.tcp {
-		if length := network.read_16(header, 4); int(length) != count {
+		if length := byte_order.read_u16_big_endian(header, 4); int(length) != count {
 			complete(endpoint, tag, .Bad_Command, errors.ring_fail(SEND, .Bad_Value, .Bytes, 2, i64(length), i64(count)))
 			return false
 		}
@@ -910,7 +911,7 @@ sends_waiting_refuse :: proc "contextless" (endpoint: ^Endpoint, index: int) {
 		if waiting.kind != .Send || waiting.endpoint != index {
 			continue
 		}
-		port := network.read_16(place_bytes(waiting.place)[network.IPV4_DATA:], 2)
+		port := byte_order.read_u16_big_endian(place_bytes(waiting.place)[network.IPV4_DATA:], 2)
 		send_place_free(waiting.place)
 		complete_taken(endpoint, waiting.tag, .Not_Granted, not_granted(u32(datagram.Command.Send), 3, waiting.target, port, grant_remote(endpoint.grant)))
 		waiting = {}
@@ -939,9 +940,9 @@ controlled :: proc "contextless" (record: ring.Record) {
 		// ports of client grants. The ports of an endpoint are the ones of
 		// its creation, whatever its grant is now: an endpoint whose grant
 		// was revoked keeps its port taken until it is removed.
-		asked := datagram.grant_unpack(record.values[2])
+		asked, asked_known := datagram.grant_unpack(record.values[2])
 		taken := false
-		if asked.listen {
+		if asked_known && asked.listen {
 			held: [ENDPOINT_CAPACITY]network.Local_Ports
 			for &item, index in endpoints {
 				if item.ring_memory != 0 {
@@ -971,7 +972,12 @@ controlled :: proc "contextless" (record: ring.Record) {
 			opened, ring_status = system.ring_open(handle)
 		}
 		ADD :: u32(datagram.Control.Endpoint_Add)
-		if taken {
+		if !asked_known {
+			// A bit that names no right: the endpoint is not made, so that
+			// no grant with fewer rights than the root service wrote exists.
+			result = .Bad_Command
+			values = errors.ring_fail(ADD, .Bad_Value, .None, 3, i64(record.values[2]))
+		} else if taken {
 			result = .Busy
 			values = errors.ring_fail(ADD, .Bad_Value, .None, 3, i64(asked.port)) // A listen port that another endpoint has.
 		} else if free < 0 {
@@ -1012,7 +1018,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 			frame_command(.Read_Region_Add, TAG_READ_REGION_ADD + u32(free), {0 = u64(read_region), 1 = u64(free)})
 			endpoint := &endpoints[free]
 			name := system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
-			grant := datagram.grant_unpack(record.values[2])
+			grant := asked
 			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, listen = grant.listen, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
 			text: [32]u8
 			writer := system.Writer{buffer = text[:]}
@@ -1048,7 +1054,11 @@ controlled :: proc "contextless" (record: ring.Record) {
 				// one of its grant now: after a revocation, a client grant on an
 				// endpoint that was made for a listen port would send from that
 				// port.
-				new_grant := datagram.grant_unpack(record.values[1])
+				new_grant, new_grant_known := datagram.grant_unpack(record.values[1])
+				if !new_grant_known {
+					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))
+					break
+				}
 				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.listen && (!new_grant.listen || new_grant.port == item.local_port)
 				if datagram.granted(new_grant) && !same_form {
 					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))

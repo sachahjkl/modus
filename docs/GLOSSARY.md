@@ -5995,7 +5995,7 @@ A connection identifier is the 0 to 20 bytes by which a QUIC endpoint names a co
 
 UDP gives no connection: a datagram has only addresses and ports, and those can change on the path. So each QUIC packet carries a Destination Connection ID, and the receiver finds its connection by it. Each side chooses the identifiers that the other side sends to it. A client of this system chooses 8 bytes; the OpenSSL client chooses 0 bytes, and the server then sends it packets with an empty identifier.
 
-The identifier also seeds the Initial keys: they come from the Destination Connection ID of the first Initial packet of the client. A server of this system (`quic.Server`) finds the connection record by the identifier and the remote together: the same identifier from another address or port is dropped, because the server sends `disable_active_migration`. `header_read` refuses an identifier over 20 bytes for every version.
+The identifier also seeds the Initial keys: they come from the Destination Connection ID of the first Initial packet of the client. A server of this system (`quic.Server`) finds the connection record by the identifier and the remote together: the same identifier from another address or port is dropped, because the server sends `disable_active_migration`. `header_read` refuses an identifier over 20 bytes for every version. In the library an identifier is one record, `quic.Connection_Identifier`, that `connection_identifier_make` makes and that holds no identifier over 20 bytes.
 
 The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 

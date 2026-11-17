@@ -222,7 +222,8 @@ Control :: enum u32 {
 	// values[0], values[1]: the datagram ring and the datagram region, as
 	// the network service names them (the root service gives them through
 	// the memory of the control ring). values[2]: the grant (grant_pack),
-	// with or without the right Inspect.
+	// with or without the right Inspect. A grant word with a bit outside
+	// GRANT_KNOWN_BITS: Bad_Command, Bad_Value of the argument 3.
 	// values[3..6]: the name of the program, 32 bytes. The completion:
 	// values[0] the local port of the endpoint.
 	Endpoint_Add    = 1,
@@ -231,6 +232,8 @@ Control :: enum u32 {
 	// gives Not_Granted, and no datagram arrives. A new grant has the form
 	// of the old one (UDP or TCP, client or listen, the same listen port):
 	// else Bad_Command, because the local ports come from Endpoint_Add.
+	// A grant word with a bit outside GRANT_KNOWN_BITS: Bad_Command,
+	// Bad_Value of the argument 2.
 	Endpoint_Grant  = 2,
 	// values[0]: the datagram ring. The network service ends the endpoint,
 	// and closes the ring and the region.
@@ -294,6 +297,10 @@ Problem_Row :: struct {
 GRANT_INSPECT :: u64(1) << 48
 GRANT_TCP :: u64(1) << 49 // A segment endpoint.
 GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port. A UDP listen grant can name one remote address; no remote port is named.
+// The bits that a grant word can hold: the port, the address and the three
+// flags. A bit above them names no right, so grant_unpack refuses the word:
+// a grant with fewer rights than its word says is a wrong grant.
+GRANT_KNOWN_BITS :: (u64(1) << 51) - 1
 
 // The grant of an endpoint.
 Grant :: struct {
@@ -320,9 +327,15 @@ grant_pack :: proc "contextless" (grant: Grant) -> u64 {
 	return value
 }
 
-// grant_unpack gives the grant of a value that grant_pack made.
-grant_unpack :: proc "contextless" (value: u64) -> Grant {
-	return {address = u32(value >> 16), port = u16(value), inspect = value & GRANT_INSPECT != 0, tcp = value & GRANT_TCP != 0, listen = value & GRANT_LISTEN != 0}
+// grant_unpack gives the grant of a value that grant_pack made. known is
+// false, and the grant is zero (no grant), when the value has a bit outside
+// GRANT_KNOWN_BITS. This is the border of the word: past it, the code holds
+// a Grant, never the word.
+grant_unpack :: proc "contextless" (value: u64) -> (grant: Grant, known: bool) {
+	if value & ~GRANT_KNOWN_BITS != 0 {
+		return {}, false
+	}
+	return {address = u32(value >> 16), port = u16(value), inspect = value & GRANT_INSPECT != 0, tcp = value & GRANT_TCP != 0, listen = value & GRANT_LISTEN != 0}, true
 }
 
 // granted says if a grant names a remote: a revoked grant is all zero.

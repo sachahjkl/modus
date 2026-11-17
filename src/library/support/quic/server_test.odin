@@ -565,7 +565,7 @@ a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 	if !testing.expectf(t, header_read(retry, 0, 0, &retry_header, &error) && retry_header.type == .Retry, "%v", error) {
 		return
 	}
-	retry_source := retry_header.source_connection_id[:retry_header.source_connection_id_length]
+	retry_source := connection_identifier_bytes(&retry_header.source_connection_id)
 	testing.expect_value(t, len(retry_source), CONNECTION_ID_SIZE)
 	token := retry[retry_header.token_offset:][:retry_header.token_length]
 	// The ClientHello of a client whose transport parameters name an empty
@@ -574,7 +574,7 @@ a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 	parameters.initial_max_data = STREAM_BUFFER_SIZE
 	parameters.initial_max_stream_data_bidirectional_local = STREAM_BUFFER_SIZE
 	parameters.initial_max_stream_data_bidirectional_remote = STREAM_BUFFER_SIZE
-	parameters.initial_source_connection_id_length = 0
+	parameters.initial_source_connection_id = {}
 	configuration := harness.client_configuration.tls
 	configuration.transport_parameters_length = transport_parameters_write(&parameters, .Client, configuration.transport_parameters[:])
 	testing.expect(t, configuration.transport_parameters_length > 0)
@@ -620,7 +620,7 @@ a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 	}
 	connection := &harness.connections[outcome.record]
 	testing.expectf(t, connection.state == .Handshake, "the record closed with the code %x, the frame type %x", connection.close_error_code, connection.close_frame_type)
-	testing.expect_value(t, connection.peer_connection_id_length, 0)
+	testing.expect_value(t, connection.peer_connection_id.length, 0)
 	// The first datagram of the server.
 	buffer: [MAX_DATAGRAM_SIZE]u8
 	length, to := server_datagram_send(&harness.server, buffer[:], harness.now)
@@ -633,14 +633,14 @@ a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 	if !testing.expectf(t, header_read(sent, 0, 0, &initial, &error), "%v", error) {
 		return
 	}
-	testing.expect(t, initial.type == .Initial && initial.destination_connection_id_length == 0 && initial.token_length == 0)
-	testing.expect_value(t, hex_of(initial.source_connection_id[:initial.source_connection_id_length]), hex_of(connection.local_connection_id[:]))
+	testing.expect(t, initial.type == .Initial && initial.destination_connection_id.length == 0 && initial.token_length == 0)
+	testing.expect_value(t, hex_of(connection_identifier_bytes(&initial.source_connection_id)), hex_of(connection.local_connection_id[:]))
 	handshake: Packet_Header
 	if !testing.expectf(t, header_read(sent, initial.end, 0, &handshake, &error), "%v", error) {
 		return
 	}
-	testing.expect(t, handshake.type == .Handshake && handshake.destination_connection_id_length == 0)
-	testing.expect_value(t, hex_of(handshake.source_connection_id[:handshake.source_connection_id_length]), hex_of(connection.local_connection_id[:]))
+	testing.expect(t, handshake.type == .Handshake && handshake.destination_connection_id.length == 0)
+	testing.expect_value(t, hex_of(connection_identifier_bytes(&handshake.source_connection_id)), hex_of(connection.local_connection_id[:]))
 	opened: Opened_Packet
 	testing.expectf(t, packet_open(&harness.cryptography, &server_keys, sent, &initial, 0, &opened, &error), "%v", error)
 	secret_erase(&client_keys, size_of(client_keys))
@@ -659,7 +659,7 @@ retry_of :: proc(harness: ^Harness, remote: Remote, identifier: [CONNECTION_ID_S
 		return
 	}
 	copy(token[:], answer[header.token_offset:][:header.token_length])
-	copy(retry_source[:], header.source_connection_id[:header.source_connection_id_length])
+	copy(retry_source[:], connection_identifier_bytes(&header.source_connection_id))
 	return token, retry_source, true
 }
 

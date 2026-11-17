@@ -276,8 +276,7 @@ Connection :: struct {
 	tls_started:                       bool, // The handshake of TLS started. A client: at its start. A server: at the first authentic Initial packet of its client; before it, the record has no timer and no key.
 	spaces:                            [Encryption_Level]Packet_Number_Space, // One packet number space for each encryption level: Initial, Handshake, application.
 	local_connection_id:               [CONNECTION_ID_SIZE]u8, // The connection identifier that this side chose, of `CONNECTION_ID_SIZE` random bytes: the peer writes it as the Destination Connection ID of its packets. This side has only this one.
-	peer_connection_id:                [CONNECTION_ID_LIMIT]u8, // The connection identifier of the peer: the Destination Connection ID of each packet of this side. A client first sends to an identifier that it chose itself.
-	peer_connection_id_length:         int, // The bytes of the identifier of the peer: 0 to 20.
+	peer_connection_id:                Connection_Identifier, // The connection identifier of the peer: the Destination Connection ID of each packet of this side. A client first sends to an identifier that it chose itself.
 	peer_connection_id_known:          bool, // The peer chose its identifier: a client took it from the first Initial packet of the server, a server from the first Initial packet of the client. From then on a long header with another Source Connection ID is dropped.
 	// The Destination Connection ID of the first Initial packet of the client: the
 	// Initial keys of both sides come from it (RFC 9001, section 5.2). After a
@@ -285,18 +284,16 @@ Connection :: struct {
 	// derives new Initial keys from that one. A server also finds a record by it,
 	// for the Initial packets of a client that does not know the identifier of the
 	// server yet.
-	original_destination_connection_id: [CONNECTION_ID_LIMIT]u8,
-	original_destination_connection_id_length: int, // The bytes of that identifier: 8 to 20.
+	// It has 8 to 20 bytes.
+	original_destination_connection_id: Connection_Identifier,
 	// A Retry took place (`retry.odin`). A client: it took the one Retry that it
 	// accepts, and a second one is dropped. A server: the record is of a client
 	// that came back with a valid Retry token; the server of several connections
 	// sets it. It decides which identifiers the transport parameters must name
 	// (RFC 9000, section 7.3).
 	retried:                           bool,
-	retry_first_destination_connection_id: [CONNECTION_ID_LIMIT]u8, // The identifier that the client chose first, before the Retry: the server names it in the transport parameter `original_destination_connection_id`, and the client checks it.
-	retry_first_destination_connection_id_length: int, // The bytes of that first identifier.
-	retry_source_connection_id:        [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of the Retry packet: the server names it in the transport parameter `retry_source_connection_id`, and the client checks it.
-	retry_source_connection_id_length: int, // The bytes of that identifier.
+	retry_first_destination_connection_id: Connection_Identifier, // The identifier that the client chose first, before the Retry: the server names it in the transport parameter `original_destination_connection_id`, and the client checks it.
+	retry_source_connection_id:        Connection_Identifier, // The Source Connection ID of the Retry packet: the server names it in the transport parameter `retry_source_connection_id`, and the client checks it.
 	retry_token:                       [RETRY_TOKEN_LIMIT]u8, // A client: the Retry token, which each Initial packet after the Retry carries. A server does not use it.
 	retry_token_length:                int, // The bytes of the token. 0: no Retry, and the Initial packets carry an empty token.
 	local_parameters:                  Sent_Transport_Parameters, // The transport parameters that this side sends: `connection_tls_start` writes them from the configuration and the table of streams.
@@ -424,12 +421,13 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 		return false
 	}
 	least := configuration.tls.least_seed_strength
-	if !random.fill_for_a_key(generator, connection.local_connection_id[:], least, error) || !random.fill_for_a_key(generator, connection.original_destination_connection_id[:CONNECTION_ID_SIZE], least, error) {
+	first_destination: [CONNECTION_ID_SIZE]u8
+	if !random.fill_for_a_key(generator, connection.local_connection_id[:], least, error) || !random.fill_for_a_key(generator, first_destination[:], least, error) {
 		connection.state = .Closed
 		return false
 	}
-	connection.original_destination_connection_id_length = CONNECTION_ID_SIZE
-	connection.peer_connection_id_length = copy(connection.peer_connection_id[:], connection.original_destination_connection_id[:CONNECTION_ID_SIZE])
+	connection.original_destination_connection_id = connection_identifier_of_chosen(first_destination)
+	connection.peer_connection_id = connection.original_destination_connection_id
 	if !connection_initial_keys_install(connection, error) || !connection_tls_start(connection, error) {
 		connection.state = .Closed
 		return false
@@ -578,7 +576,7 @@ connection_reset :: proc "contextless" (connection: ^Connection, streams: []Stre
 connection_initial_keys_install :: proc "contextless" (connection: ^Connection, error: ^errors.Error_Record) -> bool {
 	space := &connection.spaces[.Initial]
 	client, server: Packet_Keys
-	if !initial_keys(connection.cryptography, connection.original_destination_connection_id[:connection.original_destination_connection_id_length], &client, &server, error) {
+	if !initial_keys(connection.cryptography, connection_identifier_bytes(&connection.original_destination_connection_id), &client, &server, error) {
 		return false
 	}
 	if connection.configuration.tls.role == .Client {
@@ -628,7 +626,7 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 	// Only the client opens streams: a server allows the client one stream
 	// for each of its records, a client allows the server none.
 	parameters.initial_max_streams_bidirectional = connection.streams_limit_given
-	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], connection.local_connection_id[:])
+	parameters.initial_source_connection_id = connection_identifier_of_chosen(connection.local_connection_id)
 	if connection.configuration.tls.role == .Server {
 		// A server of this library finds a connection by its identifier and
 		// by the address and port of its client: the client must not move
@@ -638,13 +636,11 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 		// chose first, and the Source Connection ID of its Retry (RFC 9000,
 		// section 7.3).
 		if connection.retried {
-			parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], connection.retry_first_destination_connection_id[:connection.retry_first_destination_connection_id_length])
-			parameters.retry_source_connection_id_length = copy(parameters.retry_source_connection_id[:], connection.retry_source_connection_id[:connection.retry_source_connection_id_length])
-			parameters.has_retry_source_connection_id = true
+			parameters.original_destination_connection_id = connection.retry_first_destination_connection_id
+			parameters.retry_source_connection_id = connection.retry_source_connection_id
 		} else {
-			parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], connection.original_destination_connection_id[:connection.original_destination_connection_id_length])
+			parameters.original_destination_connection_id = connection.original_destination_connection_id
 		}
-		parameters.has_original_destination_connection_id = true
 	}
 	tls_configuration := &connection.configuration.tls
 	// The writer gives 0 for a refused record and for a full buffer: the
@@ -807,22 +803,25 @@ connection_peer_parameters_apply :: proc "contextless" (connection: ^Connection,
 	}
 	// The identifiers that the packets carried must be the ones that the
 	// handshake authenticated (RFC 9000, section 7.3).
-	if !bytes_equal(parameters.initial_source_connection_id[:parameters.initial_source_connection_id_length], connection.peer_connection_id[:connection.peer_connection_id_length]) {
+	// Each identifier comes from the constructors of Connection_Identifier,
+	// so `==` of two records is the equality of their bytes.
+	if parameters.initial_source_connection_id != connection.peer_connection_id {
 		return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
 	}
 	if peer_role == .Server {
 		// The server names the identifier that this client chose first; and,
 		// when this client took a Retry, the Source Connection ID of that
 		// Retry, and only then (RFC 9000, section 7.3).
-		original := connection.original_destination_connection_id[:connection.original_destination_connection_id_length]
+		original := connection.original_destination_connection_id
 		if connection.retried {
-			original = connection.retry_first_destination_connection_id[:connection.retry_first_destination_connection_id_length]
+			original = connection.retry_first_destination_connection_id
 		}
-		if !bytes_equal(parameters.original_destination_connection_id[:parameters.original_destination_connection_id_length], original) {
+		named_original, has_named_original := parameters.original_destination_connection_id.?
+		if !has_named_original || named_original != original {
 			return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
 		}
-		retry_source := connection.retry_source_connection_id[:connection.retry_source_connection_id_length]
-		if parameters.has_retry_source_connection_id != connection.retried || (connection.retried && !bytes_equal(parameters.retry_source_connection_id[:parameters.retry_source_connection_id_length], retry_source)) {
+		named_retry_source, has_named_retry_source := parameters.retry_source_connection_id.?
+		if has_named_retry_source != connection.retried || (connection.retried && named_retry_source != connection.retry_source_connection_id) {
 			return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
 		}
 	}

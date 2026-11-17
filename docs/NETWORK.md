@@ -139,6 +139,8 @@ The root service names the grant by the name of the program, as for UDP (`endpoi
 | UDP client grant | One UDP port that the network service gives (`Info`); the program writes it as the source port of each datagram | One remote address and one remote UDP port | A program that talks to one remote over datagrams |
 | UDP listen grant | One UDP port that the root service names | Each remote that sent a first datagram of 1200 bytes at least, and with a named address, that address only | A QUIC server: `quic_echo` on the port 4433, `remote` on the port 7100 (section "The listen grant of UDP") |
 
+The grant crosses the control ring and the completion of `Info` as one word (`datagram.grant_pack`): the port in bits 0 to 15, the address in bits 16 to 47, and the flags `inspect`, `tcp` and `listen` in bits 48, 49 and 50. `datagram.grant_unpack` is the one border of that word. It refuses a word with a bit from 51 to 63, which names no right: it gives no grant and `false`, never a grant with fewer rights than the word says. The network service then refuses `Endpoint_Add` and `Endpoint_Grant` with `Bad_Command` and the record `Bad_Value` of the grant argument, and makes or changes no endpoint. A program whose `Info` gives such a word stops at its start.
+
 The form and the local ports of an endpoint come from its creation, and stay until the endpoint is removed. A revocation sets the grant to none and keeps them:
 
 - A listen port has one holder. The port of an endpoint whose grant was revoked is still taken: no second endpoint gets it (`network.listen_port_taken`, one rule for UDP and TCP).
@@ -251,6 +253,14 @@ TCP is tested at three levels: the library alone on the host, the system against
 `odin test src/library/support/tcp` (in `modustool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state. The checksum has its own cases: a segment with one changed bit, in its data or in its header, changes no field of the connection and adds one to the count; a segment whose checksum is right for another pair of addresses is dropped; a segment from the remote of a live connection with a malformed option, with and without a right checksum, still names its connection for the program (`connection_of_segment`), and data on the connection is taken after it.
 
 `odin test src/library/support/network` checks the other half: `parse` gives a datagram or a segment with a wrong checksum to its port, and `udp_data_read` refuses the datagram with the rule `Verify` and takes it with the rule `Do_Not_Verify`. A datagram with an odd count of bytes has its own case: the test sums the words by hand, and one changed bit of the last byte is refused. The rule of a taken listen port has its case too: the port of an endpoint with no grant stays taken until the endpoint is removed.
+
+`odin test src/library/contract/datagram` gives `grant_unpack` each word that it must refuse first: each bit from 51 to 63 alone and beside a whole grant, and the largest word. Then the edges: 0, each flag alone, the largest address and port. The grants of the programs come last.
+
+`odin test src/library/contract/byte_order` checks the reads and the writes of a number in each order: 0, 1, the largest value, the place of each byte, a write that leaves its neighbors unchanged. The checksum has its edges: no byte, one byte, the fold of a carry that makes a new carry, the largest sum, and the example of RFC 1071.
+
+### One place for the byte order and the checksum
+
+The network packages, the network service and the tool read and write each number of a header, and compute each checksum of the Internet, with one package: `src/library/contract/byte_order`. It holds the reads and writes of 16, 32 and 64 bits in network order and in the other order, the sum of RFC 1071 with its fold, and the sum of the pseudo-header of UDP and TCP over IPv4. It is a contract package because each folder of the library can import a contract package, and a contract package imports no support package (`TOOLS.md`, "The imports of the sources of the system"). It has no party: the import rule alone makes `contract` its folder.
 
 ### Against an independent implementation
 

@@ -2,6 +2,7 @@
 package tcp
 
 import "core:testing"
+import "modus:contract/byte_order"
 
 // Two connection tables on one link that the test controls: it drops,
 // delays and repeats segments with a generator of numbers that each test
@@ -528,7 +529,7 @@ malformed_segments :: proc(t: ^testing.T) {
 	_, ok = header_read(segment[:])
 	testing.expect(t, !ok)
 	segment[21] = 4
-	write_16(segment[:], 22, 1000)
+	byte_order.write_u16_big_endian(segment[:], 22, 1000)
 	header: Header
 	header, ok = header_read(segment[:])
 	testing.expect(t, ok)

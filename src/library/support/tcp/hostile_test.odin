@@ -2,6 +2,7 @@
 package tcp
 
 import "core:testing"
+import "modus:contract/byte_order"
 
 // The tests of the faults that a read of the library as hostile input
 // found, and the cases that it found with no test. Each test failed before
@@ -475,7 +476,7 @@ dropped_segment_of_a_live_connection_names_its_connection :: proc(t: ^testing.T)
 	malformed := Flying{at = link.now, to = 1, from = ADDRESS_A, length = HEADER_MSS}
 	header_write(malformed.bytes[:], ADDRESS_A, ADDRESS_B, header, HEADER_MSS)
 	malformed.bytes[21] = 0
-	write_16(malformed.bytes[:], 16, checksum(ADDRESS_A, ADDRESS_B, malformed.bytes[:HEADER_MSS]))
+	byte_order.write_u16_big_endian(malformed.bytes[:], 16, checksum(ADDRESS_A, ADDRESS_B, malformed.bytes[:HEADER_MSS]))
 	_, header_whole := header_read(malformed.bytes[:HEADER_MSS])
 	testing.expect(t, !header_whole)
 	testing.expect(t, checksum_valid(ADDRESS_A, ADDRESS_B, malformed.bytes[:HEADER_MSS]))
@@ -499,7 +500,7 @@ dropped_segment_of_a_live_connection_names_its_connection :: proc(t: ^testing.T)
 	// segment too short for its ports: no connection.
 	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A + 1, segment = damaged.bytes[:HEADER_MSS]}), -1)
 	other := malformed
-	write_16(other.bytes[:], 0, a.local_port + 1)
+	byte_order.write_u16_big_endian(other.bytes[:], 0, a.local_port + 1)
 	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = other.bytes[:HEADER_MSS]}), -1)
 	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = damaged.bytes[:3]}), -1)
 	// The connection goes on.
