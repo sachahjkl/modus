@@ -70,6 +70,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The bound of a glossary term in the check.** `modustool check` refuses a term whose explanation has more than 100 words, as it refuses a term with no short definition. A term then stays a definition, and its guide holds the detail (`docs/SITE.md`, "The form of an entry").
 - **The glossary in one file for each group.** The glossary becomes one file for each of its groups, and the reader of the tool, the references to a term and the links of the comments read the files of a folder. An agent then reads only the group of its part, and two branches that add terms to two groups do not change the same file.
 - **The host tests of the check in the measure record.** The measure record counts the host tests of `modustool check` beside the machine tests and the second build of `modustool screenshots`. The site then shows the count of every check of a release.
+- **The boot program named in the processors of a failed step.** The tool learns where the firmware loaded the boot program, so an instruction address of a processor there names the boot program and not "no known code". A stall between the start of the boot program and the kernel then says which of the two held the processor.
 
 ## Maybe
 

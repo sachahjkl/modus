@@ -4131,6 +4131,11 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
+	// First after a failure, before any other act: the processors of a
+	// stall must not move on before the tool reads where they are.
+	if qmp_opened && !passed {
+		processors_report(&machine, output, volume, firmware)
+	}
 	// A scenario that failed between Film_Start and Film_Stop: its worker
 	// ends before the connections to QEMU close.
 	_ = film_stop(&machine)
