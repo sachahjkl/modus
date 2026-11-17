@@ -204,7 +204,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			driver = &item
 			break
 		}
@@ -222,7 +222,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 	grants: [op.CONTEXT_HANDLES]system.Grant
-	grants[op.CONTEXT_LOG] = log_grant(kind.name)
+	grants[op.CONTEXT_LOG] = log_grant(role_of(kind.name))
 	grants[pci.GRANT_MACHINE] = {machine, {.Physical}}
 
 	// Behind a conventional bridge, the registers of each other device
@@ -349,7 +349,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
-	driver.role = {.System_Part}
+	driver.role = {grants = {.System_Part}}
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	if place.bus == 0 {

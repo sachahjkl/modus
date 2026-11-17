@@ -100,12 +100,12 @@ host_gives_guest_support :: proc() -> (gives: bool, reason: string) {
 	return true, "KVM on an AMD host with nested virtualization on"
 }
 
-guest_tests_run :: proc() -> bool {
+guest_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	gives, reason := host_gives_guest_support()
 	if gives {
 		fmt.printfln("modustool: the part guest runs a guest: %s", reason)
-		return machine_test(scenario_guest[:], BOOT_VOLUME, TEST_OUTPUT_GUEST, MACHINE_STOP_OK, TEST_DATA_DISK)
+		return machine_test(part, scenario_guest[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = MACHINE_STOP_OK})
 	}
 	fmt.printfln("modustool: the part guest runs NO guest on this host: %s; the machine checks only that Guest_Run refuses with Unsupported", reason)
-	return machine_test(scenario_guest_unsupported[:], BOOT_VOLUME, TEST_OUTPUT_GUEST, MACHINE_STOP_OK, TEST_DATA_DISK)
+	return machine_test(part, scenario_guest_unsupported[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = MACHINE_STOP_OK})
 }

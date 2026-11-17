@@ -60,7 +60,7 @@
 // - **Remote_Clients**: the client table, read-only: the key of each
 //   client that a principal allowed, and that principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
-//   to the services of `callable_of`: compositor, date, debugger, inspect,
+//   to the services of its role (`program_role_rows`): compositor, date, debugger, inspect,
 //   log, manual, monitor, settings and storage, each for one row of the
 //   client table. A call to another service fails with the refusal of the
 //   root service.
@@ -86,6 +86,7 @@ import "modus:support/interface"
 import "modus:support/network"
 import "modus:support/quic"
 import "modus:support/random"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
@@ -269,7 +270,7 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-// The 9 services of callable_of("remote") in the root service, for each of
+// The 9 services of the row of "remote" in program_role_rows in the root service, for each of
 // the CAPACITY connections, each of which can have a key of another row.
 SERVICE_CONNECTION_CAPACITY :: 24
 
@@ -978,7 +979,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 	packed := system.name_pack(name)
 	request_tag += 1
 	// values[4] names the row from 1, as the root service takes it.
-	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
 		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot))
 	}
 	limit := system.time() + CONNECT_LIMIT
@@ -1019,11 +1020,13 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			ring_status: system.Status
 			connection.calls, ring_status = system.ring_open(connection.ring_memory)
 			address, map_status := system.memory_map(connection.region_memory)
-			if ring_status != .Ok || map_status != .Ok {
+			region_pages, size_status := system.memory_size(connection.region_memory)
+			if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
 				connection_end(connection, false)
-				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(ring_status != .Ok ? ring_status : map_status))
+				refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
+				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused))
 			}
-			connection.region = ([^]u8)(address)[:system.memory_size(connection.region_memory) * system.PAGE_SIZE]
+			connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 			system.log("remote: connected to the service ", name, ", for principal ", client.principal)
 			return connection, {}
 		}
@@ -1042,7 +1045,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 	if tell {
 		packed := system.name_pack(remote.name_text(&connection.name))
 		request_tag += 1
-		system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
+		system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
 	}
 	if connection.calls.head != nil {
 		system.ring_close(&connection.calls)
@@ -1237,7 +1240,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no endpoint: the program has no grant of the network")
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
-	if map_status != .Ok || system.memory_size(ctx.handles[datagram.GRANT_REGION]) < datagram.REGION_PAGES {
+	region_pages, size_status := system.memory_size(ctx.handles[datagram.GRANT_REGION])
+	if map_status != .Ok || size_status != .Ok || region_pages < datagram.REGION_PAGES {
 		fail("no datagram region")
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
@@ -1266,8 +1270,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &endpoint.completions)
 		system.wait_end(&wait, system.time() + 2000)
 	}
-	grant := datagram.grant_unpack(info.values[6])
-	if grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
+	grant, grant_known := datagram.grant_unpack(info.values[6])
+	if !grant_known || grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
 		// The address is a second fence after the key of the client: a
 		// listen grant that admits each address would let any machine of
 		// the network start handshakes against the table.
@@ -1361,7 +1365,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		now := system.time()
 		if has_window {
-			interface.window_events(&drawing, &window)
+			interface.window_events(&window_memory.drawing, &window)
 			// The window changes at most ten times in one second: a burst of
 			// calls does not wait for the drawing. This service never
 			// waits for the compositor: while the compositor did not take
@@ -1377,7 +1381,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !draw_logged && counts.calls >= 1000 {
 					draw_logged = true
 					system.log("remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
-					system.log("remote: the interface: ", u64(drawing.now.record_count), " records, ", u64(drawing.damage.count), " damage rectangles; build ", drawing.build_time / 1000, " us, difference ", drawing.difference_time / 1000, " us, draw ", drawing.draw_time / 1000, " us")
+					system.log("remote: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
 				}
 			}
 		}

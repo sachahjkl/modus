@@ -50,9 +50,7 @@ paper_generation: u32
 // The one picture memory of the draw tables: the drawing module reads the
 // paper there.
 picture_memories: [1][]graphics.Color
-records_now, records_before: [64]interface.Draw_Record
-text_now, text_before: [256]u8
-window_drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(64, 256)
 
 // The key of the window, in its action bar.
 // A procedure, not a global array: an item is made by a call, and a
@@ -163,15 +161,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	paper_picture := paper()
 	graphics.clear(paper_picture, COLOR_PAPER)
 	picture_memories[0] = paper_pixels[:]
-	window_drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	window_drawing.now.picture_memories = picture_memories[:]
-	window_drawing.before.picture_memories = picture_memories[:]
+	window_memory.drawing.now.picture_memories = picture_memories[:]
+	window_memory.drawing.before.picture_memories = picture_memories[:]
 	color := colors[0]
 	last_x, last_y := 0, 0
 	drawing := false
 	system.log("paint: ok")
 	for {
-		frame := interface.window_frame_begin(&window_drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		interface.action_bar_input_take(&frame, &bar)
 		table := frame.table
 		// The element name of the cell of each color: a machine test
@@ -204,7 +201,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		bar_left := x + 16
 		items := bar_items()
 		bar_result := interface.action_bar(&frame, {bar_left, 0, WIDTH - bar_left, PALETTE_HEIGHT}, items[:], &bar, {alignment = .Right})
-		interface.window_frame_end(&window_drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		if bar_result.ran {
 			key_run(bar_result.run)
 			continue
@@ -233,7 +230,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Pointer:
 				// The action bar takes the pointer from the input of the
 				// next frame; a press on it does not paint.
-				interface.input_add(&window_drawing.input, event)
+				interface.input_add(&window_memory.drawing.input, event)
 				if !drawing && interface.action_bar_takes_pointer(&bar, event.x, event.y) {
 					continue
 				}

@@ -4,7 +4,6 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
-import answers "modus:support/storage"
 import block_tree "modus:support/storage_object"
 import "modus:support/system"
 
@@ -17,8 +16,6 @@ import "modus:support/system"
 // hash on the path of the last block: never at each write, and never over
 // the whole object. A loss of power before the commit loses the pending
 // changes, and nothing else: the disk has the last commit.
-
-ERROR_PENDING :: answers.ERROR_PENDING
 
 // The pending changes of the service: the objects, and their blocks. A
 // connection has at most one pending object for each name; the blocks are
@@ -198,18 +195,18 @@ ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_
 		ranged.exists = true
 		return ranged, 0
 	}
-	if located == ERROR_ABSENT && (change || ranged.pending != nil) {
+	if located == failure(.Absent) && (change || ranged.pending != nil) {
 		// A name that is a tree is refused: the lookup of the name as an
 		// object gives Absent for it too, so look at its entry.
 		if store_index := store_find(ranged.named.path.store.name); store_index >= 0 {
 			if entry, outcome := entry_of(store_index, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != .Object {
-				return ranged, errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 2)
+				return ranged, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
 			} else if outcome == .Wrong || outcome == .Device {
 				return ranged, lookup_refusal(outcome, error, 2)
 			} else if outcome == .Absent && len(path_names(&ranged.named.path)) != 0 {
 				// The tree of the place: it must exist for a new object.
 				if _, tree_outcome := tree_of(store_index, path_names(&ranged.named.path)); tree_outcome == .Absent {
-					return ranged, errors.fail(error, ERROR_ABSENT, .Absent, .Places, 1)
+					return ranged, errors.fail(error, failure(.Absent), .Absent, .Places, 1)
 				} else if tree_outcome != .Found {
 					return ranged, lookup_refusal(tree_outcome, error, 1)
 				}
@@ -279,7 +276,7 @@ pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^e
 		pending_sweep()
 	}
 	if pending_blocks_used >= PENDING_BLOCK_CAPACITY {
-		return -1, errors.fail(error, ERROR_FULL, .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
+		return -1, errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
 	}
 	for &block, free_place in pending_blocks {
 		if block.owner != 0 {
@@ -294,7 +291,7 @@ pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^e
 		pending_blocks_used += 1
 		return free_place, 0
 	}
-	return -1, errors.fail(error, ERROR_FULL, .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
+	return -1, errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
 }
 
 // ranged_pending gives the pending object of the caller, and makes it at
@@ -309,7 +306,7 @@ ranged_pending :: proc "contextless" (ranged: ^Ranged, error: ^errors.Error_Reco
 	}
 	ranged.pending = pending_take(ranged.named.caller.connection.ring_memory, &ranged.named.path, ranged.named.name.key, base, ranged.state.size)
 	if ranged.pending == nil {
-		return errors.fail(error, ERROR_FULL, .Full, .Pending, 0, 0, PENDING_OBJECT_CAPACITY)
+		return errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_OBJECT_CAPACITY)
 	}
 	return 0
 }
@@ -325,7 +322,7 @@ read_range :: proc "c" (place: i64, name: ^string, offset: i64, result: ^[]u8, e
 	}
 	size := ranged_size(&ranged)
 	if offset < 0 || u64(offset) > size {
-		return errors.fail(error, ERROR_NAME, .Out_Of_Range, .Bytes, 3, offset, i64(size))
+		return errors.fail(error, failure(.Name), .Out_Of_Range, .Bytes, 3, offset, i64(size))
 	}
 	return ranged_read(&ranged, u64(offset), result^, error)
 }
@@ -341,10 +338,10 @@ write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, 
 	}
 	count := u64(len(data^))
 	if offset < 0 {
-		return errors.fail(error, ERROR_NAME, .Bad_Value, .Bytes, 3, offset)
+		return errors.fail(error, failure(.Name), .Bad_Value, .Bytes, 3, offset)
 	}
 	if u64(offset) > format.OBJECT_SIZE_LIMIT || count > format.OBJECT_SIZE_LIMIT - u64(offset) {
-		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, 3, offset + i64(count), i64(format.OBJECT_SIZE_LIMIT))
+		return errors.fail(error, failure(.Too_Large), .Too_Long, .Bytes, 3, offset + i64(count), i64(format.OBJECT_SIZE_LIMIT))
 	}
 	if pending_refused := ranged_pending(&ranged, error); pending_refused < 0 {
 		return pending_refused
@@ -377,10 +374,10 @@ set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes
 		return refused
 	}
 	if size < 0 {
-		return errors.fail(error, ERROR_NAME, .Bad_Value, .Bytes, 3, i64(size))
+		return errors.fail(error, failure(.Name), .Bad_Value, .Bytes, 3, i64(size))
 	}
 	if u64(size) > format.OBJECT_SIZE_LIMIT {
-		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, 3, i64(size), i64(format.OBJECT_SIZE_LIMIT))
+		return errors.fail(error, failure(.Too_Large), .Too_Long, .Bytes, 3, i64(size), i64(format.OBJECT_SIZE_LIMIT))
 	}
 	if pending_refused := ranged_pending(&ranged, error); pending_refused < 0 {
 		return pending_refused
@@ -418,19 +415,19 @@ set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes
 @(export, link_name = "commit")
 commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error: ^errors.Error_Record) -> i64 {
 	ranged, refused := ranged_of(place, name^, error, true)
-	if refused < 0 && refused != ERROR_ABSENT {
+	if refused < 0 && refused != failure(.Absent) {
 		return refused
 	}
 	pending := ranged.pending
 	if pending == nil {
-		return errors.fail(error, ERROR_PENDING, .Absent, .Pending, 2)
+		return errors.fail(error, failure(.Pending), .Absent, .Pending, 2)
 	}
 	start := system.time()
 	written_before := blocks_written
 	measure: Commit_Measure
 	generation := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
 	if generation < 0 {
-		if generation == ERROR_PENDING || generation == ERROR_DAMAGED {
+		if generation == failure(.Pending) || generation == failure(.Damaged) {
 			pending_drop(pending)
 		}
 		return generation

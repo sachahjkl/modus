@@ -77,7 +77,7 @@ type_name_write :: proc "contextless" (writer: ^sentence.Writer, object: []u8, t
 		sentence.write_part(writer, "...")
 		return
 	}
-	#partial switch type.kind {
+	switch type.kind {
 	case .Pointer:
 		if type.element == 0 {
 			sentence.write_part(writer, "rawptr")
@@ -103,7 +103,8 @@ type_name_write :: proc "contextless" (writer: ^sentence.Writer, object: []u8, t
 		sentence.write_part(writer, "enum")
 	case .Procedure_Address:
 		sentence.write_part(writer, "proc")
-	case:
+	case .None, .Signed_Integer, .Unsigned_Integer, .Boolean, .Float, .Other:
+		// A type with no name of its own: its size says what it is.
 		sentence.write_part(writer, u64(type.size))
 		sentence.write_part(writer, " bytes")
 	}
@@ -181,7 +182,7 @@ value_write :: proc "contextless" (writer: ^sentence.Writer, ctx: ^Value_Context
 		sentence.write_part(writer, "no type")
 		return
 	}
-	#partial switch type.kind {
+	switch type.kind {
 	case .Signed_Integer:
 		value, ok := located_integer(ctx, located, type.size, true)
 		if !ok {
@@ -334,7 +335,8 @@ value_write :: proc "contextless" (writer: ^sentence.Writer, ctx: ^Value_Context
 		sentence.write_part(writer, count)
 		sentence.write_part(writer, " elements at 0x")
 		sentence.write_hex(writer, address)
-	case:
+	case .None, .Union, .Other:
+		// The bytes of these kinds have no one reading: their size says it.
 		what: string = type.kind == .Union ? "a union of " : "a value of "
 		sentence.write_part(writer, what)
 		sentence.write_part(writer, u64(type.size))
@@ -456,7 +458,7 @@ path_resolve :: proc "contextless" (ctx: ^Value_Context, start: Located, path: ^
 			if !has_type {
 				return {}, .Not_Indexable, number
 			}
-			#partial switch type.kind {
+			switch type.kind {
 			case .Array:
 				part, has := array_element(ctx, located, type, item.index)
 				if !has {
@@ -476,7 +478,7 @@ path_resolve :: proc "contextless" (ctx: ^Value_Context, start: Located, path: ^
 					return {}, .Index_Past_End, number
 				}
 				located = {type = type.element, in_memory = true, address = address + item.index * u64(element.size)}
-			case:
+			case .None, .Signed_Integer, .Unsigned_Integer, .Boolean, .Float, .Pointer, .String, .Record, .Union, .Enumeration, .Procedure_Address, .Other:
 				return {}, .Not_Indexable, number
 			}
 		}
@@ -509,7 +511,9 @@ value_part :: proc "contextless" (ctx: ^Value_Context, located: Located, number:
 		sentence.write_part(&writer, "]")
 		return string(buffer[:writer.count])
 	}
-	#partial switch type.kind {
+	switch type.kind {
+	case .None, .Signed_Integer, .Unsigned_Integer, .Boolean, .Float, .Pointer, .String, .Enumeration, .Procedure_Address, .Other:
+		// One part: the value itself, after the switch.
 	case .Record, .Union:
 		return record_field(ctx, located, number)
 	case .Array:

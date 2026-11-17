@@ -36,7 +36,9 @@ import "modus:contract/glyph_cache"
 import "modus:support/display"
 import "modus:support/graphics"
 
-DRAW_RECORD_VERSION :: 10 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds. 8: a Picture names its pixels by its picture memory, its first pixel and its stride, not by an index in a list of canvases. 9: a Text_Grid names its cells in the text table, by their first byte, their bytes and the columns, not by an index in a list of grids. 10: a cell of a text grid holds a code point, 16 bytes.
+// The version of the draw records: a new kind of record, or a new field,
+// is a new version. The drawing module and the window agree on it.
+DRAW_RECORD_VERSION :: 10
 
 // What one draw record draws. The fields of `Draw_Record` that each kind
 // reads are in the comment of the member.

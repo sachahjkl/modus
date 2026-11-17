@@ -131,6 +131,7 @@
 //      instruction address 0. The line says which.
 package fault_ring
 
+import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/fixed_addresses"
 import "modus:contract/module"
@@ -383,9 +384,7 @@ program_generator: random.Generator
 image: []u8
 log_handle: system.Handle
 
-records_now, records_before: [256]interface.Draw_Record
-text_now, text_before: [4096]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(256, 4096)
 
 // The state that the threads of a child share.
 lazy_memory: system.Handle // Uncommitted: case 1, and the faults of the other children.
@@ -1034,7 +1033,11 @@ child_controls :: proc "contextless" () -> ! {
 	// 23. Extended states that the processor refuses.
 	control(spinner.handle, 0, .Stop)
 	state, _ := system.call(.Thread_State, u64(spinner.handle))
-	size, with_header := state[2], state[4] == 1
+	layout, layout_known := enum_word.member_of_word(op.Extended_State_Layout, state[4])
+	if !layout_known {
+		system.log("fault_ring: Thread_State gave the layout ", state[4], ", which names no layout: WRONG")
+	}
+	size, with_header := state[2], layout_known && layout == .With_Header
 	_, area_read := control(spinner.handle, 0, .Read_Extended_State, &extended_state_area, size)
 	asked, area_refused: u64
 	if with_header {
@@ -1557,7 +1560,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a fault of a thread becomes a record for a handler thread of the program, in place of a stop", graphics.colors.kernel)
 	// Two columns of rows: the cases do not fit in one window height.
@@ -1581,7 +1584,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		// that it needs, and the next row starts under them.
 		interface.label_value_lines(&frame, column, item.name, value, VALUE_X, color, LINE)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 case_log :: proc "contextless" (item: ^Case, code: u32, address: u64) {
@@ -1628,7 +1631,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
 		system.log("fault_ring: no boot image")
@@ -1762,6 +1764,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window, system.time() + 1000)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

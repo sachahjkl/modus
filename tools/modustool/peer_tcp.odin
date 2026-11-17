@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:support/tcp"
 import "modus:support/web"
@@ -231,7 +232,7 @@ peer_case_result :: proc(peer: ^Peer, serial: int) -> (passed: bool, result: str
 		if time.tick_since(start) > CASE_TIME_LIMIT + 5 * time.Second {
 			return false, "the peer did not end the case"
 		}
-		time.sleep(20 * time.Millisecond)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	return state.passed, state.result
 }
@@ -258,8 +259,8 @@ segment_by_hand_add :: proc(state: ^Peer_Tcp, port: u16, sequence: u32, flags: t
 	tcp.header_write(segment, PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, header, length)
 	if bad_option {
 		segment[21] = 0 // An option of length 0: the library refuses the segment.
-		tcp.write_16(segment, 16, 0)
-		tcp.write_16(segment, 16, tcp.checksum(PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, segment))
+		byte_order.write_u16_big_endian(segment, 16, 0)
+		byte_order.write_u16_big_endian(segment, 16, tcp.checksum(PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, segment))
 	}
 	append(&state.raw, segment)
 }
@@ -986,9 +987,9 @@ peer_dropped_segments :: proc(peer: ^Peer, connection: ^tcp.Connection) {
 	tcp.header_write(segment[:], PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, header, tcp.HEADER_MSS)
 	segment[21] = 0 // An option of length 0: the library refuses the segment.
 	whole := tcp.checksum(PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, segment[:])
-	tcp.write_16(segment[:], 16, whole ~ 0x0040)
+	byte_order.write_u16_big_endian(segment[:], 16, whole ~ 0x0040)
 	peer_tcp_send(peer, segment[:], false)
-	tcp.write_16(segment[:], 16, whole)
+	byte_order.write_u16_big_endian(segment[:], 16, whole)
 	peer_tcp_send(peer, segment[:], false)
 }
 

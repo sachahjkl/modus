@@ -197,7 +197,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	queues := ctx.handles[pci.GRANT_QUEUES]
 	queue_address, map_status := system.memory_map(queues, {.Write})
 	queue_physical, physical_status := system.memory_physical(machine, queues)
-	if map_status != .Ok || physical_status != .Ok || system.memory_size(queues) < pci.QUEUE_PAGES {
+	queue_pages, queue_status := system.memory_size(queues)
+	if map_status != .Ok || physical_status != .Ok || queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
 		fail("no memory for the queue")
 	}
 	queue_error: virtio.Queue_Error

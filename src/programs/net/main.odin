@@ -52,6 +52,7 @@
 // program fetch.
 package net
 
+import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -63,9 +64,7 @@ import "modus:support/network"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 GATEWAY :: 0x0A000202 // 10.0.2.2: the gateway, and the echo server of the test.
 LOCAL :: 0x0A00020F // 10.0.2.15
@@ -273,7 +272,7 @@ datagram_wait :: proc "contextless" (deadline: u64) -> (place: int, data: []u8, 
 		if right {
 			return place, found, record.values[2], record.values[3], true
 		}
-		if len(whole) < network.UDP_HEADER || int(network.read_16(whole, 4)) != len(whole) {
+		if len(whole) < network.UDP_HEADER || int(byte_order.read_u16_big_endian(whole, 4)) != len(whole) {
 			malformed_datagrams += 1
 		} else {
 			wrong_checksums += 1
@@ -289,10 +288,10 @@ cases_run :: proc "contextless" () {
 	// 1. The link and the address.
 	info, has_info := call(.Info)
 	link := has_info && datagram.Status(info.kind) == .Ok
-	grant := datagram.grant_unpack(info.values[6])
+	grant, grant_known := datagram.grant_unpack(info.values[6])
 	inspect = grant.inspect
 	local_address, local_port = u32(info.values[0]), u16(info.values[1])
-	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
+	note("the link and the address", link && grant_known && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
 
 	// 2. The hardware address of the gateway (ARP).
 	start := system.cycles()
@@ -360,7 +359,7 @@ cases_run :: proc "contextless" () {
 	// a length field that is its length.
 	copy(data_of(SEND_FIRST + 3), "a wrong length field")
 	whole_count := datagram_write(SEND_FIRST + 3, 20)
-	network.write_16(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
+	byte_order.write_u16_big_endian(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = u64(whole_count), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
 	note("UDP with a wrong length field", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))
@@ -531,12 +530,8 @@ measure_burst :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	interface.draw_text_wrapped(table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.colors.dim)
 	interface.draw_text(table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
 	interface.draw_text(table, LEFT + ANSWER_X, 16 + LINE + 4, "the network answers", graphics.colors.dim)
@@ -580,7 +575,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 		interface.case_lines(&frame, &measures_column, 1, item.name, item.value, ANSWER_X, graphics.colors.dim, measured ? graphics.colors.text : graphics.colors.dim, LINE)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The entry of net: it runs the cases of its endpoint once, then the
@@ -611,7 +606,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The datagram region: the root service made it, with the ring.
 	region_memory := ctx.handles[datagram.GRANT_REGION]
 	address, map_status := system.memory_map(region_memory, {.Write})
-	if map_status != .Ok || system.memory_size(region_memory) < REGION_PAGES {
+	region_pages, size_status := system.memory_size(region_memory)
+	if map_status != .Ok || size_status != .Ok || region_pages < REGION_PAGES {
 		system.log("net: no datagram region")
 		system.stop(1)
 	}

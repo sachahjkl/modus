@@ -46,6 +46,9 @@ Peer :: struct {
 	thread:       ^thread.Thread,
 	stop:         bool,
 	machine:      net.Endpoint, // Where QEMU receives the frames for the machine.
+	machine_socket: net.UDP_Socket, // The socket of that endpoint, which QEMU uses through a copy.
+	machine_socket_lent: linux.Fd, // The copy that QEMU inherits, while machine_socket_lent_open.
+	machine_socket_lent_open: bool,
 	hardware:     [6]u8, // The hardware address of the machine.
 	machine_port: u16, // The local port of the first datagram of the machine.
 	refused_sent: bool,
@@ -99,25 +102,38 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 	// (net.core.rmem_max): peer_run reads every frame that waits before
 	// the next sends, and the QUIC flood waits for its answers.
 	_ = net.set_option(socket, .Receive_Buffer_Size, 4 << 20)
-	// The port where QEMU receives the frames for the machine: the peer
-	// chooses it, so that it can send the first frame (a SYN).
-	machine_socket, machine_err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
-	if machine_err != nil {
+	// The socket of QEMU for the machine: the peer makes it, so that it
+	// knows its port and can send the first frame (a SYN), and QEMU
+	// receives a copy of it at its start (peer_machine_socket_lend). The
+	// port is never free between the two: no other socket of the host can
+	// take it. The socket is connected to the port of the peer, so QEMU
+	// sends each frame there with no address of its own.
+	machine_socket, machine_error := net.make_bound_udp_socket(net.IP4_Loopback, 0)
+	if machine_error != nil {
 		net.close(socket)
+		fmt.eprintfln("modustool: the peer has no UDP socket for the machine: %v", machine_error)
 		return false
 	}
-	machine_bound, _ := net.bound_endpoint(machine_socket)
-	net.close(machine_socket)
-	peer^ = {socket = socket, port = bound.port, machine = machine_bound}
+	machine_bound, machine_bound_error := net.bound_endpoint(machine_socket)
+	peer_address := linux.Sock_Addr_In{sin_family = .INET, sin_port = u16be(bound.port), sin_addr = {127, 0, 0, 1}}
+	if machine_bound_error != nil || linux.connect(linux.Fd(machine_socket), &peer_address) != .NONE {
+		net.close(machine_socket)
+		net.close(socket)
+		fmt.eprintln("modustool: the UDP socket of the machine cannot be connected to the peer")
+		return false
+	}
+	peer^ = {socket = socket, port = bound.port, machine = machine_bound, machine_socket = machine_socket}
 	peer.remote = peer_remote_make()
 	socket_name := call_socket_name
 	if socket_name == "" {
-		peers_started += 1
-		socket_name = fmt.tprintf("test-%d-%d", int(linux.getpid()), peers_started)
+		// Machines start peers on several threads at once.
+		number := sync.atomic_add(&peers_started, 1) + 1
+		socket_name = fmt.tprintf("test-%d-%d", int(linux.getpid()), number)
 	}
 	if !peer_remote_socket_start(peer.remote, socket_name) {
 		peer_remote_free(peer.remote)
 		peer.remote = nil
+		net.close(machine_socket)
 		net.close(socket)
 		return false
 	}
@@ -130,6 +146,7 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 		peer_remote_socket_stop(peer.remote)
 		peer_remote_free(peer.remote)
 		peer.tcp, peer.quic, peer.remote = nil, nil, nil
+		net.close(machine_socket)
 		net.close(socket)
 		return false
 	}
@@ -138,6 +155,35 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
 	peer.call_thread = thread.create_and_start_with_poly_data(peer, peer_remote_serve_socket)
 	return true
+}
+
+// peer_machine_socket_lend gives the number of a copy of the socket of the
+// machine that a child process inherits, for the `-netdev dgram` of QEMU.
+// The socket of the peer closes at each start of a program (CLOEXEC); the
+// copy does not, so the caller closes it as soon as QEMU started
+// (peer_machine_socket_lent_close). A program that another thread of the
+// tool starts in that time also inherits the copy; it holds the port of
+// this machine until it ends, and never reads it.
+peer_machine_socket_lend :: proc(peer: ^Peer) -> (descriptor: int, ok: bool) {
+	peer_machine_socket_lent_close(peer)
+	// The first number at least 3: never a standard stream.
+	inherited, error := linux.fcntl_dupfd(linux.Fd(peer.machine_socket), linux.F_DUPFD, 3)
+	if error != .NONE {
+		fmt.eprintfln("modustool: no copy of the UDP socket of the machine for QEMU: %v", error)
+		return 0, false
+	}
+	peer.machine_socket_lent = inherited
+	peer.machine_socket_lent_open = true
+	return int(inherited), true
+}
+
+// peer_machine_socket_lent_close closes the copy of the socket that QEMU
+// inherited, in this process: QEMU keeps its own.
+peer_machine_socket_lent_close :: proc(peer: ^Peer) {
+	if peer.machine_socket_lent_open {
+		_ = linux.close(peer.machine_socket_lent)
+		peer.machine_socket_lent_open = false
+	}
 }
 
 peer_stop :: proc(peer: ^Peer) {
@@ -150,6 +196,8 @@ peer_stop :: proc(peer: ^Peer) {
 	thread.join(peer.call_thread)
 	thread.destroy(peer.call_thread)
 	net.close(peer.socket)
+	peer_machine_socket_lent_close(peer)
+	net.close(peer.machine_socket)
 	peer_remote_socket_stop(peer.remote)
 	peer.call_socket = ""
 	peer.thread = nil

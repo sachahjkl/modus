@@ -1,7 +1,6 @@
 package kernel
 
 import "base:intrinsics"
-import op "modus:contract/operation"
 
 // The limits of a budget: processor time and log records. A program cannot
 // take all the processor time or fill the log: each resource has a limit.
@@ -41,9 +40,6 @@ import op "modus:contract/operation"
 // processor_sync to all processors (budget_create).
 LIMIT_PERIOD :: 100 // Milliseconds.
 LOG_PERIOD :: 1000 // Milliseconds.
-// The root budget holds the log records of a program of normal use for
-// each program slot: the contract counts the slots of the kernel.
-#assert(PROGRAM_CAPACITY == op.PROGRAM_SLOTS_OF_THE_MACHINE)
 
 // budget_charge counts the time of the thread of a processor, up to now,
 // and gives it: the strategy charges the same time (strategy.odin).

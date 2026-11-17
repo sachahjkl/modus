@@ -26,6 +26,7 @@ package quic
 // An attacker on the path can do worse anyway (drop the datagrams). A
 // replay gives nothing to an attacker off the path.
 
+import "modus:contract/byte_order"
 import "modus:contract/errors"
 
 // The format number of a retry token of this server: its first byte, and the first byte of its additional data.
@@ -91,8 +92,7 @@ RETRY_TOKEN_LIMIT :: 256
 //
 // See [retry token](term:retry-token) and (docs/QUIC.md, "The token of a Retry").
 Retry_Token_Facts :: struct {
-	original_destination_connection_id:        [CONNECTION_ID_LIMIT]u8, // The Destination Connection ID of the first Initial packet of the client, before the Retry. The bytes after its length are zeros.
-	original_destination_connection_id_length: int, // The bytes of that identifier: 0 to `CONNECTION_ID_LIMIT`.
+	original_destination_connection_id:        Connection_Identifier, // The Destination Connection ID of the first Initial packet of the client, before the Retry.
 	retry_source_connection_id:                [CONNECTION_ID_SIZE]u8, // The Source Connection ID of the Retry packet, which the server chose: the client must use it as its next Destination Connection ID.
 	issued_at:                                 u64, // The time of the Retry, in microseconds of the clock that the caller gives. `retry_token_open` compares it with `now`.
 	counter:                                   u64, // The counter that made the nonce of the token. `retry_token_make` does not read it: its counter is a parameter. `retry_token_open` writes it, and the server uses it to take each token once.
@@ -105,9 +105,7 @@ Retry_Token_Facts :: struct {
 // each start, so the pair of key and nonce never comes back.
 @(private)
 retry_token_nonce :: proc "contextless" (counter: u64) -> (nonce: [12]u8) {
-	for index in 0 ..< 8 {
-		nonce[4 + index] = u8(counter >> (8 * uint(7 - index)))
-	}
+	byte_order.write_u64_big_endian(nonce[:], 4, counter)
 	return
 }
 
@@ -121,8 +119,8 @@ retry_token_nonce :: proc "contextless" (counter: u64) -> (nonce: [12]u8) {
 @(private)
 retry_token_additional :: proc "contextless" (remote: Remote) -> (additional: [7]u8) {
 	additional[0] = RETRY_TOKEN_FORMAT
-	additional[1], additional[2], additional[3], additional[4] = u8(remote.address >> 24), u8(remote.address >> 16), u8(remote.address >> 8), u8(remote.address)
-	additional[5], additional[6] = u8(remote.port >> 8), u8(remote.port)
+	byte_order.write_u32_big_endian(additional[:], 1, remote.address)
+	byte_order.write_u16_big_endian(additional[:], 5, remote.port)
 	return
 }
 
@@ -144,26 +142,17 @@ retry_token_additional :: proc "contextless" (remote: Remote) -> (additional: [7
 // - `token`: where the `RETRY_TOKEN_SIZE` bytes go.
 // - `error`: the error record of a failure.
 //
-// **Result**: true when the token is whole. False:
-//
-// - `Too_Long` (argument 5): the length of the original identifier in `facts` is not 0 to
-//   `CONNECTION_ID_LIMIT`. The record holds that length as its value and the limit;
-// - an error of the seal of the module, with its own record.
+// **Result**: true when the token is whole. False with an error of the seal of the module, with
+// its own record.
 retry_token_make :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETRY_TOKEN_KEY_SIZE]u8, counter: u64, remote: Remote, facts: ^Retry_Token_Facts, token: ^[RETRY_TOKEN_SIZE]u8, error: ^errors.Error_Record) -> bool {
-	if facts.original_destination_connection_id_length < 0 || facts.original_destination_connection_id_length > CONNECTION_ID_LIMIT {
-		return fail_at(error, .Too_Long, 5, facts.original_destination_connection_id_length, CONNECTION_ID_LIMIT)
-	}
+	original := connection_identifier_bytes(&facts.original_destination_connection_id)
 	plain: [RETRY_TOKEN_FACTS_SIZE]u8
-	plain[0] = u8(facts.original_destination_connection_id_length)
-	copy(plain[1:], facts.original_destination_connection_id[:facts.original_destination_connection_id_length])
+	plain[0] = u8(len(original))
+	copy(plain[1:], original)
 	copy(plain[1 + CONNECTION_ID_LIMIT:], facts.retry_source_connection_id[:])
-	for index in 0 ..< 8 {
-		plain[1 + CONNECTION_ID_LIMIT + CONNECTION_ID_SIZE + index] = u8(facts.issued_at >> (8 * uint(7 - index)))
-	}
+	byte_order.write_u64_big_endian(plain[:], 1 + CONNECTION_ID_LIMIT + CONNECTION_ID_SIZE, facts.issued_at)
 	token[0] = RETRY_TOKEN_FORMAT
-	for index in 0 ..< 8 {
-		token[1 + index] = u8(counter >> (8 * uint(7 - index)))
-	}
+	byte_order.write_u64_big_endian(token[:], 1, counter)
 	nonce := retry_token_nonce(counter)
 	additional := retry_token_additional(remote)
 	key_text, nonce_text, additional_text, plain_text := string(key[:]), string(nonce[:]), string(additional[:]), string(plain[:])
@@ -206,10 +195,7 @@ retry_token_open :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETR
 	if len(token) != RETRY_TOKEN_SIZE || token[0] != RETRY_TOKEN_FORMAT {
 		return fail_at(error, .Bad_Value, 3, len(token), RETRY_TOKEN_SIZE)
 	}
-	counter: u64
-	for index in 0 ..< 8 {
-		counter = counter << 8 | u64(token[1 + index])
-	}
+	counter := byte_order.read_u64_big_endian(token, 1)
 	nonce := retry_token_nonce(counter)
 	additional := retry_token_additional(remote)
 	plain: [RETRY_TOKEN_FACTS_SIZE]u8
@@ -222,11 +208,10 @@ retry_token_open :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETR
 	if length > CONNECTION_ID_LIMIT {
 		return fail_at(error, .Bad_Value, 3, length, CONNECTION_ID_LIMIT)
 	}
-	facts.original_destination_connection_id_length = copy(facts.original_destination_connection_id[:], plain[1:][:length])
+	// The length is at most CONNECTION_ID_LIMIT: checked above.
+	facts.original_destination_connection_id, _ = connection_identifier_make(plain[1:][:length])
 	copy(facts.retry_source_connection_id[:], plain[1 + CONNECTION_ID_LIMIT:][:CONNECTION_ID_SIZE])
-	for index in 0 ..< 8 {
-		facts.issued_at = facts.issued_at << 8 | u64(plain[1 + CONNECTION_ID_LIMIT + CONNECTION_ID_SIZE + index])
-	}
+	facts.issued_at = byte_order.read_u64_big_endian(plain[:], 1 + CONNECTION_ID_LIMIT + CONNECTION_ID_SIZE)
 	facts.counter = counter
 	if facts.issued_at > now || now - facts.issued_at > RETRY_TOKEN_LIFETIME {
 		return fail_at(error, .Out_Of_Range, 3, int(min(facts.issued_at, u64(max(int)))), int(min(now, u64(max(int)))))

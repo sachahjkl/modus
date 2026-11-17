@@ -374,9 +374,7 @@ memory_place_count: int
 memory_rows: [MEMORY_ROWS]Memory_Row
 memory_count: int
 
-records_now, records_before: [2048]interface.Draw_Record
-text_now, text_before: [32768]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(2048, 32768)
 frame_table: ^interface.Draw_Table
 frame_acts: Frame_Acts // The acts of the frame that draw builds now.
 
@@ -731,7 +729,7 @@ place_memory :: proc "contextless" () {
 key_act :: proc "contextless" (press: interface.Key_Press) {
 	if press.code == display.KEY_ESCAPE {
 		// The letters act again: no element has the focus.
-		drawing.state.focus = 0
+		window_memory.drawing.state.focus = 0
 		return
 	}
 	if !attached {
@@ -1131,7 +1129,7 @@ draw_variables :: proc "contextless" (frame: ^interface.Frame) {
 // elements asked and the keys that no element took.
 draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	frame_acts = {}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	frame_table = frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	// The keys of the open list of the action bar, and a press on it, go
@@ -1155,16 +1153,16 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 			frame_acts.key_count += 1
 		}
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if bar_result.ran {
 		// A press on an item acts as its key. With a program attached the
 		// letters are acts, so the debug place field gives up the focus:
 		// else `h` would type in the field and not hold the thread. With
 		// none, the name field keeps it, and Enter attaches.
 		if attached {
-			drawing.state.focus = 0
+			window_memory.drawing.state.focus = 0
 		}
-		frame_acts.bar_key_given = interface.input_key_add(&drawing.input, bar_result.run)
+		frame_acts.bar_key_given = interface.input_key_add(&window_memory.drawing.input, bar_result.run)
 	}
 	return frame_acts
 }
@@ -1233,7 +1231,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	if problem := service_reach(ctx); problem != "" {
 		status_set(true, problem)
 		system.log("debugger_window: ", problem)
@@ -1248,7 +1245,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			wait: system.Wait
 			display.wait_events(&wait, &window)
 			now := system.wait_end(&wait, next)
-			if interface.window_events(&drawing, &window) {
+			if interface.window_events(&window_memory.drawing, &window) {
 				frame_build(&window)
 			}
 			if now >= next {

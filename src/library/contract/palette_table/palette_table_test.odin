@@ -224,6 +224,38 @@ candidates_and_arguments_are_checked :: proc(t: ^testing.T) {
 	testing.expect(t, !good)
 	_, _, good = argument_unpack({0 = u64(Value_Kind.Text) << 8 | 1 << 24})
 	testing.expect(t, !good)
+	// A kind byte that names no kind: one past the last kind, the largest byte.
+	_, _, good = argument_unpack({0 = (u64(max(Value_Kind)) + 1) << 8})
+	testing.expect(t, !good)
+	_, _, good = argument_unpack({0 = 0xFF << 8})
+	testing.expect(t, !good)
+}
+
+// A word of the provider that names no kind or no outcome is refused:
+// one past the last member and the largest word. Then each member comes
+// back from its own word.
+@(test)
+a_word_that_names_no_kind_or_outcome_is_refused :: proc(t: ^testing.T) {
+	refused_kinds := [?]u64{u64(max(Value_Kind)) + 1, 1 << 32, max(u64)}
+	for word in refused_kinds {
+		_, ok := value_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no kind, and it is taken", word)
+	}
+	refused_outcomes := [?]u64{u64(max(Outcome)) + 1, 1 << 32, max(u64)}
+	for word in refused_outcomes {
+		_, ok := outcome_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no outcome, and it is taken", word)
+	}
+	for member in Value_Kind {
+		read, ok := value_kind_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
+	for member in Outcome {
+		read, ok := outcome_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
 }
 
 // The act name, the name of a setting and the name of a value: each is

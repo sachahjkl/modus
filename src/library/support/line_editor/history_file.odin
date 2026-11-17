@@ -1,6 +1,7 @@
 package line_editor
 
 import "modus:contract/blake3"
+import "modus:contract/byte_order"
 import "modus:contract/text_encoding"
 
 // The line history as bytes, to keep it in a store across a stop of the
@@ -59,18 +60,6 @@ history_file_problem_texts := [History_File_Problem]string {
 	.Wrong_Count    = "its count of lines is wrong",
 }
 
-// u32_write writes a number of 32 bits, little-endian.
-@(private)
-u32_write :: proc "contextless" (bytes: []u8, value: u32) {
-	bytes[0], bytes[1], bytes[2], bytes[3] = u8(value), u8(value >> 8), u8(value >> 16), u8(value >> 24)
-}
-
-// u32_read reads a number of 32 bits, little-endian.
-@(private)
-u32_read :: proc "contextless" (bytes: []u8) -> u32 {
-	return u32(bytes[0]) | u32(bytes[1]) << 8 | u32(bytes[2]) << 16 | u32(bytes[3]) << 24
-}
-
 // history_file_write writes the history in buffer, in the form above: the
 // newest lines that fit, and the oldest of them first. bytes is the part
 // of buffer that holds the file, or nil when buffer cannot hold a header
@@ -91,9 +80,9 @@ history_file_write :: proc "contextless" (history: ^History, buffer: []u8) -> (b
 		line_count += 1
 	}
 	copy(buffer[0:4], HISTORY_FILE_MAGIC)
-	u32_write(buffer[4:8], HISTORY_FILE_VERSION)
-	u32_write(buffer[8:12], u32(line_count))
-	u32_write(buffer[12:16], u32(line_bytes))
+	byte_order.write_u32_little_endian(buffer[4:8], 0, HISTORY_FILE_VERSION)
+	byte_order.write_u32_little_endian(buffer[8:12], 0, u32(line_count))
+	byte_order.write_u32_little_endian(buffer[12:16], 0, u32(line_bytes))
 	place := HISTORY_FILE_HEADER_SIZE
 	for age := line_count - 1; age >= 0; age -= 1 {
 		text, _ := history_line(history, age)
@@ -116,7 +105,7 @@ history_file_read :: proc "contextless" (bytes: []u8, history: ^History) -> (pro
 	if string(bytes[0:4]) != HISTORY_FILE_MAGIC {
 		return .Wrong_Magic
 	}
-	if u32_read(bytes[4:8]) != HISTORY_FILE_VERSION {
+	if byte_order.read_u32_little_endian(bytes[4:8], 0) != HISTORY_FILE_VERSION {
 		return .Wrong_Version
 	}
 	end := len(bytes) - HISTORY_FILE_HASH_SIZE
@@ -124,11 +113,11 @@ history_file_read :: proc "contextless" (bytes: []u8, history: ^History) -> (pro
 	if string(hash[:]) != string(bytes[end:]) {
 		return .Wrong_Hash
 	}
-	line_count := u64(u32_read(bytes[8:12]))
+	line_count := u64(byte_order.read_u32_little_endian(bytes[8:12], 0))
 	if line_count > HISTORY_LINE_CAPACITY {
 		return .Too_Many_Lines
 	}
-	if u64(u32_read(bytes[12:16])) != u64(end - HISTORY_FILE_HEADER_SIZE) {
+	if u64(byte_order.read_u32_little_endian(bytes[12:16], 0)) != u64(end - HISTORY_FILE_HEADER_SIZE) {
 		return .Wrong_Size
 	}
 	// Each line is checked before any line goes into the history.

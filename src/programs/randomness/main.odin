@@ -65,9 +65,7 @@ megabytes_per_second_tenths: u64
 measure_microseconds: u64
 measured: bool
 
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 hex_text :: proc "contextless" (builder: ^interface.Text_Builder, bytes: []u8) -> string {
 	digits := "0123456789abcdef"
@@ -150,7 +148,7 @@ fresh_bytes_line :: proc "contextless" (frame: ^interface.Frame, column: ^interf
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 
@@ -208,7 +206,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		digit := [1]u8{digits[index]}
 		interface.draw_text(frame.table, x + bar_width / 2 - 4, bars.y + bars.height - LINE + 4, string(digit[:]), graphics.colors.dim)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The entry of randomness: it shows the seed, counts 1 MiB, measures 4 MiB,
@@ -233,7 +231,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	random.fill(&program_generator, first_bytes[:])
 	hex: interface.Text_Builder
 	system.log("randomness: the seed of the system: strength ", op.seed_strength_names[report.strength], "; the first bytes of the stream of this program: ", hex_text(&hex, first_bytes[:]))
@@ -279,6 +276,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		deadline += 500
 		display.wait(&window, deadline)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

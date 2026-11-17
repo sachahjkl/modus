@@ -48,6 +48,7 @@
 // the window.
 package server
 
+import "modus:contract/byte_order"
 import "modus:contract/date"
 import "modus:contract/datagram"
 import "modus:contract/ring"
@@ -418,7 +419,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	for item in incoming {
 		if len(item.segment) >= 4 && tcp.connection_of_segment(&table, item) < 0 {
 			released_strays += 1
-			release(item.remote_address, tcp.read_16(item.segment, 0))
+			release(item.remote_address, byte_order.read_u16_big_endian(item.segment, 0))
 		}
 	}
 	// The remotes of records in TIME-WAIT that a SYN took: no Closed event
@@ -494,8 +495,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &endpoint.completions)
 		system.wait_end(&wait, system.time() + 2000)
 	}
-	grant := datagram.grant_unpack(info.values[6])
-	if !grant.tcp || !grant.listen {
+	grant, grant_known := datagram.grant_unpack(info.values[6])
+	if !grant_known || !grant.tcp || !grant.listen {
 		fail("the grant is not a listen grant of TCP")
 	}
 	local_address = u32(info.values[0])

@@ -53,7 +53,9 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 		}
 		return nil, status
 	}
-	return ([^]u8)(address)[:system.memory_size(memory) * system.PAGE_SIZE], .Ok
+	// The map took the handle, so the kernel gives its size: a refusal maps no byte.
+	pages, _ := system.memory_size(memory)
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Ok
 }
 
 // total adds the bytes of a memory object.

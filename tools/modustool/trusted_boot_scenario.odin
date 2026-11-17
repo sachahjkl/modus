@@ -168,7 +168,7 @@ tpm_start :: proc(tpm: ^Tpm_Process, output: string, state: string = "") -> bool
 			tpm_stop(tpm)
 			return false
 		}
-		time.sleep(10 * time.Millisecond)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	return true
 }
@@ -339,29 +339,26 @@ scenario_secure_boot_refused := [?]Step {
 // trusted_boot_tests_run runs the ten machines: the five refusals of the
 // boot program, the two machines of the measure, and the three machines of
 // Secure Boot.
-trusted_boot_tests_run :: proc() -> bool {
-	// The machines that reach the desktop write a store on the data disk of
-	// the tests. The machines after these expect a new disk.
-	defer disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true)
-	refused_machine_run(scenario_changed_module[:], BOOT_VOLUME_CHANGED_MODULE, TEST_OUTPUT_CHANGED_MODULE) or_return
-	refused_machine_run(scenario_wrong_signature[:], BOOT_VOLUME_WRONG_SIGNATURE, TEST_OUTPUT_WRONG_SIGNATURE) or_return
-	refused_machine_run(scenario_changed_kernel[:], BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
-	refused_machine_run(scenario_without_description[:], BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
-	refused_machine_run(scenario_stated_hash[:], BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
-	measured := measure_machine_run(scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
-	other := measure_machine_run(scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
+trusted_boot_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	refused_machine_run(part, scenario_changed_module[:], BOOT_VOLUME_CHANGED_MODULE, TEST_OUTPUT_CHANGED_MODULE) or_return
+	refused_machine_run(part, scenario_wrong_signature[:], BOOT_VOLUME_WRONG_SIGNATURE, TEST_OUTPUT_WRONG_SIGNATURE) or_return
+	refused_machine_run(part, scenario_changed_kernel[:], BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
+	refused_machine_run(part, scenario_without_description[:], BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
+	refused_machine_run(part, scenario_stated_hash[:], BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
+	measured := measure_machine_run(part, scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
+	other := measure_machine_run(part, scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
 	if measured == other {
 		fmt.eprintln("modustool: test failed: a system with one byte of one module changed has the same measure")
 		return false
 	}
 	test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
 	// The tool ends QEMU: status 0.
-	machine_test(scenario_secure_boot[:], BOOT_VOLUME_SECURE_BOOT, TEST_OUTPUT_SECURE_BOOT, 0, firmware = .With_Secure_Boot) or_return
+	machine_test(part, scenario_secure_boot[:], {volume = BOOT_VOLUME_SECURE_BOOT, output = TEST_OUTPUT_SECURE_BOOT, exit_status = 0, firmware = .With_Secure_Boot}) or_return
 	test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
-	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
-	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
-	release_image_machine_run() or_return
-	floor_tests_run() or_return
+	refused_machine_run(part, scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
+	refused_machine_run(part, scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
+	release_image_machine_run(part) or_return
+	floor_tests_run(part) or_return
 	return true
 }
 
@@ -465,11 +462,11 @@ floor_machine_forget :: proc(machine: ^Floor_Machine) {
 // the software TPM, then empties it. A machine that starts reaches the
 // desktop, and the tool ends QEMU; a refused machine shows its failure, and
 // the tool checks that its kernel never started.
-floor_machine_run :: proc(machine: ^Floor_Machine, volume: string, number: int, refused: bool, firmware: Machine_Firmware = .With_Secure_Boot) -> bool {
+floor_machine_run :: proc(part: ^Test_Part_Run, machine: ^Floor_Machine, volume: string, number: int, refused: bool, firmware: Machine_Firmware = .With_Secure_Boot) -> bool {
 	defer floor_machine_forget(machine)
 	output := self_test_file(TEST_OUTPUT_FLOOR, number)
 	// The tool ends QEMU: status 0.
-	passed := machine_test(machine.steps[:], volume, output, 0, firmware = firmware, tpm_state = FLOOR_TPM_STATE_FOLDER, tpm_device = true)
+	passed := machine_test(part, machine.steps[:], {volume = volume, output = output, exit_status = 0, firmware = firmware, tpm_state = FLOOR_TPM_STATE_FOLDER, tpm_device = true})
 	tpm_traffic_report(output)
 	if !passed {
 		return false
@@ -546,7 +543,7 @@ floor_plant :: proc(key_number: u64) -> bool {
 // floor_tests_run runs the six machines of the TPM floors on a new state
 // of the software TPM, with a plant of another system between machines 12
 // and 13.
-floor_tests_run :: proc() -> bool {
+floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	numbers := floor_numbers_read() or_return
 	reset_folder(FLOOR_TPM_STATE_FOLDER) or_return
 	machine: Floor_Machine
@@ -574,7 +571,7 @@ floor_tests_run :: proc() -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, version_name))
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
 	floor_started_steps(&machine)
-	floor_machine_run(&machine, BOOT_VOLUME_NEWER_SYSTEM, 12, false) or_return
+	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 12, false) or_return
 	test_passed_print("a newer system defined the TPM floors and raised them before its measure: the key floor to %d, the version floor of its key to %d", numbers.key_number, newer_version)
 
 	// Another system plants an index with an authorization value, and a
@@ -589,7 +586,7 @@ floor_tests_run :: proc() -> bool {
 	floor_wait(&machine, fmt.aprintf("boot program: %s: removed an index that was never written: another system planted it", version_name))
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
 	floor_started_steps(&machine)
-	floor_machine_run(&machine, BOOT_VOLUME_NEWER_SYSTEM, 13, false) or_return
+	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 13, false) or_return
 	test_passed_print("%s", "the boot program removed a planted index with an authorization value and a foreign index, and put the floors of this system back")
 
 	// 14. The system of the repository: below the version floor that
@@ -597,7 +594,7 @@ floor_tests_run :: proc() -> bool {
 	held := fmt.aprintf(FLOOR_LINE, numbers.key_number, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS)
 	floor_start_steps(&machine, .With_Secure_Boot, held, numbers.key_number, numbers.security_version)
 	floor_refused_steps(&machine, fmt.aprintf("boot program: the security version %d of the system description is below the version floor %d of the TPM: an older system", numbers.security_version, newer_version))
-	floor_machine_run(&machine, BOOT_VOLUME_SECURE_BOOT, 14, true) or_return
+	floor_machine_run(part, &machine, BOOT_VOLUME_SECURE_BOOT, 14, true) or_return
 	test_passed_print("the boot program refused the system of %s after a newer one started: its security version %d is below the version floor %d", BOOT_VOLUME_SECURE_BOOT, numbers.security_version, newer_version)
 
 	// 15. A newer key raises the key floor, and starts the version floor of
@@ -607,13 +604,13 @@ floor_tests_run :: proc() -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, newer_version_name))
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, newer_version_name, 0, newer_version))
 	floor_started_steps(&machine)
-	floor_machine_run(&machine, BOOT_VOLUME_NEWER_KEY, 15, false) or_return
+	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_KEY, 15, false) or_return
 	test_passed_print("a boot program with the key number %d raised the key floor from %d to %d", newer_key, numbers.key_number, newer_key)
 
 	// 16. The boot program of machine 12: its key is revoked.
 	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, newer_key, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS), numbers.key_number, newer_version)
 	floor_refused_steps(&machine, fmt.aprintf("boot program: the key number %d of this boot program is below the key floor %d of the TPM: its key is revoked", numbers.key_number, newer_key))
-	floor_machine_run(&machine, BOOT_VOLUME_NEWER_SYSTEM, 16, true) or_return
+	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 16, true) or_return
 	test_passed_print("the boot program with the key number %d refused to start after a boot program with the key number %d raised the key floor: its signing key is revoked", numbers.key_number, newer_key)
 
 	// 17. Another PCR 7: the system of the repository, whose boot program
@@ -623,7 +620,7 @@ floor_tests_run :: proc() -> bool {
 	floor_start_steps(&machine, .With_Tpm_Driver, fmt.aprintf(FLOOR_LINE, 0, FLOOR_FOREIGN_WORDS, numbers.key_number, 0, FLOOR_FOREIGN_WORDS), numbers.key_number, numbers.security_version)
 	append(&machine.steps, Step{kind = .Wait, text = FLOOR_STAY_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
 	floor_started_steps(&machine)
-	floor_machine_run(&machine, BOOT_VOLUME_SECURE_BOOT, 17, false, .With_Tpm_Driver) or_return
+	floor_machine_run(part, &machine, BOOT_VOLUME_SECURE_BOOT, 17, false, .With_Tpm_Driver) or_return
 	test_passed_print("%s", "with another PCR 7 (Secure Boot off), each floor is foreign: the older system started, and its boot program changed no floor")
 	fmt.println("modustool: the TPM floors: 6 machines passed")
 	return true
@@ -652,7 +649,7 @@ scenario_release_image := [?]Step {
 // accepts the test keys. It verifies the files, decompresses the image with
 // zstd, and starts a machine from the GPT disk with the usual firmware: the
 // machines of Secure Boot already test the signature of the boot program.
-release_image_machine_run :: proc() -> bool {
+release_image_machine_run :: proc(part: ^Test_Part_Run) -> bool {
 	seed_text: string = RELEASE_TEST_SEED_TEXT
 	seed := transmute([]u8)seed_text
 	files := release_files_write(BOOT_VOLUME_SECURE_BOOT, release.RELEASE_NUMBER, RELEASE_TEST_FOLDER, RELEASE_TEST_FOLDER + "/" + RELEASE_OUTPUT_FOLDER, seed, .Test_Keys_Allowed) or_return
@@ -668,7 +665,7 @@ release_image_machine_run :: proc() -> bool {
 	// The disk is the output of this build: the machine starts from it.
 	boot_volume_ready_note(RELEASE_TEST_DISK)
 	// The tool ends QEMU: status 0.
-	machine_test(scenario_release_image[:], RELEASE_TEST_DISK, TEST_OUTPUT_RELEASE_IMAGE, 0) or_return
+	machine_test(part, scenario_release_image[:], {volume = RELEASE_TEST_DISK, output = TEST_OUTPUT_RELEASE_IMAGE, exit_status = 0}) or_return
 	test_passed_print("the decompressed release image %s, a GPT disk, starts the system", RELEASE_TEST_DISK)
 	return true
 }
@@ -676,9 +673,9 @@ release_image_machine_run :: proc() -> bool {
 // refused_machine_run runs a machine whose boot program, or whose firmware,
 // must refuse its volume, then checks that the kernel wrote nothing: it
 // never started. With Secure Boot the boot program itself must not start.
-refused_machine_run :: proc(steps: []Step, volume, output: string, firmware: Machine_Firmware = .Usual) -> bool {
+refused_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output: string, firmware: Machine_Firmware = .Usual) -> bool {
 	// The tool ends QEMU: status 0.
-	machine_test(steps, volume, output, 0, firmware = firmware) or_return
+	machine_test(part, steps, {volume = volume, output = output, exit_status = 0, firmware = firmware}) or_return
 	log_bytes := read_file(output) or_return
 	log := string(log_bytes)
 	if strings.contains(log, "kernel: ") {
@@ -700,9 +697,9 @@ refused_machine_run :: proc(steps: []Step, volume, output: string, firmware: Mac
 // measure_machine_run runs a machine with a software TPM, then compares the
 // value of the measure register that the boot program read back with the
 // value that the tool computes from the system description of the volume.
-measure_machine_run :: proc(steps: []Step, volume, output: string, firmware: Machine_Firmware) -> (value: [32]u8, ok: bool) {
+measure_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output: string, firmware: Machine_Firmware) -> (value: [32]u8, ok: bool) {
 	// The tool ends QEMU: status 0.
-	passed := machine_test(steps, volume, output, 0, firmware = firmware, tpm_device = true)
+	passed := machine_test(part, steps, {volume = volume, output = output, exit_status = 0, firmware = firmware, tpm_device = true})
 	tpm_traffic_report(output)
 	if !passed {
 		return

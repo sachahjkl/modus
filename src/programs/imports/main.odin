@@ -62,9 +62,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 808, programs = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 foreign _ {
 	days_in_month :: proc "c" (month, year: i64) -> i64 ---
@@ -489,12 +487,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("imports: two programs import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
 
 	for {
-		if drawing.now.records == nil {
-			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-		}
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		y := 12
 		interface.draw_text(table, 12, y, "agenda imports calendar. calendar has a fault; calendar_fixed corrects it.", graphics.colors.dim)
 		y += LINE
@@ -519,7 +513,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_text(table, 12, y, system.format(line[:], "the bind of agenda: ", bind_whole, ".", bind_tenth, " ns; with the check of the replacement: ", checked_whole, ".", checked_tenth, " ns"), graphics.colors.dim)
 		y += LINE
 		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", load_whole / 1000, " us; with the replacement: ", load_replaced_whole / 1000, " us"), graphics.colors.dim)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

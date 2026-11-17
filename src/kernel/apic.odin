@@ -116,7 +116,7 @@ timer_calibrate :: proc "contextless" () {
 	apic_write(APIC_TIMER_START, 0)
 	if timer_count == 0 {
 		log("kernel: the timer of the processor does not count")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 }
 

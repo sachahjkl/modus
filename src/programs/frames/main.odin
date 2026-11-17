@@ -46,9 +46,7 @@ import "modus:support/twins"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11446, programs = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 LINE :: 22
 ANSWER_X :: 384
@@ -328,36 +326,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		if drawing.now.records == nil {
-			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-		}
-		frame := interface.window_frame_begin(&drawing, &window)
-		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
-		y := 12
-		interface.draw_text(table, 12, y, "a page gets its frame at its first use; the budget paid at creation.", graphics.colors.dim)
-		y += LINE
-		interface.draw_text(table, 12, y, "programs of one module map one memory object for its code.", graphics.colors.dim)
-		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program does", graphics.colors.dim)
-		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.colors.dim)
-		y += LINE
+		frame := interface.window_frame_start(&window_memory, &window)
+		// Each line is a line of a table: its text 3 pixels under its top.
+		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "a page gets its frame at its first use; the budget paid at creation.", graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "programs of one module map one memory object for its code.", graphics.colors.dim)
+		interface.column_take(&column, LINE / 2)
+		sizes := [2]interface.Size{interface.pixels(ANSWER_X - 12), interface.share()}
+		cells: [2]interface.Area
+		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
+		interface.cell_text(&frame, cells[0], "the program does", graphics.colors.dim)
+		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
 		for item, index in cases[:case_count] {
-			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
-			}
-			interface.draw_text(table, 12, y, item.text, graphics.colors.text)
-			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.colors.program : graphics.colors.failed)
-			y += LINE
+			row := interface.column_take(&column, LINE)
+			interface.table_band(&frame, {row.x - 6, row.y, row.width + 12, row.height}, index)
+			interface.row_split(row, sizes[:], cells[:])
+			interface.cell_text(&frame, cells[0], item.text, graphics.colors.text)
+			interface.cell_text(&frame, cells[1], item.right ? item.answer : "another answer", item.right ? graphics.colors.program : graphics.colors.failed)
 		}
-		y += LINE / 2
+		interface.column_take(&column, LINE / 2)
 		line: [96]u8
-		interface.draw_text(table, 12, y, system.format(line[:], "create and map 8192 pages: ", create_now, " us with the frames, ", create_first_use, " us without"), graphics.colors.dim)
-		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "first use of a page: ", first_use, " ns; a write to a page with its frame: ", write_present, " ns"), graphics.colors.dim)
-		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "start a twin: ", start_own, " us with a copy of the module, ", start_shared, " us with the shared code"), graphics.colors.dim)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), system.format(line[:], "create and map 8192 pages: ", create_now, " us with the frames, ", create_first_use, " us without"), graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), system.format(line[:], "first use of a page: ", first_use, " ns; a write to a page with its frame: ", write_present, " ns"), graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), system.format(line[:], "start a twin: ", start_own, " us with a copy of the module, ", start_shared, " us with the shared code"), graphics.colors.dim)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

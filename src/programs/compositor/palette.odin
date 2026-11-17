@@ -345,8 +345,13 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	}
 	opened, status := system.ring_open(ring_handle)
 	address: rawptr
-	if status == .Ok && system.memory_size(table_handle) < palette_table.TABLE_PAGES {
-		status = .Bad_Handle
+	if status == .Ok {
+		table_pages, table_status := system.memory_size(table_handle)
+		if table_status != .Ok {
+			status = table_status
+		} else if table_pages < palette_table.TABLE_PAGES {
+			status = .Bad_Handle
+		}
 	}
 	if status == .Ok {
 		address, status = system.memory_map(table_handle, {})

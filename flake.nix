@@ -211,14 +211,28 @@
     '';
 
     # modustool check: the host code passes -vet and its tests, the system builds,
-    # and the machine test passes under QEMU (console, desktop, tools).
+    # and the machine test passes under QEMU (console, desktop, tools). This is
+    # the one run of the machine test of the full check: its output holds the
+    # pictures and the logs, which `modustool screenshots` takes from the store
+    # (src/md/infrastructure/full_check.md).
+    # The names of the pictures of docs/screenshots, not their bytes: the
+    # checks read which pictures exist and that each is a PNG with a size
+    # (the README, the news, the pages of the site), so the build writes one
+    # PNG of one pixel under each name. `modustool screenshots` writes new
+    # bytes into these files at each run; with the names only, the source of
+    # the check stays the same, so the check that it built stays in the store
+    # whatever the order of the two commands of the full check. A new name is
+    # a new source.
+    screenshotNames = builtins.filter (name: inputs.nixpkgs.lib.hasSuffix ".png" name) (builtins.attrNames (builtins.readDir ./docs/screenshots));
+
     bootTest = pkgs.stdenvNoCC.mkDerivation ({
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          # The host tests of `modustool site` read README.md, flake.lock and the Markdown documents; the check of the source paths in the documents reads AGENTS.md too; the check of the README needs its pictures; `modustool news check` reads news/, and the film that a news entry names (docs/films: absent in a tree where no entry names a film); the check of the font of the name of the mark reads LICENSE, whose text the font carries.
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
+          # The host tests of `modustool site` read README.md, flake.lock and the Markdown documents; the check of the source paths in the documents reads AGENTS.md too; the check of the README needs the names of its pictures (screenshotNames); `modustool news check` reads news/, and the film that a news entry names (docs/films: absent in a tree where no entry names a film); the check of the font of the name of the mark reads LICENSE, whose text the font carries.
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
         };
+        inherit screenshotNames;
         nativeBuildInputs = buildTools ++ [modustool];
         # /dev/kvm in the sandbox. Without it QEMU falls back to TCG, which
         # takes every register write: the self test of a refused register
@@ -227,11 +241,19 @@
         requiredSystemFeatures = ["kvm"];
         buildPhase = ''
           export HOME=$TMPDIR
-          mkdir -p build
+          mkdir -p build docs/screenshots
+          for name in $screenshotNames; do
+            echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > "docs/screenshots/$name"
+          done
           modustool check
         '';
+        # The logs and the records of build/ (the logs of the machines, the
+        # times of the test, the record of the second build, the count of
+        # the checks) and the pictures of the test.
         installPhase = ''
-          cp build/test_output.txt $out
+          mkdir -p $out/logs $out/screenshots
+          cp build/*.txt $out/logs/
+          cp build/screenshots/*.png $out/screenshots/
         '';
       }
       // firmware

@@ -685,6 +685,12 @@ transport_parameters_of_a_peer :: proc(t: ^testing.T) {
 		{"initial_max_streams_bidi over 2^60", .Client, "0808d000000000000001" + "0f01aa", .Transport_Parameter_Error},
 		{"an integer shorter than its length", .Client, "040201" + "0f01aa", .Transport_Parameter_Error},
 		{"a connection identifier of 21 bytes", .Client, "0f15000102030405060708090a0b0c0d0e0f1011121314", .Transport_Parameter_Error},
+		// Each identifier parameter refuses 21 bytes by itself, in a server
+		// record that is whole without it; 20 bytes are taken.
+		{"original_destination_connection_id of 21 bytes", .Server, "0015000102030405060708090a0b0c0d0e0f1011121314" + "0f01aa", .Transport_Parameter_Error},
+		{"original_destination_connection_id of 20 bytes", .Server, "0014000102030405060708090a0b0c0d0e0f10111213" + "0f01aa", .No_Error},
+		{"retry_source_connection_id of 21 bytes", .Server, "0001aa" + "1015000102030405060708090a0b0c0d0e0f1011121314" + "0f01aa", .Transport_Parameter_Error},
+		{"retry_source_connection_id of 20 bytes", .Server, "0001aa" + "1014000102030405060708090a0b0c0d0e0f10111213" + "0f01aa", .No_Error},
 		{"a length past the end", .Client, "0f05aa", .Transport_Parameter_Error},
 		{"disable_active_migration with a value", .Client, "0c0101" + "0f01aa", .Transport_Parameter_Error},
 		// RFC 9000, section 18.2, gives max_udp_payload_size no largest
@@ -715,12 +721,19 @@ transport_parameters_of_a_peer :: proc(t: ^testing.T) {
 sent_parameters_of_a_side :: proc(role: Tls_Role) -> Sent_Transport_Parameters {
 	parameters := sent_transport_parameters_default()
 	parameters.initial_max_data = 65536
-	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], []u8{1, 2, 3, 4})
+	parameters.initial_source_connection_id = identifier_of([]u8{1, 2, 3, 4})
 	if role == .Server {
-		parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], []u8{9, 9, 9, 9})
-		parameters.has_original_destination_connection_id = true
+		parameters.original_destination_connection_id = identifier_of([]u8{9, 9, 9, 9})
 	}
 	return parameters
+}
+
+// identifier_of gives the connection identifier of bytes that a case
+// chose, of `CONNECTION_ID_LIMIT` bytes at most.
+identifier_of :: proc(bytes: []u8) -> Connection_Identifier {
+	identifier, made := connection_identifier_make(bytes)
+	assert(made, "a case names an identifier over the limit")
+	return identifier
 }
 
 // The writer of the transport parameters refuses each record whose bytes
@@ -740,59 +753,23 @@ transport_parameters_that_this_side_sends :: proc(t: ^testing.T) {
 	}
 	refused := []Case {
 		{"a client with original_destination_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_original_destination_connection_id = true
+				parameters.original_destination_connection_id = identifier_of([]u8{9})
+			}},
+		{"a client with an empty original_destination_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id = Connection_Identifier{}
 			}},
 		{"a client with retry_source_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_retry_source_connection_id = true
+				parameters.retry_source_connection_id = identifier_of([]u8{7})
+			}},
+		{"a client with an empty retry_source_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.retry_source_connection_id = Connection_Identifier{}
 			}},
 		{"a server with no original_destination_connection_id", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_original_destination_connection_id = false
-				parameters.original_destination_connection_id_length = 0
-				parameters.original_destination_connection_id = {}
+				parameters.original_destination_connection_id = nil
 			}},
-		{"an initial_source_connection_id of length -1", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.initial_source_connection_id_length = -1
-			}},
-		{"an initial_source_connection_id one byte over the limit", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.initial_source_connection_id_length = CONNECTION_ID_LIMIT + 1
-			}},
-		{"an initial_source_connection_id of the largest length", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.initial_source_connection_id_length = max(int)
-			}},
-		{"an original_destination_connection_id of length -1", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.original_destination_connection_id_length = -1
-			}},
-		{"an original_destination_connection_id one byte over the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.original_destination_connection_id_length = CONNECTION_ID_LIMIT + 1
-			}},
-		{"a retry_source_connection_id one byte over the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_retry_source_connection_id = true
-				parameters.retry_source_connection_id_length = CONNECTION_ID_LIMIT + 1
-			}},
-		{"a retry_source_connection_id of length -1", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_retry_source_connection_id = true
-				parameters.retry_source_connection_id_length = -1
-			}},
-		{"a byte after the length of a retry_source_connection_id that is there", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_retry_source_connection_id = true
-				parameters.retry_source_connection_id_length = copy(parameters.retry_source_connection_id[:], []u8{3, 3})
-				parameters.retry_source_connection_id[CONNECTION_ID_LIMIT - 1] = 5
-			}},
-		{"a retry_source_connection_id with a length and no has_ field", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.retry_source_connection_id_length = 1
-				parameters.retry_source_connection_id[0] = 7
-			}},
-		{"a retry_source_connection_id with bytes and no has_ field", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.retry_source_connection_id[0] = 7
-			}},
-		{"an original_destination_connection_id with a length and no has_ field", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.original_destination_connection_id_length = 1
-			}},
-		{"a byte after the length of initial_source_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.initial_source_connection_id[parameters.initial_source_connection_id_length] = 5
-			}},
-		{"a byte in the last place after the length of an identifier", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.original_destination_connection_id[CONNECTION_ID_LIMIT - 1] = 5
+		{"a server with retry_source_connection_id and no original_destination_connection_id", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id = nil
+				parameters.retry_source_connection_id = identifier_of([]u8{7})
 			}},
 		{"max_udp_payload_size of 0", .Client, proc(parameters: ^Sent_Transport_Parameters) {
 				parameters.max_udp_payload_size = 0
@@ -860,27 +837,29 @@ transport_parameters_that_this_side_sends :: proc(t: ^testing.T) {
 	taken := []Case {
 		{"an initial_source_connection_id of no byte", .Client, proc(parameters: ^Sent_Transport_Parameters) {
 				parameters.initial_source_connection_id = {}
-				parameters.initial_source_connection_id_length = 0
+			}},
+		{"an initial_source_connection_id of 1 byte", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_source_connection_id = identifier_of([]u8{0})
 			}},
 		{"an initial_source_connection_id of the limit", .Client, proc(parameters: ^Sent_Transport_Parameters) {
-				for &value, index in parameters.initial_source_connection_id {
+				bytes: [CONNECTION_ID_LIMIT]u8
+				for &value, index in bytes {
 					value = u8(index + 1)
 				}
-				parameters.initial_source_connection_id_length = CONNECTION_ID_LIMIT
+				parameters.initial_source_connection_id = identifier_of(bytes[:])
 			}},
 		{"an original_destination_connection_id of no byte", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.original_destination_connection_id = {}
-				parameters.original_destination_connection_id_length = 0
+				parameters.original_destination_connection_id = Connection_Identifier{}
 			}},
 		{"a retry_source_connection_id of no byte", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				parameters.has_retry_source_connection_id = true
+				parameters.retry_source_connection_id = Connection_Identifier{}
 			}},
 		{"a retry_source_connection_id of the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
-				for &value in parameters.retry_source_connection_id {
+				bytes: [CONNECTION_ID_LIMIT]u8
+				for &value in bytes {
 					value = 3
 				}
-				parameters.retry_source_connection_id_length = CONNECTION_ID_LIMIT
-				parameters.has_retry_source_connection_id = true
+				parameters.retry_source_connection_id = identifier_of(bytes[:])
 			}},
 		{"max_udp_payload_size of the least", .Client, proc(parameters: ^Sent_Transport_Parameters) {
 				parameters.max_udp_payload_size = SMALLEST_MAX_UDP_PAYLOAD_SIZE
@@ -1320,13 +1299,6 @@ error_records_name_the_argument_at_fault :: proc(t: ^testing.T) {
 	records: [1]Server_Record
 	testing.expect(t, !server_init(server, connections, records[:], streams, &configuration, &cryptography, &generator, SERVER_LIMITS_DEFAULT, &error))
 	expect_record(t, "server_init", error, .Bad_Value, 5, 0, i64(random.Seed_Strength.Processor))
-
-	// The facts of a token are argument 5 of retry_token_make.
-	key: [RETRY_TOKEN_KEY_SIZE]u8
-	token: [RETRY_TOKEN_SIZE]u8
-	facts := Retry_Token_Facts{original_destination_connection_id_length = CONNECTION_ID_LIMIT + 1}
-	testing.expect(t, !retry_token_make(&cryptography, &key, 1, Remote{0x0A00_0302, 50_000}, &facts, &token, &error))
-	expect_record(t, "retry_token_make", error, .Too_Long, 5, CONNECTION_ID_LIMIT + 1, CONNECTION_ID_LIMIT)
 
 	// retry_packet_write: each identifier by its own number, with its size;
 	// an empty token is Empty, not a small buffer.

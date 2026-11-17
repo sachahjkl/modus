@@ -84,14 +84,14 @@ measure_program_steps :: proc(program: Measure_Program, steps: ^[dynamic]Step) {
 // measure_program_run starts one program alone on a machine of a measure
 // run, waits for its last line, stops the machine, and prints the lines of
 // the program. The tool checks no number: the program checks its counts.
-measure_program_run :: proc(program: Measure_Program) -> bool {
+measure_program_run :: proc(part: ^Test_Part_Run, program: Measure_Program) -> bool {
 	output := measure_program_output(program.name)
 	defer delete(output)
 	// Not in the temporary allocator: the scenario frees it after each step.
 	steps := make([dynamic]Step)
 	defer delete(steps)
 	measure_program_steps(program, &steps)
-	if !machine_test(steps[:], BOOT_VOLUME_MEASURE, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if !machine_test(part, steps[:], {volume = BOOT_VOLUME_MEASURE, output = output, exit_status = MACHINE_STOP_OK}) {
 		return false
 	}
 	log, read_error := os.read_entire_file(output, context.temp_allocator)
@@ -108,15 +108,19 @@ measure_program_run :: proc(program: Measure_Program) -> bool {
 
 // measure_runs_of_the_record runs the measure runs whose lines the measure
 // record holds: the locks, the time page, the disk and the scheduling
-// strategies. `modustool screenshots` calls it after the test: the test
-// itself measures no rate.
+// strategies. `modustool screenshots` calls it on the host, with no other
+// machine: the test itself measures no rate.
 measure_runs_of_the_record :: proc() -> bool {
-	if !machine_test(scenario_measure[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	part := test_part_run_make(MEASURE_COMMAND)
+	defer test_part_run_free(&part)
+	test_part_run_start(&part) or_return
+	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) {
 		return false
 	}
 	for name in ([]string{"clock", "disk"}) {
 		program := measure_program_find(name) or_return
-		measure_program_run(program) or_return
+		measure_program_run(&part, program) or_return
 	}
-	return machine_test(scenario_measure_scheduler[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE_SCHEDULER, MACHINE_STOP_OK, TEST_DATA_DISK)
+	part.passed = machine_test(&part, scenario_measure_scheduler[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_SCHEDULER, exit_status = MACHINE_STOP_OK})
+	return part.passed
 }

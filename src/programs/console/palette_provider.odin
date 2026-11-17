@@ -72,7 +72,8 @@ palette_provider_start :: proc "contextless" () {
 	}
 	palette_table_handle, palette_ring_handle = system.Handle(completion.values[0]), system.Handle(completion.values[1])
 	table_kind, _, _ := system.handle_state(palette_table_handle)
-	if table_kind != .Memory || system.memory_size(palette_table_handle) < palette_table.TABLE_PAGES {
+	table_pages, table_status := system.memory_size(palette_table_handle)
+	if table_kind != .Memory || table_status != .Ok || table_pages < palette_table.TABLE_PAGES {
 		system.log("console: the console is not the palette provider: no entry table")
 		return
 	}

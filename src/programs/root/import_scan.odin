@@ -18,6 +18,7 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:support/disk_program"
 import "modus:support/storage"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // One page of the list: its rows, and the bytes of their names.
@@ -356,7 +357,7 @@ disk_import_bound_refusal :: proc "contextless" () {
 // error record of the command with the kind of the refusal.
 disk_import_refused :: proc "contextless" (status: system.Status, kind_of_error: errors.Kind, parts: ..system.Part) {
 	name := string(disk_load.name[:disk_load.name_length])
-	kind := u32(system.Root_Command.Start_From_Disk)
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	disk_load_end(status, disk_refused(name, errors.ring_fail(kind, kind_of_error, .Modules, 2, 0, 0, i64(status)), ..parts))
 }
 

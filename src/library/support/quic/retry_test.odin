@@ -37,8 +37,10 @@ a_client_connects_through_a_retry :: proc(t: ^testing.T) {
 	record := &harness.connections[0]
 	testing.expectf(t, harness.server.counters.retries == 1 && harness.server.counters.accepted == 1, "%s", harness_describe(harness))
 	testing.expect(t, client.retried && record.retried)
-	testing.expect(t, client.peer_parameters_applied && client.peer_parameters.has_retry_source_connection_id)
-	testing.expect(t, bytes_equal(client.peer_parameters.original_destination_connection_id[:client.peer_parameters.original_destination_connection_id_length], client.retry_first_destination_connection_id[:client.retry_first_destination_connection_id_length]))
+	_, has_retry_source := client.peer_parameters.retry_source_connection_id.?
+	testing.expect(t, client.peer_parameters_applied && has_retry_source)
+	named_original, has_named_original := client.peer_parameters.original_destination_connection_id.?
+	testing.expect(t, has_named_original && named_original == client.retry_first_destination_connection_id)
 	testing.expect(t, record.address_validated)
 }
 
@@ -53,14 +55,16 @@ retry_tokens_that_do_not_open :: proc(t: ^testing.T) {
 	key[0] = 7
 	remote := Remote{0x0A00_0302, 50_000}
 	facts := Retry_Token_Facts{issued_at = 5_000_000}
-	facts.original_destination_connection_id_length = copy(facts.original_destination_connection_id[:], bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID))
+	original_made: bool
+	facts.original_destination_connection_id, original_made = connection_identifier_make(bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID))
+	testing.expect(t, original_made)
 	copy(facts.retry_source_connection_id[:], bytes_of("0102030405060708"))
 	token: [RETRY_TOKEN_SIZE]u8
 	testing.expect(t, retry_token_make(&cryptography, &key, 1, remote, &facts, &token, &error))
 	opened: Retry_Token_Facts
 	testing.expect(t, retry_token_open(&cryptography, &key, token[:], remote, 6_000_000, &opened, &error))
 	testing.expect(t, opened.issued_at == facts.issued_at && opened.retry_source_connection_id == facts.retry_source_connection_id)
-	testing.expect_value(t, hex_of(opened.original_destination_connection_id[:opened.original_destination_connection_id_length]), ORIGINAL_DESTINATION_CONNECTION_ID)
+	testing.expect_value(t, hex_of(connection_identifier_bytes(&opened.original_destination_connection_id)), ORIGINAL_DESTINATION_CONNECTION_ID)
 	testing.expect(t, !retry_token_open(&cryptography, &key, token[:], {0x0A00_0303, 50_000}, 6_000_000, &opened, &error))
 	testing.expect(t, !retry_token_open(&cryptography, &key, token[:], {0x0A00_0302, 50_001}, 6_000_000, &opened, &error))
 	for index in 0 ..< RETRY_TOKEN_SIZE {
@@ -92,7 +96,7 @@ the_server_checks_each_token :: proc(t: ^testing.T) {
 	token_for :: proc(harness: ^Harness, remote: Remote, retry_source: [CONNECTION_ID_SIZE]u8, issued_at: u64) -> [RETRY_TOKEN_SIZE]u8 {
 		error: errors.Error_Record
 		facts := Retry_Token_Facts{issued_at = issued_at, retry_source_connection_id = retry_source}
-		facts.original_destination_connection_id_length = copy(facts.original_destination_connection_id[:], bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID))
+		facts.original_destination_connection_id, _ = connection_identifier_make(bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID))
 		token: [RETRY_TOKEN_SIZE]u8
 		harness.server.token_counter += 1
 		retry_token_make(&harness.cryptography, &harness.server.retry_key, harness.server.token_counter, remote, &facts, &token, &error)
@@ -133,8 +137,8 @@ retries_that_a_client_refuses :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	retry: [MAX_DATAGRAM_SIZE]u8
 	token := "a token of the server"
-	original := client.original_destination_connection_id
-	original_length := client.original_destination_connection_id_length
+	original_identifier := client.original_destination_connection_id
+	original := connection_identifier_bytes(&original_identifier)
 	first_source := bytes_of("1111111111111111")
 	// A bad tag: computed over another original identifier.
 	wrong := bytes_of("0000000000000000")
@@ -142,21 +146,21 @@ retries_that_a_client_refuses :: proc(t: ^testing.T) {
 	connection_datagram_receive(client, retry[:length], harness.now, &error)
 	testing.expect(t, !client.retried)
 	// A Source Connection ID that is the identifier of the client.
-	length, _ = retry_packet_write(&harness.cryptography, retry[:], 0, client.local_connection_id[:], original[:original_length], transmute([]u8)token, original[:original_length], &error)
+	length, _ = retry_packet_write(&harness.cryptography, retry[:], 0, client.local_connection_id[:], original, transmute([]u8)token, original, &error)
 	connection_datagram_receive(client, retry[:length], harness.now, &error)
 	testing.expect(t, !client.retried)
 	// A right Retry.
-	length, _ = retry_packet_write(&harness.cryptography, retry[:], 0, client.local_connection_id[:], first_source, transmute([]u8)token, original[:original_length], &error)
+	length, _ = retry_packet_write(&harness.cryptography, retry[:], 0, client.local_connection_id[:], first_source, transmute([]u8)token, original, &error)
 	connection_datagram_receive(client, retry[:length], harness.now, &error)
 	testing.expect(t, client.retried)
 	testing.expect_value(t, hex_of(client.retry_token[:client.retry_token_length]), hex_of(transmute([]u8)token))
-	testing.expect_value(t, hex_of(client.peer_connection_id[:client.peer_connection_id_length]), "1111111111111111")
+	testing.expect_value(t, hex_of(connection_identifier_bytes(&client.peer_connection_id)), "1111111111111111")
 	// A second Retry, with a right tag over each identifier that the client
 	// had: refused.
-	for over in ([][]u8{original[:original_length], first_source}) {
+	for over in ([][]u8{original, first_source}) {
 		length, _ = retry_packet_write(&harness.cryptography, retry[:], 0, client.local_connection_id[:], bytes_of("2222222222222222"), transmute([]u8)token, over, &error)
 		connection_datagram_receive(client, retry[:length], harness.now, &error)
-		testing.expect_value(t, hex_of(client.retry_source_connection_id[:client.retry_source_connection_id_length]), "1111111111111111")
+		testing.expect_value(t, hex_of(connection_identifier_bytes(&client.retry_source_connection_id)), "1111111111111111")
 	}
 }
 
@@ -296,7 +300,7 @@ a_retry_for_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 		// The reader of a client takes it: the header, then the tag.
 		header: Packet_Header
 		testing.expectf(t, header_read(retry, 0, 0, &header, &error), "%v", error)
-		testing.expect(t, header.type == .Retry && header.destination_connection_id_length == 0 && header.token_length == RETRY_TOKEN_SIZE)
+		testing.expect(t, header.type == .Retry && header.destination_connection_id.length == 0 && header.token_length == RETRY_TOKEN_SIZE)
 		testing.expectf(t, retry_integrity_check(&harness.cryptography, original, retry, &header, &error), "%v", error)
 	}
 }

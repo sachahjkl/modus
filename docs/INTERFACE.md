@@ -108,6 +108,15 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 ### 2.3 Memory of the caller, errors as values
 
 - The caller gives the draw table (`records: []Draw_Record`, `text: []u8`) and the interface state. The package never allocates. Its core files make no kernel call; `window_drawing.odin` reads the events of a window and presents its surface.
+- **The window memory** (`Window_Memory(RECORDS, TEXT)`, a record of the program) holds the drawing of one window and the memory of its two draw tables: `RECORDS` records and `TEXT` bytes of text in each. `TEXT` is a multiple of 4, so each text table can hold a grid. A frame starts with `window_frame_start(&window_memory, window)`: it gives the drawing its tables, then calls `window_frame_begin`. It draws no background, because the draw of each rectangle starts from the background color; a window with the grid of points calls `background`. The drawing is `window_memory.drawing`: the events, the end of the frame and the measures take it.
+
+```odin
+window_memory: interface.Window_Memory(512, 8192)
+
+frame := interface.window_frame_start(&window_memory, window)
+// ... the elements of the window ...
+interface.window_frame_end(&window_memory.drawing, &frame, window)
+```
 - On the surface of a program, each damage rectangle is painted with the background before the records draw again (`draw_damage_on_surface`), and a whole frame starts from the background: a record that a frame no longer has leaves no pixel, with no rule for the caller. The compositor draws its panels over other windows, so it draws the records only.
 - A table that is full stops taking records and keeps the flag `full`: the frame is drawn without the records that did not fit, the program can test the flag and write it on its log. No element fails in silence.
 - An element gives its result as a value (`Element_Result`): pressed, has the focus, changed. Nothing is hidden in a context.
@@ -155,6 +164,7 @@ Layout places the elements of a window. The package has no solver: a program tak
 - **A column** gives areas from the top of its area to the bottom: `column_take(&column, height)`. The height of a line of text is 16, a line of a table 24.
 - **A row** splits an area into columns in one pass: the caller gives the sizes of all the columns before it draws in them, so the row knows each width at once. A size is `Pixels` (a fixed width), `Characters` (a count of characters of the font: the width that the text measure gives) or `Share` (a part of what the fixed sizes leave, in proportion to its value). A gap is between two columns.
 - **Alignment**: text is at the left, or at the right of its area (numbers: `DESIGN.md`, section 5), and in the middle of the height of a line.
+- **A bar in a table**: `bar_with_value(frame, cell, bar_width, value, maximum, color)` draws the bar of the rules, 10 pixels high in the middle of the line, at the left of a cell, and the value after it in the rest of the cell, cut to it. `crowd`, `disk`, `flow` and `budget` draw their bars with it.
 - **One pass.** There is no tree and no constraint solver: what is not known before the row (the width of a text that the program has not made yet) is measured by the caller with `text_width` first. `gui_toolkit` solves sizes in five passes over a tree of boxes (standalone, upward, downward, violations, positions): the windows of this system have fixed sizes, and one pass with sizes declared before content covers each window of section 1.
 
 ## 4. Input and focus
@@ -243,14 +253,14 @@ bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
 }
 bar: interface.Action_Bar_State
 
-frame := interface.window_frame_begin(&drawing, window)
+frame := interface.window_frame_start(&window_memory, window)
 interface.action_bar_input_take(&frame, &bar) // First: the keys of the list, and a press on the bar.
 // ... the elements of the window ...
 items := bar_items()
 result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar) // Last: the list opens over them.
-interface.window_frame_end(&drawing, &frame, window)
+interface.window_frame_end(&window_memory.drawing, &frame, window)
 if result.ran {
-	interface.input_key_add(&drawing.input, result.run) // The key goes the way of a typed key.
+	interface.input_key_add(&window_memory.drawing.input, result.run) // The key goes the way of a typed key.
 }
 ```
 
@@ -440,6 +450,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 1. The model: immediate mode over draw tables, damage by difference (sections 2 and 2.2).
 2. The form: a `support` package, and a module when the contract describes a table as a parameter (section 7).
 3. The font: a vector font by default, subpixel bands, Spleen as the fallback. The open decisions (the font file, the grid fit) are in `docs/FONTS.md`, section 11.
+4. The memory of a window: one record of the program, `Window_Memory`, in `interface` and not in `display`, because `display` does not import `interface` (section 2.3). A global record cannot hold slices of itself before the program runs, so `window_frame_start` gives the drawing its tables at each frame: the same slices each time, with no state that says whether they were given. A first form gave them once, at the first frame, when the tables were empty; it was refused, because it was a second state of the start in each program, and it replaced the whole drawing, so an event that came before the first frame was lost. The start draws no background: the draw of each rectangle starts from the background color, so a rectangle of that color over the window draws no pixel.
 
 ## 11. What was taken from `gui_toolkit`, and what was not
 

@@ -105,7 +105,7 @@ AVX-512 gives 512-bit registers (16 pixels, 16 chunks of BLAKE3 side by side), m
 
 ## 3. The blend of a glyph (`src/library/support/graphics`)
 
-**What it is.** A glyph of the vector font is a rectangle of coverage words from the glyph cache: for each pixel, how much of each color stripe of the screen the shape covers. The blend mixes the text color over the pixels of the canvas with that coverage, in linear light (`docs/FONTS.md`, "Subpixel bands"; `docs/FONTS.md`, "The blend in linear light"). It is the cost of every text of the system.
+**What it is.** A glyph of the vector font is a rectangle of coverage words from the glyph cache: for each pixel, how much of each color stripe of the screen the shape covers. The blend mixes the text color over the pixels of the canvas with that coverage, in linear light (`docs/FONTS.md`, "3. Subpixel bands"; `docs/FONTS.md`, "The blend in linear light"). It is the cost of every text of the system.
 
 **The hot loop** is `blend_coverage_row_in_order` (`src/library/support/graphics/blend.odin`): for each pixel with partial coverage, three channels, each `square_root[(d * d * (255 - a) + c * c * a) >> 12]`, with `d` the pixel, `c` the color and `a` the coverage. `docs/FONTS.md`, section 5, gives its cost: a glyph from the glyph cache costs about 9 times a glyph of Spleen.
 

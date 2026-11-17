@@ -14,9 +14,6 @@
 // This package allocates no memory and calls no kernel operation.
 package iommu
 
-// The size of the header of every ACPI table.
-ACPI_HEADER_SIZE :: 36
-
 // The table DMAR: the ACPI header, the host address width minus 1, the
 // flags, 10 reserved bytes, then the remapping structures.
 DMAR_STRUCTURES_START :: 48
@@ -641,7 +638,6 @@ FAULT_STATUS_TIME_OUT_ERROR :: u32(1) << 6 // An invalidation of the cache of a 
 // cleared by a write of 1: the start clears them all, so an error of the
 // queue of the firmware does not stop the first invalidation of the kernel.
 FAULT_STATUS_CLEARED_AT_START :: FAULT_STATUS_OVERFLOW | FAULT_STATUS_QUEUE_ERROR | FAULT_STATUS_COMPLETION_ERROR | FAULT_STATUS_TIME_OUT_ERROR
-FAULT_EVENT_MASKED :: u32(1) << 31
 
 // The most levels of the tables of a domain, on each vendor: addresses of
 // 48 bits. The kernel frees a table level by level, one frame of its

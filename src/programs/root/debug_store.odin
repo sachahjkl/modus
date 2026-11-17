@@ -19,6 +19,7 @@ package root
 
 import "modus:contract/errors"
 import "modus:support/disk_program"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // The caller record of that connection. This service is no row of its own
@@ -91,7 +92,7 @@ stop_report_keep :: proc "contextless" (item: ^Started) {
 // that name for that caller, or the program is not a disk program: the
 // debug image holds the debug object of a module of the boot image.
 debug_store_open :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, kept: bool, values: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Debug_Store)
+	kind := u32(root_ring.Root_Command.Debug_Store)
 	caller: ^Started
 	principal: u64
 	row: int
@@ -156,7 +157,7 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 // that nickname for that principal.
 @(private = "file")
 debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^Started, principal: u64, row: int, name: string, end: bool, values: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Debug_Store)
+	kind := u32(root_ring.Root_Command.Debug_Store)
 	if end {
 		if debug_store.report_for == caller && debug_store.report_for_row == row && debug_store.holder == holder {
 			debug_store_report_end()

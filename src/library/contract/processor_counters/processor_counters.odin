@@ -298,7 +298,7 @@ trial_step_outcome :: proc "contextless" (step: Trial_Step, accepted: bool, valu
 	if !accepted {
 		return .Register_Refused
 	}
-	#partial switch step.kind {
+	switch step.kind {
 	case .Read_Select_Off:
 		if value_read & SELECT_ENABLE != 0 {
 			return .Counter_In_Use
@@ -307,6 +307,8 @@ trial_step_outcome :: proc "contextless" (step: Trial_Step, accepted: bool, valu
 		if value_read != step.value {
 			return .Counter_Not_Kept
 		}
+	case .Write, .Add_Bits:
+		// The access itself is the test: the processor took it.
 	}
 	return .None
 }

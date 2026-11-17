@@ -98,9 +98,7 @@ MEASURE_WIDTH :: 720
 measure_pixels: [MEASURE_WIDTH * 16]graphics.Color
 shaping_time, drawing_time: u64
 
-records_now, records_before: [128]interface.Draw_Record
-text_now, text_before: [4096]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(128, 4096)
 
 // line_draw places a text and draws it, its origin at the whole pixel x and
 // the top of its line at y; it gives the width in 1/64 of a pixel.
@@ -206,8 +204,8 @@ GREEK_TOP :: 552
 TIME_TOP :: 616
 
 draw :: proc "contextless" (window: ^display.Window) {
-	interface.draw_whole_window_next(&drawing)
-	frame := interface.window_frame_begin(&drawing)
+	interface.draw_whole_window_next(&window_memory.drawing)
+	frame := interface.window_frame_start(&window_memory)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE INTERFACE FONT", "B612 Regular and Bold: proportional, with its pairs, at three positions in a pixel", graphics.colors.machine)
 	labels := [?]struct {
@@ -230,7 +228,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; caches of ", u64(regular_cache.header.file_size), " and ", u64(bold_cache.header.file_size), " bytes, from the boot image"), graphics.colors.dim)
 	// The lines below are drawn by hand over the frame, in the same
 	// picture of the surface, before the present.
-	if !interface.window_frame_end_without_present(&drawing, &frame, window) {
+	if !interface.window_frame_end_without_present(&window_memory.drawing, &frame, window) {
 		return
 	}
 
@@ -319,7 +317,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	no_pair_spacing_large = {advances = regular_spacing_large.advances}
 	greek_lines_make()
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	measure()
 	system.log("interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")
 	draw(&window)
@@ -329,7 +326,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		list: system.Wait
 		display.wait_events(&list, &window)
 		system.wait_end(&list)
-		changed := interface.window_events(&drawing, &window)
+		changed := interface.window_events(&window_memory.drawing, &window)
 		if changed {
 			draw(&window)
 		}

@@ -928,7 +928,7 @@ child_delegate :: proc "contextless" (ctx: ^system.Context) -> ! {
 			ranges := [1]op.Page_Range{{first = 34, page_count = 1}}
 			_, result.status = system.memory_commit(memory, ranges[:], budget, &result.record)
 			// The object that B made with the Spend handle before the revocation.
-			result.value = system.memory_size(made)
+			result.value, _ = system.memory_size(made)
 		case 7:
 			ranges := [1]op.Page_Range{{first = 0, page_count = 32}}
 			_, result.status = system.memory_decommit(memory, ranges[:], &result.record)
@@ -1250,9 +1250,7 @@ page_tables_return :: proc "contextless" () {
 }
 
 // The window: one card for each case, with the numbers.
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column, label: string, parts: ..system.Part) {
 	buffer: [96]u8
@@ -1347,9 +1345,9 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 }
 
 frame_draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_start(&window_memory)
 	build(&frame)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // entry runs each case once, checks its counts against the budget and the
@@ -1377,7 +1375,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	frame_draw(&window)
 	machine = ctx.handles[system.GRANT_MACHINE]
 	find_self()
@@ -1420,7 +1417,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		deadline += 500
 		display.wait(&window, deadline)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 		frame_draw(&window)
 	}
 }

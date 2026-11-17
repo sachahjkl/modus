@@ -270,7 +270,9 @@ module_exports :: proc "contextless" (found: Item, filter: Export_Filter, rows: 
 rights_of :: proc "contextless" (file: []u8, function: module.Function) -> (rights: op.Rights) {
 	function := function
 	for type, number in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
-		#partial switch type {
+		switch type {
+		case .None, .Integer, .Text, .Table, .Bytes:
+			// No handle: the parameter asks no right.
 		case .Handle:
 			rights += transmute(op.Rights)function.parameter_details[number]
 		case .Record:

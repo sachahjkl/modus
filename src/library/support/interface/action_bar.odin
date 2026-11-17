@@ -827,7 +827,8 @@ action_bar_arrow_draw :: proc "contextless" (table: ^Draw_Table, x, y: int, arro
 	middle := ACTION_BAR_ARROW_WIDTH / 2
 	first := (ACTION_BAR_ARROW_WIDTH - ACTION_BAR_ARROW_ROWS) / 2
 	for step in 0 ..< ACTION_BAR_ARROW_ROWS {
-		#partial switch arrow {
+		switch arrow {
+		case .None:
 		case .Up:
 			draw_rectangle(table, x + middle - step, y + first + step, 2 * step + 1, 1, graphics.colors.text)
 		case .Down:

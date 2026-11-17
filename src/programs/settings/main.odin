@@ -90,9 +90,7 @@ service: system.Service
 store: storage.Client
 has_store: bool
 
-records_now, records_before: [384]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(384, 8192)
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
@@ -435,7 +433,7 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 // of the glyph caches.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	choice := settings.read(page)
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_start(&window_memory)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	interface.action_bar_input_take(&frame, &bar)
 	count: interface.Text_Builder
@@ -515,7 +513,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_text(frame.table, sample.x, sample.y + sample.height - 16, interface.text_of(&facts), graphics.colors.dim)
 	items := bar_items()
 	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
@@ -529,7 +527,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 // bar ran its key, a second frame that takes the key, as a typed key: the
 // focus moves, or the button with the focus is pressed.
 draw_with_bar :: proc "contextless" (window: ^display.Window) {
-	if result := draw(window); result.ran && interface.input_key_add(&drawing.input, result.run) {
+	if result := draw(window); result.ran && interface.input_key_add(&window_memory.drawing.input, result.run) {
 		draw(window)
 	}
 }
@@ -568,7 +566,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	service, _ = system.service_open(ctx)
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	draw_with_bar(&window)
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
@@ -579,7 +576,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)
-		if interface.window_events(&drawing, &window) {
+		if interface.window_events(&window_memory.drawing, &window) {
 			draw_with_bar(&window)
 		}
 	}

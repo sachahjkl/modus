@@ -20,6 +20,7 @@ Form :: enum u8 {
 	Count   = 5, // A count. `limit`: the largest, or 0.
 	Flags   = 6, // A set of flags. `limit`: the flags that the operation knows.
 	Choice  = 7, // A value of an enumeration. `limit`: the largest.
+	Bounded = 8, // A number that is neither a count nor a choice, from 0 to `limit`: the code of `Machine_Stop`.
 }
 
 // One parameter of a kernel operation, as `OPERATIONS` describes it.
@@ -31,7 +32,7 @@ Parameter_Form :: struct {
 	form:   Form, // What the value is.
 	kind:   Object_Kind, // For a handle: the kind of object that it must name. `None`: any kind.
 	rights: Rights, // For a handle: the rights that it must have.
-	limit:  u64, // For a count, a set of flags or a choice: the bound that the comment of `Form` gives. 0: none.
+	limit:  u64, // For a count, a set of flags, a choice or a bounded value: the bound that the comment of `Form` gives. 0: none.
 }
 
 // One kernel operation, as a sentence names it: its name and its seven
@@ -48,12 +49,12 @@ Operation_Form :: struct {
 @(rodata)
 OPERATIONS := [Operation]Operation_Form {
 	.None = {name = "None"},
-	.Log = {"Log", {{"log", .Handle, .Log, {.Write}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, 4096}, {"level", .Choice, .None, {}, u64(max(Log_Level))}, {"channel", .Value, .None, {}, 0}, {"channel", .Value, .None, {}, 0}, {"runs", .Count, .None, {}, LOG_CALL_RUN_LIMIT}}},
-	.Memory_Create = {"Memory_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, MEMORY_PAGE_LIMIT}, {"flags", .Flags, .None, {}, 0b1111}, {}, {}, {}, {}}},
-	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, 0b111}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
+	.Log = {"Log", {{"log", .Handle, .Log, {.Write}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, LOG_TEXT_BYTES_MOST}, {"level", .Choice, .None, {}, u64(max(Log_Level))}, {"channel", .Value, .None, {}, 0}, {"channel", .Value, .None, {}, 0}, {"runs", .Count, .None, {}, LOG_CALL_RUN_LIMIT}}},
+	.Memory_Create = {"Memory_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, MEMORY_PAGE_LIMIT}, {"flags", .Flags, .None, {}, MEMORY_FLAGS_KNOWN}, {}, {}, {}, {}}},
+	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, MAP_FLAGS_KNOWN}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
 	.Memory_Unmap = {"Memory_Unmap", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Memory_Size = {"Memory_Size", {{"memory", .Handle, .Memory, {}, 0}, {}, {}, {}, {}, {}, {}}},
-	.Program_Create = {"Program_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"name", .Address, .None, {}, 0}, {"name_length", .Count, .None, {}, 31}, {}, {}, {}, {}}},
+	.Program_Create = {"Program_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"name", .Address, .None, {}, 0}, {"name_length", .Count, .None, {}, PROGRAM_NAME_BYTES_MOST}, {}, {}, {}, {}}},
 	.Program_Start = {"Program_Start", {{"program", .Handle, .Program, {.Control}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"context", .Address, .None, {}, 0}, {}, {}, {}}},
 	.Program_Stop = {"Program_Stop", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Program_State = {"Program_State", {{"program", .Handle, .Program, {.Read}, 0}, {"report", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
@@ -62,7 +63,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Interrupt_Read = {"Interrupt_Read", {{"interrupt", .Handle, .Interrupt, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Device_Create = {"Device_Create", {{"machine", .Handle, .Machine, {.Devices}, 0}, {"kind", .Choice, .None, {}, u64(max(Device_Kind))}, {"a", .Value, .None, {}, 0}, {"b", .Value, .None, {}, 0}, {}, {}, {}}},
 	.Inspect = {"Inspect", {{"machine", .Handle, .Machine, {.Inspect}, 0}, {"kind", .Choice, .None, {}, u64(max(Inspect_Kind))}, {"index", .Value, .None, {}, 0}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
-	.Machine_Stop = {"Machine_Stop", {{"machine", .Handle, .Machine, {.Stop}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Machine_Stop = {"Machine_Stop", {{"machine", .Handle, .Machine, {.Stop}, 0}, {"code", .Bounded, .None, {}, MACHINE_STOP_CODE_MOST}, {}, {}, {}, {}, {}}},
 	.Thread_Create = {"Thread_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"parameter", .Value, .None, {}, 0}, {"weight", .Count, .None, {}, WEIGHT_FULL}, {"request", .Count, .None, {}, REQUEST_LIMIT}, {}}},
 	.Thread_Stop = {"Thread_Stop", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Thread_State = {"Thread_State", {{"thread", .Handle, .Thread, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
@@ -75,9 +76,9 @@ OPERATIONS := [Operation]Operation_Form {
 	.Memory_Physical = {"Memory_Physical", {{"machine", .Handle, .Machine, {.Physical}, 0}, {"memory", .Handle, .Memory, {.Read}, 0}, {}, {}, {}, {}, {}}},
 	.Program_Module = {"Program_Module", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Strategy_Set = {"Strategy_Set", {{"machine", .Handle, .Machine, {.Schedule}, 0}, {"strategy", .Choice, .None, {}, u64(max(Strategy))}, {}, {}, {}, {}, {}}},
-	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"budget", .Handle_Or_Zero, .Budget, {}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b1}, {}, {}}},
-	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b111}, {}, {}, {}, {}}},
-	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, 1}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {"program", .Handle_Or_Zero, .Program, {.Debug}, 0}, {}, {}, {}}},
+	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"budget", .Handle_Or_Zero, .Budget, {}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, COMMIT_FLAGS_KNOWN}, {}, {}}},
+	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, MAP_FLAGS_KNOWN}, {}, {}, {}, {}}},
+	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, u64(max(Fault_Handler_Action))}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {"program", .Handle_Or_Zero, .Program, {.Debug}, 0}, {}, {}, {}}},
 	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {"program", .Handle_Or_Zero, .Program, {.Debug}, 0}, {}, {}, {}}},
 	.Events_Set = {"Events_Set", {{"machine", .Handle, .Machine, {.Events}, 0}, {"memory", .Handle_Or_Zero, .Memory, {.Write}, 0}, {"rules", .Address, .None, {}, 0}, {"count", .Count, .None, {}, EVENT_RULE_CAPACITY}, {"records", .Count, .None, {}, EVENT_RING_RECORDS_MOST}, {}, {}}},
 	// The form names no right of the thread handle: each command has its

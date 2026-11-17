@@ -617,8 +617,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &endpoint.completions)
 		system.wait_end(&wait, system.time() + 2000)
 	}
-	grant := datagram.grant_unpack(info.values[6])
-	if !grant.tcp || grant.listen || grant.address == 0 {
+	grant, grant_known := datagram.grant_unpack(info.values[6])
+	if !grant_known || !grant.tcp || grant.listen || grant.address == 0 {
 		fail("the grant is not a client grant of TCP")
 	}
 	remote_address, remote_port = grant.address, grant.port

@@ -214,7 +214,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the storage service gave no size in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
 		return
 	}
-	if status == .Failed && answer_value == storage.ERROR_ABSENT {
+	if storage.export_failed_with(status, answer_value, .Absent) {
 		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the store ", disk_program.STORE_NAME, " of principal ", store_principal, " has no object ", object_name)
 		return
 	}

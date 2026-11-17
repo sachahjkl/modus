@@ -267,11 +267,6 @@ device_bytes_mix :: proc "contextless" (generator: ^Generator, mixing: ^Device_M
 	return .Mixed
 }
 
-// The values of the context of a program that shows the seed of the system
-// (`randomness`): the root service writes its report in the values 0 to 7
-// (the values 9 to 12 are the seed of the program).
-REPORT_VALUES :: 8
-
 // report_values_write writes a report in the values 0 to 7 of a context.
 // Value 0: the strength in its low byte, then the presence of rdseed, of
 // rdrand and of the entropy device in the bits 8, 9 and 10. Value 7: the

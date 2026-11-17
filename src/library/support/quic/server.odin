@@ -511,7 +511,7 @@ server_datagram_receive :: proc "contextless" (server: ^Server, received: []u8, 
 // dropped, because a client of this server does not move.
 @(private)
 server_record_of :: proc "contextless" (server: ^Server, header: ^Packet_Header, remote: Remote) -> (index: int, other_remote: bool) {
-	destination := header.destination_connection_id[:header.destination_connection_id_length]
+	destination := connection_identifier_bytes(&header.destination_connection_id)
 	for &record, place in server.records {
 		if !record.in_use {
 			continue
@@ -519,7 +519,7 @@ server_record_of :: proc "contextless" (server: ^Server, header: ^Packet_Header,
 		connection := &server.connections[place]
 		ours := bytes_equal(destination, connection.local_connection_id[:])
 		if !ours && header.type == .Initial {
-			ours = bytes_equal(destination, connection.original_destination_connection_id[:connection.original_destination_connection_id_length])
+			ours = header.destination_connection_id == connection.original_destination_connection_id
 		}
 		if !ours {
 			continue
@@ -602,7 +602,7 @@ server_work_take :: proc "contextless" (server: ^Server, work: Server_Work, now:
 // bytes of a Retry in `answer`, or 0.
 @(private)
 server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, header: ^Packet_Header, remote: Remote, answer: []u8, now: u64) -> (index: int, answer_length: int) {
-	if len(datagram) < SMALLEST_MAX_UDP_PAYLOAD_SIZE || header.destination_connection_id_length < CONNECTION_ID_SIZE {
+	if len(datagram) < SMALLEST_MAX_UDP_PAYLOAD_SIZE || header.destination_connection_id.length < CONNECTION_ID_SIZE {
 		server.counters.too_small += 1
 		return -1, 0
 	}
@@ -624,7 +624,7 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 	}
 	// The client sends to the identifier that the Retry named, and to no
 	// other: one token gives the Initial keys of one identifier.
-	if !bytes_equal(header.destination_connection_id[:header.destination_connection_id_length], facts.retry_source_connection_id[:]) {
+	if !bytes_equal(connection_identifier_bytes(&header.destination_connection_id), facts.retry_source_connection_id[:]) {
 		server.counters.tokens_refused += 1
 		return -1, 0
 	}
@@ -689,8 +689,8 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 	// the identifier that it chose first and the identifier of the Retry.
 	connection.address_validated = true
 	connection.retried = true
-	connection.retry_first_destination_connection_id_length = copy(connection.retry_first_destination_connection_id[:], facts.original_destination_connection_id[:facts.original_destination_connection_id_length])
-	connection.retry_source_connection_id_length = copy(connection.retry_source_connection_id[:], facts.retry_source_connection_id[:])
+	connection.retry_first_destination_connection_id = facts.original_destination_connection_id
+	connection.retry_source_connection_id = connection_identifier_of_chosen(facts.retry_source_connection_id)
 	connection_datagram_receive(connection, datagram, now, &error)
 	if !connection.tls_started {
 		// It opened on the copy: this does not happen, but a record that
@@ -723,7 +723,7 @@ server_retry :: proc "contextless" (server: ^Server, header: ^Packet_Header, rem
 	}
 	error: errors.Error_Record
 	facts := Retry_Token_Facts{issued_at = now}
-	facts.original_destination_connection_id_length = copy(facts.original_destination_connection_id[:], header.destination_connection_id[:header.destination_connection_id_length])
+	facts.original_destination_connection_id = header.destination_connection_id
 	if !random.fill_for_a_key(server.generator, facts.retry_source_connection_id[:], server.configuration.tls.least_seed_strength, &error) {
 		return 0
 	}
@@ -732,7 +732,7 @@ server_retry :: proc "contextless" (server: ^Server, header: ^Packet_Header, rem
 	if !retry_token_make(server.cryptography, &server.retry_key, server.token_counter, remote, &facts, &token, &error) {
 		return 0
 	}
-	length, ok := retry_packet_write(server.cryptography, answer, 0, header.source_connection_id[:header.source_connection_id_length], facts.retry_source_connection_id[:], token[:], facts.original_destination_connection_id[:facts.original_destination_connection_id_length], &error)
+	length, ok := retry_packet_write(server.cryptography, answer, 0, connection_identifier_bytes(&header.source_connection_id), facts.retry_source_connection_id[:], token[:], connection_identifier_bytes(&facts.original_destination_connection_id), &error)
 	if !ok {
 		return 0
 	}
@@ -759,7 +759,7 @@ server_initial_is_authentic :: proc "contextless" (server: ^Server, datagram: []
 	client_keys, server_keys: Packet_Keys
 	defer secret_erase(&client_keys, size_of(client_keys))
 	defer secret_erase(&server_keys, size_of(server_keys))
-	if !initial_keys(server.cryptography, header.destination_connection_id[:header.destination_connection_id_length], &client_keys, &server_keys, &error) {
+	if !initial_keys(server.cryptography, connection_identifier_bytes(&header.destination_connection_id), &client_keys, &server_keys, &error) {
 		return false
 	}
 	unprotected: Unprotected_Header
@@ -797,8 +797,8 @@ server_version_negotiation :: proc "contextless" (server: ^Server, datagram: []u
 		server.counters.version_negotiations_dropped += 1
 		return 0
 	}
-	destination := header.source_connection_id[:header.source_connection_id_length]
-	source := header.destination_connection_id[:header.destination_connection_id_length]
+	destination := connection_identifier_bytes(&header.source_connection_id)
+	source := connection_identifier_bytes(&header.destination_connection_id)
 	length := 1 + 4 + 1 + len(destination) + 1 + len(source) + 4
 	if len(answer) < length {
 		return 0

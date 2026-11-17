@@ -84,9 +84,7 @@ module_size: int
 empty_call_nanoseconds: u64
 done: bool
 
-records_now, records_before: [768]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(768, 16384)
 
 // bytes_from_hex reads hexadecimal into a buffer of the caller.
 bytes_from_hex :: proc "contextless" (buffer: []u8, text: string) -> string {
@@ -316,7 +314,7 @@ hash_text :: proc "contextless" (builder: ^interface.Text_Builder, bytes: []u8) 
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE MODULE", "cryptography: Odin core:crypto dev-2026-05, taken with a proof of origin", graphics.colors.kernel)
@@ -378,7 +376,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 		interface.cell_text(&frame, cells[3], interface.text_of(&builder), graphics.colors.text, .Right)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // entry runs the vectors of each primitive, the refused inputs, the
@@ -391,7 +389,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 		file := system.image_find(image, "cryptography")
@@ -413,6 +410,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window, system.time() + 1000)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

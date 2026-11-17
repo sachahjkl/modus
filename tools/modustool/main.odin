@@ -36,6 +36,7 @@ package modustool
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -69,6 +70,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/isolated",
 	SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
 	SOURCE_FOLDER_CONTRACT + "/remote",
+	SOURCE_FOLDER_CONTRACT + "/root_ring",
+	SOURCE_FOLDER_CONTRACT + "/enum_word",
 	SOURCE_FOLDER_SUPPORT + "/sentence",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
 	SOURCE_FOLDER_MODULES + "/cryptography",
@@ -137,6 +140,10 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/kind_icons",
 	SOURCE_FOLDER_CONTRACT + "/manual_pages",
 	SOURCE_FOLDER_SUPPORT + "/manual_navigation",
+	SOURCE_FOLDER_CONTRACT + "/ring",
+	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
+	SOURCE_FOLDER_CONTRACT + "/datagram",
+	SOURCE_FOLDER_CONTRACT + "/byte_order",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot
@@ -173,19 +180,32 @@ BOOT_VOLUME_NEWER_SYSTEM :: BUILD_FOLDER + "/boot_volume_newer_system.img"
 BOOT_VOLUME_NEWER_KEY :: BUILD_FOLDER + "/boot_volume_newer_key.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
+// The private copy of the variable store of the firmware of `run`. A test
+// machine has its own copy beside its log, with the same name after the
+// name of its log (machine_command): two machines that run at the same
+// time never write one store.
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 FIRMWARE_FULL_VARIABLES :: BUILD_FOLDER + "/ovmf_full_vars.fd"
 FIRMWARE_TPM_VARIABLES :: BUILD_FOLDER + "/ovmf_tpm_vars.fd"
+FIRMWARE_VARIABLES_SUFFIX :: "_ovmf_vars.fd"
+FIRMWARE_FULL_VARIABLES_SUFFIX :: "_ovmf_full_vars.fd"
+FIRMWARE_TPM_VARIABLES_SUFFIX :: "_ovmf_tpm_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
 TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
 // The disks beside the boot volume (src/library/support/pci has their places on the
 // bus). The data disk keeps the stores of the storage service: `run` uses
-// one that stays from run to run, each test makes a new one. The disk of the
-// measures holds no data that a program keeps.
+// one that stays from run to run; each part of the test makes a new one of
+// its own (Test_Part_Run). The disk of the measures holds no data that a
+// program keeps: `run` uses SCRATCH_DISK, and a test machine a new one
+// beside its log.
 DATA_DISK :: BUILD_FOLDER + "/data_disk.img"
-TEST_DATA_DISK :: BUILD_FOLDER + "/test_data_disk.img"
 SCRATCH_DISK :: BUILD_FOLDER + "/scratch_disk.img"
+SCRATCH_DISK_SUFFIX :: "_scratch_disk.img"
+// The processors of each machine (`-smp`). The whole test starts at most
+// one part for each of these counts of processors of the host
+// (test_parts_at_once).
+MACHINE_PROCESSOR_COUNT :: 4
 // The data disk of the three machines of the test of persistence: new
 // before the first one, kept for the two others.
 TEST_PERSIST_DISK :: BUILD_FOLDER + "/test_persist_disk.img"
@@ -332,29 +352,22 @@ COMMANDS :: [?]Command {
 	// the hang bound, never at a fixed delay: the test checks an order of
 	// events, not a speed. Each machine writes its log in a file
 	// `build/test_output*.txt` and its pictures in `build/screenshots`. The
-	// whole run starts with a new data disk, then runs every machine in
-	// order (a start that fails, the trusted boot, the shortage of frames,
-	// the self tests of the kernel, the main machine, the network, TCP, QUIC,
-	// the randomness, the extended state, the return to a program, the fault
-	// ring, the kernel events, the cryptography, the persistence, the
-	// principals, the hierarchy, the ranges, the loss of power), then the
-	// tests of the loader on the host. It ends with "modustool: all tests
-	// passed".
+	// whole run runs every part of the table of the parts, several at once,
+	// each on a new data disk of its own, and prints the time of each part
+	// (docs/TOOLS.md, "The parts of the machine test"). It ends with
+	// "modustool: all tests passed".
 	//
 	// The build of the whole run builds every boot volume. The build of one
 	// part builds only the boot volumes that the part boots
 	// (docs/TOOLS.md, "The incremental build").
 	//
-	// - `part` (optional): one part only, for the work on it: `main`,
-	//   `network`, `power`, `principals`, `tcp`, `quic`, `quic-real`, `random`,
-	//   `extended_state`, `return_fault`, `trusted_boot`, also `hierarchy`,
-	//   `ranges`, `crypto`, `shortage`, `fault_ring`, `debugger`,
-	//   `kernel_events`.
+	// - `part` (optional): one part only, for the work on it; a word that
+	//   names no part is refused with the list of the parts.
 	//
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, start the machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test principals`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only", run = run_test},
+	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test <part>`: one part only", run = run_test},
 	// Builds, then starts the machine under QEMU in a window, with the log of
 	// the kernel on this terminal: the way to use the system by hand.
 	//
@@ -367,19 +380,23 @@ COMMANDS :: [?]Command {
 	// on a socket that only this user reaches. Close the window, or run
 	// `shutdown()` in the console, to end it.
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
-	// Runs the full machine test and the second build, then publishes their
-	// results into the repository.
+	// Takes the results of the check of the flake, which ran the whole
+	// machine test and the second build, then publishes them into the
+	// repository (src/md/infrastructure/full_check.md).
 	//
-	// It writes the measure record (`docs/measures/measures.txt`): the numbers
-	// of the logs of this run, with the commit, the host and the count of
-	// checks. It copies each picture of the test to `docs/screenshots` and to
-	// a new dated folder of the development log beside the repository. It is,
-	// with `nix flake check`, the full check before a release.
+	// It builds the check `boot-test` of the flake: Nix takes it from the
+	// store when `nix flake check` passed on the same tree. It copies each
+	// picture of the test to `docs/screenshots` and to a new dated folder of
+	// the development log beside the repository, runs the measure runs on
+	// the host, and writes the measure record (`docs/measures/measures.txt`):
+	// the numbers of the logs of this run, with the commit, the host and the
+	// count of checks. It is, with `nix flake check`, the full check before
+	// a release.
 	//
 	// - `compress`: no machine; it compresses each PNG file of
 	//   `docs/screenshots` and `resources` whose data is stored with no
 	//   compression, and prints the bytes before and after.
-	{name = "screenshots", about = "test, the second build and the measure runs, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "take the pictures and the logs of the check of the flake (its one run of the machine test), run the measure runs on the host, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	// Runs a machine that measures, with no other load: the numbers that it
 	// prints are measures, never conditions of the test.
 	//
@@ -653,8 +670,9 @@ COMMANDS :: [?]Command {
 	// (docs/TOOLS.md, "The hashes of the modules of two builds").
 	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = run_module_hashes},
 	// Runs every check of the work tree, and writes no file of the
-	// repository. The full check of a batch is `screenshots` with
-	// `nix flake check`.
+	// repository: the count of its checks goes to build/checks_passed.txt.
+	// The full check of a batch is `nix flake check`, which runs this
+	// command, with `screenshots`.
 	//
 	// In order: `odin check -vet` of the tool, each package of the contract
 	// alone, the host tests of each library, the origin of the cryptography,
@@ -810,45 +828,8 @@ run_machine :: proc(args: []string) -> int {
 	return 0
 }
 
-// The parts of the machine test that `test <part>` runs alone.
-test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "iommu_amd", "guest", "principals", "outside_module", "trusted_boot"}
-
-// test_arguments_problem gives the refusal of the arguments of `test`, or
-// "" when they name the whole test or one part. A word that is not a part
-// is refused: the whole test in its place takes minutes and passes, and the
-// reader believes that the part passed.
-test_arguments_problem :: proc(args: []string) -> string {
-	if len(args) == 0 {
-		return ""
-	}
-	if len(args) == 1 {
-		for part in test_parts {
-			if args[0] == part {
-				return ""
-			}
-		}
-	}
-	given := strings.join(args, " ", context.temp_allocator)
-	known := strings.join(test_parts[:], ", ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test", given, known)
-}
-
-// The machines of the parts `main`, `network` and `shortage`: one procedure
-// for each part, so that the table of the boot volumes of the parts names
-// it (boot_volumes.odin).
-main_tests_run :: proc() -> bool {
-	return machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK)
-}
-
-network_tests_run :: proc() -> bool {
-	return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK)
-}
-
-shortage_tests_run :: proc() -> bool {
-	return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK)
-}
-
-// run_test runs the machine test (machine.odin), then the host load test.
+// run_test runs the parts of the machine test (test_parts.odin): one part,
+// or every part, several at once.
 run_test :: proc(args: []string) -> int {
 	if problem := test_arguments_problem(args); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
@@ -856,111 +837,38 @@ run_test :: proc(args: []string) -> int {
 	}
 	// The times of the test are measures: the report never changes the result.
 	test_started := time.tick_now()
-	defer test_times_report(test_started)
 	// One part boots only its own boot volumes: the build builds those.
 	build_code := build_system(boot_volumes_of_test(args))
-	test_times_build_end(test_started)
+	build_duration := time.tick_since(test_started)
 	if build_code != 0 {
 		return build_code
 	}
 	if !reset_folder(SCREENSHOT_FOLDER) {
 		return EXIT_FAILURE
 	}
-	// A start that fails ends when the tool ends QEMU: status 0.
-	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
-		return EXIT_FAILURE
+	parts := test_parts[:]
+	if len(args) == 1 {
+		for part, place in test_parts {
+			if part.name == args[0] {
+				parts = test_parts[place:][:1]
+			}
+		}
 	}
-	// `test network`, `test main`, `test power`, `test hierarchy`, `test ranges`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`, `test kernel_events`, `test trusted_boot`: one part only, for the work on it.
-	if len(args) == 1 && args[0] == "trusted_boot" {
-		return trusted_boot_tests_run() ? 0 : EXIT_FAILURE
+	processors := test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
+	at_once := test_parts_at_once(len(parts), processors)
+	picture_names_forget()
+	if len(parts) > 1 {
+		fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine", len(parts), at_once, processors, MACHINE_PROCESSOR_COUNT)
 	}
-	if len(args) == 1 && args[0] == "hierarchy" {
-		return hierarchy_tests_run() ? 0 : EXIT_FAILURE
+	runs, passed := test_parts_run(parts, at_once)
+	defer {
+		for &part_run in runs {
+			test_part_run_free(&part_run)
+		}
+		delete(runs)
 	}
-	if len(args) == 1 && args[0] == "ranges" {
-		return ranges_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test disk_programs`: the machine that starts a program from the
-	// store `programs` of a data disk that the tool writes.
-	if len(args) == 1 && args[0] == "disk_programs" {
-		return disk_programs_tests_run() ? 0 : EXIT_FAILURE
-	}
-	if len(args) == 1 && args[0] == "power" {
-		return power_loss_run() && power_loss_settings_run() && power_loss_ranges_run() && dropped_write_run() ? 0 : EXIT_FAILURE
-	}
-	if len(args) == 1 && args[0] == "main" {
-		return main_tests_run() ? 0 : EXIT_FAILURE
-	}
-	if len(args) == 1 && args[0] == "network" {
-		return network_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test crypto`: the machine of the module cryptography only.
-	if len(args) == 1 && args[0] == "crypto" {
-		return cryptography_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test random`: the three machines of the randomness only.
-	if len(args) == 1 && args[0] == "random" {
-		return random_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test shortage`: the machine of the shortage of frames only.
-	if len(args) == 1 && args[0] == "shortage" {
-		return shortage_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test fault_ring`: the machine of the fault ring only.
-	if len(args) == 1 && args[0] == "fault_ring" {
-		return fault_ring_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test debugger`: the machine of the debugger of a program only.
-	if len(args) == 1 && args[0] == "debugger" {
-		return debugger_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test principals`: the two machines of the principals and the six
-	// machines of the machine key sealed by the TPM only.
-	if len(args) == 1 && args[0] == "principals" {
-		return principals_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test kernel_events`: the machine of the kernel events only.
-	if len(args) == 1 && args[0] == "kernel_events" {
-		return kernel_events_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test iommu`: the machine with the IOMMU only.
-	if len(args) == 1 && args[0] == "iommu" {
-		return iommu_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test iommu_amd`: the machine with the IOMMU of AMD only.
-	if len(args) == 1 && args[0] == "iommu_amd" {
-		return iommu_amd_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test guest`: the machine of the guest only.
-	if len(args) == 1 && args[0] == "guest" {
-		return guest_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test return_fault`: the machine of the return to a program only.
-	if len(args) == 1 && args[0] == "return_fault" {
-		return return_fault_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test extended_state`: the three machines of the extended state only.
-	if len(args) == 1 && args[0] == "extended_state" {
-		return extended_state_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test outside_module`: the build of the examples of an outside module only.
-	if len(args) == 1 && args[0] == "outside_module" {
-		return outside_module_examples_check() ? 0 : EXIT_FAILURE
-	}
-	// `test tcp`: the two machines of TCP only.
-	if len(args) == 1 && args[0] == "tcp" {
-		return tcp_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test quic`: the machine of QUIC through the network service only.
-	if len(args) == 1 && args[0] == "quic" {
-		return quic_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test quic-real`: the QUIC client of OpenSSL against quic_echo, through
-	// the UDP relay of the peer.
-	if len(args) == 1 && args[0] == "quic-real" {
-		return quic_real_tests_run() ? 0 : EXIT_FAILURE
-	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !iommu_tests_run() || !iommu_amd_tests_run() || !guest_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !dropped_write_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
+	test_times_report(runs, build_duration, test_started)
+	if !passed {
 		return EXIT_FAILURE
 	}
 	fmt.println("modustool: all tests passed")
@@ -977,9 +885,26 @@ test_passed_print :: proc(format: string, args: ..any) {
 	fmt.printfln("modustool: test passed: %s", fmt.tprintf(format, ..args))
 }
 
-// run_screenshots runs the machine test, copies the pictures of the test
-// to the documents and to a new folder of the development log, then runs
-// the second build and writes the measure record (measure_record.odin).
+// The check of the flake that runs `modustool check` in the sandbox of Nix.
+// The flake defines its checks for x86_64-linux only.
+FLAKE_CHECK_ATTRIBUTE :: ".#checks.x86_64-linux.boot-test"
+// The link to the output of that check: it keeps the output in the store
+// while the link exists.
+FLAKE_CHECK_LINK :: BUILD_FOLDER + "/flake_check"
+// The folders of the output of the check (flake.nix, bootTest): the logs
+// and the records of build/, and the pictures of the test.
+FLAKE_CHECK_LOGS :: FLAKE_CHECK_LINK + "/logs"
+FLAKE_CHECK_PICTURES :: FLAKE_CHECK_LINK + "/screenshots"
+// The count of the checks that passed in `modustool check`: the measure
+// record of `screenshots` adds it to the checks of its own measure runs.
+CHECKS_PASSED_FILE :: BUILD_FOLDER + "/checks_passed.txt"
+
+// run_screenshots takes the outputs of the one run of the machine test of
+// the full check, the check of the flake (src/md/infrastructure/full_check.md):
+// it builds that check, which Nix takes from the store when `nix flake
+// check` passed on the same tree. It copies the pictures of the test to the
+// documents and to a new folder of the development log, runs the measure
+// runs on the host, and writes the measure record (measure_record.odin).
 // `screenshots compress` runs no machine: it compresses each PNG file of
 // the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
@@ -992,27 +917,28 @@ run_screenshots :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: screenshots takes no argument, or `compress`")
 		return EXIT_USAGE
 	}
-	// The full check proves the build: it keeps no output of an earlier build.
-	build_whole = true
 	// The facts of the tree before the pass changes it: the pass writes the
-	// pictures and the record into the repository.
+	// pictures and the record into the repository. A log of the check is
+	// copied after this time, so the record reads it as a log of this run.
 	run_facts := measure_run_facts_read()
-	if code := run_test(nil); code != 0 {
-		return code
+	// The check of the flake runs the host checks, the whole machine test
+	// and the second build in the sandbox; it fails when one of them fails.
+	if !run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs"}) {
+		return EXIT_FAILURE
+	}
+	if !flake_check_outputs_take() {
+		return EXIT_FAILURE
 	}
 	// The pictures are a fact of the machines, which all passed: they go
-	// to the documents now. The proofs of the build below say nothing of a
-	// picture, and a proof that fails must not leave old pictures in the
-	// documents.
+	// to the documents now.
 	if !screenshots_copy() {
 		return EXIT_FAILURE
 	}
-	// The record states the second build, as `modustool check` makes it.
-	if !outputs_same_after_second_build() {
-		return EXIT_FAILURE
+	// The rates of the record come from measure runs on the host, with no
+	// other machine: the test measures none (measure_runs.odin).
+	if code := build_system(boot_volumes_of_command("screenshots")); code != 0 {
+		return code
 	}
-	// The rates of the record come from measure runs: the test measures
-	// none (measure_runs.odin).
 	if !measure_runs_of_the_record() {
 		return EXIT_FAILURE
 	}
@@ -1020,6 +946,54 @@ run_screenshots :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	return 0
+}
+
+// flake_check_outputs_take copies the outputs of the check of the flake
+// into build/: its pictures into SCREENSHOT_FOLDER, and its logs and
+// records beside the logs of the host. The files of the store are read-only:
+// each copy is a new file. It adds the checks that passed in the check to
+// the count of this process.
+flake_check_outputs_take :: proc() -> bool {
+	reset_folder(SCREENSHOT_FOLDER) or_return
+	pictures := files_with_suffix(FLAKE_CHECK_PICTURES, ".png") or_return
+	logs := files_with_suffix(FLAKE_CHECK_LOGS, ".txt") or_return
+	if len(pictures) == 0 || len(logs) == 0 {
+		fmt.eprintfln("modustool: the output of the check of the flake has %d pictures and %d logs: it is not the output of a whole test", len(pictures), len(logs))
+		return false
+	}
+	for list, place in ([2][]string{pictures, logs}) {
+		folder := place == 0 ? SCREENSHOT_FOLDER : BUILD_FOLDER
+		for source in list {
+			target := strings.concatenate({folder, source[strings.last_index_byte(source, '/'):]}, context.temp_allocator)
+			file_copy_as_new(target, source) or_return
+		}
+	}
+	text, read_error := os.read_entire_file(CHECKS_PASSED_FILE, context.temp_allocator)
+	count, number_ok := strconv.parse_int(strings.trim_space(string(text)))
+	if read_error != nil || !number_ok || count <= 0 {
+		fmt.eprintfln("modustool: the check of the flake gave no count of its checks in %s", CHECKS_PASSED_FILE)
+		return false
+	}
+	sync.atomic_add(&test_passed_count, count)
+	fmt.printfln("modustool: took %d pictures and %d logs of the check of the flake (%d checks passed there)", len(pictures), len(logs), count)
+	return true
+}
+
+// file_copy_as_new writes the bytes of source to a new file target, with
+// the permissions of a new file: a copy of a file of the store keeps no
+// read-only mode, so a later copy can write over it.
+file_copy_as_new :: proc(target, source: string) -> bool {
+	bytes, read_error := os.read_entire_file(source, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", source, read_error)
+		return false
+	}
+	_ = os.remove(target)
+	if write_error := os.write_entire_file(target, bytes); write_error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", target, write_error)
+		return false
+	}
+	return true
 }
 
 // screenshots_copy copies the pictures of the test to the documents and to
@@ -1070,23 +1044,25 @@ run_measure :: proc(args: []string) -> int {
 	if code := build_system(boot_volumes_of_command(shortage ? MEASURE_SHORTAGE_COMMAND : MEASURE_COMMAND)); code != 0 {
 		return code
 	}
-	if !make_folder(SCREENSHOT_FOLDER) || !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
+	part := test_part_run_make(MEASURE_COMMAND)
+	defer test_part_run_free(&part)
+	if !make_folder(SCREENSHOT_FOLDER) || !test_part_run_start(&part) {
 		return EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "windows" {
-		return measure_windows() ? 0 : EXIT_FAILURE
+		return measure_windows(&part) ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "address_space" {
-		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+		return machine_test(&part, scenario_measure_address_space[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) ? 0 : EXIT_FAILURE
 	}
 	// `measure <program>`: one program that measures itself, alone.
 	if len(args) == 1 {
 		if program, found := measure_program_find(args[0]); found {
-			return measure_program_run(program) ? 0 : EXIT_FAILURE
+			return measure_program_run(&part, program) ? 0 : EXIT_FAILURE
 		}
 	}
 	if shortage {
-		return shortage_tests_run() ? 0 : EXIT_FAILURE
+		return shortage_tests_run(&part) ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "scheduler" {
 		count := 1
@@ -1104,7 +1080,7 @@ run_measure :: proc(args: []string) -> int {
 			// Not in the temporary allocator: the scenario frees it after each step.
 			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", BUILD_FOLDER, run)
 			defer delete(output)
-			if !machine_test(scenario_measure_scheduler[:], BOOT_VOLUME_MEASURE, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
+			if !machine_test(&part, scenario_measure_scheduler[:], {volume = BOOT_VOLUME_MEASURE, output = output, exit_status = MACHINE_STOP_OK}) {
 				return EXIT_FAILURE
 			}
 		}
@@ -1114,7 +1090,7 @@ run_measure :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
 		return EXIT_USAGE
 	}
-	if !machine_test(scenario_measure[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) {
 		return EXIT_FAILURE
 	}
 	return 0
@@ -1202,7 +1178,17 @@ run_check :: proc(args: []string) -> int {
 	if run_test(nil) != 0 {
 		return EXIT_FAILURE
 	}
-	return outputs_same_after_second_build() ? 0 : EXIT_FAILURE
+	if !outputs_same_after_second_build() {
+		return EXIT_FAILURE
+	}
+	// `screenshots` reads the count from the output of the check of the
+	// flake, for its measure record.
+	count_line := fmt.tprintf("%d\n", sync.atomic_load(&test_passed_count))
+	if write_error := os.write_entire_file(CHECKS_PASSED_FILE, count_line); write_error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", CHECKS_PASSED_FILE, write_error)
+		return EXIT_FAILURE
+	}
+	return 0
 }
 
 // The processor of a test machine, as the -cpu of QEMU.
@@ -1252,17 +1238,26 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// Each machine starts from a new disk of the measures, of the first
 	// size: the machine of AMD gives that disk a new size during its test
 	// (iommu_scenario.odin), and a machine that kept the file would see that
-	// size. The disk holds no data that a program keeps.
-	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, true) {
+	// size. The disk holds no data that a program keeps. A test machine has
+	// its files beside its log: machines that run at the same time share no
+	// file that QEMU writes.
+	scratch_disk := test_output != "" ? machine_file(test_output, SCRATCH_DISK_SUFFIX) : SCRATCH_DISK
+	if !disk_prepare(scratch_disk, SCRATCH_DISK_SIZE, true) {
 		return nil, false
 	}
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
+	variables_suffix := FIRMWARE_VARIABLES_SUFFIX
 	switch firmware {
 	case .Usual:
 	case .With_Tpm_Driver:
 		code_variable, variables_variable, variables_copy = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES
+		variables_suffix = FIRMWARE_TPM_VARIABLES_SUFFIX
 	case .With_Secure_Boot:
 		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
+		variables_suffix = FIRMWARE_FULL_VARIABLES_SUFFIX
+	}
+	if test_output != "" {
+		variables_copy = machine_file(test_output, variables_suffix)
 	}
 	firmware_code := os.get_env(code_variable, context.temp_allocator)
 	firmware_variables := os.get_env(variables_variable, context.temp_allocator)
@@ -1285,9 +1280,16 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		return nil, false
 	}
 	listener_port := forward.listener != nil ? forward.listener.port : 0
-	network_device := network_device_of(forward.host_port, listener_port, peer.port, peer.machine.port)
+	// With the peer, QEMU uses a copy of the socket of the peer for the
+	// machine; the caller closes the copy once QEMU started.
+	machine_descriptor := 0
+	if forward.host_port == 0 {
+		machine_descriptor = peer_machine_socket_lend(peer) or_return
+	}
+	network_device := network_device_of(forward.host_port, listener_port, machine_descriptor)
 	if problem := network_device_problem(network_device); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
+		peer_machine_socket_lent_close(peer)
 		return nil, false
 	}
 	list := make([dynamic]string, context.temp_allocator)
@@ -1311,7 +1313,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-m",
 		"1024",
 		"-smp",
-		"4",
+		fmt.tprintf("%d", MACHINE_PROCESSOR_COUNT),
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
@@ -1349,7 +1351,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	if forward.host_port != 0 {
 		// Each frame of the device, with its time, for the tool after the run
 		// (web_host.odin, frames_of_the_fetch_report).
-		append(&list, "-object", "filter-dump,id=frames,netdev=network,file=" + FRAMES_OF_USER_NETWORK)
+		append(&list, "-object", strings.concatenate({"filter-dump,id=frames,netdev=network,file=", frames_of_user_network_file(test_output)}, context.temp_allocator))
 	}
 	append(
 		&list,
@@ -1360,7 +1362,15 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,file=", variables_copy}, context.temp_allocator),
 		"-drive",
-		strings.concatenate({"if=none,id=boot,format=raw,file=", volume}, context.temp_allocator),
+		// Several machines boot one volume at the same time, and QEMU takes
+		// a lock for writing on each image that it opens for writing: the
+		// second machine would not start. With snapshot=on QEMU opens the
+		// volume to read only, with a shared lock, and keeps each write of
+		// the machine in a temporary file of its own. No program of the
+		// system writes its boot volume (the block service serves the data
+		// disk and the disk of the measures), and the firmware is not ours:
+		// a write that it makes stays private, and no machine reads one.
+		strings.concatenate({"if=none,id=boot,format=raw,snapshot=on,file=", volume}, context.temp_allocator),
 		"-device",
 		// The boot volume is the first boot option of the firmware: with no
 		// bootindex, the order of its options follows its own enumeration,
@@ -1373,7 +1383,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-device",
 		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s", pci.DATA_DISK_DEVICE, virtio_iommu),
 		"-drive",
-		"if=none,id=scratch,format=raw,file=" + SCRATCH_DISK,
+		strings.concatenate({"if=none,id=scratch,format=raw,file=", scratch_disk}, context.temp_allocator),
 	)
 	switch iommu {
 	case .Intel:
@@ -1478,11 +1488,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 // network_device_of gives the network device of a machine: QEMU user
 // networking with its TCP when host_port is not 0 (web_host.odin), else the
 // peer (`-netdev dgram`).
-network_device_of :: proc(host_port, listener_port, peer_port, machine_port: int) -> string {
+network_device_of :: proc(host_port, listener_port, machine_descriptor: int) -> string {
 	if host_port != 0 {
 		return fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", host_port, GUEST_ADDRESS, listener_port)
 	}
-	return fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer_port, machine_port)
+	// The socket is bound and connected to the peer: QEMU takes no
+	// address of its own (peer_start).
+	return fmt.tprintf("dgram,id=network,local.type=fd,local.str=%d", machine_descriptor)
 }
 
 // network_device_problem refuses a network device that forwards a UDP port

@@ -143,10 +143,11 @@ command_call :: proc "contextless" (error: ^errors.Error_Record, command: ring.R
 		return {}, .Bad_Operation
 	}
 	if completion.kind != u32(Status.Ok) {
+		refused, refusal := status_of_word(completion.kind)
 		if error != nil {
-			error^ = transmute(errors.Error_Record)completion.values
+			error^ = refusal.kind == i64(errors.Kind.None) ? transmute(errors.Error_Record)completion.values : refusal
 		}
-		return {}, Status(completion.kind)
+		return {}, refused
 	}
 	return completion.values, .Ok
 }
@@ -366,7 +367,7 @@ memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_
 // }
 // ```
 fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kinds = {}, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0, transmute(u64)kinds)
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), u64(op.Fault_Handler_Action.Set), transmute(u64)kinds)
 	return status
 }
 
@@ -374,7 +375,7 @@ fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kin
 // If a thread waits for an answer, its record is lost with the ring: the
 // program stops with STOP_CODE_FAULT_UNANSWERED. Answer first.
 fault_handler_end :: proc "contextless" () -> Status {
-	_, status := call(.Fault_Handler_Set, 0, 1)
+	_, status := call(.Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End))
 	return status
 }
 
@@ -437,7 +438,7 @@ fault_record_next :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> (recor
 // the last handle with Debug closes, and when the program stops: the
 // program then gets back each thread that the debugger held.
 debug_attach :: proc "contextless" (program: Handle, kinds: op.Fault_Kinds = {}, thread: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0, transmute(u64)kinds, u64(program))
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), u64(op.Fault_Handler_Action.Set), transmute(u64)kinds, u64(program))
 	return status
 }
 
@@ -446,7 +447,7 @@ debug_attach :: proc "contextless" (program: Handle, kinds: op.Fault_Kinds = {},
 // flag that the debugger wrote, takes back the stops that it made, and
 // resumes each thread that waits for its answer.
 debug_detach :: proc "contextless" (program: Handle, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, 0, 1, 0, u64(program))
+	_, status := call_with_error(error, .Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End), 0, u64(program))
 	return status
 }
 
@@ -570,14 +571,19 @@ memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^
 	return results[0], status
 }
 
-// memory_size gives the pages of a memory object, or 0 when the kernel
-// refuses; then the error record is at error, if it is not nil.
+// memory_size gives the pages of a memory object, and the status of the
+// kernel. When the kernel refuses, pages is 0 and the error record is at
+// error, if it is not nil.
 //
 // Any rights suffice. The kernel refuses a handle that is not a memory
 // handle (`Bad_Handle`).
-memory_size :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> u64 {
-	results, _ := call_with_error(error, .Memory_Size, u64(memory))
-	return results[0]
+memory_size :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (pages: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Memory_Size, u64(memory))
+	if status != .Ok {
+		return 0, status
+	}
+	return results[0], .Ok
 }
 
 // give copies a handle to another program. target is a program handle, or a
@@ -699,24 +705,45 @@ ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY) -> (memory: Ha
 // ring_open maps the memory of a ring in this program. The capacity of the
 // ring comes from the size of the memory, that the kernel gives.
 // error: the record of a refusal, if the caller gives one. The argument 1
-// is the memory.
+// is the memory. Each cause has its own answer: the status and the record
+// of the kernel for a handle that it refuses (Memory_Size, Memory_Map), and
+// Bad_Operation with the record of ring_pages_refusal for a size that is no
+// ring.
 ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (mapped: ring.Ring, status: Status) {
-	page_count := memory_size(memory, error)
-	if page_count == 0 {
-		return {}, .Bad_Handle // memory_size wrote the record of the kernel.
-	}
-	if page_count < ring.PAGE_COUNT || page_count > ring.pages(ring.CAPACITY_LIMIT) {
-		errors.fail(error, 0, .Bad_Value, .Pages, 1, i64(page_count), i64(ring.pages(ring.CAPACITY_LIMIT)))
-		return {}, .Bad_Handle
+	page_count := memory_size(memory, error) or_return
+	if refusal, refused := ring_pages_refusal(page_count); refused {
+		if error != nil {
+			error^ = refusal
+		}
+		return {}, .Bad_Operation
 	}
 	address := memory_map(memory, error = error) or_return
 	opened, ok := ring.open(address, page_count)
 	if !ok {
+		// ring_pages_refusal took this count, and ring.open reads no byte of
+		// the memory: its one other refusal is an address of no memory.
 		memory_unmap(address)
-		errors.fail(error, 0, .Malformed, .None, 1) // The header of the ring is not a header that ring.open takes.
-		return {}, .Bad_Handle
+		errors.fail(error, 0, .Bad_Address, .None, 1, i64(uintptr(address)))
+		return {}, .Bad_Address
 	}
 	return opened, .Ok
+}
+
+// ring_pages_refusal is the check of the size of the memory of a ring: the
+// record Bad_Value, unit Pages, of argument 1, for a count of pages that is
+// no ring (below ring.PAGE_COUNT, above the pages of ring.CAPACITY_LIMIT, or
+// a capacity that is not a power of two). The bound comes first, so the
+// product of a large count never wraps. It reads and changes no state.
+ring_pages_refusal :: proc "contextless" (page_count: u64) -> (refusal: errors.Error_Record, refused: bool) {
+	largest := ring.pages(ring.CAPACITY_LIMIT)
+	if page_count < ring.PAGE_COUNT || page_count > largest {
+		return errors.error_make(.Bad_Value, .Pages, 1, i64(min(page_count, 1 << 62)), i64(largest)), true
+	}
+	capacity := (page_count - 1) * ring.CAPACITY
+	if capacity & (capacity - 1) != 0 {
+		return errors.error_make(.Bad_Value, .Pages, 1, i64(page_count), i64(largest)), true
+	}
+	return {}, false
 }
 
 // ring_close unmaps a ring.
@@ -745,7 +772,7 @@ shared_create :: proc "contextless" (capacity: u32 = ring.SHARED_CAPACITY) -> (m
 // shared_open maps the memory of a shared queue in this program. The
 // capacity comes from the size of the memory, that the kernel gives.
 shared_open :: proc "contextless" (memory: Handle) -> (mapped: ring.Shared, status: Status) {
-	page_count := memory_size(memory)
+	page_count := memory_size(memory) or_return
 	if page_count > ring.shared_pages(ring.SHARED_CAPACITY_LIMIT) {
 		return {}, .Bad_Handle
 	}

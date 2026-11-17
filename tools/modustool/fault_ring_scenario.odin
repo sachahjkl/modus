@@ -105,6 +105,6 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-fault_ring_tests_run :: proc() -> bool {
-	return machine_test(scenario_fault_ring[:], BOOT_VOLUME, TEST_OUTPUT_FAULT_RING, MACHINE_STOP_OK, TEST_DATA_DISK)
+fault_ring_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_fault_ring[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_FAULT_RING, exit_status = MACHINE_STOP_OK})
 }

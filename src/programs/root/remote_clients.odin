@@ -31,6 +31,7 @@ import "modus:contract/remote"
 import "modus:contract/ring"
 import "modus:support/disk_program"
 import "modus:support/principals"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // The rows of every principal fit in the client table, so a key of a disk
@@ -92,7 +93,7 @@ key_head_text :: proc "contextless" (buffer: ^[16]u8, key: [32]u8) -> string {
 // of the caller. A refusal writes its own error record in values: the
 // values of the command hold a key where a name would be.
 remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Remote_Client)
+	kind := u32(root_ring.Root_Command.Remote_Client)
 	// The principal gives a grant: only a program that acts for it may ask,
 	// and the grant is of that principal only.
 	if .Acts_For_Principal not_in grants_held(caller) {
@@ -105,7 +106,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State
 	}
-	action, action_status, action_refusal := system.ring_member_of_word(system.Remote_Client_Action, record.values[4], .Remote_Client, REMOTE_CLIENT_ACTION_ARGUMENT)
+	action, action_status, action_refusal := root_ring.member_of_word(root_ring.Remote_Client_Action, record.values[4], .Remote_Client, REMOTE_CLIENT_ACTION_ARGUMENT)
 	if action_status != .Ok {
 		values^ = action_refusal
 		return action_status
@@ -123,7 +124,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			row := client_table.clients[place]
 			if row.serial != 0 && row.principal == principal {
 				key := transmute([4]u64)row.key
-				state := system.Remote_Client_State.Holds
+				state := root_ring.Remote_Client_State.Holds
 				if row.contested != 0 {
 					state = .Contested
 				} else if row.session_locked != 0 {
@@ -141,7 +142,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			holder := remote.client_find(&client_table.clients, contested)
 			if holder >= 0 && client_table.clients[holder].principal != principal {
 				key := transmute([4]u64)contested
-				values^ = {key[0], key[1], key[2], key[3], principal, 1, u64(system.Remote_Client_State.Contested)}
+				values^ = {key[0], key[1], key[2], key[3], principal, 1, u64(root_ring.Remote_Client_State.Contested)}
 			}
 		}
 		return .Ok
@@ -158,7 +159,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		// Served above, before the check of the key: this arm is reached
 		// only if that block moves, and then it refuses, never answers Ok
 		// with values that it did not write.
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(system.Remote_Client_Action)))
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(root_ring.Remote_Client_Action)))
 		return .Bad_Operation
 	case .Allow:
 		if place >= 0 {
@@ -219,7 +220,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			if disk_program.table_client_key_remove(table, key) == .None {
 				values[0] = 0
 				system.log_in("calls", .Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote, which was contested: connections to services ended: 0")
-				values[1] = persisted_table_revocation(principal, key) ? system.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
+				values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 				client_contest_end(principal, key)
 				return .Ok
 			}
@@ -231,14 +232,14 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		values[0] = count
 		system.log_in("calls", .Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote: connections to services ended: ", count)
 		_ = disk_program.table_client_key_remove(table, key)
-		values[1] = persisted_table_revocation(principal, key) ? system.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
+		values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 		// The key has no row now: a principal whose disk grant table holds
 		// it too, for which it was contested, takes it.
 		client_keys_restore()
 		return .Ok
 	}
 	// Each arm returns: only an action that skipped the border reaches here.
-	values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(system.Remote_Client_Action)))
+	values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(root_ring.Remote_Client_Action)))
 	return .Bad_Operation
 }
 
@@ -378,8 +379,8 @@ remote_clients_session_changed :: proc "contextless" (principal: u64, locked: bo
 // values[4] - 1 with the serial values[5], whose grant holds. A refusal
 // writes its own error record in values.
 client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial: u64, values: ^[7]u64) -> (client: Client_Grant, status: system.Status) {
-	kind := u32(system.Root_Command.Connect)
-	if .Remote_Clients not_in caller.role || row_number == 0 {
+	kind := u32(root_ring.Root_Command.Connect)
+	if .Remote_Clients not_in caller.role.grants || row_number == 0 {
 		// Only the program of the client table connects for a row, and it
 		// connects for a row only: a call from another machine acts for a
 		// principal that allowed its client, and never for the session of
@@ -429,6 +430,6 @@ connection_principal :: proc "contextless" (connection: ^Connection) -> u64 {
 // for it while the caller holds the grant to act for a principal. No store:
 // the program of the client table has none.
 client_connection_grant :: proc "contextless" (caller: ^Started, client: Client_Grant) -> u64 {
-	acts := .Acts_For_Principal in caller.role && .Acts_For_Principal not_in caller.revoked
+	acts := .Acts_For_Principal in caller.role.grants && .Acts_For_Principal not_in caller.revoked
 	return isolated.caller_grant_make(0, client.principal, acts)
 }

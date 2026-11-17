@@ -28,9 +28,7 @@ HEIGHT :: 552
 
 LINE :: graphics.LINE_HEIGHT
 
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 // hash_color gives the color of a module from its hash (docs/DESIGN.md:
 // a thing with an identity takes its color from it).
@@ -39,17 +37,14 @@ hash_color :: proc "contextless" (hash: [32]u8) -> graphics.Color {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	buffer: [64]u8
 	if weak_seed {
 		inside := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "NO KEY", "the random seed of this program is weaker than \"processor\"", graphics.colors.failed)
 		interface.draw_text(table, inside.x, inside.y, "Seed_Too_Weak: this service makes no key, and listens on nothing", graphics.colors.failed)
-		interface.window_frame_end(&drawing, &frame, window)
+		interface.window_frame_end(&window_memory.drawing, &frame, window)
 		return
 	}
 
@@ -152,5 +147,5 @@ draw :: proc "contextless" (window: ^display.Window) {
 	if recent_count == 0 {
 		interface.draw_text(table, inside.x, inside.y, "none yet: modustool call <public key> \"monitor.programs()\" on the host", graphics.colors.dim)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }

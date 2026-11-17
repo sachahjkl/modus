@@ -80,6 +80,8 @@ test_the_reader_refuses_each_fault_of_a_row :: proc(t: ^testing.T) {
 	cases := [?]Case {
 		{row_of(1, 2, .None), .Scope},
 		{row_of(1, 2, Scope(7)), .Scope},
+		{row_of(1, 2, Scope(u32(max(Scope)) + 1)), .Scope},
+		{row_of(1, 2, Scope(max(u32))), .Scope},
 		{row_of(1, 2, .System, 1), .Scope},
 		{row_of(1, 2, .Principal, 0), .Scope},
 		{row_of(1, 1), .Same_Hash},

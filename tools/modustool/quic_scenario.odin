@@ -78,6 +78,6 @@ scenario_quic := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-quic_tests_run :: proc() -> bool {
-	return machine_test(scenario_quic[:], BOOT_VOLUME, TEST_OUTPUT_QUIC, MACHINE_STOP_OK, TEST_DATA_DISK)
+quic_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_quic[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_QUIC, exit_status = MACHINE_STOP_OK})
 }

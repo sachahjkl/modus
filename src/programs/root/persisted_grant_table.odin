@@ -41,6 +41,7 @@ import "modus:contract/ring"
 import "modus:support/disk_program"
 import "modus:support/principals"
 import "modus:support/storage"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // The tries of one write. Each try has the deadline of a load; the bound
@@ -206,7 +207,7 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 	state := table.state
 	waiting := state == .No_Passphrase || state == .Awaited || state == .Record_Unreadable
 	// A word that names no state or no form is refused, and changes nothing.
-	report, report_status := system.machine_key_report_of_values(values)
+	report, report_status := root_ring.machine_key_report_of_values(values)
 	if report_status != .Ok {
 		return report_status
 	}
@@ -270,7 +271,7 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 	table := &persisted_tables[number]
 	key := transmute([disk_program.KEY_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 	defer key_erase(key[:])
-	origin, origin_status, _ := system.ring_member_of_word(system.Principal_Key_Origin, values[5], .Principal_Unlock, 0)
+	origin, origin_status, _ := root_ring.member_of_word(root_ring.Principal_Key_Origin, values[5], .Principal_Unlock, 0)
 	if key == {} || origin_status != .Ok {
 		return .Bad_Operation
 	}
@@ -633,7 +634,7 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 	switch table.call {
 	case .None:
 	case .Read:
-		absent := status == .Failed && value == storage.ERROR_ABSENT
+		absent := storage.export_failed_with(status, value, .Absent)
 		if !absent && status != .Ok {
 			sentence: [240]u8
 			writer := system.Writer{buffer = sentence[:]}

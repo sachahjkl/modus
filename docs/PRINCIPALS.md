@@ -549,7 +549,7 @@ The storage service names a store by the name that the root service gives to the
 
 So two principals that run one program have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 
-**Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "No way up"), from bits 48 to 62 of the grant of each connection:
+**Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "4.2 No way up"), from bits 48 to 62 of the grant of each connection:
 
 - A caller that acts for principal N sees the stores of principal N only: `stores()` lists them, and `open_store` gives a place on one of them; another store is refused with `No_Grant`, unit `Acts_For_Principal`.
 - Principal 0 sees the stores of principal 0 only. It does not see the stores of a named principal: the machine is not an administrator.
@@ -557,7 +557,7 @@ So two principals that run one program have two stores, and the stores of the sy
 
 ## 7. The commands
 
-**The root ring** (`src/library/support/system`, `Root_Command`):
+**The root ring** (`src/library/contract/root_ring`, `Root_Command`; who sends each command: `ROOT_COMMAND_SENDERS`):
 
 | Command | Who sends it | What it does |
 |---|---|---|

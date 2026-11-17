@@ -260,7 +260,9 @@ name_runs :: proc "contextless" (text: string, token: Token, being_typed, assign
 	}
 	if first_dot > 0 {
 		owner := name[:first_dot]
-		#partial switch role_of(lookup, owner) {
+		switch role_of(lookup, owner) {
+		case .Unknown, .Function, .Record:
+			// No field and no export follows such a name: the whole token is unknown below.
 		case .Variable:
 			// variable.field: the console checks the field when the line runs.
 			return run_add(runs, written, token.start, token.end, .Variable)

@@ -16,7 +16,8 @@ import "base:intrinsics"
 //
 // This file is the side of the kernel that does not know the vendor, with
 // the procedures of Intel (VT-d). Each place where the two vendors differ
-// is one switch on iommu_vendor; iommu_amd_vi.odin holds the procedures of
+// reads iommu_vendor, in a switch or in a test of one vendor, with no
+// indirect call; iommu_amd_vi.odin holds the procedures of
 // AMD (src/md/infrastructure/iommu.md, "Two vendors behind one kernel
 // side").
 //
@@ -48,9 +49,9 @@ IOMMU_STANDING_DOMAIN_FIRST :: IOMMU_DEVICE_CAPACITY + 1
 // the slot of an object always names a window that the tables can map.
 #assert(REGION_CAPACITY * iommu.WINDOW_SIZE <= iommu.WINDOW_BASE)
 
-// The vendor of the units: two vendors are a closed set, so each place
-// where they differ is a switch, with no indirect call on the path of a
-// declaration.
+// The vendor of the units: two vendors are a closed set. Each place where
+// they differ reads it, in a switch or in a test of one vendor, with no
+// indirect call on the path of a declaration.
 Iommu_Vendor :: enum u8 {
 	Intel, // VT-d: the table DMAR.
 	Amd, // AMD-Vi: the table IVRS.
@@ -297,7 +298,7 @@ invalidate_unit :: proc "contextless" (unit: ^Iommu_Unit, batch: Descriptor_Batc
 	if !done {
 		fault_report_begin()
 		log("kernel: the IOMMU did not finish an invalidation, or refused one: the machine stops")
-		machine_stop(2)
+		machine_stop(.Fault)
 	}
 }
 
@@ -1582,7 +1583,7 @@ owned_of :: proc "contextless" (program_index: u32, requester: u32) -> (owned: u
 // only after its first declaration. Bad_State: another program owns it.
 // The caller holds the frame lock.
 @(private = "file")
-device_slot :: proc "contextless" (requester: u16, program_index: u32) -> (slot: u32, status: op.Status) {
+device_slot :: proc "contextless" (requester: u16, program_index: u32) -> (slot: u32, status: Operation_Outcome) {
 	free := u32(IOMMU_DEVICE_CAPACITY)
 	for &device, index in iommu_devices {
 		if device.owner == 0 {
@@ -1796,7 +1797,7 @@ Declaration_Change :: enum {
 // of the domain became present. The caller holds the frame lock, and
 // invalidates after it by what changed.
 @(private = "file")
-declare_to_device :: proc "contextless" (program_index: u32, requester: u16, slot: u32, region_index: u32, writable: bool, write_held: bool) -> (change: Declaration_Change, made: bool, status: op.Status) {
+declare_to_device :: proc "contextless" (program_index: u32, requester: u16, slot: u32, region_index: u32, writable: bool, write_held: bool) -> (change: Declaration_Change, made: bool, status: Operation_Outcome) {
 	device := &iommu_devices[slot]
 	region := &regions[region_index]
 	bit := u32(1) << slot
@@ -1947,7 +1948,7 @@ iommu_bridge_refusal_last: u32
 // would reach what it declares. member_count: the functions of the group.
 // The caller holds the program lock; the walk reads the bus with no lock.
 @(private = "file")
-bridge_domain_check :: proc "contextless" (program: ^Program, requester: u32) -> (member_count: u32, status: op.Status) {
+bridge_domain_check :: proc "contextless" (program: ^Program, requester: u32) -> (member_count: u32, status: Operation_Outcome) {
 	walk := Bus_Walk{group = requester, holder = program}
 	buses_walk(&walk)
 	if !walk.unheld && walk.member_count != 0 {
@@ -2020,12 +2021,12 @@ new_entry_needs_invalidation :: proc "contextless" (unit: ^Iommu_Unit, device_en
 // while the program holds a handle with Write. The invalidation runs only
 // when a domain changed, for that domain. The caller holds the program
 // lock. The domain of a shared requester is made under the control lock:
-// the call asks for it (STATUS_RETRY), and after the frame lock the message
+// the call asks for it (Needs_Control), and after the frame lock the message
 // interrupts of the groups follow their domains (group_messages_follow).
 // They follow whatever the status: a call that fails after it made the
 // domain of a shared requester for an earlier device of the call keeps that
 // domain, and its interrupts then come with it.
-iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: op.Status) {
+iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: Operation_Outcome) {
 	address, status = declare(program_index, region_index, writable)
 	if lock_held(.Control) {
 		group_messages_follow()
@@ -2035,7 +2036,7 @@ iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writ
 
 // declare is iommu_declare up to the end of the frame lock.
 @(private = "file")
-declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: op.Status) {
+declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	if !iommu_in_use || region.device {
 		if !region.contiguous {
@@ -2100,8 +2101,8 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 		if owned_of(program_index, requester) != 0 {
 			continue
 		}
-		if need_control() {
-			return 0, STATUS_RETRY
+		if require_control() == .Needs_Control {
+			return 0, .Needs_Control
 		}
 		members, check_status := bridge_domain_check(program, requester)
 		if check_status != .Ok {
@@ -2143,7 +2144,12 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 		// (a function that appeared behind the bridge). It is made again
 		// only after a check, under the control lock.
 		if iommu_devices[slot].owner == 0 && shared_requesters & (1 << u32(index)) != 0 && member_counts[index] == 0 {
-			status = need_control() ? STATUS_RETRY : op.Status.Bad_State
+			// With the control lock the domain is gone: a state that the
+			// call cannot change.
+			status = require_control()
+			if status == .Ok {
+				status = .Bad_State
+			}
 			break
 		}
 		change: Declaration_Change
@@ -2344,7 +2350,7 @@ domains_ended :: proc "contextless" (ended: u32) {
 bridge_control_missing :: proc "contextless" () -> ! {
 	fault_report_begin()
 	log("kernel: IOMMU: the hold of the registers of a function behind a conventional bridge, or the domain of its group, ends with no control lock: the machine stops")
-	machine_stop(3)
+	machine_stop(.Invariant_Broken)
 }
 
 // domains_end ends the domains of the device slots of a mask, which a

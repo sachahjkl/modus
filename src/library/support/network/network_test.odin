@@ -3,6 +3,7 @@ package network
 
 import "core:math/rand"
 import "core:testing"
+import "modus:contract/byte_order"
 import "modus:support/system"
 
 @(private = "file")
@@ -20,13 +21,12 @@ GATEWAY_ADDRESS :: 0x0A000202 // 10.0.2.2
 @(test)
 known_checksums :: proc(t: ^testing.T) {
 	words := []u8{0x00, 0x01, 0xF2, 0x03, 0xF4, 0xF5, 0xF6, 0xF7}
-	testing.expect_value(t, sum(0, words), 0xDDF2)
-	testing.expect_value(t, checksum(sum(0, words)), 0x220D)
+	testing.expect_value(t, byte_order.internet_checksum_end(byte_order.internet_checksum_add(0, words)), 0x220D)
 	header := []u8{0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0xB8, 0x61, 0xC0, 0xA8, 0x00, 0x01, 0xC0, 0xA8, 0x00, 0xC7}
 	ok, expected := checked(header, 10, 0)
 	testing.expect(t, ok)
 	testing.expect_value(t, expected, 0xB861)
-	testing.expect_value(t, sum(0, header), 0xFFFF)
+	testing.expect_value(t, byte_order.internet_checksum_end(byte_order.internet_checksum_add(0, header)), 0)
 }
 
 // udp_example writes a frame as the two parts write it: the program writes
@@ -111,10 +111,10 @@ udp_checksum_of_zero_is_written_as_ones :: proc(t: ^testing.T) {
 	// the other words, complemented.
 	length := udp_header_write(datagram[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, 2)
 	testing.expect_value(t, length, UDP_HEADER + 2)
-	field := read_16(datagram[:], 6)
-	write_16(datagram[:], UDP_HEADER, field) // The data takes what the checksum held: the sum is now all ones.
+	field := byte_order.read_u16_big_endian(datagram[:], 6)
+	byte_order.write_u16_big_endian(datagram[:], UDP_HEADER, field) // The data takes what the checksum held: the sum is now all ones.
 	length = udp_header_write(datagram[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, 49152, 7, 2)
-	testing.expect_value(t, read_16(datagram[:], 6), 0xFFFF)
+	testing.expect_value(t, byte_order.read_u16_big_endian(datagram[:], 6), 0xFFFF)
 	_, ok := udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
 	testing.expect(t, ok)
 }
@@ -151,16 +151,16 @@ udp_checksum_with_an_odd_length :: proc(t: ^testing.T) {
 		datagram[length - 1] ~= 0x01
 		// The length field one more and one less than the count: refused
 		// with each rule, before any read of the checksum.
-		write_16(datagram[:], 4, u16(length + 1))
+		byte_order.write_u16_big_endian(datagram[:], 4, u16(length + 1))
 		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
 		testing.expect(t, !ok)
-		write_16(datagram[:], 4, u16(length - 1))
+		byte_order.write_u16_big_endian(datagram[:], 4, u16(length - 1))
 		_, ok = udp_data_read(datagram[:length], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
 		testing.expect(t, !ok)
 	}
 	// A datagram of 7 bytes, whose field would say 7: under its header.
 	short: [7]u8
-	write_16(short[:], 4, 7)
+	byte_order.write_u16_big_endian(short[:], 4, 7)
 	_, short_taken := udp_data_read(short[:], LOCAL_ADDRESS, GATEWAY_ADDRESS, .Do_Not_Verify)
 	testing.expect(t, !short_taken)
 }
@@ -202,28 +202,28 @@ Malformed :: struct {
 
 @(private = "file")
 fix_ipv4 :: proc(frame: []u8) {
-	write_16(frame, ETHERNET_HEADER + 10, 0)
-	write_16(frame, ETHERNET_HEADER + 10, checksum(sum(0, frame[ETHERNET_HEADER:][:IPV4_HEADER])))
+	byte_order.write_u16_big_endian(frame, ETHERNET_HEADER + 10, 0)
+	byte_order.write_u16_big_endian(frame, ETHERNET_HEADER + 10, byte_order.internet_checksum_end(byte_order.internet_checksum_add(0, frame[ETHERNET_HEADER:][:IPV4_HEADER])))
 }
 
 @(test)
 malformed_frames :: proc(t: ^testing.T) {
 	cases := []Malformed {
 		{"10 bytes", proc(frame: []u8) -> int {return 10}, .Too_Short, .Ethernet, 0, 10, 14},
-		{"IPv6", proc(frame: []u8) -> int {write_16(frame, 12, 0x86DD); return 60}, .Unsupported, .Ethernet, 12, 0x86DD, 0},
+		{"IPv6", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 12, 0x86DD); return 60}, .Unsupported, .Ethernet, 12, 0x86DD, 0},
 		{"30 bytes of IPv4", proc(frame: []u8) -> int {return 30}, .Too_Short, .Ipv4, 14, 16, 20},
 		{"version 6", proc(frame: []u8) -> int {frame[14] = 0x65; return 60}, .Bad_Header, .Ipv4, 14, 6, 4},
 		{"header of 16 bytes", proc(frame: []u8) -> int {frame[14] = 0x44; return 60}, .Bad_Header, .Ipv4, 14, 4, 5},
 		{"header longer than the frame", proc(frame: []u8) -> int {frame[14] = 0x4F; return 60}, .Too_Short, .Ipv4, 14, 46, 60},
-		{"total length after the frame", proc(frame: []u8) -> int {write_16(frame, 16, 400); fix_ipv4(frame); return 60}, .Bad_Length, .Ipv4, 16, 400, 46},
-		{"total length in the header", proc(frame: []u8) -> int {write_16(frame, 16, 12); fix_ipv4(frame); return 60}, .Bad_Length, .Ipv4, 16, 12, 20},
+		{"total length after the frame", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 16, 400); fix_ipv4(frame); return 60}, .Bad_Length, .Ipv4, 16, 400, 46},
+		{"total length in the header", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 16, 12); fix_ipv4(frame); return 60}, .Bad_Length, .Ipv4, 16, 12, 20},
 		{"header checksum", proc(frame: []u8) -> int {frame[24] ~= 0xFF; return 60}, .Bad_Checksum, .Ipv4, 24, 0, 0},
-		{"a fragment", proc(frame: []u8) -> int {write_16(frame, 20, 0x2000); fix_ipv4(frame); return 60}, .Unsupported, .Ipv4, 20, 0x2000, 0},
+		{"a fragment", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 20, 0x2000); fix_ipv4(frame); return 60}, .Unsupported, .Ipv4, 20, 0x2000, 0},
 		{"protocol 99", proc(frame: []u8) -> int {frame[23] = 99; fix_ipv4(frame); return 60}, .Unsupported, .Ipv4, 23, 99, 0},
-		{"UDP of 4 bytes", proc(frame: []u8) -> int {write_16(frame, 16, 24); fix_ipv4(frame); return 60}, .Too_Short, .Udp, 34, 4, 8},
-		{"UDP length after the datagram", proc(frame: []u8) -> int {write_16(frame, 38, 300); return 60}, .Bad_Length, .Udp, 38, 300, 18},
-		{"UDP length under the header", proc(frame: []u8) -> int {write_16(frame, 38, 3); return 60}, .Bad_Length, .Udp, 38, 3, 8},
-		{"ARP of 20 bytes", proc(frame: []u8) -> int {write_16(frame, 12, KIND_ARP); return 34}, .Too_Short, .Arp, 14, 20, 28},
+		{"UDP of 4 bytes", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 16, 24); fix_ipv4(frame); return 60}, .Too_Short, .Udp, 34, 4, 8},
+		{"UDP length after the datagram", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 38, 300); return 60}, .Bad_Length, .Udp, 38, 300, 18},
+		{"UDP length under the header", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 38, 3); return 60}, .Bad_Length, .Udp, 38, 3, 8},
+		{"ARP of 20 bytes", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 12, KIND_ARP); return 34}, .Too_Short, .Arp, 14, 20, 28},
 		{"ARP hardware size 8", proc(frame: []u8) -> int {
 				arp_frame(frame, ARP_REQUEST, LOCAL, LOCAL_ADDRESS, {}, GATEWAY_ADDRESS)
 				frame[18] = 8
@@ -260,7 +260,7 @@ malformed_frames :: proc(t: ^testing.T) {
 udp_with_no_checksum :: proc(t: ^testing.T) {
 	frame: [128]u8
 	length := udp_example(frame[:], "no check")
-	write_16(frame[:], 40, 0)
+	byte_order.write_u16_big_endian(frame[:], 40, 0)
 	packet, problem := parse(frame[:length])
 	data, ok := udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
 	testing.expect(t, problem.kind == .None && ok && string(data) == "no check")
@@ -317,15 +317,15 @@ problem_sentence :: proc(t: ^testing.T) {
 @(private = "file")
 tcp_example :: proc(frame: []u8, data: string) -> int {
 	segment := frame[IPV4_DATA:][:TCP_HEADER + len(data)]
-	write_16(segment, 0, 80)
-	write_16(segment, 2, 49200)
-	write_32(segment, 4, 1000)
-	write_32(segment, 8, 2000)
+	byte_order.write_u16_big_endian(segment, 0, 80)
+	byte_order.write_u16_big_endian(segment, 2, 49200)
+	byte_order.write_u32_big_endian(segment, 4, 1000)
+	byte_order.write_u32_big_endian(segment, 8, 2000)
 	segment[12] = 5 << 4
 	segment[13] = 0x18 // PSH, ACK.
-	write_16(segment, 14, 8192)
+	byte_order.write_u16_big_endian(segment, 14, 8192)
 	copy(segment[TCP_HEADER:], data)
-	write_16(segment, 16, checksum(sum(pseudo(GATEWAY_ADDRESS, LOCAL_ADDRESS, PROTOCOL_TCP, len(segment)), segment)))
+	byte_order.write_u16_big_endian(segment, 16, byte_order.internet_checksum_end(byte_order.internet_checksum_add(byte_order.internet_checksum_pseudo_header(GATEWAY_ADDRESS, LOCAL_ADDRESS, PROTOCOL_TCP, len(segment)), segment)))
 	return ipv4_frame(frame, LOCAL, GATEWAY, GATEWAY_ADDRESS, LOCAL_ADDRESS, PROTOCOL_TCP, len(segment), 7)
 }
 
@@ -354,7 +354,7 @@ tcp_malformed :: proc(t: ^testing.T) {
 		limit:  u32,
 	}
 	cases := []Case {
-		{"a segment of 10 bytes", proc(frame: []u8) -> int {write_16(frame, 16, 30); fix_ipv4(frame); return 60}, .Too_Short, 34, 10, 20},
+		{"a segment of 10 bytes", proc(frame: []u8) -> int {byte_order.write_u16_big_endian(frame, 16, 30); fix_ipv4(frame); return 60}, .Too_Short, 34, 10, 20},
 		{"a data offset of 16 bytes", proc(frame: []u8) -> int {frame[46] = 4 << 4; return 74}, .Bad_Header, 46, 4, 5},
 		{"a data offset after the segment", proc(frame: []u8) -> int {frame[46] = 15 << 4; return 74}, .Bad_Length, 46, 60, 40},
 	}

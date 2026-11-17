@@ -208,9 +208,9 @@ connection_datagram_send :: proc "contextless" (connection: ^Connection, buffer:
 @(private)
 packet_header_size :: proc "contextless" (connection: ^Connection, level: Encryption_Level) -> int {
 	if level == .Application {
-		return 1 + connection.peer_connection_id_length + PACKET_NUMBER_SIZE
+		return 1 + int(connection.peer_connection_id.length) + PACKET_NUMBER_SIZE
 	}
-	size := 1 + 4 + 1 + connection.peer_connection_id_length + 1 + CONNECTION_ID_SIZE + LONG_HEADER_LENGTH_SIZE + PACKET_NUMBER_SIZE
+	size := 1 + 4 + 1 + int(connection.peer_connection_id.length) + 1 + CONNECTION_ID_SIZE + LONG_HEADER_LENGTH_SIZE + PACKET_NUMBER_SIZE
 	if level == .Initial {
 		// The token: its length, then its bytes. A client after a Retry
 		// sends the token of the Retry; else it is empty.
@@ -239,7 +239,7 @@ packet_write_and_seal :: proc "contextless" (connection: ^Connection, level: Enc
 	space := &connection.spaces[level]
 	start := position
 	at := position
-	peer := connection.peer_connection_id[:connection.peer_connection_id_length]
+	peer := connection_identifier_bytes(&connection.peer_connection_id)
 	if level == .Application {
 		buffer[at] = FIXED_BIT | u8(PACKET_NUMBER_SIZE - 1)
 		at += 1

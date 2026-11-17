@@ -167,6 +167,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Fault_Class", type_info_of(op.Fault_Class)},
 		{"operation", "Fault_Answer_Kind", type_info_of(op.Fault_Answer_Kind)},
 		{"operation", "Thread_Control_Command", type_info_of(op.Thread_Control_Command)},
+		{"operation", "Fault_Handler_Action", type_info_of(op.Fault_Handler_Action)},
+		{"operation", "Extended_State_Layout", type_info_of(op.Extended_State_Layout)},
 		{"operation", "Thread_Registers", type_info_of(op.Thread_Registers)},
 		{"operation", "Thread_Write_Refusal", type_info_of(op.Thread_Write_Refusal)},
 		{"operation", "Thread_Schedule", type_info_of(op.Thread_Schedule)},

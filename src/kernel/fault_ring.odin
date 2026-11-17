@@ -239,7 +239,7 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 // that waits then has a record that no thread will read, so the program
 // stops as at the end of the handler thread. The caller holds the program
 // lock (execute).
-fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32, kinds: u64) -> op.Status {
+fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32, kinds: u64) -> Operation_Outcome {
 	program := &programs[program_index]
 	handler := &threads[handler_index]
 	// Only a live thread of this program: thread.program is 0 after
@@ -254,9 +254,7 @@ fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32,
 	}
 	if fault_waiter_exists(program_index) {
 		// A stop of the program takes the control lock.
-		if need_control() {
-			return STATUS_RETRY
-		}
+		require_control() or_return
 		program_stop(program_index, op.STOP_CODE_FAULT_UNANSWERED)
 		return .Ok
 	}
@@ -304,7 +302,7 @@ fault_waiter_exists :: proc "contextless" (program_index: u32) -> bool {
 // with an empty ring. The caller holds the control lock and the program
 // lock of the calling program, and checked the right Debug on the handle
 // of the debugged program.
-debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, debugged_index: u32, kinds: u64) -> op.Status {
+debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, debugged_index: u32, kinds: u64) -> Operation_Outcome {
 	// A program does not debug itself: its debug handler would wait for
 	// its own answer.
 	if debugged_index == caller_index {
@@ -357,7 +355,7 @@ debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, 
 
 // debug_handler_detach ends the debugging of a program by its debugger,
 // the calling program. The caller holds the control lock.
-debug_handler_detach :: proc "contextless" (caller_index: u32, debugged_index: u32) -> op.Status {
+debug_handler_detach :: proc "contextless" (caller_index: u32, debugged_index: u32) -> Operation_Outcome {
 	taken := program_lock(debugged_index)
 	defer program_unlock(debugged_index, taken)
 	if !debugger_is(debugged_index, caller_index) {
@@ -467,7 +465,7 @@ debug_right_closed :: proc "contextless" (holder: ^Program, closed: ^Handle_Slot
 // debug_fault_answer lets a thread of a debugged program go on after a
 // fault whose record went to its debugger, the calling program. The
 // caller holds the control lock.
-debug_fault_answer :: proc "contextless" (caller_index: u32, debugged_index: u32, number: u64, serial: u64) -> op.Status {
+debug_fault_answer :: proc "contextless" (caller_index: u32, debugged_index: u32, number: u64, serial: u64) -> Operation_Outcome {
 	taken := program_lock(debugged_index)
 	defer program_unlock(debugged_index, taken)
 	if !debugger_is(debugged_index, caller_index) {

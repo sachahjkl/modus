@@ -253,6 +253,8 @@ edit_runs_pending: terminal.Code_Runs
 // left its line plain. The list counts its own.
 edit_runs_refused: u64
 runs_refusal_logged: bool
+// The log says one time that the program sent a list row that names no icon.
+rows_refusal_logged: bool
 
 // The line under the edit line (terminal.Kind.Hint): a long form, and a
 // short form for a terminal too narrow for the long one. The text holds
@@ -488,22 +490,36 @@ apply :: proc "contextless" (record: ring.Record) {
 		runs_refusal_logged = true
 		system.log("terminal: ", program_name, " sent runs of code that do not fit their row: the row is drawn plain, its text whole")
 	}
+	if !rows_refusal_logged && list_keeping.rows_refused != 0 {
+		rows_refusal_logged = true
+		system.log("terminal: ", program_name, " sent a row of a completion list whose icon names no icon: the row is refused")
+	}
 }
 
 // style_color gives the color of a run of text: its own color with the
 // flag Color; if not, the color of its value kind when it has one; if not,
 // the color of its code kind when the kind has one; if not, the color of
 // its tone. Each color but its own is the one of the appearance in force,
-// read at each draw. A kind or a tone past the known ones is the default.
+// read at each draw. The bytes of the style come from another program: a
+// tone that names no tone draws in the color of plain text, and a value
+// kind or a code kind that names no kind gives no color of its own.
 style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 	if .Color in style.flags {
 		return style.color & 0xFFFFFF
 	}
-	plain := own_colors().tones[terminal.Tone(min(u8(style.tone), u8(max(terminal.Tone))))]
-	if value_kind := value_kinds.value_kind_of(style.value_kind); value_kind != .None {
+	colors := own_colors()
+	plain := colors.tones[.Default]
+	if tone, tone_ok := terminal.tone_of_byte(u8(style.tone)); tone_ok {
+		plain = colors.tones[tone]
+	}
+	if value_kind, value_kind_ok := value_kinds.value_kind_of(style.value_kind); value_kind_ok && value_kind != .None {
 		return graphics.value_kind_color(value_kind, graphics.appearance, plain)
 	}
-	return terminal.code_kind_color(terminal.code_kind_of(u8(style.code)), plain)
+	code_kind, code_kind_ok := terminal.code_kind_of(u8(style.code))
+	if !code_kind_ok {
+		return plain
+	}
+	return terminal.code_kind_color(code_kind, plain)
 }
 
 // The text of each record is UTF-8 from another program: a cell holds one
@@ -1279,7 +1295,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if source, status = system.ring_open(ctx.handles[terminal.GRANT_RING]); status != .Ok {
 		fail("no terminal ring")
 	}
-	if system.memory_size(ctx.handles[terminal.GRANT_TEXT]) != terminal.TEXT_PAGES {
+	if text_pages, text_status := system.memory_size(ctx.handles[terminal.GRANT_TEXT]); text_status != .Ok || text_pages != terminal.TEXT_PAGES {
 		fail("no text region")
 	}
 	if address, map_status := system.memory_map(ctx.handles[terminal.GRANT_TEXT], {}); map_status == .Ok {

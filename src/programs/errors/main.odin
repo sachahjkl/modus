@@ -82,6 +82,7 @@ import "modus:support/storage"
 import terminal "modus:support/terminal"
 import "modus:contract/ring"
 import "modus:support/random"
+import "modus:contract/root_ring"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -89,9 +90,7 @@ import "base:intrinsics"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1476, programs = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 WIDTH :: 1000
 LINE :: 16
@@ -219,9 +218,9 @@ case_rights :: proc "contextless" (writer: ^system.Writer) -> bool {
 
 // size_case asks the size of a memory object of a handle that must fail.
 size_case :: proc "contextless" (writer: ^system.Writer, handle: system.Handle, expected: errors.Kind) -> (record: errors.Error_Record, right: bool) {
-	pages := system.memory_size(handle, &record)
+	pages, status := system.memory_size(handle, &record)
 	system.kernel_error_text(writer, &record)
-	return record, pages == 0 && errors.Kind(record.kind) == expected
+	return record, status != .Ok && pages == 0 && record.kind == i64(expected)
 }
 
 case_revoked :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -492,7 +491,7 @@ tally_load :: proc "contextless" () -> bool {
 	return true
 }
 
-requests: ring.Ring // To the root service: Connect only (the grant Connect), and callable_of gives this program no service.
+requests: ring.Ring // To the root service: Connect only (the grant Connect), and its role in the root service names no service.
 has_requests: bool
 request_tag: u32
 
@@ -504,7 +503,7 @@ root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, o
 	}
 	request_tag += 1
 	packed := system.name_pack(name)
-	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
 		return {}, false
 	}
 	// The bound only ends a hang.
@@ -554,7 +553,7 @@ case_root_connect :: proc "contextless" (writer: ^system.Writer) -> bool {
 		return false
 	}
 	error := errors.completion_record(completion.values)
-	system.ring_error_text(writer, &error, "root", system.root_command_name(error.operation), system.root_argument_name(error.operation, error.argument))
+	system.ring_error_text(writer, &error, "root", root_ring.root_command_name(error.operation), root_ring.root_argument_name(error.operation, error.argument))
 	return system.Status(completion.kind) == .No_Right && errors.Kind(error.kind) == .No_Grant && errors.Unit(error.unit) == .Connection
 }
 
@@ -1188,12 +1187,8 @@ case_at :: proc "contextless" (at: int) -> int {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.colors.dim)
 	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the next page", graphics.colors.dim)
 	page_text: [32]u8
@@ -1218,5 +1213,5 @@ draw :: proc "contextless" (window: ^display.Window) {
 	y += 8
 	line: [192]u8
 	interface.draw_text_wrapped(table, 16, y, WIDTH - 32, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.colors.dim)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }

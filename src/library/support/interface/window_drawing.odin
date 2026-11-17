@@ -295,7 +295,14 @@ when DRAWING_THROUGH_MODULE {
 		drawing.module_refusal_logged = true
 		record := drawing.module_error
 		cause := "the module gave an error kind that this line has no words for"
-		#partial switch errors.Kind(record.kind) {
+		kind, kind_ok := errors.kind_of_word(record.kind)
+		if !kind_ok {
+			cause = "the module gave a word that names no error kind"
+		}
+		// Each kind is named, so that a new kind of the drawing module gets
+		// its words here or joins this list by a choice.
+		switch kind {
+		case .None, .Empty, .Bad_Flags, .Bad_Byte, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Absent, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .Refused, .No_Answer, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Not_Authentic, .Seed_Too_Weak, .Exists, .Starter_Module:
 		case .Too_Long:
 			cause = "a table has more records or bytes than the module takes"
 		case .Bad_Value:
@@ -331,6 +338,40 @@ when DRAWING_THROUGH_MODULE {
 // memory of the caller.
 window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Record, text_now, text_before: []u8) -> Window_Drawing {
 	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}}
+}
+
+// What a program keeps to draw one window, in one record of its own
+// memory: the drawing, and the memory of its two draw tables. RECORDS is
+// the capacity of each table in records, TEXT in bytes of text. A table
+// with a grid starts at an address that is a multiple of 4, so TEXT is a
+// multiple of 4: the second text table then starts at such an address too.
+Window_Memory :: struct($RECORDS, $TEXT: int) where RECORDS > 0 && TEXT > 0 && TEXT % 4 == 0 {
+	drawing:                     Window_Drawing,
+	records_now, records_before: [RECORDS]Draw_Record,
+	text_now, text_before:       [TEXT]u8,
+}
+
+// window_memory_drawing gives the drawing of a window memory, with its two
+// tables in the memory of the record. A global record cannot hold slices of
+// itself before the program runs, so each call gives the slices again: the
+// same slices each time, and the other fields of the drawing (the input,
+// the state, the picture memories) stay as they are.
+window_memory_drawing :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT)) -> ^Window_Drawing {
+	memory.drawing.now.records = memory.records_now[:]
+	memory.drawing.now.text = memory.text_now[:]
+	memory.drawing.before.records = memory.records_before[:]
+	memory.drawing.before.text = memory.text_before[:]
+	return &memory.drawing
+}
+
+// window_frame_start starts a frame of a window whose drawing is in a
+// window memory: window_frame_begin, after the tables are given. It draws
+// no background: the draw of a frame paints the background color under
+// each rectangle first (draw_damage_on_surface), so a rectangle of that
+// color over the window would draw no pixel. A window with the grid of
+// points of the rules draws it with background.
+window_frame_start :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT), window: ^display.Window = nil) -> Frame {
+	return window_frame_begin(window_memory_drawing(memory), window)
 }
 
 // window_events takes the events of a window into the input of the next

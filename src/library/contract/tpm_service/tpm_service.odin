@@ -58,7 +58,6 @@ REGION_PUBLIC_AREA :: 0 // The public area of a sealed object, with its size fie
 REGION_PRIVATE_AREA :: 512 // The private area, with its size field.
 REGION_CREATION_DATA :: 1024 // The creation data, with its size field.
 REGION_CREATION_TICKET :: 1536 // The creation ticket, whole.
-AREA_LIMIT :: 512 // The bytes of the place of each part.
 // The authorization value of a request with Authorization.Value:
 // AUTHORIZATION_SIZE bytes. The service erases it from the region when it
 // takes the request.

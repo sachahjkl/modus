@@ -447,7 +447,7 @@ field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
 // field_size gives the bytes of a field of a record, from its type and its
 // detail. 0: a record cannot have such a field.
 field_size :: proc "contextless" (type: Type, detail: u32) -> u32 {
-	#partial switch type {
+	switch type {
 	case .Integer:
 		switch detail {
 		case 0:
@@ -460,6 +460,8 @@ field_size :: proc "contextless" (type: Type, detail: u32) -> u32 {
 		return 4
 	case .Text:
 		return detail <= RECORD_SIZE_LIMIT ? detail : 0
+	case .None, .Record, .Table, .Bytes:
+		// A record holds values only: no record in a record, and no table.
 	}
 	return 0
 }

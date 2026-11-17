@@ -50,6 +50,7 @@
 package tpm_device_service
 
 import "base:intrinsics"
+import "modus:contract/byte_order"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
@@ -190,7 +191,7 @@ transact :: proc "contextless" (count: int) -> (answer: []u8, step: tpm_service.
 	for index in 0 ..< len(header) {
 		header[index] = intrinsics.volatile_load((^u8)(registers + DATA_BUFFER + uintptr(index)))
 	}
-	size := int(u32(header[2]) << 24 | u32(header[3]) << 16 | u32(header[4]) << 8 | u32(header[5]))
+	size := int(byte_order.read_u32_big_endian(header[:], 2))
 	if size < 10 || size > min(buffer_size, MESSAGE_LIMIT) {
 		return nil, .Answer
 	}

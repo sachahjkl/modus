@@ -124,6 +124,7 @@ import "modus:support/interface"
 import "modus:support/principals"
 import "modus:support/random"
 import "modus:support/storage"
+import "modus:contract/root_ring"
 import "modus:support/system"
 import "modus:support/tpm2"
 
@@ -314,7 +315,7 @@ object_versions_erase :: proc "contextless" (object: string) {
 
 // root_command sends a command of the principals to the root service and
 // waits for its completion.
-root_command :: proc "contextless" (kind: system.Root_Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
+root_command :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
 	request_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_tag, values = values}) {
 		return {}, false
@@ -434,7 +435,7 @@ create :: proc "contextless" () {
 		return
 	}
 	system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in ", derived, " ms")
-	session_start(&secrets, system.Principal_Key_Origin.New)
+	session_start(&secrets, root_ring.Principal_Key_Origin.New)
 }
 
 // passphrase_file_seal seals the secret keys in a file of the form under the
@@ -559,7 +560,7 @@ passphrase_try :: proc "contextless" () {
 		} else {
 			system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
 		}
-		session_start(&secrets, system.Principal_Key_Origin.Opened)
+		session_start(&secrets, root_ring.Principal_Key_Origin.Opened)
 	}
 }
 
@@ -568,7 +569,7 @@ passphrase_try :: proc "contextless" () {
 // else: the root service needs no key that opens the record. origin is
 // .Opened or .New: the root service writes over a table that does not
 // verify only under a key of a new passphrase.
-machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, origin: system.Machine_Key_State) -> bool {
+machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, origin: root_ring.Machine_Key_State) -> bool {
 	// The current record gave the machine key: an erase that a stop missed
 	// is done now, as for the file of a principal. A new key opened no
 	// record.
@@ -654,7 +655,7 @@ machine_passphrase_alone_try :: proc "contextless" () {
 		message, message_failed = "the passphrase is wrong: nothing is opened", true
 		return
 	}
-	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
+	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
 		message, message_failed = "the root service did not take the key", true
 		return
 	}
@@ -722,7 +723,7 @@ machine_passphrase_alone_create :: proc "contextless" () {
 	// The record is on the disk now: this run never writes a second one.
 	// A root service that answers late can still take this key, and a new
 	// record would then hold another key than the root service.
-	if !machine_key_give(&machine_key, system.Machine_Key_State.New) {
+	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.New) {
 		system.log("unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
 		erase(machine_key[:])
 		erase(key[:])
@@ -1004,7 +1005,7 @@ machine_key_sealed_commit :: proc "contextless" () {
 	system.log("unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down")
 	// The record holds the copy under the recovery key: a root service that
 	// does not take the key changes nothing of it.
-	if !machine_key_give(&opened_machine_key, system.Machine_Key_State.New) {
+	if !machine_key_give(&opened_machine_key, root_ring.Machine_Key_State.New) {
 		system.log("unlock: the root service did not take the key of the new machine key; the record stays, and the TPM opens it at the next start")
 	}
 	mode = .Done
@@ -1058,7 +1059,7 @@ machine_tpm_unseal :: proc "contextless" () -> Unseal_Outcome {
 		system.log("unlock: the key that the TPM released does not have the key check of the record: it is erased, and the recovery key opens the record")
 		return .Refused
 	}
-	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
+	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
 		system.log("unlock: the TPM released the machine key, and the root service did not take the key of its table: the disk grants of principal 0 stay absent until the next start")
 		return .Not_Taken
 	}
@@ -1139,7 +1140,7 @@ recovery_try :: proc "contextless" () {
 		message, message_failed = "the recovery key is wrong: nothing is opened", true
 		return
 	}
-	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
+	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
 		message, message_failed = "the root service did not take the key", true
 		return
 	}
@@ -1160,13 +1161,22 @@ machine_recovery_ask :: proc "contextless" (sentence: string) {
 	system.log("unlock: the machine key waits for its recovery key: the disk grants of principal 0 come when it is typed")
 }
 
-// machine_tpm_passphrase_seal seals the machine key in a record of the form
-// sealed by the TPM with the machine passphrase: a new salt and a new TPM
-// secret, the key of the passphrase typed, the seal by the TPM service with
-// its authorization value, and the machine key under the seal key. The copy
-// under the recovery key is in the record already. On a failure the record
-// can be half written: the caller writes it to the store only on success.
-machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, sealed_file: ^principals.Machine_Tpm_Passphrase_File, sealed_bytes: ^[principals.MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8) -> bool {
+// The owner of the secret that a seal by the TPM with a passphrase guards.
+// The two seals derive another authorization value and another seal key,
+// so that a value of one never opens the other, and their lines name the
+// owner.
+Secret_Owner :: enum u8 {
+	Machine, // The machine key, under the machine passphrase.
+	Named_Principal, // The secret keys of a named principal, under its passphrase.
+}
+
+// tpm_passphrase_seal_begin is the start that the two seals share: a new
+// TPM secret, salt and nonce, the key of the passphrase typed, the seal of
+// the TPM secret by the TPM service with the authorization value of that
+// key, and the seal key from the two. salt and nonce are the fields of the
+// file of the seal. A failure sets the message of the window and gives
+// false; the TPM secret and the key of the passphrase never leave it.
+tpm_passphrase_seal_begin :: proc "contextless" (owner: Secret_Owner, salt, nonce: []u8, object: ^principals.Sealed_Object) -> (seal_key: [principals.KEY_SIZE]u8, derived: u64, ok: bool) {
 	passphrase_key: [principals.KEY_SIZE]u8
 	tpm_secret: [principals.TPM_SECRET_SIZE]u8
 	defer erase(passphrase_key[:])
@@ -1175,27 +1185,64 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 	// The secret, the salt and the nonce come from the generator of this
 	// program, seeded by the root service from the sources of the
 	// processor; a weak seed is refused.
-	if !random.fill_for_a_key(&generator, tpm_secret[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: the machine key is not sealed by the TPM")
+	if !random.fill_for_a_key(&generator, tpm_secret[:], .Processor, &error) || !random.fill_for_a_key(&generator, salt, .Processor, &error) || !random.fill_for_a_key(&generator, nonce, .Processor, &error) {
+		switch owner {
+		case .Machine:
+			system.log("unlock: the seed of this program is too weak for a key: the machine key is not sealed by the TPM")
+		case .Named_Principal:
+			system.log("unlock: the seed of this program is too weak for a key: the keys are not sealed by the TPM")
+		}
 		message, message_failed = "the seed of the machine is too weak for a key", true
-		return false
+		return {}, 0, false
 	}
 	started := system.time()
-	if !derive(typed[:typed_count], sealed_file.salt[:], &passphrase_key) {
+	if !derive(typed[:typed_count], salt, &passphrase_key) {
 		message, message_failed = "the derivation of the key failed", true
-		return false
+		return {}, 0, false
 	}
-	derived := system.time() - started
-	authorization := principals.machine_authorization_value(&passphrase_key)
+	derived = system.time() - started
+	authorization: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
+	switch owner {
+	case .Machine:
+		authorization = principals.machine_authorization_value(&passphrase_key)
+	case .Named_Principal:
+		authorization = principals.principal_authorization_value(&passphrase_key)
+	}
 	defer erase(authorization[:])
-	if !tpm_seal(&tpm_secret, authorization[:], &sealed_file.object) {
-		system.log("unlock: the TPM service did not seal the machine key with the machine passphrase")
-		message, message_failed = "the TPM service did not seal the key", true
+	if !tpm_seal(&tpm_secret, authorization[:], object) {
+		switch owner {
+		case .Machine:
+			system.log("unlock: the TPM service did not seal the machine key with the machine passphrase")
+			message, message_failed = "the TPM service did not seal the key", true
+		case .Named_Principal:
+			system.log("unlock: the TPM service did not seal the keys of principal \"", the_name(), "\"")
+			message, message_failed = "the TPM service did not seal the keys", true
+		}
+		return {}, 0, false
+	}
+	switch owner {
+	case .Machine:
+		seal_key = principals.machine_tpm_passphrase_seal_key(&tpm_secret, &passphrase_key)
+	case .Named_Principal:
+		seal_key = principals.principal_tpm_seal_key(&tpm_secret, &passphrase_key)
+	}
+	return seal_key, derived, true
+}
+
+// machine_tpm_passphrase_seal seals the machine key in a record of the form
+// sealed by the TPM with the machine passphrase: a new salt and a new TPM
+// secret, the key of the passphrase typed, the seal by the TPM service with
+// its authorization value, and the machine key under the seal key. The copy
+// under the recovery key is in the record already. On a failure the record
+// can be half written: the caller writes it to the store only on success.
+machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, sealed_file: ^principals.Machine_Tpm_Passphrase_File, sealed_bytes: ^[principals.MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8) -> bool {
+	seal_key, derived, began := tpm_passphrase_seal_begin(.Machine, sealed_file.salt[:], sealed_file.nonce[:], &sealed_file.object)
+	defer erase(seal_key[:])
+	if !began {
 		return false
 	}
+	error: errors.Error_Record
 	sealed_file.pcrs = principals.MACHINE_TPM_PASSPHRASE_PCRS
-	seal_key := principals.machine_tpm_passphrase_seal_key(&tpm_secret, &passphrase_key)
-	defer erase(seal_key[:])
 	principals.machine_tpm_passphrase_file_encode(sealed_file, sealed_bytes)
 	key_text := string(seal_key[:])
 	nonce_text := string(sealed_file.nonce[:])
@@ -1284,7 +1331,7 @@ machine_passphrase_commit :: proc "contextless" () {
 	system.log("unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock")
 	// The record holds the copy under the recovery key: a root service that
 	// does not take the key changes nothing of it.
-	if !machine_key_give(&opened_machine_key, system.Machine_Key_State.New) {
+	if !machine_key_give(&opened_machine_key, root_ring.Machine_Key_State.New) {
 		system.log("unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
 	}
 	mode = .Done
@@ -1338,7 +1385,7 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 		machine_recovery_ask("the record is not consistent: type the recovery key")
 		return
 	}
-	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
+	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
 		message, message_failed = "the root service did not take the key", true
 		return
 	}
@@ -1409,35 +1456,13 @@ machine_passphrase_reseal :: proc "contextless" () {
 // recovery key are in the file already. On a failure the file can be half
 // written: the caller writes it to the store only on success.
 principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, sealed_file: ^principals.Principal_Tpm_File, sealed_bytes: ^[principals.PRINCIPAL_TPM_FILE_SIZE]u8) -> bool {
-	passphrase_key: [principals.KEY_SIZE]u8
-	tpm_secret: [principals.TPM_SECRET_SIZE]u8
-	defer erase(passphrase_key[:])
-	defer erase(tpm_secret[:])
-	error: errors.Error_Record
-	// The secret and the salt come from the generator of this program,
-	// seeded by the root service from the sources of the processor; a weak
-	// seed is refused.
-	if !random.fill_for_a_key(&generator, tpm_secret[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: the keys are not sealed by the TPM")
-		message, message_failed = "the seed of the machine is too weak for a key", true
-		return false
-	}
-	started := system.time()
-	if !derive(typed[:typed_count], sealed_file.salt[:], &passphrase_key) {
-		message, message_failed = "the derivation of the key failed", true
-		return false
-	}
-	derived := system.time() - started
-	authorization := principals.principal_authorization_value(&passphrase_key)
-	defer erase(authorization[:])
-	if !tpm_seal(&tpm_secret, authorization[:], &sealed_file.object) {
-		system.log("unlock: the TPM service did not seal the keys of principal \"", the_name(), "\"")
-		message, message_failed = "the TPM service did not seal the keys", true
-		return false
-	}
-	sealed_file.pcrs = principals.PRINCIPAL_TPM_PCRS
-	seal_key := principals.principal_tpm_seal_key(&tpm_secret, &passphrase_key)
+	seal_key, derived, began := tpm_passphrase_seal_begin(.Named_Principal, sealed_file.salt[:], sealed_file.nonce[:], &sealed_file.object)
 	defer erase(seal_key[:])
+	if !began {
+		return false
+	}
+	error: errors.Error_Record
+	sealed_file.pcrs = principals.PRINCIPAL_TPM_PCRS
 	principals.principal_tpm_file_encode(sealed_file, sealed_bytes)
 	key_text := string(seal_key[:])
 	nonce_text := string(sealed_file.nonce[:])
@@ -1541,7 +1566,7 @@ principal_created_commit :: proc "contextless" () {
 		return
 	}
 	system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key")
-	session_start(&opened_secrets, system.Principal_Key_Origin.New)
+	session_start(&opened_secrets, root_ring.Principal_Key_Origin.New)
 	// The keys are erased now: a session that did not start starts at the
 	// next start of unlock, which reads the file.
 	if mode != .Done {
@@ -1863,7 +1888,7 @@ principal_recovery_try :: proc "contextless" () {
 		system.log("unlock: principal ", number, " \"", the_name(), "\" types a passphrase: the TPM seals its keys again to it and to the system that runs")
 		return
 	}
-	session_start(&secrets, system.Principal_Key_Origin.Opened)
+	session_start(&secrets, root_ring.Principal_Key_Origin.Opened)
 }
 
 // principal_reseal seals the keys that the recovery key opened again by the
@@ -1888,7 +1913,7 @@ principal_reseal :: proc "contextless" () {
 			object_versions_erase(principals.FILE_OBJECT)
 		}
 	}
-	session_start(&opened_secrets, system.Principal_Key_Origin.Opened)
+	session_start(&opened_secrets, root_ring.Principal_Key_Origin.Opened)
 	// The keys are erased now: the window cannot ask for a passphrase to
 	// seal them again, so it ends even when the session did not start.
 	if mode != .Done {
@@ -1953,7 +1978,7 @@ machine_record_read :: proc "contextless" () -> Record_State {
 // service needs no key that opens the file or signs a grant. origin
 // .New lets the root service write over a table that does not verify:
 // only the key of a new principal does.
-session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, origin: system.Principal_Key_Origin) {
+session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, origin: root_ring.Principal_Key_Origin) {
 	// The current file opened the keys: a version of it is no longer the
 	// only way back to keys that open, so an erase that a stop missed is
 	// done now (src/md/features/version_erase.md). A new principal opened
@@ -2611,8 +2636,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Absent:
 		case .Present:
 			sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
-			key_form := sealed_by_the_tpm ? system.Machine_Key_Form.Sealed_By_The_Tpm : system.Machine_Key_Form.Passphrase
-			completion, answered := root_command(.Machine_Key, {4 = u64(system.Machine_Key_State.Awaited), 5 = u64(key_form)})
+			key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
+			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
 			switch {
 			case !answered || system.Status(completion.kind) != .Ok:
 				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
@@ -2632,7 +2657,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// service refuses each change of the table of principal 0, and
 			// a new machine passphrase, so nothing is written over a table
 			// or a record that can be good.
-			completion, answered := root_command(.Machine_Key, {4 = u64(system.Machine_Key_State.Unreadable)})
+			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
 			if !answered || system.Status(completion.kind) != .Ok {
 				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
 			}

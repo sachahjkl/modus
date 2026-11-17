@@ -118,9 +118,7 @@ run :: proc "contextless" (measure: ^Measure, entered: bool, reads_checked: u64)
 }
 
 // The memory of the interface package for the window (docs/INTERFACE.md).
-records_now, records_before: [256]interface.Draw_Record
-text_now, text_before: [4096]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(256, 4096)
 
 // clock_text writes a time since boot as hours:minutes:seconds.milliseconds.
 clock_text :: proc "contextless" (builder: ^interface.Text_Builder, milliseconds: u64) -> string {
@@ -153,7 +151,7 @@ sentence :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, p
 // draw builds the window with the interface package: a card, the time since
 // boot, a table of the two ways with their bars, the checks.
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.colors.kernel)
 	column := interface.column_of(content)
@@ -212,7 +210,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 			{" ms ahead.", graphics.colors.dim})
 		sentence(&frame, interface.column_take(&column, LINE), {refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? graphics.colors.dim : graphics.colors.failed})
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // entry finds its own slot with the machine handle, reads the time in the
@@ -226,7 +224,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
@@ -316,11 +313,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if drawn == 10 {
 				system.log("clock: the window drew one picture in ", drawn_time / 10 / 1000, ".", drawn_time / 10 / 100 % 10, " us, the mean of 10")
 				// One frame where one number changed: the time since boot.
-				system.log("clock: the interface: ", u64(drawing.now.record_count), " records, ", u64(drawing.damage.count), " damage rectangles; build ", drawing.build_time / 1000, ".", drawing.build_time / 100 % 10, " us, difference ", drawing.difference_time / 1000, ".", drawing.difference_time / 100 % 10, " us, draw ", drawing.draw_time / 1000, ".", drawing.draw_time / 100 % 10, " us")
+				system.log("clock: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, ".", window_memory.drawing.build_time / 100 % 10, " us, difference ", window_memory.drawing.difference_time / 1000, ".", window_memory.drawing.difference_time / 100 % 10, " us, draw ", window_memory.drawing.draw_time / 1000, ".", window_memory.drawing.draw_time / 100 % 10, " us")
 			}
 		}
 		deadline += 100
 		display.wait(&window, deadline)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

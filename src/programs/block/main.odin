@@ -152,7 +152,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	sectors := u64(virtio.load_32(device.device_config)) | u64(virtio.load_32(device.device_config + 4)) << 32
 	disk_blocks = sectors / (block.BLOCK_SIZE / SECTOR_SIZE)
 
-	if system.memory_size(queues) < pci.QUEUE_PAGES {
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
 		fail("the memory of the queue is too small")
 	}
 	address, map_status := system.memory_map(queues, {.Write})
@@ -211,12 +211,16 @@ attach :: proc "contextless" (handle: system.Handle) -> (block.Status, [7]u64) {
 	if status != .Ok {
 		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
 	}
+	pages, size_status := system.memory_size(handle)
+	if size_status != .Ok {
+		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
+	}
 	if region_memory != 0 {
 		system.close(region_memory)
 	}
 	region_memory = handle
 	region_physical = physical
-	region_size = system.memory_size(handle) * system.PAGE_SIZE
+	region_size = pages * system.PAGE_SIZE
 	return .Ok, {}
 }
 

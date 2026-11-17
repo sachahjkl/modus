@@ -19,6 +19,7 @@
 // See [link page](term:link-page) and [resource](term:resource).
 package manual_pages
 
+import "modus:contract/byte_order"
 import "modus:contract/text_encoding"
 
 MAGIC :: u64(0x5345474150_4E414D) // The bytes "MANPAGES".
@@ -119,24 +120,18 @@ bytes_compare :: proc "contextless" (first, second: string) -> int {
 	return len(first) - len(second)
 }
 
-// word_at reads a little-endian u32 at an offset that the caller checked.
-@(private = "file")
-word_at :: proc "contextless" (bytes: []u8, offset: int) -> u32 {
-	return u32(bytes[offset]) | u32(bytes[offset + 1]) << 8 | u32(bytes[offset + 2]) << 16 | u32(bytes[offset + 3]) << 24
-}
-
 // entry_at reads the entry of a page, by its index, from a file whose
 // count the caller checked.
 @(private = "file")
 entry_at :: proc "contextless" (file: []u8, index: int) -> Page_Entry {
 	at := HEADER_SIZE + index * PAGE_ENTRY_SIZE
 	return {
-		target_offset = word_at(file, at),
-		target_size = word_at(file, at + 4),
-		title_offset = word_at(file, at + 8),
-		title_size = word_at(file, at + 12),
-		text_offset = word_at(file, at + 16),
-		text_size = word_at(file, at + 20),
+		target_offset = byte_order.read_u32_little_endian(file, at),
+		target_size = byte_order.read_u32_little_endian(file, at + 4),
+		title_offset = byte_order.read_u32_little_endian(file, at + 8),
+		title_size = byte_order.read_u32_little_endian(file, at + 12),
+		text_offset = byte_order.read_u32_little_endian(file, at + 16),
+		text_size = byte_order.read_u32_little_endian(file, at + 20),
 	}
 }
 
@@ -168,17 +163,17 @@ validate :: proc "contextless" (file: []u8) -> (pages: Pages, problem: Problem) 
 	if len(file) < HEADER_SIZE {
 		return {}, .Too_Short
 	}
-	magic := u64(word_at(file, 0)) | u64(word_at(file, 4)) << 32
+	magic := byte_order.read_u64_little_endian(file, 0)
 	if magic != MAGIC {
 		return {}, .Magic
 	}
-	if word_at(file, 8) != VERSION {
+	if byte_order.read_u32_little_endian(file, 8) != VERSION {
 		return {}, .Version
 	}
-	count := word_at(file, 12)
-	text_offset := word_at(file, 16)
-	text_size := word_at(file, 20)
-	if count > PAGE_COUNT_LIMIT || word_at(file, 24) != 0 || word_at(file, 28) != 0 {
+	count := byte_order.read_u32_little_endian(file, 12)
+	text_offset := byte_order.read_u32_little_endian(file, 16)
+	text_size := byte_order.read_u32_little_endian(file, 20)
+	if count > PAGE_COUNT_LIMIT || byte_order.read_u32_little_endian(file, 24) != 0 || byte_order.read_u32_little_endian(file, 28) != 0 {
 		return {}, .Count
 	}
 	if u64(text_offset) != u64(HEADER_SIZE) + u64(count) * PAGE_ENTRY_SIZE || text_size > TEXT_SIZE_LIMIT || u64(text_offset) + u64(text_size) != u64(len(file)) {
@@ -281,29 +276,25 @@ encode :: proc "contextless" (sources: []Page_Source, buffer: []u8) -> bool {
 		return false
 	}
 	file := buffer[:size]
-	put_word :: proc "contextless" (bytes: []u8, offset: int, value: u32) {
-		bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3] = u8(value), u8(value >> 8), u8(value >> 16), u8(value >> 24)
-	}
-	put_word(file, 0, u32(MAGIC & 0xFFFF_FFFF))
-	put_word(file, 4, u32(MAGIC >> 32))
-	put_word(file, 8, VERSION)
-	put_word(file, 12, u32(len(sources)))
-	put_word(file, 16, u32(text_offset))
-	put_word(file, 20, u32(size - text_offset))
-	put_word(file, 24, 0)
-	put_word(file, 28, 0)
+	byte_order.write_u64_little_endian(file, 0, MAGIC)
+	byte_order.write_u32_little_endian(file, 8, VERSION)
+	byte_order.write_u32_little_endian(file, 12, u32(len(sources)))
+	byte_order.write_u32_little_endian(file, 16, u32(text_offset))
+	byte_order.write_u32_little_endian(file, 20, u32(size - text_offset))
+	byte_order.write_u32_little_endian(file, 24, 0)
+	byte_order.write_u32_little_endian(file, 28, 0)
 	at := 0
 	text := file[text_offset:]
 	for source, index in sources {
 		entry := HEADER_SIZE + index * PAGE_ENTRY_SIZE
-		put_word(file, entry, u32(at))
-		put_word(file, entry + 4, u32(len(source.target)))
+		byte_order.write_u32_little_endian(file, entry, u32(at))
+		byte_order.write_u32_little_endian(file, entry + 4, u32(len(source.target)))
 		at += copy(text[at:], source.target)
-		put_word(file, entry + 8, u32(at))
-		put_word(file, entry + 12, u32(len(source.title)))
+		byte_order.write_u32_little_endian(file, entry + 8, u32(at))
+		byte_order.write_u32_little_endian(file, entry + 12, u32(len(source.title)))
 		at += copy(text[at:], source.title)
-		put_word(file, entry + 16, u32(at))
-		put_word(file, entry + 20, u32(len(source.text)))
+		byte_order.write_u32_little_endian(file, entry + 16, u32(at))
+		byte_order.write_u32_little_endian(file, entry + 20, u32(len(source.text)))
 		at += copy(text[at:], source.text)
 	}
 	_, problem := validate(file)

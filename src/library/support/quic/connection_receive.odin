@@ -130,12 +130,11 @@ connection_datagram_receive :: proc "contextless" (connection: ^Connection, rece
 // identifier: that packet is the one that gives the record to a client.
 @(private)
 connection_id_is_ours :: proc "contextless" (connection: ^Connection, header: ^Packet_Header) -> bool {
-	destination := header.destination_connection_id[:header.destination_connection_id_length]
-	if bytes_equal(destination, connection.local_connection_id[:]) {
+	if bytes_equal(connection_identifier_bytes(&header.destination_connection_id), connection.local_connection_id[:]) {
 		return true
 	}
 	if connection.configuration.tls.role == .Server && header.type == .Initial {
-		return !connection.tls_started || bytes_equal(destination, connection.original_destination_connection_id[:connection.original_destination_connection_id_length])
+		return !connection.tls_started || header.destination_connection_id == connection.original_destination_connection_id
 	}
 	return false
 }
@@ -201,7 +200,7 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	if !connection_id_is_ours(connection, header) {
 		return fail_at(error, .Bad_Value, 1, header.start)
 	}
-	source := header.source_connection_id[:header.source_connection_id_length]
+	source := header.source_connection_id
 	if header.type == .Initial {
 		if role == .Server {
 			// A client Initial comes in a datagram of 1200 bytes at least
@@ -214,7 +213,7 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 			return fail_at(error, .Bad_Value, 1, header.token_offset)
 		}
 	}
-	if header.type != .One_Rtt && connection.peer_connection_id_known && !bytes_equal(source, connection.peer_connection_id[:connection.peer_connection_id_length]) {
+	if header.type != .One_Rtt && connection.peer_connection_id_known && source != connection.peer_connection_id {
 		// The peer keeps the identifier that it chose (RFC 9000, section 7.2).
 		return fail_at(error, .Bad_Value, 1, header.start)
 	}
@@ -228,11 +227,11 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	defer secret_erase(&first_server_keys, size_of(first_server_keys))
 	receive_keys := &space.receive_keys
 	if first_initial {
-		if header.destination_connection_id_length < CONNECTION_ID_SIZE {
+		if header.destination_connection_id.length < CONNECTION_ID_SIZE {
 			// RFC 9000, section 7.2: 8 bytes at least in the first Initial.
-			return fail_at(error, .Too_Small, 1, header.destination_connection_id_length, CONNECTION_ID_SIZE)
+			return fail_at(error, .Too_Small, 1, int(header.destination_connection_id.length), CONNECTION_ID_SIZE)
 		}
-		if !initial_keys(connection.cryptography, header.destination_connection_id[:header.destination_connection_id_length], &first_client_keys, &first_server_keys, error) {
+		if !initial_keys(connection.cryptography, connection_identifier_bytes(&header.destination_connection_id), &first_client_keys, &first_server_keys, error) {
 			return false
 		}
 		receive_keys = &first_client_keys
@@ -277,7 +276,7 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	if role == .Client && header.type == .Initial && !connection.peer_connection_id_known {
 		// The client sends to the identifier that the server chose (RFC
 		// 9000, section 7.2).
-		connection.peer_connection_id_length = copy(connection.peer_connection_id[:], source)
+		connection.peer_connection_id = source
 		connection.peer_connection_id_known = true
 	}
 	payload := datagram[opened.payload_offset:][:opened.payload_length]
@@ -360,20 +359,20 @@ client_retry_receive :: proc "contextless" (connection: ^Connection, datagram: [
 	if connection.configuration.tls.role != .Client || connection.state != .Handshake || connection.retried || connection.peer_connection_id_known {
 		return fail_at(error, .State, 1, header.start, 0, int(header.type))
 	}
-	original := connection.original_destination_connection_id[:connection.original_destination_connection_id_length]
-	source := header.source_connection_id[:header.source_connection_id_length]
-	if bytes_equal(source, original) || header.token_length > RETRY_TOKEN_LIMIT {
+	original := connection.original_destination_connection_id
+	source := header.source_connection_id
+	if source == original || header.token_length > RETRY_TOKEN_LIMIT {
 		return fail_at(error, .Bad_Value, 1, header.start)
 	}
-	if !retry_integrity_check(connection.cryptography, original, datagram, header, error) {
+	if !retry_integrity_check(connection.cryptography, connection_identifier_bytes(&original), datagram, header, error) {
 		return false
 	}
 	connection.retried = true
-	connection.retry_first_destination_connection_id_length = copy(connection.retry_first_destination_connection_id[:], original)
-	connection.retry_source_connection_id_length = copy(connection.retry_source_connection_id[:], source)
+	connection.retry_first_destination_connection_id = original
+	connection.retry_source_connection_id = source
 	connection.retry_token_length = copy(connection.retry_token[:], datagram[header.token_offset:][:header.token_length])
-	connection.peer_connection_id_length = copy(connection.peer_connection_id[:], source)
-	connection.original_destination_connection_id_length = copy(connection.original_destination_connection_id[:], source)
+	connection.peer_connection_id = source
+	connection.original_destination_connection_id = source
 	if !connection_initial_keys_install(connection, error) {
 		connection_fail(connection, u64(Transport_Error.Internal_Error), 0, now)
 		return false
@@ -413,8 +412,8 @@ client_retry_receive :: proc "contextless" (connection: ^Connection, datagram: [
 // the connection.
 @(private)
 server_first_initial :: proc "contextless" (connection: ^Connection, header: ^Packet_Header, client_keys, server_keys: ^Packet_Keys, now: u64, error: ^errors.Error_Record) -> bool {
-	connection.original_destination_connection_id_length = copy(connection.original_destination_connection_id[:], header.destination_connection_id[:header.destination_connection_id_length])
-	connection.peer_connection_id_length = copy(connection.peer_connection_id[:], header.source_connection_id[:header.source_connection_id_length])
+	connection.original_destination_connection_id = header.destination_connection_id
+	connection.peer_connection_id = header.source_connection_id
 	connection.peer_connection_id_known = true
 	space := &connection.spaces[.Initial]
 	space.send_keys, space.receive_keys = server_keys^, client_keys^

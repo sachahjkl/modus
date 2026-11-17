@@ -150,9 +150,7 @@ pending :: proc "contextless" (queue: ^ring.Queue) -> (first, count: u32) {
 
 // The drawing of the window with the interface package: the tables of the
 // frame now and of the frame on the surface.
-records_now, records_before: [384]interface.Draw_Record
-text_now, text_before: [2048]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(384, 2048)
 
 // The random generator of this program (src/library/support/random).
 program_generator: random.Generator
@@ -208,7 +206,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for index in 0 ..< START_RECORDS {
 		add(index)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	system.log("rings: ok, ", u64(relay.NODE_COUNT), " programs, ", u64(relay.NODE_COUNT), " rings, ", u64(START_RECORDS), " records")
 
 	buttons: u32
@@ -234,7 +231,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The action bar takes the pointer from the input of the
 				// next frame; a press on it, or while its list is open, is
 				// not a press on a square.
-				interface.input_add(&drawing.input, event)
+				interface.input_add(&window_memory.drawing.input, event)
 				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
 					continue
 				}
@@ -253,7 +250,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		now := system.time()
 		watch()
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		interface.action_bar_input_take(&frame, &bar)
 		draw(frame.table, now)
 		// The keys of the window, in its action bar (docs/INTERFACE.md,
@@ -264,7 +261,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		bar_left := pointer_end + 16
 		items := bar_items()
 		bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar, {alignment = .Right})
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		if bar_result.ran {
 			key_run(bar_result.run)
 		}
