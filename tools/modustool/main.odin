@@ -139,6 +139,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/manual_navigation",
 	SOURCE_FOLDER_CONTRACT + "/ring",
 	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
+	SOURCE_FOLDER_CONTRACT + "/datagram",
+	SOURCE_FOLDER_CONTRACT + "/byte_order",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot

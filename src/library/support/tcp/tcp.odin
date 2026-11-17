@@ -33,6 +33,7 @@
 package tcp
 
 import "modus:contract/blake3"
+import "modus:contract/byte_order"
 import "modus:contract/errors"
 
 RTO_INITIAL :: 1_000_000 // Microseconds before the first retransmission (RFC 6298 2.1).
@@ -314,12 +315,12 @@ initial_sequence :: proc "contextless" (table: ^Table, remote_address: u32, loca
 	}
 	input: [44]u8
 	copy(input[:32], table.secret[:])
-	write_32(input[:], 32, table.local_address)
-	write_16(input[:], 36, local_port)
-	write_32(input[:], 38, remote_address)
-	write_16(input[:], 42, remote_port)
+	byte_order.write_u32_big_endian(input[:], 32, table.local_address)
+	byte_order.write_u16_big_endian(input[:], 36, local_port)
+	byte_order.write_u32_big_endian(input[:], 38, remote_address)
+	byte_order.write_u16_big_endian(input[:], 42, remote_port)
 	hash := blake3.hash(input[:])
-	return u32(now / 4) + read_32(hash[:], 0)
+	return u32(now / 4) + byte_order.read_u32_big_endian(hash[:], 0)
 }
 
 @(private)
@@ -713,7 +714,7 @@ connection_of_segment :: proc "contextless" (table: ^Table, item: Incoming) -> i
 	if len(item.segment) < 4 {
 		return -1
 	}
-	return find(table, item.remote_address, read_16(item.segment, 2), read_16(item.segment, 0))
+	return find(table, item.remote_address, byte_order.read_u16_big_endian(item.segment, 2), byte_order.read_u16_big_endian(item.segment, 0))
 }
 
 // emit writes one segment in the next place of the output. false: the

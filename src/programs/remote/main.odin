@@ -1266,8 +1266,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &endpoint.completions)
 		system.wait_end(&wait, system.time() + 2000)
 	}
-	grant := datagram.grant_unpack(info.values[6])
-	if grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
+	grant, grant_known := datagram.grant_unpack(info.values[6])
+	if !grant_known || grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
 		// The address is a second fence after the key of the client: a
 		// listen grant that admits each address would let any machine of
 		// the network start handshakes against the table.

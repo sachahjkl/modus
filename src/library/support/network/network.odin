@@ -31,6 +31,7 @@
 // See [network service](term:network-service) and (docs/NETWORK.md).
 package network
 
+import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -105,66 +106,14 @@ Packet :: struct {
 	tcp_flags:        u8, // TCP: the control bits.
 }
 
-// read_16 reads a number of 16 bits in network order.
-read_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u16 {
-	return u16(bytes[offset]) << 8 | u16(bytes[offset + 1])
-}
-
-// read_32 reads a number of 32 bits in network order.
-read_32 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u32 {
-	return u32(bytes[offset]) << 24 | u32(bytes[offset + 1]) << 16 | u32(bytes[offset + 2]) << 8 | u32(bytes[offset + 3])
-}
-
-// write_16 writes a number of 16 bits in network order.
-write_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int, value: u16) {
-	bytes[offset] = u8(value >> 8)
-	bytes[offset + 1] = u8(value)
-}
-
-// write_32 writes a number of 32 bits in network order.
-write_32 :: #force_inline proc "contextless" (bytes: []u8, offset: int, value: u32) {
-	bytes[offset] = u8(value >> 24)
-	bytes[offset + 1] = u8(value >> 16)
-	bytes[offset + 2] = u8(value >> 8)
-	bytes[offset + 3] = u8(value)
-}
-
-// sum adds the bytes as 16-bit words in network order, to a sum of the
-// checksum of the Internet (RFC 1071). An odd last byte is the high byte of
-// a word.
-sum :: proc "contextless" (total: u32, bytes: []u8) -> u32 {
-	total := u64(total)
-	count := len(bytes)
-	index := 0
-	for ; index + 1 < count; index += 2 {
-		total += u64(bytes[index]) << 8 | u64(bytes[index + 1])
-	}
-	if index < count {
-		total += u64(bytes[index]) << 8
-	}
-	for total > 0xFFFF {
-		total = (total & 0xFFFF) + (total >> 16)
-	}
-	return u32(total)
-}
-
-// checksum ends a sum: the 16 bits that the field holds.
-checksum :: proc "contextless" (total: u32) -> u16 {
-	return ~u16(sum(total, nil))
-}
-
-// pseudo gives the sum of the pseudo-header of UDP or of TCP over IPv4.
-pseudo :: proc "contextless" (source, destination: u32, protocol: u8, length: int) -> u32 {
-	return (source >> 16) + (source & 0xFFFF) + (destination >> 16) + (destination & 0xFFFF) + u32(protocol) + u32(length)
-}
-
 // checked tells if the 16-bit field at `field` of bytes holds the checksum of
 // the bytes, with a sum to add (a pseudo-header). It gives the checksum of
-// the bytes with the field as zero.
-checked :: proc "contextless" (bytes: []u8, field: int, extra: u32) -> (ok: bool, expected: u16) {
-	total := sum(sum(extra, bytes[:field]), bytes[field + 2:])
-	expected = checksum(total)
-	return read_16(bytes, field) == expected, expected
+// the bytes with the field as zero. The field is at an even offset, so the
+// two parts of the sum keep their words.
+checked :: proc "contextless" (bytes: []u8, field: int, extra: u64) -> (ok: bool, expected: u16) {
+	total := byte_order.internet_checksum_add(byte_order.internet_checksum_add(extra, bytes[:field]), bytes[field + 2:])
+	expected = byte_order.internet_checksum_end(total)
+	return byte_order.read_u16_big_endian(bytes, field) == expected, expected
 }
 
 // parse reads one frame. problem.kind is None when the frame has a known
@@ -175,7 +124,7 @@ parse :: proc "contextless" (frame: []u8) -> (packet: Packet, problem: Problem) 
 	}
 	copy(packet.destination[:], frame[0:6])
 	copy(packet.source[:], frame[6:12])
-	kind := read_16(frame, 12)
+	kind := byte_order.read_u16_big_endian(frame, 12)
 	switch kind {
 	case KIND_ARP:
 		return arp_parse(frame, packet)
@@ -200,19 +149,19 @@ arp_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Proble
 	// Ethernet, IPv4, 6 bytes, 4 bytes.
 	fields := [4]Field{{0, 2, 1}, {2, 2, KIND_IPV4}, {4, 1, 6}, {5, 1, 4}}
 	for field in fields {
-		value := field.size == 2 ? u32(read_16(frame, B + field.offset)) : u32(frame[B + field.offset])
+		value := field.size == 2 ? u32(byte_order.read_u16_big_endian(frame, B + field.offset)) : u32(frame[B + field.offset])
 		if value != field.value {
 			return packet, {kind = .Bad_Header, layer = .Arp, offset = u16(B + field.offset), value = value, limit = field.value}
 		}
 	}
-	packet.operation = read_16(frame, B + 6)
+	packet.operation = byte_order.read_u16_big_endian(frame, B + 6)
 	if packet.operation != ARP_REQUEST && packet.operation != ARP_REPLY {
 		return packet, {kind = .Unsupported, layer = .Arp, offset = B + 6, value = u32(packet.operation)}
 	}
 	copy(packet.sender_hardware[:], frame[B + 8:][:6])
-	packet.sender_address = read_32(frame, B + 14)
+	packet.sender_address = byte_order.read_u32_big_endian(frame, B + 14)
 	copy(packet.target_hardware[:], frame[B + 18:][:6])
-	packet.target_address = read_32(frame, B + 24)
+	packet.target_address = byte_order.read_u32_big_endian(frame, B + 24)
 	packet.kind = .Arp
 	return packet, {}
 }
@@ -237,7 +186,7 @@ ipv4_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Probl
 	if header > available {
 		return packet, {kind = .Too_Short, layer = .Ipv4, offset = B, value = u32(available), limit = u32(header)}
 	}
-	total := int(read_16(frame, B + 2))
+	total := int(byte_order.read_u16_big_endian(frame, B + 2))
 	if total < header {
 		return packet, {kind = .Bad_Length, layer = .Ipv4, offset = B + 2, value = u32(total), limit = u32(header)}
 	}
@@ -245,15 +194,15 @@ ipv4_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Probl
 		return packet, {kind = .Bad_Length, layer = .Ipv4, offset = B + 2, value = u32(total), limit = u32(available)}
 	}
 	if ok, expected := checked(frame[B:][:header], 10, 0); !ok {
-		return packet, {kind = .Bad_Checksum, layer = .Ipv4, offset = B + 10, value = u32(read_16(frame, B + 10)), limit = u32(expected)}
+		return packet, {kind = .Bad_Checksum, layer = .Ipv4, offset = B + 10, value = u32(byte_order.read_u16_big_endian(frame, B + 10)), limit = u32(expected)}
 	}
-	fragment := read_16(frame, B + 6)
+	fragment := byte_order.read_u16_big_endian(frame, B + 6)
 	if fragment & 0x3FFF != 0 { // More fragments, or a fragment after the first.
 		return packet, {kind = .Unsupported, layer = .Ipv4, offset = B + 6, value = u32(fragment)}
 	}
 	packet.ttl = frame[B + 8]
-	packet.source_address = read_32(frame, B + 12)
-	packet.destination_address = read_32(frame, B + 16)
+	packet.source_address = byte_order.read_u32_big_endian(frame, B + 12)
+	packet.destination_address = byte_order.read_u32_big_endian(frame, B + 16)
 	// The bytes after total are the zero bytes of a short frame.
 	payload := frame[B + header:B + total]
 	offset := B + header
@@ -276,14 +225,14 @@ icmp_parse :: proc "contextless" (message: []u8, offset: int, packet: Packet) ->
 		return packet, {kind = .Too_Short, layer = .Icmp, offset = u16(offset), value = u32(len(message)), limit = ICMP_HEADER}
 	}
 	if ok, expected := checked(message, 2, 0); !ok {
-		return packet, {kind = .Bad_Checksum, layer = .Icmp, offset = u16(offset + 2), value = u32(read_16(message, 2)), limit = u32(expected)}
+		return packet, {kind = .Bad_Checksum, layer = .Icmp, offset = u16(offset + 2), value = u32(byte_order.read_u16_big_endian(message, 2)), limit = u32(expected)}
 	}
 	packet.icmp_kind = message[0]
 	if (packet.icmp_kind != ICMP_ECHO_REQUEST && packet.icmp_kind != ICMP_ECHO_REPLY) || message[1] != 0 {
 		return packet, {kind = .Unsupported, layer = .Icmp, offset = u16(offset), value = u32(packet.icmp_kind) << 8 | u32(message[1])}
 	}
-	packet.identifier = read_16(message, 4)
-	packet.sequence = read_16(message, 6)
+	packet.identifier = byte_order.read_u16_big_endian(message, 4)
+	packet.sequence = byte_order.read_u16_big_endian(message, 6)
 	packet.data = message[ICMP_HEADER:]
 	packet.kind = .Icmp
 	return packet, {}
@@ -297,15 +246,15 @@ udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) ->
 	if len(datagram) < UDP_HEADER {
 		return packet, {kind = .Too_Short, layer = .Udp, offset = u16(offset), value = u32(len(datagram)), limit = UDP_HEADER}
 	}
-	length := int(read_16(datagram, 4))
+	length := int(byte_order.read_u16_big_endian(datagram, 4))
 	if length < UDP_HEADER {
 		return packet, {kind = .Bad_Length, layer = .Udp, offset = u16(offset + 4), value = u32(length), limit = UDP_HEADER}
 	}
 	if length > len(datagram) {
 		return packet, {kind = .Bad_Length, layer = .Udp, offset = u16(offset + 4), value = u32(length), limit = u32(len(datagram))}
 	}
-	packet.source_port = read_16(datagram, 0)
-	packet.destination_port = read_16(datagram, 2)
+	packet.source_port = byte_order.read_u16_big_endian(datagram, 0)
+	packet.destination_port = byte_order.read_u16_big_endian(datagram, 2)
 	packet.data = datagram[:length]
 	packet.kind = .Udp
 	return packet, {}
@@ -327,8 +276,8 @@ tcp_parse :: proc "contextless" (segment: []u8, offset: int, packet: Packet) -> 
 	if header > len(segment) {
 		return packet, {kind = .Bad_Length, layer = .Tcp, offset = u16(offset + 12), value = u32(header), limit = u32(len(segment))}
 	}
-	packet.source_port = read_16(segment, 0)
-	packet.destination_port = read_16(segment, 2)
+	packet.source_port = byte_order.read_u16_big_endian(segment, 0)
+	packet.destination_port = byte_order.read_u16_big_endian(segment, 2)
 	packet.tcp_flags = segment[13]
 	packet.data = segment
 	packet.kind = .Tcp
@@ -339,7 +288,7 @@ tcp_parse :: proc "contextless" (segment: []u8, offset: int, packet: Packet) -> 
 ethernet_write :: proc "contextless" (frame: []u8, destination, source: Hardware, kind: u16) {
 	hardware_put(frame, 0, destination)
 	hardware_put(frame, 6, source)
-	write_16(frame, 12, kind)
+	byte_order.write_u16_big_endian(frame, 12, kind)
 }
 
 // ipv4_write writes the header of IPv4 after the header of Ethernet, for
@@ -348,15 +297,15 @@ ipv4_write :: proc "contextless" (frame: []u8, source, destination: u32, protoco
 	header := frame[ETHERNET_HEADER:][:IPV4_HEADER]
 	header[0] = 0x45
 	header[1] = 0
-	write_16(header, 2, u16(IPV4_HEADER + payload))
-	write_16(header, 4, identification)
-	write_16(header, 6, 0x4000)
+	byte_order.write_u16_big_endian(header, 2, u16(IPV4_HEADER + payload))
+	byte_order.write_u16_big_endian(header, 4, identification)
+	byte_order.write_u16_big_endian(header, 6, 0x4000)
 	header[8] = TTL
 	header[9] = protocol
-	write_16(header, 10, 0)
-	write_32(header, 12, source)
-	write_32(header, 16, destination)
-	write_16(header, 10, checksum(sum(0, header)))
+	byte_order.write_u16_big_endian(header, 10, 0)
+	byte_order.write_u32_big_endian(header, 12, source)
+	byte_order.write_u32_big_endian(header, 16, destination)
+	byte_order.write_u16_big_endian(header, 10, byte_order.internet_checksum_end(byte_order.internet_checksum_add(0, header)))
 }
 
 // pad writes zero bytes after a frame of length bytes up to FRAME_LEAST,
@@ -379,15 +328,15 @@ arp_frame :: proc "contextless" (frame: []u8, operation: u16, sender_hardware: H
 	}
 	ethernet_write(frame, operation == ARP_REQUEST ? BROADCAST : target_hardware, sender_hardware, KIND_ARP)
 	arp := frame[ETHERNET_HEADER:][:ARP_SIZE]
-	write_16(arp, 0, 1)
-	write_16(arp, 2, KIND_IPV4)
+	byte_order.write_u16_big_endian(arp, 0, 1)
+	byte_order.write_u16_big_endian(arp, 2, KIND_IPV4)
 	arp[4] = 6
 	arp[5] = 4
-	write_16(arp, 6, operation)
+	byte_order.write_u16_big_endian(arp, 6, operation)
 	hardware_put(arp, 8, sender_hardware)
-	write_32(arp, 14, sender_address)
+	byte_order.write_u32_big_endian(arp, 14, sender_address)
 	hardware_put(arp, 18, operation == ARP_REQUEST ? Hardware{} : target_hardware)
-	write_32(arp, 24, target_address)
+	byte_order.write_u32_big_endian(arp, 24, target_address)
 	return pad(frame, ETHERNET_HEADER + ARP_SIZE)
 }
 
@@ -421,14 +370,15 @@ udp_header_write :: proc "contextless" (datagram: []u8, source_address, destinat
 	}
 	length := UDP_HEADER + data_length
 	whole := datagram[:length]
-	write_16(whole, 0, source_port)
-	write_16(whole, 2, destination_port)
-	write_16(whole, 4, u16(length))
+	byte_order.write_u16_big_endian(whole, 0, source_port)
+	byte_order.write_u16_big_endian(whole, 2, destination_port)
+	byte_order.write_u16_big_endian(whole, 4, u16(length))
 	// The sum passes over the checksum field, and the field is written one
 	// time: the datagram never holds a checksum of zero, which says "no
 	// checksum", also not for a moment.
-	value := checksum(sum(sum(pseudo(source_address, destination_address, PROTOCOL_UDP, length), whole[:6]), whole[UDP_HEADER:]))
-	write_16(whole, 6, value == 0 ? 0xFFFF : value) // UDP sends a zero checksum as 0xFFFF.
+	pseudo_header := byte_order.internet_checksum_pseudo_header(source_address, destination_address, PROTOCOL_UDP, length)
+	value := byte_order.internet_checksum_end(byte_order.internet_checksum_add(byte_order.internet_checksum_add(pseudo_header, whole[:6]), whole[UDP_HEADER:]))
+	byte_order.write_u16_big_endian(whole, 6, value == 0 ? 0xFFFF : value) // UDP sends a zero checksum as 0xFFFF.
 	return length
 }
 
@@ -452,13 +402,13 @@ Udp_Checksum_Rule :: enum u8 {
 // not its length, or whose checksum is wrong: the program drops it and
 // counts it.
 udp_data_read :: proc "contextless" (datagram: []u8, remote_address, local_address: u32, rule: Udp_Checksum_Rule) -> (data: []u8, ok: bool) {
-	if len(datagram) < UDP_HEADER || int(read_16(datagram, 4)) != len(datagram) {
+	if len(datagram) < UDP_HEADER || int(byte_order.read_u16_big_endian(datagram, 4)) != len(datagram) {
 		return nil, false
 	}
-	if rule == .Verify && read_16(datagram, 6) != 0 {
-		matches, expected := checked(datagram, 6, pseudo(remote_address, local_address, PROTOCOL_UDP, len(datagram)))
+	if rule == .Verify && byte_order.read_u16_big_endian(datagram, 6) != 0 {
+		matches, expected := checked(datagram, 6, byte_order.internet_checksum_pseudo_header(remote_address, local_address, PROTOCOL_UDP, len(datagram)))
 		if expected == 0 {
-			matches = read_16(datagram, 6) == 0xFFFF // The sender wrote a zero checksum as 0xFFFF.
+			matches = byte_order.read_u16_big_endian(datagram, 6) == 0xFFFF // The sender wrote a zero checksum as 0xFFFF.
 		}
 		if !matches {
 			return nil, false
@@ -480,10 +430,10 @@ echo_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, so
 	message := frame[ETHERNET_HEADER + IPV4_HEADER:][:length]
 	message[0] = kind
 	message[1] = 0
-	write_16(message, 2, 0)
-	write_16(message, 4, identifier)
-	write_16(message, 6, sequence)
-	write_16(message, 2, checksum(sum(0, message)))
+	byte_order.write_u16_big_endian(message, 2, 0)
+	byte_order.write_u16_big_endian(message, 4, identifier)
+	byte_order.write_u16_big_endian(message, 6, sequence)
+	byte_order.write_u16_big_endian(message, 2, byte_order.internet_checksum_end(byte_order.internet_checksum_add(0, message)))
 	return pad(frame, ICMP_DATA + data_length)
 }
 

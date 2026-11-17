@@ -609,8 +609,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &endpoint.completions)
 		system.wait_end(&wait, system.time() + 2000)
 	}
-	grant := datagram.grant_unpack(info.values[6])
-	if grant.tcp || !grant.listen {
+	grant, grant_known := datagram.grant_unpack(info.values[6])
+	if !grant_known || grant.tcp || !grant.listen {
 		fail("the grant is not a listen grant of UDP")
 	}
 	listen_port = grant.port

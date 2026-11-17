@@ -52,6 +52,7 @@
 // program fetch.
 package net
 
+import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -271,7 +272,7 @@ datagram_wait :: proc "contextless" (deadline: u64) -> (place: int, data: []u8, 
 		if right {
 			return place, found, record.values[2], record.values[3], true
 		}
-		if len(whole) < network.UDP_HEADER || int(network.read_16(whole, 4)) != len(whole) {
+		if len(whole) < network.UDP_HEADER || int(byte_order.read_u16_big_endian(whole, 4)) != len(whole) {
 			malformed_datagrams += 1
 		} else {
 			wrong_checksums += 1
@@ -287,10 +288,10 @@ cases_run :: proc "contextless" () {
 	// 1. The link and the address.
 	info, has_info := call(.Info)
 	link := has_info && datagram.Status(info.kind) == .Ok
-	grant := datagram.grant_unpack(info.values[6])
+	grant, grant_known := datagram.grant_unpack(info.values[6])
 	inspect = grant.inspect
 	local_address, local_port = u32(info.values[0]), u16(info.values[1])
-	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
+	note("the link and the address", link && grant_known && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
 
 	// 2. The hardware address of the gateway (ARP).
 	start := system.cycles()
@@ -358,7 +359,7 @@ cases_run :: proc "contextless" () {
 	// a length field that is its length.
 	copy(data_of(SEND_FIRST + 3), "a wrong length field")
 	whole_count := datagram_write(SEND_FIRST + 3, 20)
-	network.write_16(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
+	byte_order.write_u16_big_endian(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = u64(whole_count), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
 	note("UDP with a wrong length field", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))

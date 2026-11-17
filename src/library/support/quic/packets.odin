@@ -9,6 +9,7 @@ package quic
 // write is copied once, and its header is read, unmasked and opened in that
 // copy only. So no byte is checked in one place and used from another.
 
+import "modus:contract/byte_order"
 import "modus:contract/errors"
 
 // The version number of QUIC version 1, the one version that this library speaks (RFC 9000, section 15).
@@ -68,10 +69,8 @@ Packet_Header :: struct {
 	type:                             Packet_Type, // The type of the packet.
 	version:                          u32, // The 4 bytes of the Version field of a long header. 0 for a short header, which has no such field, and for a Version Negotiation packet.
 	start:                            int, // The offset of the first byte of this packet in the datagram.
-	destination_connection_id:        [CONNECTION_ID_LIMIT]u8, // The Destination Connection ID: the identifier by which the receiver finds its connection.
-	destination_connection_id_length: int, // Its bytes: 0 to `CONNECTION_ID_LIMIT`. For a short header, the length that the caller of `header_read` gave.
-	source_connection_id:             [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of a long header: the identifier that the sender asks the receiver to use for it.
-	source_connection_id_length:      int, // Its bytes: 0 to `CONNECTION_ID_LIMIT`. 0 for a short header, which has no such field.
+	destination_connection_id:        Connection_Identifier, // The Destination Connection ID: the identifier by which the receiver finds its connection. For a short header, of the length that the caller of `header_read` gave.
+	source_connection_id:             Connection_Identifier, // The Source Connection ID of a long header: the identifier that the sender asks the receiver to use for it. Empty for a short header, which has no such field.
 	token_offset:                     int, // The offset of the token: the Token field of an Initial packet, or the Retry Token of a Retry packet. 0 for each other type.
 	token_length:                     int, // The bytes of the token. An Initial packet can have 0; a Retry packet never has 0.
 	packet_number_offset:             int, // The offset of the first byte of the packet number, still protected. 0 for a packet with no packet number: Retry, Version Negotiation, an unknown version.
@@ -177,7 +176,8 @@ header_read :: proc "contextless" (datagram: []u8, start: int, short_destination
 			return fail_at(error, .Too_Small, 1, position, position + short_destination_length, len(datagram))
 		}
 		header.type = .One_Rtt
-		header.destination_connection_id_length = copy(header.destination_connection_id[:], datagram[position:][:short_destination_length])
+		// The length is at most CONNECTION_ID_LIMIT: checked above.
+		header.destination_connection_id, _ = connection_identifier_make(datagram[position:][:short_destination_length])
 		header.packet_number_offset = position + short_destination_length
 		header.end = len(datagram)
 		return sample_fits(header, error)
@@ -187,7 +187,7 @@ header_read :: proc "contextless" (datagram: []u8, start: int, short_destination
 	if 4 + 1 > len(datagram) - position {
 		return fail_at(error, .Too_Small, 1, position, position + 5, len(datagram))
 	}
-	header.version = u32(datagram[position]) << 24 | u32(datagram[position + 1]) << 16 | u32(datagram[position + 2]) << 8 | u32(datagram[position + 3])
+	header.version = byte_order.read_u32_big_endian(datagram, position)
 	position += 4
 	for identifier in 0 ..< 2 {
 		if position >= len(datagram) {
@@ -203,10 +203,12 @@ header_read :: proc "contextless" (datagram: []u8, start: int, short_destination
 		if length > len(datagram) - position {
 			return fail_at(error, .Too_Small, 1, position, position + length, len(datagram))
 		}
+		// The length is at most CONNECTION_ID_LIMIT: checked above.
+		read_identifier, _ := connection_identifier_make(datagram[position:][:length])
 		if identifier == 0 {
-			header.destination_connection_id_length = copy(header.destination_connection_id[:], datagram[position:][:length])
+			header.destination_connection_id = read_identifier
 		} else {
-			header.source_connection_id_length = copy(header.source_connection_id[:], datagram[position:][:length])
+			header.source_connection_id = read_identifier
 		}
 		position += length
 	}

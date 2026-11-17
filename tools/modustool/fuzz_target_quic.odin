@@ -182,13 +182,13 @@ fuzz_quic_reseal :: proc(sender: ^quic.Connection, datagram: []u8, choices: ^Fuz
 	for number_length + len(payload) < 4 {
 		append(&payload, 0)
 	}
-	number_offset := 1 + header.destination_connection_id_length
+	number_offset := 1 + int(header.destination_connection_id.length)
 	end := number_offset + number_length + len(payload) + quic.TAG_SIZE
 	if end > len(state.resealed) {
 		return nil, false
 	}
 	state.resealed[0] = opened.first_byte
-	copy(state.resealed[1:], header.destination_connection_id[:header.destination_connection_id_length])
+	copy(state.resealed[1:], quic.connection_identifier_bytes(&header.destination_connection_id))
 	copy(state.resealed[number_offset + number_length:], payload[:])
 	sealed_end, sealed := quic.packet_seal(&state.cryptography, &space.send_keys, state.resealed[:end], 0, number_offset, len(payload), opened.packet_number, &error)
 	if !sealed {
@@ -389,8 +389,7 @@ fuzz_tls_messages_execute :: proc(input: []u8) -> Fuzz_Verdict {
 fuzz_tls_transport_parameters :: proc(configuration: ^quic.Tls_Configuration) {
 	parameters := quic.sent_transport_parameters_default()
 	if configuration.role == .Server {
-		parameters.has_original_destination_connection_id = true
-		parameters.original_destination_connection_id_length = quic.CONNECTION_ID_SIZE
+		parameters.original_destination_connection_id = quic.connection_identifier_of_chosen({})
 	}
 	configuration.transport_parameters_length = quic.transport_parameters_write(&parameters, configuration.role, configuration.transport_parameters[:])
 }
@@ -479,8 +478,7 @@ fuzz_transport_parameters_seeds :: proc(seeds: ^[dynamic][]u8) {
 	for role in quic.Tls_Role {
 		parameters := quic.sent_transport_parameters_default()
 		if role == .Server {
-			parameters.has_original_destination_connection_id = true
-			parameters.original_destination_connection_id_length = quic.CONNECTION_ID_SIZE
+			parameters.original_destination_connection_id = quic.connection_identifier_of_chosen({})
 		}
 		buffer: [quic.TRANSPORT_PARAMETERS_LIMIT]u8
 		length := quic.transport_parameters_write(&parameters, role, buffer[:])

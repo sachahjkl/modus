@@ -22,6 +22,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/byte_order"
 import "modus:contract/system_description"
 import "modus:support/bootscreen"
 import "modus:support/cryptography/ed25519"
@@ -256,11 +257,11 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	// description by its BLAKE3 hash, the identity of the system.
 	message := system_description.signed_message(description)
 	event: [EFI_TCG2_EVENT_DATA_OFFSET + system_description.SIGNED_MESSAGE_SIZE]u8
-	put_little_endian_u32(event[0:], u32(len(event)))
-	put_little_endian_u32(event[4:], EFI_TCG2_EVENT_HEADER_SIZE)
+	byte_order.write_u32_little_endian(event[0:], 0, u32(len(event)))
+	byte_order.write_u32_little_endian(event[4:], 0, EFI_TCG2_EVENT_HEADER_SIZE)
 	event[8] = EFI_TCG2_EVENT_HEADER_VERSION
-	put_little_endian_u32(event[10:], u32(info.MEASURE_REGISTER))
-	put_little_endian_u32(event[14:], TCG_EVENT_IPL)
+	byte_order.write_u32_little_endian(event[10:], 0, u32(info.MEASURE_REGISTER))
+	byte_order.write_u32_little_endian(event[14:], 0, TCG_EVENT_IPL)
 	copy(event[EFI_TCG2_EVENT_DATA_OFFSET:], message[:])
 	text: bootscreen.Text
 	status: Efi_Status
@@ -338,11 +339,11 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 // response code of the TPM when read is false.
 register_read :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, register: u64) -> (value: [32]u8, status: u64, read: bool) {
 	command: [TPM_PCR_READ_COMMAND_SIZE]u8
-	put_big_endian_u16(command[0:], TPM_ST_NO_SESSIONS)
-	put_big_endian_u32(command[2:], TPM_PCR_READ_COMMAND_SIZE)
-	put_big_endian_u32(command[6:], TPM_CC_PCR_READ)
-	put_big_endian_u32(command[10:], 1) // One selection.
-	put_big_endian_u16(command[14:], TPM_ALG_SHA256)
+	byte_order.write_u16_big_endian(command[0:], 0, TPM_ST_NO_SESSIONS)
+	byte_order.write_u32_big_endian(command[2:], 0, TPM_PCR_READ_COMMAND_SIZE)
+	byte_order.write_u32_big_endian(command[6:], 0, TPM_CC_PCR_READ)
+	byte_order.write_u32_big_endian(command[10:], 0, 1) // One selection.
+	byte_order.write_u16_big_endian(command[14:], 0, TPM_ALG_SHA256)
 	command[16] = TPM_SELECTION_SIZE
 	command[17 + register / 8] = u8(1) << (register % 8)
 	response: [256]u8
@@ -352,8 +353,8 @@ register_read :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, register: u64) -> 
 	}
 	// The response: tag (2 bytes), size (4), response code (4), the update
 	// counter (4), the selections that the TPM read, then the digests.
-	size := int(big_endian_u32(response[2:]))
-	code := big_endian_u32(response[6:])
+	size := int(byte_order.read_u32_big_endian(response[2:], 0))
+	code := byte_order.read_u32_big_endian(response[6:], 0)
 	if code != 0 {
 		return {}, u64(code), false
 	}
@@ -361,11 +362,11 @@ register_read :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, register: u64) -> 
 		return {}, 0, false
 	}
 	at := 14
-	if at + 4 + 3 + TPM_SELECTION_SIZE + 4 + 2 + 32 > size || big_endian_u32(response[at:]) != 1 {
+	if at + 4 + 3 + TPM_SELECTION_SIZE + 4 + 2 + 32 > size || byte_order.read_u32_big_endian(response[at:], 0) != 1 {
 		return {}, 0, false
 	}
 	at += 4
-	algorithm := big_endian_u16(response[at:])
+	algorithm := byte_order.read_u16_big_endian(response[at:], 0)
 	selection_size := int(response[at + 2])
 	at += 3
 	// A TPM with no SHA-256 bank, or that did not read the register, gives
@@ -374,7 +375,7 @@ register_read :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, register: u64) -> 
 		return {}, 0, false
 	}
 	at += selection_size
-	if big_endian_u32(response[at:]) != 1 || big_endian_u16(response[at + 4:]) != 32 {
+	if byte_order.read_u32_big_endian(response[at:], 0) != 1 || byte_order.read_u16_big_endian(response[at + 4:], 0) != 32 {
 		return {}, 0, false
 	}
 	at += 6
@@ -693,36 +694,11 @@ firmware_submit :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, command: []u8, r
 	if firmware_status != 0 {
 		return nil, u64(firmware_status), false
 	}
-	size := int(big_endian_u32(response[2:]))
+	size := int(byte_order.read_u32_big_endian(response[2:], 0))
 	if size < 10 || size > len(response) {
 		return nil, 0, false
 	}
 	return response[:size], 0, true
-}
-
-put_little_endian_u32 :: proc "contextless" (bytes: []u8, value: u32) {
-	for index in 0 ..< 4 {
-		bytes[index] = u8(value >> (8 * u32(index)))
-	}
-}
-
-put_big_endian_u32 :: proc "contextless" (bytes: []u8, value: u32) {
-	for index in 0 ..< 4 {
-		bytes[index] = u8(value >> (8 * u32(3 - index)))
-	}
-}
-
-put_big_endian_u16 :: proc "contextless" (bytes: []u8, value: u16) {
-	bytes[0] = u8(value >> 8)
-	bytes[1] = u8(value)
-}
-
-big_endian_u32 :: proc "contextless" (bytes: []u8) -> u32 {
-	return u32(bytes[0]) << 24 | u32(bytes[1]) << 16 | u32(bytes[2]) << 8 | u32(bytes[3])
-}
-
-big_endian_u16 :: proc "contextless" (bytes: []u8) -> u16 {
-	return u16(bytes[0]) << 8 | u16(bytes[1])
 }
 
 // The first serial port of a PC: the log of the machine tests reads it.

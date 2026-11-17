@@ -1,0 +1,3 @@
+type: Changed
+
+**One type for a QUIC connection identifier**: the QUIC library holds each connection identifier as a `quic.Connection_Identifier`, made by `connection_identifier_make` or `connection_identifier_of_chosen` and read with `connection_identifier_bytes`, in place of an array and a separate `_length` field. The optional identifiers of the transport parameters are a `Maybe` of it, and the fields `has_original_destination_connection_id`, `has_retry_source_connection_id` and `has_initial_source_connection_id` are gone. `transport_parameters_write` no longer refuses an identifier, and `retry_token_make` no longer gives `Too_Long`.

@@ -41,6 +41,7 @@ package tpm2
 
 import "base:runtime"
 import info "modus:contract/boot_info"
+import "modus:contract/byte_order"
 import "modus:support/cryptography/sha2"
 
 // The tags of a command and of an answer.
@@ -277,13 +278,15 @@ put_u8 :: proc "contextless" (command_writer: ^Command_Writer, value: u8) {
 
 @(private)
 put_u16 :: proc "contextless" (command_writer: ^Command_Writer, value: u16) {
-	bytes := [2]u8{u8(value >> 8), u8(value)}
+	bytes: [2]u8
+	byte_order.write_u16_big_endian(bytes[:], 0, value)
 	put_bytes(command_writer, bytes[:])
 }
 
 @(private)
 put_u32 :: proc "contextless" (command_writer: ^Command_Writer, value: u32) {
-	bytes := [4]u8{u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value)}
+	bytes: [4]u8
+	byte_order.write_u32_big_endian(bytes[:], 0, value)
 	put_bytes(command_writer, bytes[:])
 }
 
@@ -306,7 +309,7 @@ set_u16_at :: proc "contextless" (command_writer: ^Command_Writer, place: int, v
 	if command_writer.overflowed || place + 2 > command_writer.count {
 		return
 	}
-	command_writer.buffer[place], command_writer.buffer[place + 1] = u8(value >> 8), u8(value)
+	byte_order.write_u16_big_endian(command_writer.buffer, place, value)
 }
 
 @(private)
@@ -314,7 +317,7 @@ set_u32_at :: proc "contextless" (command_writer: ^Command_Writer, place: int, v
 	if command_writer.overflowed || place + 4 > command_writer.count {
 		return
 	}
-	command_writer.buffer[place], command_writer.buffer[place + 1], command_writer.buffer[place + 2], command_writer.buffer[place + 3] = u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value)
+	byte_order.write_u32_big_endian(command_writer.buffer, place, value)
 }
 
 // begin writes the header of a command: the tag, the size that end writes,
@@ -602,7 +605,7 @@ take_u16 :: proc "contextless" (reader: ^Answer_Reader) -> u16 {
 	if bytes == nil {
 		return 0
 	}
-	return u16(bytes[0]) << 8 | u16(bytes[1])
+	return byte_order.read_u16_big_endian(bytes, 0)
 }
 
 @(private)
@@ -611,7 +614,7 @@ take_u32 :: proc "contextless" (reader: ^Answer_Reader) -> u32 {
 	if bytes == nil {
 		return 0
 	}
-	return u32(bytes[0]) << 24 | u32(bytes[1]) << 16 | u32(bytes[2]) << 8 | u32(bytes[3])
+	return byte_order.read_u32_big_endian(bytes, 0)
 }
 
 // take_sized takes a sized buffer of the TPM: its size, then its bytes.
@@ -773,7 +776,8 @@ creation_hash :: proc "contextless" (creation_data: []u8) -> [DIGEST_SIZE]u8 {
 // digest (TPM 2.0 part 3, TPM2_PolicyPCR).
 policy_pcr_digest :: proc "contextless" (pcr_digest: ^[DIGEST_SIZE]u8) -> [DIGEST_SIZE]u8 {
 	empty: [DIGEST_SIZE]u8
-	code := [4]u8{u8(COMMAND_POLICY_PCR >> 24), u8(COMMAND_POLICY_PCR >> 16 & 0xFF), u8(COMMAND_POLICY_PCR >> 8 & 0xFF), u8(COMMAND_POLICY_PCR & 0xFF)}
+	code: [4]u8
+	byte_order.write_u32_big_endian(code[:], 0, COMMAND_POLICY_PCR)
 	selection_bytes: [10]u8
 	command_writer := Command_Writer{buffer = selection_bytes[:]}
 	put_pcr_selection(&command_writer)
@@ -784,7 +788,8 @@ policy_pcr_digest :: proc "contextless" (pcr_digest: ^[DIGEST_SIZE]u8) -> [DIGES
 // TPM2_PolicyPassword: SHA-256 of the policy and the code of
 // TPM2_PolicyAuthValue (TPM 2.0 part 3, TPM2_PolicyPassword).
 policy_with_password_digest :: proc "contextless" (policy: ^[DIGEST_SIZE]u8) -> [DIGEST_SIZE]u8 {
-	code := [4]u8{u8(COMMAND_POLICY_AUTH_VALUE >> 24), u8(COMMAND_POLICY_AUTH_VALUE >> 16 & 0xFF), u8(COMMAND_POLICY_AUTH_VALUE >> 8 & 0xFF), u8(COMMAND_POLICY_AUTH_VALUE & 0xFF)}
+	code: [4]u8
+	byte_order.write_u32_big_endian(code[:], 0, COMMAND_POLICY_AUTH_VALUE)
 	return sha256_of(policy^[:], code[:])
 }
 
@@ -943,7 +948,7 @@ area_fits :: proc "contextless" (area: []u8, limit: int) -> bool {
 	if len(area) < 2 || len(area) > limit {
 		return false
 	}
-	return int(u16(area[0]) << 8 | u16(area[1])) == len(area) - 2
+	return int(byte_order.read_u16_big_endian(area, 0)) == len(area) - 2
 }
 
 // The attributes of an index (TPM 2.0 part 2, TPMA_NV).
