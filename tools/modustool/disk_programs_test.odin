@@ -12,7 +12,7 @@ import "modus:private/storage/storage_mount"
 // call of sleep_for_ever in the entry of visitor.
 @(test)
 visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
-	content, read := read_file(PROGRAM_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
+	content, read := read_file(TEST_MODULE_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
 	if !testing.expect(t, read) {
 		return
 	}
@@ -25,7 +25,7 @@ visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
 // write to the address 0 in fault_three of visitor.
 @(test)
 visitor_line_of_the_fault_is_the_write :: proc(t: ^testing.T) {
-	content, read := read_file(PROGRAM_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
+	content, read := read_file(TEST_MODULE_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
 	if !testing.expect(t, read) {
 		return
 	}

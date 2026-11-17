@@ -105,7 +105,7 @@ The compositor shows the surface of each window as a picture. Each surface is a 
 
 ## The proof
 
-The host test `the_exports_draw_the_same_bytes_as_the_package` (`src/modules/drawing`) draws two pictures of one picture memory in each frame: a part with the full stride of the memory, and a part at a place that the seed changes. The package and the exports give the same damage rectangles and the same bytes of the canvas. The test `fill_of_the_background_pictures_and_grids` gives Picture records of a hostile caller: a pixel past the memory, a memory that the call does not have, a stride and a first pixel that would wrap.
+The host test `the_exports_draw_the_same_bytes_as_the_package` (`src/modules/libraries/drawing`) draws two pictures of one picture memory in each frame: a part with the full stride of the memory, and a part at a place that the seed changes. The package and the exports give the same damage rectangles and the same bytes of the canvas. The test `fill_of_the_background_pictures_and_grids` gives Picture records of a hostile caller: a pixel past the memory, a memory that the call does not have, a stride and a first pixel that would wrap.
 
 The host test `the_parts_of_a_screen_draw_the_same_bytes_as_the_package` draws a screen of several surfaces, each in its own picture memory, that overlap, over a background, with a bar and its heron: one call of the package over the whole table with all the memories in each damage rectangle, against one call of the export for each part with all the damage rectangles of the frame, in the phases of the compositor. The damage rectangles of a frame do not touch, as in the compositor. The two canvases are the same bytes.
 

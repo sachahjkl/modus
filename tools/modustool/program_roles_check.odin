@@ -2,7 +2,6 @@ package modustool
 
 import "core:fmt"
 import "core:slice"
-import "core:strings"
 import "modus:contract/start_grant"
 
 // The check of the table of the roles of the root service
@@ -67,7 +66,7 @@ program_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 		}
 	}
 	for build in builds {
-		if !strings.has_prefix(build.source, PROGRAM_SOURCES) || !module_in_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
+		if !build.program || !module_in_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
 			continue
 		}
 		if !named[build.name] {

@@ -75,7 +75,7 @@
 //
 // Who uses it: `src/library/support/system` on the side of the caller (`system.call_isolated`
 // and the connections to services) and on the side of the receiver (the
-// call host `src/programs/host` and each service that serves its own exports).
+// call host `src/modules/system/host` and each service that serves its own exports).
 // The parts:
 //
 // - `encode` and `decode`: the argument record, on each side.

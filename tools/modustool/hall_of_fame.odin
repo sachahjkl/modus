@@ -14,7 +14,7 @@ import "core:strings"
 
 HALL_OF_FAME_RESOURCE_FOLDER :: "resources/hall_of_fame"
 HALL_OF_FAME_CREDITS_FILE :: HALL_OF_FAME_RESOURCE_FOLDER + "/CREDITS.md"
-HALL_OF_FAME_PROGRAM_FOLDER :: PROGRAM_SOURCES + "hall_of_fame"
+HALL_OF_FAME_PROGRAM_FOLDER :: DEMONSTRATION_MODULE_SOURCES + "hall_of_fame"
 HALL_OF_FAME_PROGRAM_FILE :: HALL_OF_FAME_PROGRAM_FOLDER + "/main.odin"
 HALL_OF_FAME_PORTRAIT_FOLDER :: HALL_OF_FAME_PROGRAM_FOLDER + "/portraits"
 // Each picture of the resources is a crop of this size.
@@ -24,7 +24,7 @@ HALL_OF_FAME_SOURCE_HEIGHT :: 640
 // source: a whole divisor, so that no pixel of the source counts twice.
 HALL_OF_FAME_REDUCTION :: 5
 // The size of a portrait in the program: PORTRAIT_WIDTH and
-// PORTRAIT_HEIGHT of src/programs/hall_of_fame/main.odin.
+// PORTRAIT_HEIGHT of src/modules/demonstrations/hall_of_fame/main.odin.
 HALL_OF_FAME_PORTRAIT_WIDTH :: HALL_OF_FAME_SOURCE_WIDTH / HALL_OF_FAME_REDUCTION
 HALL_OF_FAME_PORTRAIT_HEIGHT :: HALL_OF_FAME_SOURCE_HEIGHT / HALL_OF_FAME_REDUCTION
 #assert(HALL_OF_FAME_PORTRAIT_WIDTH * HALL_OF_FAME_REDUCTION == HALL_OF_FAME_SOURCE_WIDTH)

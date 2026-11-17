@@ -226,7 +226,7 @@ The disk of the measures is a disk that holds no data that a program keeps: the 
 
 A measure of the block service writes blocks, and a measure on the data disk destroys the stores. So the test machine has a second disk, and the root service gives its block ring to a test program only, such as `disk`. The program `disk` measures reads and writes with one request in flight and then with many, counts the kernel entries for each request, checks a pattern that it wrote, and shows the result. The storage service never uses this disk.
 
-The design: `src/programs/disk`.
+The design: `src/modules/demonstrations/disk`.
 
 Do not use: scratch disk, test disk.
 

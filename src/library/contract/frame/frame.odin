@@ -1,6 +1,6 @@
 // The frame contract: what a program and a frame service agree on. A frame
 // service is the device service of one network device. The first one drives
-// a virtio network device (src/programs/frame); a driver of another device class
+// a virtio network device (src/modules/system/frame); a driver of another device class
 // serves the same contract.
 //
 // A frame is one Ethernet frame, from the destination address to the end of

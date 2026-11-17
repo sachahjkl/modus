@@ -8,7 +8,7 @@ import "modus:contract/errors"
 import "modus:support/quic"
 import "modus:support/random"
 import "modus:support/web"
-import cryptography_module "../../src/modules/cryptography"
+import cryptography_module "../../src/modules/libraries/cryptography"
 
 // The peer as QUIC clients of the program `quic_echo` (docs/QUIC.md,
 // section 6). The tool asks for one case at a time (step Peer_Quic); the

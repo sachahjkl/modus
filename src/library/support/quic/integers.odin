@@ -3,7 +3,7 @@
 // memory of the caller: it allocates nothing, makes no kernel call, and
 // gives each failure as an error record.
 //
-// Who uses it: the remote service (`src/programs/remote`, a server), the
+// Who uses it: the remote service (`src/modules/system/remote`, a server), the
 // program `quic_echo` and the modus tool (a client of the remote
 // service). The parts, by file:
 //

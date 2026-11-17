@@ -8,7 +8,7 @@ import op "modus:contract/operation"
 // The names of a stop report (docs/MODULE_CONTRACT.md, "Debug information").
 // The kernel gives each frame as an address in a module record; a program
 // with the grant of the debug image names it with the debug object of that
-// module: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)". The
+// module: "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)". The
 // kernel reads no debug object.
 
 // The entries of a debug image that a lookup reads: the image of the build

@@ -6,7 +6,7 @@ This guide describes the line that is typed at the console: the language that th
 
 **The idea in plain words.** The console is the program in which the principal calls the functions of the system directly, with typed values, in place of a shell that passes text to programs. Each name that it can call comes from the description of a module, so the console can complete every name and show the signature of every call while the line is typed, with no code in the called program.
 
-**For whom.** A reader who uses the console, and a reader who changes `src/programs/console`, `src/library/support/line_editor` or `src/library/support/terminal`.
+**For whom.** A reader who uses the console, and a reader who changes `src/modules/system/console`, `src/library/support/line_editor` or `src/library/support/terminal`.
 
 **Read before.** `PROPERTIES.md`, "19. A command is a function: no text between programs". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer and short name of an export are in `glossary/communication.md`; log record and value run are in `glossary/running_code.md`.
 
@@ -35,13 +35,13 @@ This guide describes the line that is typed at the console: the language that th
 
 ## What the console owns
 
-The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The terminal holds a surface, the two memory objects that it shares with its program (the terminal ring and the text region), and a handle that reads the state of the program. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/glossary/text.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/programs/console/main.odin` and `src/programs/console/completion.odin`.
+The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The terminal holds a surface, the two memory objects that it shares with its program (the terminal ring and the text region), and a handle that reads the state of the program. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/glossary/text.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/modules/system/console/main.odin` and `src/modules/system/console/completion.odin`.
 
 ## The language of the console
 
 A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
 
-The code is `src/programs/console/language.odin` (the parser and the values), `src/programs/console/commands.odin` (the commands and the calls), `src/programs/console/tables.odin` (the commands of tables), `src/programs/console/results.odin` (the result of a line and its drawing), `src/programs/console/line_records.odin` (the log records of a line) and `src/library/private/console/console_results` (the drawers).
+The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line) and `src/library/private/console/console_results` (the drawers).
 
 ### The form of a line
 
@@ -344,7 +344,7 @@ When the export has a table of error details and wrote more than one detail, one
 
 A `hash_head` is the head of a BLAKE3 hash: its first 8 bytes, as 16 hexadecimal digits. `manual.modules()` gives the whole hash of a module.
 
-**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `src/programs/console/results.odin`), then adds rows. A column that counts a size or a time states its unit (`size_column`, `time_column`), so the drawer shows its kind. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
+**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `src/modules/system/console/results.odin`), then adds rows. A column that counts a size or a time states its unit (`size_column`, `time_column`), so the drawer shows its kind. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
 
 ## The log records of a line
 
@@ -371,7 +371,7 @@ While a line calls an export, the console shows under the line the log records t
 
 ## The built-in commands and the services
 
-A fact that a service holds is an export of that service, and the console calls it as any export. A built-in name can stay as a short name of such an export: the command connects to the service when the console has no connection to it yet, then calls the export through the connection (`bound_call` in `src/programs/console/commands.odin`).
+A fact that a service holds is an export of that service, and the console calls it as any export. A built-in name can stay as a short name of such an export: the command connects to the service when the console has no connection to it yet, then calls the export through the connection (`bound_call` in `src/modules/system/console/commands.odin`).
 
 | Built-in command | Where the fact comes from |
 |---|---|

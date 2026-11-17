@@ -2,7 +2,7 @@
 // its name, and the name of each one.
 //
 // The root service decides the start grants of a program
-// (`program_roles` in `src/programs/root/roles.odin`). The list is a contract because
+// (`program_roles` in `src/modules/system/root/roles.odin`). The list is a contract because
 // a second party reads it: the root service puts the number of a start
 // grant in an error record when that grant refuses the debug access to a
 // program (errors.Unit.Debug_Access), and the reader of the record writes
@@ -47,14 +47,14 @@ Grant :: enum i64 {
 	Replace            = 12, // Change the replacement table of the machine (Root_Command.Replace).
 	Network            = 13, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
 	Network_Device     = 14, // The frame service of the network device and its frame ring, and a control ring from the root service.
-	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (program_roles in src/programs/root/roles.odin).
+	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (program_roles in src/modules/system/root/roles.odin).
 	Schedule           = 16, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings           = 17, // The settings page with Write (modus:contract/settings): the one writer of the settings of the machine.
 	Clock              = 18, // The date page with Write and the two ports of the real-time clock (modus:contract/date): the one writer of the date.
 	History_Store      = 19, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events             = 20, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 	Principals         = 21, // A ring to the root service for Principal_Record, Principal_Unlock and Machine_Key only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
-	Debug_Image        = 22, // The debug image, read-only: the names of the procedures and the source lines of a stop report (src/programs/root/debug_image.odin).
+	Debug_Image        = 22, // The debug image, read-only: the names of the procedures and the source lines of a stop report (src/modules/system/root/debug_image.odin).
 	Debugger           = 23, // A ring to the root service for Debug only: the service that debugs a program on behalf of a caller of its connections (Root_Command.Debug).
 	Palette            = 24, // The palette provider of the desktop: the entry table with Write and the ring to the compositor (Root_Command.Palette_Provide).
 	System_Part        = 25, // A part of the system that the root service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.

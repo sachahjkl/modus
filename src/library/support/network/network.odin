@@ -21,7 +21,7 @@
 // order (the first byte is the high byte). An IPv4 address is a u32:
 // 10.0.2.15 is 0x0A00020F.
 //
-// Who uses it: the network service (`src/programs/network`), which parses each
+// Who uses it: the network service (`src/modules/system/network`), which parses each
 // frame of the frame service with `parse` and writes the frames of its
 // endpoints with the `_frame` procedures, and keeps the tables of
 // `tables.odin` (the refused frames, the admitted remotes, the neighbors);

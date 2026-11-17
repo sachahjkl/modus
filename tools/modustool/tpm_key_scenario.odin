@@ -352,7 +352,7 @@ PRINCIPAL_FILE_ERASED_LINE :: "unlock: the versions of the object \"principal\" 
 
 // The line of the storage service when the read back of the zeros of an
 // erase finds one block that the disk did not write, in two parts around
-// the generation of the commit of the end (src/programs/storage/trees.odin).
+// the generation of the commit of the end (src/modules/system/storage/trees.odin).
 @(private = "file")
 ZEROS_DROPPED_LINE_START :: "storage: the versions of " + principals.FILE_OBJECT + " in the store " + UNLOCK_STORE + " are ended at the generation "
 @(private = "file")

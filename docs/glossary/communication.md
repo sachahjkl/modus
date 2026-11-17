@@ -82,7 +82,7 @@ Do not use: kernel module (a module is a file), kernel library, subsystem.
 
 A module group is the folder of `src/modules` that holds the modules of one use: `system`, `libraries`, `demonstrations` or `tests`.
 
-The group of a module is the folder of its source, and the tool reads it from there. It is not a second format: the module file holds no group, and the loader and the root service never read it. A release leaves out the group `tests`. The one folder of modules is planned work of `ROADMAP.md`; today the programs are in `src/programs` and the other modules in `src/modules`.
+The group of a module is the folder of its source, and the tool reads it from there. It is not a second format: the module file holds no group, and the loader and the root service never read it. Its folder is `src/modules/<group>/<module>`: `src/modules/system/root`. A release leaving out the group `tests` is planned work of `ROADMAP.md`.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
@@ -416,7 +416,7 @@ Do not use: struct type, schema, class.
 
 ### Call host
 
-A call host is the program that loads one module and executes the isolated calls of its exports (`src/programs/host`).
+A call host is the program that loads one module and executes the isolated calls of its exports (`src/modules/system/host`).
 
 The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: Ok, or `Load_Failed` with its load error. A call has no time limit: the caller ends it by closing the program handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
 

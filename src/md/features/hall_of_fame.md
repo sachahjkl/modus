@@ -6,7 +6,7 @@ The program `hall_of_fame` shows the people whose work inspired modus: one card 
 
 - A reader sees where the ideas of the system come from: the language that it is written in, the emulator that runs its tests, the immediate-mode interface, the engines, the browsers and the streams that showed how to build a system from scratch.
 - A person is in it for work that the system learned from or uses. Fame, a following or an opinion is no reason. A new person comes with a line that says what of their work reached modus.
-- The list is one table of the program (`people` in `src/programs/hall_of_fame/main.odin`). This file names nobody: the table is the one place of the names.
+- The list is one table of the program (`people` in `src/modules/demonstrations/hall_of_fame/main.odin`). This file names nobody: the table is the one place of the names.
 
 ## Constraints
 
@@ -21,7 +21,7 @@ The program `hall_of_fame` shows the people whose work inspired modus: one card 
 - **A card with a portrait**: the portrait of 96 x 128 pixels at its top left, the name and the line at its right, and under the portrait the portrait credit: "Picture: <author>", then the license, in the dim color. The credit takes the whole width of the card, so a long credit takes lines, not a cut.
 - **A card with no portrait**: the name and the line on the whole width. It is a tile in the sense of the glossary: a rectangle that stands for one person, with the name inside. It has no picture in place of the portrait, no initials and no form that imitates a face.
 - **The choice**: one chosen card, with a border of 2 pixels in the chosen blue. The arrows, Home and End move it; a press of the pointer on a card chooses it, through the input of the interface package. The view moves to keep the chosen card in it. Each card has its element name (the name of the person), so a machine test presses it by name ([../infrastructure/test_pointer.md](../infrastructure/test_pointer.md)).
-- **The pictures**: each picture is a PNG file of `resources/hall_of_fame/`, a crop of 480 x 640 pixels of its source. `modustool portraits` makes the pixels of each portrait, the mean of each square of 5 x 5 pixels, into `src/programs/hall_of_fame/portraits/`. The program holds them with `#load`, so the build and the program decode no image file. The five portraits are one picture memory: the drawing module reads one picture memory for each call.
+- **The pictures**: each picture is a PNG file of `resources/hall_of_fame/`, a crop of 480 x 640 pixels of its source. `modustool portraits` makes the pixels of each portrait, the mean of each square of 5 x 5 pixels, into `src/modules/demonstrations/hall_of_fame/portraits/`. The program holds them with `#load`, so the build and the program decode no image file. The five portraits are one picture memory: the drawing module reads one picture memory for each call.
 - **The credits file**: `resources/hall_of_fame/CREDITS.md` is a table with one row for each picture: the file, the person, the source with its address, the author and the license. It is the one list of the pictures: the command reads it, the page of the licenses of the site shows one row for each picture from it, and a host test checks that the program has the author and the license of each row.
 
 ## The rule of the pictures

@@ -464,7 +464,7 @@ Do not use: SIMD version, kernel (for this), fast path, intrinsics version.
 
 A debug object is the file that names the procedures, the source lines, the types and the variables of the code of one module, so that a reader can turn an address of the module into a name and a line, and a debugger can show a variable.
 
-A module names only its exports. With the debug object, the frame "fault + 0x1478" reads "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)". The modus tool writes it at the build from the DWARF of the linked file, so the system reads no DWARF: a program reads only sorted tables of fixed records. The object names its module by the hash of the module file; the bytes of the module are the same without it. It is not the whole debug information of the compiler.
+A module names only its exports. With the debug object, the frame "fault + 0x1478" reads "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)". The modus tool writes it at the build from the DWARF of the linked file, so the system reads no DWARF: a program reads only sorted tables of fixed records. The object names its module by the hash of the module file; the bytes of the module are the same without it. It is not the whole debug information of the compiler.
 
 The design: `docs/MODULE_CONTRACT.md`, "Debug information".
 
@@ -484,7 +484,7 @@ Do not use: symbol table, function table.
 
 The line table is the table of a debug object that gives, for each range of the code of a module, the source file and the line that the code comes from.
 
-The code from the offset of a row up to the next row comes from its line. The rows are sorted by their offset, so a reader finds the line of an instruction with one binary search. A row with the file 0 says that the code after it has no source line. For a return address the reader looks up the byte before it, so the line is that of the call. Example: the machine test checks that the stack of `fault` names the lines 15 and 20 of `src/programs/fault/main.odin`.
+The code from the offset of a row up to the next row comes from its line. The rows are sorted by their offset, so a reader finds the line of an instruction with one binary search. A row with the file 0 says that the code after it has no source line. For a return address the reader looks up the byte before it, so the line is that of the call. Example: the machine test checks that the stack of `fault` names the lines 15 and 20 of `src/modules/demonstrations/fault/main.odin`.
 
 The design: `docs/MODULE_CONTRACT.md`, "The debug object".
 

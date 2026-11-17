@@ -65,7 +65,7 @@ Error_Record :: struct {
 Kind :: enum i64 {
 	None              = 0, // No error: the record of a call that did not fail is all zero.
 	Empty             = 1, // A text argument has no byte. limit: the most that it can have.
-	// Given by the storage service and by the HTTP server (`src/programs/server`) for an empty name, and by QUIC.
+	// Given by the storage service and by the HTTP server (`src/modules/demonstrations/server`) for an empty name, and by QUIC.
 	Too_Long          = 2, // value: the size of the argument; limit: the most that it can have.
 	// The unit names what the size counts: `Words` for a word wait, `Bytes` for a name of the storage service or a
 	// frame of the frame service.

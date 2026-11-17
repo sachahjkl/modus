@@ -27,13 +27,13 @@ Each part of the network is a program or a library of user space. The table name
 | Part | Where | What it does |
 |---|---|---|
 | TCP library | `src/library/support/tcp` | The state machine, the windows, the timers, the reassembly, the congestion control. Pure code over memory of the caller: no kernel operation, no allocation. The modus tool uses the same package on the host |
-| Network service | `src/programs/network` | Gives each program with the grant one endpoint. It checks the header of each datagram and each segment against the grant, writes and checks the IPv4 header, and copies a datagram or a segment that arrives one time. On send it copies 8 bytes of the header, and the device reads the rest from the datagram region. It computes no checksum of UDP or TCP and keeps no state of a connection |
+| Network service | `src/modules/system/network` | Gives each program with the grant one endpoint. It checks the header of each datagram and each segment against the grant, writes and checks the IPv4 header, and copies a datagram or a segment that arrives one time. On send it copies 8 bytes of the header, and the device reads the rest from the datagram region. It computes no checksum of UDP or TCP and keeps no state of a connection |
 | Protocol library | `src/library/support/network` | For the network service: Ethernet, ARP, IPv4, ICMP echo, and the checks of the header of UDP and TCP (`parse`). For a program with a datagram endpoint: the UDP header and its checksum (`udp_header_write`, `udp_data_read`) |
-| Server | `src/programs/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
-| Client | `src/programs/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
-| Module file service | `src/programs/programs` | A client with the same grant: it fetches a module file and stores it in the store `programs` of its principal (`MODULE_CONTRACT.md`, "A program from a disk") |
-| QUIC server | `src/programs/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
-| Remote service | `src/programs/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
+| Server | `src/modules/demonstrations/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
+| Client | `src/modules/demonstrations/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
+| Module file service | `src/modules/system/programs` | A client with the same grant: it fetches a module file and stores it in the store `programs` of its principal (`MODULE_CONTRACT.md`, "A program from a disk") |
+| QUIC server | `src/modules/demonstrations/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
+| Remote service | `src/modules/system/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
 | Peer | `tools/modustool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
 
 The kernel has no network code.
@@ -82,7 +82,7 @@ A pass is one read or one write of each byte of a payload by one program. The ta
 | Leaves | TCP | 1: the copy | 0 over the data: a copy of 8 bytes of the header |
 | Leaves | UDP | 2: the copy, then the UDP checksum | 0 over the data: a copy of the 8 bytes of the header |
 
-The network service counts its passes. For each endpoint and each direction it counts the datagrams or the segments, their bytes, the bytes of each pass, and the bytes of the data among them (`data_pass` in `src/programs/network`, called at each place that reads the bytes). When an endpoint ends, the log has two lines: a measure, "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: 1.00 on receive (...), a fraction on send (...); the bytes of the data that this service read on send: 0", and the structural fact, "network: the endpoint of server, TCP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must". The machine tests of `net`, `server` and `quic_echo`, and the test `iommu` for `net`, wait for the second line. It is a count of passes, not a speed.
+The network service counts its passes. For each endpoint and each direction it counts the datagrams or the segments, their bytes, the bytes of each pass, and the bytes of the data among them (`data_pass` in `src/modules/system/network`, called at each place that reads the bytes). When an endpoint ends, the log has two lines: a measure, "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: 1.00 on receive (...), a fraction on send (...); the bytes of the data that this service read on send: 0", and the structural fact, "network: the endpoint of server, TCP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must". The machine tests of `net`, `server` and `quic_echo`, and the test `iommu` for `net`, wait for the second line. It is a count of passes, not a speed.
 
 The one copy on receive cannot leave with this device. The device chooses the place of a frame before any program knows whose frame it is, so one program that is not the receiver must read the headers, and the bytes must then move to the receiver. A device that gives each endpoint its own receive queue, and steers frames by the destination port, removes the copy on receive too; the device of the test machine has no such queues.
 
@@ -104,7 +104,7 @@ The design: `src/md/infrastructure/network_data_path.md`, "The send with no copy
 |---|---|---|
 | The headers of Ethernet and IPv4 of a frame that arrives, with the IPv4 checksum | The network service | `network.parse` |
 | The lengths of the header of UDP or TCP of a payload that arrives | The network service | `network.parse` |
-| The local port and the remote of a payload that arrives, against the endpoints and their grants | The network service | `arrived` in `src/programs/network` |
+| The local port and the remote of a payload that arrives, against the endpoints and their grants | The network service | `arrived` in `src/modules/system/network` |
 | The checksum of a segment that arrives | The program | `tcp.step`: a wrong one adds to `Table.bad_checksums`, changes no connection and gets no answer |
 | The checksum of a datagram that arrives | The program | `network.udp_data_read` with the rule `Verify`. A QUIC program gives the rule `Do_Not_Verify`: QUIC authenticates each packet, so the checksum adds nothing (`docs/QUIC.md`, "2. The form of the library") |
 | The source port of a payload that leaves: a local port of the endpoint | The network service, in its copy | `header_granted` |

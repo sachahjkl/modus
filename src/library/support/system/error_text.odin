@@ -3,7 +3,7 @@ package system
 import op "modus:contract/operation"
 
 // frame_text writes one frame of a stack trace. With the debug object of
-// its module: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)".
+// its module: "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)".
 // Without: "fault + 0x1478", with the name of the module in the boot image,
 // or the start of its hash. A frame that no module record holds is its
 // address. `number`: frame 0 is the instruction, each next frame a return

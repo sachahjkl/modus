@@ -1,6 +1,7 @@
 package modustool
 
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 // Each folder of the sources of the system is a folder of the repository:
@@ -8,7 +9,7 @@ import "core:testing"
 @(test)
 source_folders_are_folders_of_the_repository :: proc(t: ^testing.T) {
 	folders := SOURCE_FOLDERS
-	testing.expect_value(t, len(folders), 8)
+	testing.expect_value(t, len(folders), 7)
 	for folder in folders {
 		testing.expectf(t, os.is_dir(folder), "%s is not a folder of the repository", folder)
 	}
@@ -54,7 +55,7 @@ source_library_package_folder_of_an_import :: proc(t: ^testing.T) {
 // library that imports a kernel part then does not compile.
 @(test)
 the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
-	for folder in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_SUPPORT + "/system", SOURCE_FOLDER_PROGRAMS + "/root", SOURCE_FOLDER_MODULES + "/drawing", SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_KERNEL + "s", "src", ""}) {
+	for folder in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_SUPPORT + "/system", SYSTEM_MODULE_SOURCES + "root", LIBRARY_MODULE_SOURCES + "drawing", SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_KERNEL + "s", "src", ""}) {
 		testing.expectf(t, !source_folder_takes_kernel_library(folder), "%q does not take the kernel parts", folder)
 	}
 	for folder in ([]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_KERNEL + "/iommu", SOURCE_FOLDER_KERNEL + "/acpi_processors", TOOL_SOURCE_FOLDER}) {
@@ -65,6 +66,83 @@ the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
 	for build in module_builds {
 		testing.expectf(t, build.kernel == (build.source == SOURCE_FOLDER_KERNEL), "the module %s: a kernel compiles the folder of the kernel", build.name)
 	}
+}
+
+// The group of a module is the folder of its source. Refused first: a
+// folder that is no group, a group with no module, a folder beside a group,
+// the folder of a group alone, a group whose name a longer folder starts
+// with. Then the table and the tree: each row that is not a kernel is in a
+// group, each folder of a group is a row, src/modules holds the groups and
+// nothing else, no two rows have one name, and each program has an entry.
+@(test)
+the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
+	for source in ([]string{"", SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_MODULES + "/root", SOURCE_FOLDER_MODULES + "/programs/root", SYSTEM_MODULE_SOURCES, SOURCE_FOLDER_MODULES + "/systems/root", "src/programs/root"}) {
+		_, found := module_group_of_source(source)
+		testing.expectf(t, !found, "%q is in no group", source)
+	}
+	starts := MODULE_GROUP_SOURCES
+	for start, group in starts {
+		found_group, found := module_group_of_source(strings.concatenate({start, "a_module"}, context.temp_allocator))
+		testing.expectf(t, found && found_group == group, "%sa_module is in the group %v", start, group)
+	}
+
+	names := make(map[string]bool, context.temp_allocator)
+	sources := make(map[string]bool, context.temp_allocator)
+	for build in module_builds {
+		testing.expectf(t, !names[build.name], "two rows of the table of the modules have the name %s", build.name)
+		names[build.name] = true
+		sources[build.source] = true
+		if build.kernel {
+			continue
+		}
+		_, found := module_group_of_source(build.source)
+		testing.expectf(t, found, "the source %s of the module %s is in no module group", build.source, build.name)
+		if build.program {
+			testing.expectf(t, module_source_declares_entry(build.source), "the program %s has no entry function in %s", build.name, build.source)
+		}
+	}
+	entries, error := os.read_all_directory_by_path(SOURCE_FOLDER_MODULES, context.temp_allocator)
+	testing.expect_value(t, error, nil)
+	group_folders := make(map[string]bool, context.temp_allocator)
+	for start in starts {
+		group_folders[start[:len(start) - 1]] = true
+	}
+	for entry in entries {
+		folder := strings.concatenate({SOURCE_FOLDER_MODULES, "/", entry.name}, context.temp_allocator)
+		testing.expectf(t, group_folders[folder], "%s is no module group: a module is in the folder of its group", folder)
+	}
+	for start in starts {
+		modules, list_error := os.read_all_directory_by_path(start[:len(start) - 1], context.temp_allocator)
+		testing.expectf(t, list_error == nil && len(modules) > 0, "the group %s holds no module", start)
+		for entry in modules {
+			testing.expectf(t, entry.type == .Directory && sources[strings.concatenate({start, entry.name}, context.temp_allocator)], "%s%s is no row of the table of the modules", start, entry.name)
+		}
+	}
+}
+
+// module_source_declares_entry says if a source folder declares the
+// procedure entry at the start of a line of a file that is not a test.
+@(private = "file")
+module_source_declares_entry :: proc(folder: string) -> bool {
+	paths, listed := files_with_suffix(folder, ".odin")
+	if !listed {
+		return false
+	}
+	for path in paths {
+		if library_source_is_a_test(path) {
+			continue
+		}
+		text, read := read_file(path)
+		if !read {
+			continue
+		}
+		for line in strings.split_lines(string(text), context.temp_allocator) {
+			if strings.has_prefix(line, ENTRY_NAME + " ::") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // The path from a folder to the root has one ".." for each part.

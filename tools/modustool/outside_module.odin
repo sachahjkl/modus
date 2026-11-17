@@ -384,8 +384,8 @@ THIRD_PARTY_EXAMPLE_FOLDER :: BUILD_FOLDER + "/third_party_example"
 // needs the file of its import from the folder of the system while its
 // own file goes to the folder of the copy.
 OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
-	{name = "tally", source = PROGRAM_SOURCES + "tally", build_file = "name: tally\n"},
-	{name = "agenda", source = MODULE_SOURCES + "agenda", build_file = "name: agenda\nimports: calendar\nlibrary: no\n"},
+	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", build_file = "name: tally\n"},
+	{name = "agenda", source = DEMONSTRATION_MODULE_SOURCES + "agenda", build_file = "name: agenda\nimports: calendar\nlibrary: no\n"},
 }
 
 outside_module_examples_check :: proc() -> bool {
@@ -574,7 +574,7 @@ outside_program_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: 
 	}
 	module_name := faults ? OUTSIDE_FAULT_PROGRAM : OUTSIDE_DISK_PROGRAM
 	build_file := faults ? "name: " + OUTSIDE_FAULT_PROGRAM + "\ndefines: BUILT_OUTSIDE=true FAULTS_AFTER_THE_START=true\n" : "name: " + OUTSIDE_DISK_PROGRAM + "\ndefines: BUILT_OUTSIDE=true\n"
-	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = build_file}
+	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = TEST_MODULE_SOURCES + DISK_PROGRAM_MODULE, build_file = build_file}
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
 	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", module_name)
 	file = read_file(join(out, ".module")) or_return

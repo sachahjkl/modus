@@ -948,7 +948,7 @@ compaction_of_sparse_leaves :: proc(t: ^testing.T) {
 }
 
 // A model of the version index of one object, with the rule of the engine
-// (src/programs/storage/engine.odin, version_add): at the limit of the versions
+// (src/modules/system/storage/engine.odin, version_add): at the limit of the versions
 // the oldest goes; when the last leaf of a full index is full, the leaves
 // are compacted. A long run where the retention rule keeps one version in
 // each leaf, then many writes, and 30000 restores in a row: no add fails,

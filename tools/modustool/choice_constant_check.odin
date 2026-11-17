@@ -19,7 +19,7 @@ import "core:strings"
 // members or more is refused, unless the short list of exceptions below
 // names it with its reason.
 
-CHOICE_CONSTANT_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_LIBRARY, TOOL_SOURCE_FOLDER}
+CHOICE_CONSTANT_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_LIBRARY, TOOL_SOURCE_FOLDER}
 
 // The depth of the constants that a value names through other constants
 // (B :: A + 1): past it, the value is not read. It ends a cycle too.
@@ -108,7 +108,7 @@ CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
 	{SOURCE_FOLDER_KERNEL + "/acpi_processors", "ENTRY", .First, "the entry types of the ACPI table APIC (ACPI 6.5, section 5.2.12): an entry of another type is legal and is skipped by its length"},
 	{SOURCE_FOLDER_SUPPORT + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
 	{SOURCE_FOLDER_PRIVATE + "/input/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
-	{SOURCE_FOLDER_PROGRAMS + "/input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
+	{SYSTEM_MODULE_SOURCES + "input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
 	{SOURCE_FOLDER_SUPPORT + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
 	{SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},
 	{TOOL_SOURCE_FOLDER, "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
@@ -744,7 +744,7 @@ Enum_Cast_Exception :: struct {
 @(rodata)
 ENUM_CAST_EXCEPTIONS := [?]Enum_Cast_Exception {
 	{SOURCE_FOLDER_KERNEL + "/enter.odin", "op.Operation", 1, "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
-	{SOURCE_FOLDER_PROGRAMS + "/errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
+	{DEMONSTRATION_MODULE_SOURCES + "errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
 	{TOOL_SOURCE_FOLDER + "/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
 }
 

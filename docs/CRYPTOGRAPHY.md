@@ -121,7 +121,7 @@ Programs reach the primitives through one module, `cryptography`, so the code is
 
 A call from `src/library/support/quic`, through its procedure table `quic.Cryptography`: the seal of a 1-RTT packet is one call of `seal_with_chacha20_poly1305` with the key, the nonce, the header as additional data, the frames, and the place of the result.
 
-`src/modules/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
+`src/modules/libraries/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
 
 | Export | Parameters | Result |
 |---|---|---|
