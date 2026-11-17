@@ -134,7 +134,7 @@ For each, the check copies the sources with no change to a folder outside `src`,
 3. the import table names the hash of each import of the build of the system;
 4. the debug object is there, no path of it starts with `/`, and it names a source of the copy by the name of the folder of the copy.
 
-**Why the bytes are not compared.** The compiler orders the procedures of a module by the path of its packages ([repository_layout.md](repository_layout.md), "What the move of the folders showed"). The package of the copy has another path than the package of the system, so the order can differ with the same procedures. The check prints the two hashes and says whether they are equal. It is a line of fact, not a condition.
+**Why the bytes are not compared.** The compiler orders the procedures of a module by the path of its packages ([repository_layout.md](repository_layout.md), "The hazards of a move"). The package of the copy has another path than the package of the system, so the order can differ with the same procedures. The check prints the two hashes and says whether they are equal. It is a line of fact, not a condition.
 
 **The test that breaks this design on its first day** is the second example. A module with an import needs the file of the import from the folder of the system while its own file goes to the folder of the developer, and the check of the declarations must find a source that is in no folder of the system. A design with one folder for both fails on it.
 

@@ -1,193 +1,275 @@
 # The layout of the repository
 
-Everything that becomes the system is in one folder, `src`. A program of a third party imports the packages of the system through one source library, `modus`. This file is the design of that layout and of the move that reaches it. Both are built. "The order of the move" says what each step did.
+Everything that becomes the system is in one folder, `src`. A program of a third party imports the packages of the system through one source library, `modus`. This file is the design of that layout: the folders, the parts of the library, the rules of the imports that the tool holds, the split of the tool, and the steps that reach the target layout from the layout of today.
 
-The term source library is in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Source library". The flag of the compiler for a source library is `-collection`.
+What changed: the private half of a single module and the kernel logic leave the shared library, the programs and the other modules become one folder of modules by group, and the tool becomes packages behind one command. The source library `modus` and its one flag stay as they are.
 
-## The layout before the move, and its two faults
+The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Source library", "Private part", "Kernel part", "Module group", "Test module". The flag of the compiler for a source library is `-collection`.
 
-The sources of the system were seven folders at the root, beside the folders that are not the system:
+## Purpose
 
-- `kernel`, `boot`, `runtime`, `programs`, `modules`: the kernel, the boot program, the memory procedures in assembly, the programs, the modules that are not programs.
-- `contract`, `support`: the two source libraries. A source imports `"contract:ring"` and `"support:system"`. The tool gave the compiler `-collection:contract=contract -collection:support=support`. The kernel gets the first flag only, so an import of a support package from the kernel does not compile.
-- `tools`, `docs`, `news`, `changelog.d`, `resources`, `flake.nix`.
+- A reader tells what becomes the system from what builds it, tells it and checks it: the system is `src`, the rest is at the root.
+- A reader tells from a folder what its code serves: two parties, several modules, one module, or the kernel alone.
+- Each part of the system that holds logic has host tests. Before this design a test existed only in a package of the library, so the logic of a program moved into the shared library to get its tests, and the library held the private half of single programs.
 
-Two faults of that layout:
+## The constraints
 
-1. A reader cannot tell what becomes the system from what builds it, tells it and checks it. A new folder at the root must be added to several lists of the tool and to the file set of the flake, and one that is forgotten is not checked.
-2. A program outside the repository has no name for the library of the system. `contract` and `support` are common words: they can be the names of the source libraries of that program. And it needs two flags that point at two folders.
+- A program of a third party writes no relative import, and names the library of the system by one name.
+- A program inside the repository imports with the same lines as a program outside it. An example program that is copied out still builds.
+- One spelling for one package: an import line of a package is the same in each file that imports it, the tool too.
+- No relative import in `src`.
+- The kernel imports the contract packages and its own parts only. A contract package imports no support package. This rule is held by a check that stops a build, not by a convention.
+- Each step to the target layout is one commit that builds and passes the checks. A move is made by a command: `git mv`, then one precise rewrite of the import lines and of the paths.
 
-Both faults are removed. The seven folders are under `src`, in the layout below. The two libraries are one source library, `modus`, with the one flag `-collection:modus=src/library`.
-
-## The layout to reach
+## The target tree
 
 ```
 src/
-  md/            the intent of each part (this folder)
-  kernel/        the kernel
-  boot/          the boot program
-  runtime/       the memory procedures in assembly
-  library/       the source library `modus`
-    contract/    what two parties agree on
-    support/     what a program compiles in to use the contracts
-  programs/      the programs of the system
-  modules/       the modules that are not programs
-tools/           the tool that builds, tests and publishes
-docs/            the guides, the working records, the research, the pictures
-news/  changelog.d/  CHANGELOG.md
-resources/       the sources of the resources of the boot image, with their licenses
-flake.nix  flake.lock  AGENTS.md  README.md  LICENSE
-build/           the output, which git ignores
+  md/                          the intent of each part (this folder)
+  kernel/                      the kernel: the package that is the kernel module
+    <part>/                    a kernel part: a pure package with host tests
+  boot/                        the boot program
+  runtime/                     the memory procedures in assembly
+  library/                     the source library `modus`
+    contract/                  what two bodies of code agree on, and nothing else
+    support/                   what two modules or more compile in
+    private/<module>/<part>/   a private part: what one module alone compiles in
+  modules/                     each module of the system, by its module group
+    system/                    the root service, the services, the desktop, the tools of a principal
+    libraries/                 the modules that export functions and have no entry
+    demonstrations/            the programs that show a property to a principal
+    tests/                     the test modules
+tools/modustool/               the tool: one command, in packages
+  foundation/ build/ checks/ resources/ fuzz/ similarity/ machine/ site/
+docs/                          the guides, the research, the pictures, the films, the measures
+news/  changelog.d/  CHANGELOG.md  ROADMAP.md
+resources/                     the sources of the resources of the boot image, with their licenses
+secrets/                       the keys of the publisher, encrypted with sops
+.github/                       the workflows of the releases and of the site
+.project/                      the card of the project
+flake.nix  flake.lock  .sops.yaml  AGENTS.md  README.md  LICENSE
+build/                         the output, which git ignores
 ```
 
 ### What stays at the root, and why
 
 - **`tools/`.** The tool is not a part of the system: it is a program of the host that builds the system. It must build before anything of `src` does. The command of each project is `odin run tools/<tool>`.
-- **`docs/`.** The guides are the documentation, and the site publishes them at addresses made from their names. The working records, the research and the pictures are records of the project.
-- **`news/`, `changelog.d/`, `CHANGELOG.md`.** They report the project to a reader.
-- **`resources/`.** A resource is not written here: the tool converts it from a source of another party (a font, a pointer theme) or from the mark, and each has its license. The site and the README read the same files.
+- **`docs/`.** The guides are the documentation, and the site publishes them at addresses made from their names.
+- **`news/`, `changelog.d/`, `CHANGELOG.md`, `ROADMAP.md`.** They report the project to a reader.
+- **`resources/`.** A resource is not written here: the tool converts it from a source of another party (a font, a pointer theme) or from the mark, and each has its license.
+- **`secrets/`, `.sops.yaml`, `.github/`, `.project/`.** The keys of a release, the workflows that the host of the repository runs, and the card that the host shows. A tool of the host reads each at its fixed place.
 - **`flake.nix`, `AGENTS.md`, `README.md`, `LICENSE`.** The entry points of a repository are at its root.
 
 `src/md` is under `src` because the intent is kept near the code that it explains.
 
 ## The source library `modus`
 
-### The constraints
-
-- A program of a third party writes no relative import, and names the library of the system by one name.
-- A program inside the repository imports with the same lines as a program outside it. An example program that is copied out still builds.
-- The kernel imports the contract packages only. A contract package imports no support package. This rule is held by a check that stops a build, not by a convention. Before the one library, the compiler held it: the kernel got the contract library only.
-- One spelling for one package: an import line of a package is the same in each file that imports it.
-- No relative import in `src`.
-
-### The forms
+The library is one source library, `modus`, in the folder `src/library`, with the one flag `-collection:modus=src/library`. An import line says the part of the library: `modus:contract/ring`, `modus:support/system`, `modus:private/console/line_editor`.
 
 | Form | Import lines | Flags | The rule of the kernel |
 |---|---|---|---|
-| A. One source library whose folder is `src` | `"modus:contract/ring"`, `"modus:support/system"` | One: `-collection:modus=src` | Held by the tool. `"modus:kernel"` and `"modus:programs/clock"` are imports too |
+| A. One source library whose folder is `src` | `"modus:contract/ring"`, `"modus:support/system"` | One: `-collection:modus=src` | Held by the tool. `"modus:kernel"` and `"modus:modules/clock"` are imports too |
 | **B. One source library `modus`, in `src/library`** | `"modus:contract/ring"`, `"modus:support/system"` | One: `-collection:modus=src/library` | Held by the tool |
-| C. The two source libraries of today, under one folder | `"contract:ring"`, `"support:system"`, as today | Two | Held by the compiler |
+| C. Two source libraries, `contract` and `support` | `"contract:ring"`, `"support:system"` | Two | Held by the compiler |
 | D. `modus` for programs, and `contract` kept for the kernel and for the contract packages | `"contract:ring"` in the kernel and inside `contract`; `"modus:contract/ring"` in each other file | Two for a program | Held by the compiler |
 
-### The chosen form: B
+Form B is built:
 
 - One name, `modus`, and one folder that holds the library and nothing else. A source library is a named folder of source packages; `src/library` is exactly that.
 - The name of the library and the name of its folder are two things. The name is `modus`: it is what a source writes before the `:` of an import. The folder is `library`: it says what the folder is among the parts of `src`.
 - One flag, and one entry in the settings of a language server.
-- The import line says what the package is: `modus:contract/ring` is a contract, `modus:support/system` is support.
-- One spelling for one package, in the kernel, in a program of the system and in a program of a third party.
+- One spelling for one package, in the kernel, in a module of the system and in a program of a third party.
 
 Why not the others:
 
-- **A** makes the kernel, the boot program and each program importable packages of the library. A third party points at a folder that holds the whole system.
-- **C** keeps the two common names, and gives a third party nothing that says `modus`.
-- **D** keeps the refusal by the compiler. It was refused because one package then has two import lines, and a writer must know which one a file takes. A contract package that is copied into a program, or a program file that moves into the kernel, changes its imports. It also needs two flags for each program.
-- **The folder named `modus`** (`src/modus`, with the flag `-collection:modus=src/modus`). The system modus is the whole of `src`: the kernel, the boot program and the programs are modus as much as the library is. A folder `src/modus` beside `src/kernel` reads as if the kernel were not a part of modus. The import name stays `modus`, because a program of a third party names the system there, not a part of it.
+- **A** makes the kernel, the boot program and each module importable packages of the library. A third party points at a folder that holds the whole system.
+- **C** keeps two common words as the names, and gives a third party nothing that says `modus`.
+- **D** gives one package two import lines, and a writer must know which one a file takes. A contract package that is copied into a program, or a program file that moves into the kernel, changes its imports.
+- **The folder named `modus`** (`src/modus`). The system modus is the whole of `src`: a folder `src/modus` beside `src/kernel` reads as if the kernel were not a part of modus.
 
-### What form B gives up, and how the rule is kept
+### The three parts of the library
 
-With one source library, `"modus:support/system"` compiles in the kernel. The refusal by the compiler is lost. The tool takes its place, with one rule and one reader:
+- **`contract`**: the records, the constants and the pure procedures that two bodies of code compile in so that they agree: the kernel and a program, two programs, a program and the tool, the boot program and the kernel. A contract package holds no kernel operation call, and imports no support package.
+- **`support`**: the code that two modules or more compile in to use the contracts: `system` (the kernel entry, the rings, the loader), `interface`, `graphics`, `display`, `tcp`, `quic`, `storage`, `sentence`.
+- **`private`**: the private parts. `src/library/private/<module>/<part>` is a package that the module `<module>` alone compiles in, with its host tests. The folder of a module is named by the name of the module, not by its path, so the move of a module to another module group changes no import line of a private part.
 
-- **The rule**: a source of `src/` that is not a test imports a package of the base library or of the library `modus` only, and a package of the core library is refused. A test imports a package of the core library only with `#+build !freestanding` as its first build line, so that no build of the system reads it. The kernel imports a package under `modus:contract/` only, and a contract package imports no support package. A source that is not a test imports no relative path; a host test and a file of the copy of the cryptography reach a folder of the repository by one.
-- **Why this is complete**: if no file of `src/` imports outside its list, no chain of imports from the kernel reaches a support package, and no source that a build of the system reads reaches the host through a package of the core library.
-- **The reader** is the parser of the compiler's own library, which the tool already uses for the declaration index. It reads each file of `src/`, also a file that a build tag leaves out: the check is stricter than the compiler, never looser.
-- **When**: at the start of each build, not only in `modustool check`. A writer who adds the import gets a build that stops with the file and the line, as the compiler stopped before.
-- It replaces the loop of `modustool check` that compiled each contract package with the contract library only.
+A format that only the kernel reads is not a contract, even when the hardware or the firmware writes it: a contract exists so that two bodies of code compile the same definition, and the hardware compiles nothing. Such a package is a kernel part.
 
-The subtle points of the rule, each with its reason:
+### Where the private part of a module lives: the chosen form
 
-- **A path with `..` is refused.** `"modus:contract/../support/system"` starts as a contract package, and the compiler follows it to a support package. A check of the start of the path alone lets it pass.
-- **A relative import of a contract package is refused too.** It reaches no support package, but it gives one package two import lines.
-- **A test that imports the core library names its build line.** The line keeps the file out of every build of the system, so the check does not prove that the kernel is freestanding: the compile of the kernel does, with its target. A file that the manifest of the cryptography of Odin names keeps the imports of its origin, which `modustool cryptography-origin` proves with the listed changes only.
-- **The vendor library is refused.** The compiler of the project has none, and no contract needs one.
-- **A file that the parser cannot read whole is refused as a file.** An import after an error of syntax can be unread. An import inside a procedure is such an error.
-- **A foreign import is not read.** It names a file of assembly or an object, not a package.
-- **One place for the check in a build.** Each build passes one procedure before its first compiler starts, in the process that starts the module processes. The check runs there one time, not in each module process. The command that builds one module by hand runs it too.
+**The chosen form: a third part of the library, `src/library/private/<module>/<part>`, imported as `modus:private/<module>/<part>`.** The tool holds the border.
 
-**The test that breaks this design on its first day**: a source file of the kernel that imports `modus:support/sentence`, and a contract package that imports a support package through a relative path. The build must stop and name each file. A host test of the tool holds both cases, on a small tree, and one more test reads the repository.
+- It needs nothing from the compiler: no new flag, no new setting of a language server. The compiler accepts the import in each file; the check of the imports refuses it outside its module.
+- The tool imports a private part with the same line as its module. The tool is a second reader of five of the sixteen private parts: it writes the disk images of the storage service (`storage_mount`, `storage_object`, `storage_tree`), places a click on the bar of the compositor (`bar`), and signs the rows of a replacement (`replacement_signature`). The fuzzer names a package by the same path.
+- The word `private` tells a third party that the package is not for it, in the import line itself.
 
-**What the end of the contract-only compile gives up.** That loop also compiled each contract package alone, with `-vet`. A contract package that no module and no host test imports is no longer compiled by any command. Today each contract package has an importer.
+Refused forms:
 
-This is the least sure point of the design. If a refusal by the compiler is required, form D is the nearest form that keeps it.
+- **A part under the folder of its module, through a second source library for all the modules** (`-collection:program=src/modules/...`, `program:console/line_editor`). The compiler then accepts `program:console` too, the main package of another module, so the check must refuse more, not less. Each module build, each host test and the tool need the second flag. A module folder then holds packages in its subfolders, and each reader of the tool that takes the files of a module folder whole (the build key, the size counts, the choice check, the export check) must learn to skip them. Its one gain is that the part sits beside its module; the folder `private/<module>` gives the same pairing.
+- **A part under the folder of its module, through a source library that each module build sets to its own folder** (`-collection:part=<the folder of the module>`, `part:line_editor`). The compiler then refuses a part of another module, because no line names it. But the same line names another package in each module, a language server takes one folder for one name, and the tool, which reads five private parts, can name none of them with the line of its module. It breaks "one spelling for one package".
+- **The private parts kept in `support`, with a list of the support packages that one module imports.** A reader of `support` then cannot tell shared code from private code without the list, and the list grows in silence.
+- **The private part inside the package of the module.** A module package has no host test: a test of it builds the whole program for the host.
 
-### What a third party types
+### The kernel parts and the second source library
 
-- In a source: `import "modus:support/system"` and `import operation "modus:contract/operation"`.
+**The chosen form: a second source library, `kernel`, in the folder `src/kernel`, with the flag `-collection:kernel=src/kernel`.** A kernel part is `src/kernel/<part>`, imported as `kernel:<part>`.
+
+The tool gives the flag to exactly these compiles:
+
+- the compile of the kernel module, in each row of the table of the modules that is a kernel;
+- the host test of each folder under `src/kernel`;
+- the compile of the tool, which imports two kernel parts: the fuzz targets of the firmware tables read `acpi_processors` and `iommu`, and the depth of the kernel stack reads `iommu`.
+
+No module of `src/modules`, no host test of the library and no boot program gets it. So the compiler refuses `kernel:iommu` in each of them, with an unknown source library. The check of the imports refuses it too, in each source and test of `src` outside `src/kernel`, because a language server has one set of source libraries for all the folders, and it then compiles the import.
+
+The rules of a kernel part:
+
+- It imports `base:`, a contract package, and another kernel part. It never imports `kernel:` with no package: that names the package of the kernel itself, which imports the part.
+- It is pure: its procedures read values and give values, and it declares no package variable. The state of the kernel stays in the package of the kernel. The check refuses a variable declaration at the level of the package of a kernel part, so that a host test runs each procedure with no machine.
+- It is freestanding as the kernel is: `"contextless"`, no allocator, no `fmt`. Its host tests start with the build line of the host.
+
+Why a second source library for the kernel and not a part `modus:kernel/<part>` of the library: the kernel is one body of code with its own compile, its own target and its own flags, so one more flag costs one line; and the refusal by the compiler comes back for each module build, where it was lost when the two libraries became one. For the modules this costs one flag in each build and gives no refusal (the refused forms above), so the tool holds that border.
+
+Refused forms for the kernel:
+
+- **`src/library/kernel/<part>`, as `modus:kernel/<part>`.** It keeps one flag, but puts code that only the kernel compiles in the library that a third party reads, and the border is held by the tool alone.
+- **The kernel logic kept in `contract`.** A contract package that the kernel alone imports says that two parties agree where only one reads it.
+- **Each part as a file of the package of the kernel.** The package of the kernel has no host test: a test of it builds the kernel for the host.
+
+The packages that become kernel parts are those that the kernel alone reaches: `acpi_processors`, `debug_exception`, `processor_counters`, and `iommu`. Two contract packages that the analysis named stay contracts:
+
+- **`cut_mark`** is reached by the kernel and by three support packages (`information`, `sentence`, `terminal`): it is the one form of the mark of a cut text, which the log lines of the kernel and the records of the programs share.
+- **The rule of a bridge in `iommu`.** The root service reads `bridge_passes_requesters` and `CONFIGURATION_WORDS` to give the devices behind a conventional bridge to one service, as the kernel gives them one domain. That rule leaves `iommu` for a contract package of its own, `bridge_requester`, before `iommu` moves. The formats of Intel VT-d and of AMD-Vi stay with the kernel.
+
+## The module groups
+
+Property 10 says that a program and a library are one thing: a module ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "10. One code module"). The folders `src/programs` and `src/modules` ("the modules that are not programs") said the opposite. They become one folder, `src/modules`, grouped by what each module is for:
+
+- **`system`**: the root service, the device services, the shared services, the desktop, and the tools that a principal uses (`manual`, `monitor`, `log`, `inspect`, `debugger_window`, `pages`, `boot`).
+- **`libraries`**: the modules that export functions and have no entry function, which other modules import (`drawing`, `cryptography`, `math`, `calendar`, `text_shaping`, `interface_module`).
+- **`demonstrations`**: the programs that each show a property to a principal, and the children that a demonstration starts (`node`, `twin`, `locker`).
+- **`tests`**: the test modules. A test module is started or imported by a machine test only, and is wrong on purpose or shows nothing of its own: `test_callee`, `hostile_exports`, `lonely`, `calendar_fixed`, `debug_target`, `iommu_device`, `store_library`.
+
+A module group is not a second format. The module file holds no group; the loader and the root service never read it. A module of `libraries` and a program are the same format, and a module can be a program, a service and a library at once (`tally`). The group says where a source lives, and whether a release ships it.
+
+### How the table of the modules reads the group
+
+The folder is the one fact. Each row of the table of the modules names its source folder from the constant of its group: `SYSTEM_MODULE_SOURCES + "root"`. The tool reads the group of a row from the start of its folder, through one procedure that gives the enum `Module_Group`. A host test of the tool refuses a row whose folder starts with no group, a folder of `src/modules/<group>` that no row names, and two rows with the same name. The two rows of the kernel are outside `src/modules`: the procedure gives them no group, and each reader of the group skips a kernel by its flag `kernel`.
+
+Refused forms:
+
+- **A field `group` beside the folder in each row.** Two facts that say one thing, which can disagree.
+- **The group from the name of the module** (a prefix `test_`). A name is the identity that a principal types; it must not carry a rule of the build.
+- **A list of the test modules in the code of the release.** A new test module that is not in the list ships.
+- **The flag `library` of a row as the group.** The flag is a property of the file: the conversion refuses a segment that is read-only after the load. `cryptography` is in `libraries` and has no flag; the group is a property of the place.
+
+### What a release ships
+
+Today the release volume holds the main boot image of the tests, so a release ships each row with `image = true`, the test modules too: `hostile_exports`, `lonely`, `debug_target`, `iommu_device`, `hostile_terminal`, `calendar_fixed`, `calendar_changed`. Only `test_callee` and `test_caller`, whose rows have `image = false`, and the disk programs are left out.
+
+A release must leave out the group `tests`: a principal has no use for a module that is wrong on purpose. The release image ([release_image.md](release_image.md)) also states that a release ships the bytes that the tests ran. So the boot image of a release is a boot image with no test module, and a machine test boots that exact image: the machine of Secure Boot, which boots the release volume with the test keys. That machine then must need no test module. This is a change of the design of the release image, and comes after the move.
+
+## The tool in packages
+
+The tool is about 104 000 lines in one package of 254 files. Each command compiles the whole package first, and each host test of the tool runs with the 536 others.
+
+**The chosen form: one command, `modustool`, whose package holds the table of the commands, and one package for each concern under `tools/modustool`.** The packages import each other through a source library of the tool, `-collection:modustool=tools/modustool`, so that a package has one import line in each package that imports it.
+
+The packages, in the order of their imports: a package imports only packages above it in this list, because the compiler refuses a cycle.
+
+1. **`foundation`**: what each other package uses. The folders of the sources and of the build, the source libraries and their flags, the table of the modules with its groups, the run of a process, the read and the write of a file, the print of a passed test, the hang bound, the reader of the Odin sources of a folder, the lines of a manifest.
+2. **`build`**: the compile, the description of the exports, the conversion to a module file, the incremental build, the boot images, the boot volumes, the signatures, the system description, the release image, the module of a source outside the repository, and the check of the imports, which each build runs before its first compiler starts.
+3. **`checks`**: the checks of the sources and of the documents, with the readers of the formats of the changelog, the roadmap and the news.
+4. **`resources`**: the commands that make a resource of the boot image: the mark and its pictures, the fonts, the pointer themes, the portraits of the hall of fame.
+5. **`fuzz`**: the engine, the targets and the corpus.
+6. **`similarity`**: the similarity finder.
+7. **`machine`**: QEMU, the scenarios, the peer of the network, the screenshots, the films, the measure runs, the power loss and the network block device.
+8. **`site`**: the pages of the site.
+
+A declaration that a lower package needs from a higher one moves down to the lowest package that each reader can import. The state that a command sets for its process (the folder of the modules of a build, the debug information, the folder of the imports of an outside module) moves to `foundation` with the procedures that read it.
+
+What the split gives: a border between the concerns that the compiler holds, the host tests of one package at a time, and a reader who finds a concern in one folder. What it does not give: a fault of the site still stops the compile of the command, because the one command compiles in each package.
+
+Refused forms:
+
+- **One binary for each concern, which the command starts.** A fault of one package then stops only its own command, but the tool has several outputs that each command must find and build, and a fault of a package is found by `-vet` of the check in any case.
+- **Relative imports between the packages of the tool.** One package then has two import lines: `"foundation"` from the command and `"../foundation"` from a package.
+- **The site in a tool of its own.** The site reads the table of the modules, the declarations and the measures that the other packages hold: it imports them in each form.
+
+### The tool built once
+
+The wrapper of the flake compiles the whole tool at each call. The check of the flake builds the tool as a derivation of its own, from the folders that its compile reads, and runs the binary: Nix builds it again only when one of those folders changes. In the development shell, the binary compares the hash of its own sources with the hash that its build wrote beside it, and compiles itself again when they differ, before it runs the command. A time of a file is not the identity of a source, so the hash, and not the modification time, decides.
+
+The compile time of the tool is measured before this change and after the split: no claim of speed is made without the number.
+
+## The rules of the imports
+
+The tool holds each rule at the start of each build, and in `modustool check` ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The imports of the sources of the system"). The reader is the parser of the library of the compiler. It reads each file of `src/`, also a file that a build tag leaves out: the check is stricter than the compiler, never looser.
+
+- A source of `src/` that is not a test imports a package of `base:` or of `modus:` only, and a kernel source also `kernel:`. A package of the core library is refused: it reaches the host.
+- A test imports a package of the core library only with `#+build !freestanding` as its first build line.
+- The kernel and a kernel part import a contract package or a kernel part only. A contract package imports no support package and no private part.
+- `kernel:` is refused in each file of `src/` outside `src/kernel`.
+- A private part `modus:private/<module>/...` is imported only by a file of the folder of the module `<module>` or of another private part of the same module. A name of `<module>` that names no row of the table of the modules is refused.
+- The owners of a package of the library are the bodies of code (the kernel, the boot program, each module) whose chain of imports reaches it. A support package has two owners or more. A private part has its module as its one owner. A contract package that the kernel alone owns is refused: it is a kernel part. The tool is not an owner: it builds the system and is not a part of it. A refusal names the one owner, so the message says where the package goes.
+- A path with `..` is refused. A relative import is refused in a source; a host test and a file of the copy of the cryptography of Odin reach a folder of the repository by one.
+- A file that the parser cannot read whole is refused as a file.
+
+**Why this is complete**: if no file of `src/` imports outside its list, no chain of imports from the kernel reaches a support package, and no source that a build of the system reads reaches the host.
+
+**The test that breaks this design on its first day**: a support package that only one module imports, a private part of `console` that `compositor` imports, a kernel part that a module imports, and a kernel part with a package variable. The build must stop and name each file. A host test of the tool holds each case on a small tree.
+
+**What the contract-only compile gave up.** A contract package that no module and no host test imports is compiled by no command. Today two contract packages have no importer in `src`: the tool reads `operation_sequence`, the format of a sequence of the fuzzing of the kernel operations, and `release`, the version numbers. The owner rule does not refuse them, because the kernel does not own them; the compile of the tool compiles each.
+
+## What a third party types
+
+- In a source: `import "modus:support/system"` and `import operation "modus:contract/operation"`. A private part and a kernel part are not for it: the first says so in its line, and the second is in no source library that it gets.
 - For a language server and for `odin check`: one source library, `modus`, at `<the repository of modus>/src/library`.
-- To build a module: the tool. The converter that makes a module file from a linked file is a part of the tool, and the compile needs about fifteen flags that only the tool knows. A build with no tool is not a path that the project supports.
-- The build of a module whose source is outside the repository has its own design: [third_party_module.md](third_party_module.md). The import lines and the one flag were fixed first, so that design changed no source.
+- To build a module: the tool ([third_party_module.md](third_party_module.md)).
 
-**The proof of the second constraint.** `modustool check` copies the sources of two modules of the system to a folder outside `src`, with no change, and builds a module from each copy with the command of a developer of another project ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "A module from a source outside the repository"). The copies are in the folder of the build, inside the repository: the sources of a copy hold no relative path to the library, so its folder does not matter. A copy in another repository was refused as a proof: the check then needs a second repository, and proves nothing more about the import lines.
+**The proof of the second constraint.** `modustool check` copies the sources of two modules of the system to a folder outside `src`, with no change, and builds a module from each copy with the command of a developer of another project ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "A module from a source outside the repository").
 
 The words "SDK" and "collection" are not terms of the system: the term is source library, and `-collection` is only the name of the flag.
 
-## The hazards of the move
+## The hazards of a move
 
-1. **The lists of folders in the tool.** The paths were text in many places. A path that is missed is a folder that a check no longer reads, with no error. So each folder of the sources has one named constant, in one file of the tool, and each path of the tool is made from them. A host test of the tool checks that each constant, each source of the table of the modules and each folder of a host test names something. The move of a folder is a change of one constant. What was found, beyond the lists that a reader expects (the library flags, the table of the modules, the folders of each check):
-   - the files that the site reads from the sources: the license files, the sources of the reference tables, the packages of the type cards, the commands of the console;
-   - the files that a command writes into the sources: the font, the portraits of the hall of fame, the release number;
-   - the paths in the messages of the tool, in the first line that the tool writes into a file of the cryptography, in the script of the search of the site, and in one text of a picture for a developer;
-   - the lines that a scenario waits for, and the command with a path that a scenario types;
-   - the relative path from the folder of the boot program to the root, in three settings of its compile. The tool now counts the parts of the folder.
-2. **The build keys.** A path is an input of a build key, and a build record lists files by path. Each key changes at the move, and the build is whole one time. This costs time only.
-3. **The modules must keep their bytes.** A module is compiled with the file names of the sources and not their paths, and an import line is not in the output. So each module file is expected to have the hash of before. This is the proof of a move with no change of behaviour: compare the hash of each module before and after each step ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The hashes of the modules of two builds"). It is not sure: the compiler can order packages by their path. A hash that changes is not a failure of the system, but each picture and each document that shows it changes.
-   **A text in a source is not a comment.** Four sources hold the path of a package in a text that the program draws or prints: the card of the program `interface_elements`, a line of the program `manual`, a fact of the program `server`, and a message of the compatibility layer of the cryptography. A rewrite of such a text changes the bytes of its module, and the width of a text in a window. So a step that is proved by the hashes rewrites the comments only. These four texts change with the documents of the library, where a hash can change, and the pictures of the three windows are viewed then.
-4. **The debug objects change.** A debug object holds the path of each source from the root of the repository. Each path changes, so each debug object, the debug image and each boot volume change.
-5. **The log lines and the pictures that show a path.** A stop report, a stack trace and the debugger show the path of a source with a line. Each becomes four bytes longer. The scenarios of the tool wait for three of these lines, type one command with a path two times, and wait for one line of the debugger: each is made from a constant of the tool. A window that draws a path in a box of a fixed width can cut it or draw over a text: view each picture that shows a path. The pages of the reference of the site show the path of each declaration: the search index and the page of the glossary have a limit of bytes that longer paths can reach.
-6. **The pointers of the documents.** A code span of a guide that names a file of the repository is a link on the site. A path that no longer exists stays as plain code, with no error: the link is lost in silence. So the rule is to rewrite, in the same commit as the move of a folder:
-   - each path in the guides, the glossary, the README, `AGENTS.md` and this folder. The check below proves this part;
-   - each path in a comment of a source.
-   Not rewritten: the news entries and the released sections of the changelog. They are records of their time.
-   The check ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The source paths in the documents") reads about 660 spans, and found no stale path in the documents that it reads. It refuses a span that starts with the name that a folder had at the root. So after the move of a folder, a span that names a package by its old short path is refused too, and is written from the root. This file names old paths as examples in its hazards: they are reworded with the move of their folder.
-7. **A rewrite by prefix is not safe at any place.** The name of a source folder is also a part of a longer path, under the folder of the build and under the folder of the reference pages. `kernel` is the start of `modustool`, and `support` and `contract` are words of prose. Rewrite a path only where it starts: after a code mark, a quote, a parenthesis or a space, never after a `/`.
-8. **The addresses of the site.** The page of a module has the name of the module, and the page of a guide the name of the guide: no address of a page holds a source folder, so no redirect page is needed. Verify it with the host test of the addresses. The links from a page to a source file follow the commit. A link from another site to a source file of the main branch breaks; that is accepted.
-9. **The relative paths that exist.** More files hold a relative path than a search for imports finds. Each one changes when its own folder or its target gets deeper:
-   - the tool (two files) and one test of the QUIC package import the cryptography module by a relative import;
-   - two packages of the library name the assembly file of the host tests by a relative foreign import;
-   - the two assembly files of the host tests include the memory procedures by a path from the root, where the assembler runs;
-   - 31 lines in 14 files read a font of `resources` with `#load` and a relative path: one program (7 lines), two tests of modules, and eleven tests of the support packages. A file under `src/library` is two levels deeper than it was, and a file of a program or of a module one level;
-   - the three `#load` of the boot program have a default path to the folder of the build. The tool gives each path as a setting, so the default is only what a build with no tool reads.
-   One relative import stays as it is: a file of the cryptography imports the folder beside it, and both move together.
-   Two rules read these paths, and one chain uses both. The compiler reads the path of a `#load`, of a relative import and of a foreign import from the folder of the file that holds it. The assembler reads the path of an include from the folder where it runs, the root of the repository. So a foreign import of the assembly file of the host tests counts the folders up from its package, and the include inside that file names the memory procedures from the root.
-10. **The files of another origin.** A file of the cryptography that is taken from the library of the compiler is proven to be its origin with listed changes only. Three things hold a path:
-   - the first line of each of the 40 taken files names the manifest by its path. The tool writes that line from its constant, so the check asks for the new line in each file at the move of the library;
-   - each line of the two manifests starts with the path of a file from the root;
-   - the list of the system files holds the hash of each file that the project wrote. A file of that list whose line changes (a relative path, an import line, a comment that names a path) gets a new hash, which the command of the system hashes prints. Until then its line holds the word that the tool refuses in place of a hash. The hash of each other file of the list stays: it is the proof that the file kept its bytes.
-   A comment of a taken file that names a path cannot be rewritten: the file is its origin with the listed changes and nothing else. No taken file holds such a comment below its first line.
-   The list of the import changes in the tool names the support library: it changes with the import lines.
-11. **The flake.** The file set of the check names each of the seven source folders. After the move it names `./src` whole. The command of the tool in the flake holds the two library flags on one line.
-12. **The history.** Move with `git mv`. Git finds a move as a rename when the file keeps most of its lines, so a step is one commit: the move, and the few lines that the move breaks (a relative path, an include). A commit that only moves does not build, and each step must build. The change of the import lines is another step.
-13. **The branches of other agents.** A branch that was made before the move adds its new files at the old paths. The move runs when no other branch is in flight, and each worktree is made again after it.
-14. **The fixtures of the host tests.** The tests of the tool that build a small tree with the two parts of the library, or with a boot program, place them at the folders of the constants: the tool looks for them there. The tests that read a real file of the sources name it by its constant. The tests that only hold a path as a text of a fixture (a row of a line table, a path of a debug object) do not follow the layout, and stay.
-15. **The record of the decision.** The decision on the layout of the repository names the folder of the boot program and the two libraries. It is amended first, and the glossary term of the source library says that the project has one.
+These held for the move of the seven folders under `src` and the one library, and hold for each step below.
 
-## The order of the move
+1. **The paths of the tool.** Each folder of the sources has one named constant in one file of the tool, and each path of the tool is made from them. A path that is missed is a folder that a check no longer reads, with no error. The new folders get their constants: the private parts, the source library `kernel` and its flag, the four module groups. Some lists name a package by a constant and its name (the folders of the host tests, the exceptions of the choice check, the packages of the fuzz targets): each such line changes with its package.
+2. **The hashes of the modules.** A module is compiled with the file names of the sources and not their paths, and an import line is not in the output. But the compiler orders the packages by their path, so a move that changes the order of the packages of a module changes its hash, with the same size and the same procedures in another order. After the first move, 64 of 89 modules had another hash; after the one library, 66. So the hashes are a proof of a move only for the modules whose order did not change. Each step below says which modules are expected to keep their hash; `modustool module-hashes` compares a build with a record ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The hashes of the modules of two builds"). A hash that changes and is not expected is read to its cause. The full check is the proof.
+3. **A text in a source is not a comment.** A source that holds a path in a text that its program draws or prints changes its module and the width of a text in a window. A step that rewrites a path in a text says so, and the pictures of its windows are viewed.
+4. **The debug objects and the paths in the windows.** A debug object holds the path of each source from the root. A stop report, a stack trace and the debugger show it. The module groups make the path of a module longer: `src/modules/demonstrations/` is 14 bytes longer than `src/programs/`. View each picture that shows a path (`errors`, `inspect`, the debugger) against the rule of the text box ([`../features/text_box.md`](../features/text_box.md)). The first move made a stack trace four bytes longer, and the windows of `errors` and `inspect` cut it; that fault is fixed, and each frame now shows whole.
+5. **The pointers of the documents.** A code span of a guide that names a file of the repository is a link on the site; a path that no longer exists stays as plain code, and the link is lost in silence. So each path in the guides, the glossary, the README, `AGENTS.md`, this folder and the comments of the sources is rewritten in the commit of the move. The news entries and the released sections of the changelog are records of their time and stay. The check ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The source paths in the documents") refuses a span that starts with a folder that no longer exists: each step adds its old folders to that list.
+6. **A rewrite by prefix is not safe at any place.** A name of a folder is also a part of a longer path, and after a move the old start is the start of the new path: `src/modules/drawing` is the start of nothing after the move, but a rewrite that runs twice gives `src/modules/libraries/libraries/drawing`. Rewrite a path only where it starts (after a code mark, a quote, a parenthesis or a space, never after a `/`), with the name followed by `/`, a quote or a code mark, and run each rewrite one time from one list of the names and their new folders. A name of a module is also a name of a package or a word: `storage`, `network`, `log`, `boot`, `programs`.
+7. **The relative paths.** The compiler reads the path of a `#load`, of a relative import and of a foreign import from the folder of the file that holds it, and the assembler reads an include from the root, where it runs. Each one changes when its folder gets deeper. Each step below counts them.
+8. **The files of another origin.** A taken file of the cryptography of Odin names its manifest by its path, and the list of the system files holds the hash of each file that the project wrote. No step below moves the cryptography or names it in a manifest, so no line of a manifest changes.
+9. **The branches of other agents.** A branch that was made before a move adds its files at the old paths. A move runs when no other branch is in flight, and each worktree is made again after it. The steps of the private parts and of the kernel parts touch few files and run between two batches; the module groups and the split of the tool touch most files of the repository and run alone.
+10. **The history.** Move with `git mv`. Git finds a rename when a file keeps most of its lines, so a step is one commit: the move, and the few lines that the move breaks. A commit that only moves does not build.
+11. **The fixtures of the host tests.** The tests of the tool that build a small tree place its parts at the folders of the constants. A test that only holds a path as a text of its small tree stays.
+12. **A folder named with no `/` is not a path for the check.** A sentence that lists the folders of a check by their names alone is found by a search for each name as a whole span.
 
-Each step is one commit that builds and passes its tests. A step that only moves files proves itself by the hashes of the modules.
+## The steps
 
-1. **The decision and the checks.** Built. The decision on the layout is amended. The check of the source paths in the documents runs in `modustool check` (hazard 6). The command `module-hashes` records the hash of each module of a build, and compares a build with a record.
-2. **One constant for each path of the tool.** Built. No file moved. Each folder of the system has one named constant, and each path of the tool is made from them (hazard 1). The value of each constant is the path of before, so each command and each build key is the same text: the hashes of the modules are those of step 1.
-3. **Move the folders that few documents name**: `runtime`, `boot`, `kernel`, to `src/`. Built. With `git mv`, the three constants, the file set of the flake, the paths of the documents and of the comments for these three. With the move of `runtime`: the include of the two assembly files of the host tests, and the two relative foreign imports of the library. With the move of `boot`: the default paths of its three `#load`. The expected lines of the scenarios follow the constants. The hashes of the modules are those of step 1; the debug objects change.
-4. **Move `modules` and `programs`** to `src/`, in the same way. Built. Most of the pointers of the documents are here. With it: the three relative imports of the cryptography module, and the relative `#load` of a font in one program and in two tests of modules. No text that a program draws changes (hazard 3). View the pictures that show a path: a stop report, a stack trace, the debugger.
-5. **Move `contract` and `support`** to `src/library/`. Built. The two flags stay, with their new folders: `-collection:contract=src/library/contract -collection:support=src/library/support`. No import line changes, so the compiler still holds the rule of the kernel. With it: the relative `#load` of a font in the tests of the support packages, the two relative foreign imports again, the first line of each taken file of the cryptography, the two manifests and the hashes of the system files (hazards 9 and 10).
-6. **One source library.** Built. In one commit: the check of the imports of the kernel and of the contract packages, with its host tests; the one flag `-collection:modus=src/library` in the tool and in the flake; each import line (`"contract:` becomes `"modus:contract/`, `"support:` becomes `"modus:support/`); the list of the import changes of the cryptography and the hashes of its system files; the end of the two old flags and of the contract-only compile. In the tool, the two libraries of the constants are one, whose folder is `src/library`. The check and the loss of the refusal by the compiler are in the same commit, so the rule is held at each commit. An import line is not in the output of the compiler, so no module is expected to change; the proof is the full check.
-7. **The documents of the library.** Built. The glossary term, the guide of the module contract, the README, the four texts of the sources that name a package (hazard 3), and the example of a program that is checked from a copy outside `src`, as the proof of the second constraint. The hashes of the four modules that hold one of the four texts change here, and of each module that compiles in the message of the cryptography.
+Each step is one commit that builds and passes its checks. A rule of the imports enters as a refusal in the commit where the tree first holds it: no rule runs first as a report that does not fail, because such a mode is a path that the next commit removes. The counts are from the tree before the first step.
 
-The full check runs after step 7.
+1. **The rule of a bridge as a contract.** By hand, not by a command: `CONFIGURATION_WORDS`, `express_port_type`, `bridge_passes_requesters` and `bridge_shared_requester` leave `iommu` for the new contract package `bridge_requester`, with their host tests. The kernel (two files) and the root service (one file) import it. Expected: the two kernels and `root` change their hash; each other module keeps it.
+2. **The kernel parts.** `git mv` of four folders, 10 files, from `src/library/contract/` to `src/kernel/`: `acpi_processors`, `debug_exception`, `iommu`, `processor_counters`. One rewrite of 9 import lines (6 in 6 files of the kernel, 3 in 2 files of the tool) from `"modus:contract/<part>"` to `"kernel:<part>"`. By hand in the tool: the source library `kernel` and its flag on the three compiles, the 4 folders of the host tests, the 4 exceptions of the choice check, the 2 packages of the fuzz targets, the rules of a kernel part in the check of the imports, the flag of the tool in the flake. Paths of the documents: 6 spans in 4 files with the folder, and 4 spans of `contract/iommu` in 3 intent files. No relative path. Expected: the two kernels change their hash (their package order changes); each other module keeps it.
+3. **The private parts.** `git mv` of 16 folders, 49 files and 19 343 lines, from `src/library/support/` to `src/library/private/<module>/`: `addresses` (`inspect`); `bar`, `palette` (`compositor`); `console_language`, `console_results` (`console`); `debugging` (`debugger`); `information`, `manual_navigation`, `source_comment_markdown` (`manual`); `kernel_events_rounds` (`kernel_events`); `keyboard_layout` (`input`); `replacement_signature` (`root`); `storage_mount`, `storage_object`, `storage_retention`, `storage_tree` (`storage`). One rewrite of 52 import lines in 37 files (38 lines in 27 files of `src`, 14 lines in 10 files of the tool) from `"modus:support/<part>"` to `"modus:private/<module>/<part>"`, from one list of the 16 pairs. By hand in the tool: 18 lines that name a part by its constant (the folders of the host tests, the choice check, the fuzz targets), and the owner rules of the check. One relative `#load` of a font, in the test of `bar`, gets one `../` more. Paths of the documents: 73 spans in 37 files. Expected: the 9 modules that import a part change their hash (`compositor`, `console`, `debugger`, `input`, `inspect`, `kernel_events`, `manual`, `root`, `storage`); each other module keeps it.
+4. **The module groups.** `git mv` of 101 folders, 176 files: the 85 of `src/programs` and the 16 of `src/modules`, to `src/modules/<group>/`. The group of each module is written once, in the rows of the table of the modules; the moves and the rewrites are made from that table. One rewrite of the 101 sources of the table, and of the paths: 234 spans in 80 files (17 guides, 8 intent files, the README, 32 sources of `src`, 22 files of the tool). Relative paths: 10 `#load` of a font one level deeper (7 in `vector_glyphs`, 3 in the tests of `drawing` and `text_shaping`), and the 2 relative imports of the module `cryptography` in the peer of the tool. The 5 `#load` of the portraits of `hall_of_fame` are inside its folder and stay. Expected: each module keeps its hash, because a module folder stays after `src/library` in the order of the paths; the debug objects change; view the windows that show a path (hazard 4).
+5. **The tool built once.** Measure the compile time of the tool. The flake builds the tool as a derivation and the check runs the binary; in the development shell the binary compiles itself again when the hash of its sources changes. No file of `src` changes, so each module keeps its hash.
+6. **The tool in packages.** One commit for each package, from the bottom of the list: `foundation` first, then each package that imports only the packages that exist. In each commit: `git mv` of the files of the package, a rewrite of their package clause, and the prefix of the package on each name that another package reads, from the list of the declarations that the declaration index of the tool gives. The count of those names is measured by the first commit; no count exists before it. The paths of the documents: 168 spans of a file of the tool in 54 files. No file of `src` changes, so each module keeps its hash. Measure the compile time of the tool again.
 
-## What the move of the folders showed
+The full check runs after the last step. A step whose expected hashes do not hold is read to its cause before the next step.
 
-- **The hashes of the modules changed, and the reason is the order.** 64 of the 89 modules have another hash after the move, with the same size. In the LLVM IR of a module the set of the procedures is the same and their order is another: the compiler orders the packages by their path. So the hashes of the modules are not the proof of a move. The proof is the full check: each machine test passes, two builds give the same bytes, and a module is the same bytes with and without debug information. The 25 modules that keep their hash import no package of the library.
-- **The one library changed the order again.** After the change of the import lines, 66 of the 89 modules have another hash, with the same size and the same set of procedures in another order: the two libraries are one, so the compiler orders their packages together. An import line is not in a module, but the order that follows from it is. Each contract package has an importer, so each is still compiled by a build.
-- **A longer path shows where a text had no room.** The stack trace of a stop report is cut at the edge of its box in the windows of `errors` and of `inspect`: four more bytes for each frame. The roadmap holds the correction.
+## The subtle points
 
-- **The constants held.** In the tool, the move of the seven folders is seven lines of one file. One text was left outside them: a sentence of the page of the modules of the site named the folder of the programs. It is made from the constant now.
-- **A folder named with no `/` is not a path for the check.** Five sentences of the guides listed the folders of a check or of the site by their names alone. The check of the source paths reads a span that starts with a name and a `/`, so it cannot see them: they were found by a search for each name as a whole span.
-- **A comment can be a text of a page.** The comments of the contract packages and of the kernel become pages of the reference of the site. Their paths are longer on those pages.
-- **An example of a log line is a path too.** The guides, the glossary and the comments quote a stop report and a command of a breakpoint with the path of a source. Each quote changes with the move, in a fence of code also: the system prints the new path.
-- **A fixture is not a pointer.** The host tests of the tool hold paths as texts of their own small trees, in strings and in the comments that explain those strings. They stay. A rewrite of the tests of the tool reads only the lines that are whole comments, and never the test of the check of the source paths.
-- **The count of a rewrite.** The proof of a batch is the count of the lines that match before, and no match after. The count of the changed lines of the whole change is smaller than the sum of the batches: a line that names a folder of two steps changes two times and counts one time.
-- **The import lines are regular.** 1308 import lines in 408 files named one of the two libraries, each on one line, with at most one attribute before the word `import`. 20 more lines held an import as a text: the fixtures of the host tests of the tool, the list of the import changes of the cryptography, and one check that looks for one import line. A text is changed by hand, with its test.
-- **The name of a package in prose is the path of its import.** A comment or a guide that names a package writes it as its import does: `modus:contract/ring`. 50 lines did, far fewer than the import lines: most of the prose names a package by its folder. The check of the source paths does not read such a span, because it does not start with a folder.
-- **The record of the choice of the two libraries keeps its words.** That choice describes two libraries and their two names. A new name there says what the choice did not decide.
-- **The record of the choices keeps what is gone.** Five spans of the working record name a file or a folder that was removed before the move. They keep their old text: a new path there names nothing either, and says that the thing was once under `src`.
+- **The owners, not the import lines.** `line_editor` has one program importer, `console`, and one library importer, `palette`, which is a private part of `compositor`: it has two owners, and stays in `support`. `storage_object` has two importers, `storage` and `storage_mount`, and one owner, `storage`. Count the bodies of code whose chain of imports reaches a package, never the files that import it.
+- **The tool is not an owner.** Five private parts are read by the tool too. A package that one module and the tool read is private to that module: the tool builds and tests the system, and a third reader does not make a package shared between modules of the system.
+- **A kernel part is pure.** The check of the package variable is the one guard that keeps a kernel part testable on the host; without it the state of the kernel moves into a part and its host test needs a machine.
+- **The kernel has no suffix of its processor in its file names.** Each kernel file is for x86-64. The rule of the suffixes of a platform (`_amd64`, `_arm64`) applies to the kernel and its parts before a second target is built, and not before.
+
+## The state
+
+Built: the folders under `src`, the one source library `modus`, the check of the imports with the rules of the kernel and of the contract packages, the constants of the paths of the tool, the check of the source paths in the documents, and the command `module-hashes`.
+
+Left: the six steps above, then the boot image of a release with no test module. Each is an entry of [`ROADMAP.md`](../../../ROADMAP.md).
