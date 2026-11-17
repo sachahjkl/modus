@@ -1,6 +1,6 @@
 # The access to a GPU for acceleration
 
-Programs of the system see one graphics interface, and the system writes its implementation from nothing: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One graphics interface: WebGPU with WGSL". This file records how that interface reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
+Programs of the system draw in 2D through the draw table, and WebGPU is the later interface of the GPU: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". When a GPU exists, the drawing module draws the draw table through WebGPU ([../api/draw_table.md](../api/draw_table.md), "The execution"). This file records how WebGPU reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
 
 The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Driver domain".
 
@@ -49,7 +49,7 @@ The chosen form is the most modular one: any GPU with a Linux Vulkan driver work
 
 ## The order
 
-1. The graphics interface in software. It fixes the interface that each later step keeps.
+1. The draw table on the processor. It fixes the 2D interface that each later step keeps. A software WebGPU is refused: it needs a compiler of WGSL for the processor, larger than the whole 2D drawing.
 2. The service of the virtual GPU under QEMU, in 2D, then with the serialization. It needs one new thing of the kernel: a device mapping with the cache type that the device gives. It brings the encoder and the back end, which the next steps reuse with no change.
 3. The IOMMU, then guest support.
 4. The driver domain over a ring, on one GPU, as an opt-in test. The machine is a laptop with an integrated GPU of Intel.

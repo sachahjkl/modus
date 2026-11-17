@@ -1,4 +1,4 @@
-// The compositor (docs/ARCHITECTURE.md, "U8. Graphics: WebGPU library and compositor"): the service that owns the
+// The compositor (docs/ARCHITECTURE.md, "U8. Graphics: the draw table and the compositor"): the service that owns the
 // display. It combines the surfaces of programs into the framebuffer, and it
 // sends input to the program that has focus. It is also the desktop shell of
 // this first version: a bar with the menu of the programs and the menu of
