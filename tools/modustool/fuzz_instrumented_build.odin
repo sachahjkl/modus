@@ -116,8 +116,7 @@ fuzz_package_name_of_line :: proc(line: string) -> (name: string, found: bool) {
 // folder that no IR file belongs to.
 fuzz_package_name_of_folder :: proc(package_folder: string) -> string {
 	folder_name := package_folder[strings.last_index_byte(package_folder, '/') + 1:]
-	folder := strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", package_folder}, context.temp_allocator)
-	entries, error := os.read_all_directory_by_path(folder, context.temp_allocator)
+	entries, error := os.read_all_directory_by_path(package_folder, context.temp_allocator)
 	if error != nil {
 		return folder_name
 	}
@@ -214,13 +213,13 @@ fuzz_wait_oldest :: proc(processes: ^[dynamic]os.Process, process_names: ^[dynam
 }
 
 // fuzz_instrumented_build builds the instrumented child, with the edge
-// counters in the packages of `packages` (folders under the source
-// library). Each build is whole: it keeps nothing of an earlier one.
+// counters in the packages of `packages` (folders from the root of the
+// repository). Each build is whole: it keeps nothing of an earlier one.
 fuzz_instrumented_build :: proc(packages: []string) -> bool {
 	if !reset_folder(FUZZ_INSTRUMENTED_FOLDER) || !make_folder(FUZZ_INSTRUMENTED_FOLDER + "/objects") {
 		return false
 	}
-	compile := []string{"odin", "build", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG, "-print-linker-flags", "-keep-temp-files", "-out:" + FUZZ_INSTRUMENTED_BINARY}
+	compile := []string{"odin", "build", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG, KERNEL_LIBRARY_FLAG, "-print-linker-flags", "-keep-temp-files", "-out:" + FUZZ_INSTRUMENTED_BINARY}
 	state, standard_output, standard_error, error := os.process_exec({command = compile}, context.temp_allocator)
 	if error != nil || !state.success {
 		fmt.eprintfln("modustool: the compile of the instrumented child failed: %v\n%s", error, string(standard_error))

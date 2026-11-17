@@ -193,7 +193,8 @@
     };
 
     # The command "modustool": it compiles tools/modustool with the source
-    # library of the project, and runs it in the folder of the project.
+    # library of the project and the kernel parts (the tool reads two of
+    # them), and runs it in the folder of the project.
     # With MODUS_SYSTEM set, the folder of the project is that folder and
     # the command runs where it is typed: the folder of another project,
     # for the command "module-build"
@@ -203,11 +204,11 @@
         mkdir -p "$MODUS_SYSTEM/build"
         # The tool compiles in the folder of the system: a source of the
         # tool includes an assembly file by a path from that folder.
-        (cd "$MODUS_SYSTEM" && odin build tools/modustool -vet -collection:modus=src/library -out:build/modustool) || exit 1
+        (cd "$MODUS_SYSTEM" && odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -out:build/modustool) || exit 1
         exec "$MODUS_SYSTEM/build/modustool" "$@"
       fi
       mkdir -p build
-      exec odin run tools/modustool -vet -collection:modus=src/library -out:build/modustool -- "$@"
+      exec odin run tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -out:build/modustool -- "$@"
     '';
 
     # modustool check: the host code passes -vet and its tests, the system builds,

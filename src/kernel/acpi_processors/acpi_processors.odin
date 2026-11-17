@@ -1,8 +1,9 @@
 // The list of the processors in the ACPI table APIC (the MADT of the ACPI
 // specification): the kernel reads it at its start to find the processors
-// that it starts. The two parties are the kernel and the firmware. The
-// reader is pure: it reads the bytes of the table and gives identifiers, so
-// a host test and a fuzz target read the bytes that the kernel reads
+// that it starts. It is a kernel part: the firmware writes the table, and
+// the kernel alone compiles in its reader. The reader is pure: it reads
+// the bytes of the table and gives identifiers, so a host test and a fuzz
+// target read the bytes that the kernel reads
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value").
 //
 // This package allocates no memory and calls no kernel operation.

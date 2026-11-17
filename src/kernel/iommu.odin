@@ -1,7 +1,8 @@
 package kernel
 
 import info "modus:contract/boot_info"
-import "modus:contract/iommu"
+import "modus:contract/bridge_requester"
+import "kernel:iommu"
 import op "modus:contract/operation"
 import "base:intrinsics"
 
@@ -430,11 +431,11 @@ bridge_read :: proc "contextless" (bus, device, function: u32) -> (secondary: u3
 // shared is the requester that it gives each of them.
 @(private = "file")
 bridge_kind :: proc "contextless" (bus, device, function, secondary: u32) -> (passes: bool, shared: u16) {
-	configuration: [iommu.CONFIGURATION_WORDS]u32
+	configuration: [bridge_requester.CONFIGURATION_WORDS]u32
 	for &word, index in configuration {
 		word = configuration_read(bus, device, function, u32(index) * 4)
 	}
-	if iommu.bridge_passes_requesters(&configuration) {
+	if bridge_requester.bridge_passes_requesters(&configuration) {
 		return true, 0
 	}
 	return false, iommu.bridge_shared_requester(&configuration, bus, device, function, secondary)

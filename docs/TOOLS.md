@@ -559,40 +559,54 @@ A path is read from the root of the repository. A path that names nothing gives 
 
 ## The imports of the sources of the system
 
-The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Two rules are then held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; and the kernel imports no support package.
+The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Three rules are then held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; the kernel imports no support package; and a kernel part is imported from the kernel only.
+
+**The kernel parts.** A kernel part is a pure package in a folder under `src/kernel`, with host tests: `iommu`, `acpi_processors`, `debug_exception`, `processor_counters`. It is imported through a second source library, `kernel`, with the flag `-collection:kernel=src/kernel`: `import "kernel:iommu"`. The tool gives that flag to the compile of the kernel, to the host test of each folder under `src/kernel`, and to its own compile, because two fuzz targets and the depth of the kernel stack read two kernel parts. No other module and no other host test gets it, so the compiler refuses a kernel part there. The check refuses it too in each file of `src/` outside `src/kernel`, because a language server gives one set of source libraries to every folder.
 
 **The rule of each file.** Each import of each source file of `src/` names one of these, and nothing else:
 
 | File | Imports allowed |
 |---|---|
-| A source of `src/kernel` that is not a test | A package of `base:`, or a contract package |
-| A test of `src/kernel` | The same, and a package of `core:` |
+| A source of `src/kernel` or of a kernel part that is not a test | A package of `base:`, a contract package, or a kernel part (`kernel:<part>`) |
+| A test of `src/kernel` or of a kernel part | The same, and a package of `core:` |
 | A source of `src/library/contract` that is not a test | A package of `base:`, or a contract package |
 | A test of `src/library/contract` | The same, and a package of `core:` |
 | Any other source of `src/` that is not a test | A package of `base:`, or a package of `modus:` |
-| Any other test of `src/` | The same, a package of `core:`, or a relative path of the repository |
+| Any other test of `src/` | The same, a package of `core:`, or a relative path of the repository that does not land in `src/kernel` |
 | A file that `src/library/support/cryptography/origin.manifest` names | A package of `base:`, of `modus:`, of `core:`, or a relative path of the copy |
 
 Each other import is refused:
 
 - a package of `core:` in a source that is not a test: it reaches the host, and the system runs on the machine;
 - a support package in a source of the kernel or of a contract package (`"modus:support/sentence"`);
+- a kernel part in a file outside `src/kernel`: `"kernel:iommu"` in a program, a support package, a contract package or their tests, and a relative path that lands in `src/kernel` (`"../../../kernel/iommu"` in a host test of a support package), which the compiler reads from the folder of the file and accepts in a host test;
+- `"kernel:"` alone and `"kernel:."`, which name the package of the kernel itself, and a part `.` after the name of a library (`"modus:contract/./ring"`), a second spelling of a package;
 - a relative path in a source that is not a test, and in any file of the kernel or of a contract package (`"../../support/sentence"`);
-- a path with `..` after the name of the library (`"modus:contract/../support/sentence"`);
+- a path with `..` after the name of a library (`"modus:contract/../support/sentence"`, `"kernel:../programs/clock"`);
 - a package of another library, the vendor library of the compiler too.
 
 **The build line of a host test.** A test that imports a package of `core:` runs on the host: its first build line is `#+build !freestanding`, so that no build of the system reads it. A test with no such line is refused, with its file and the line of its first import of `core:`.
 
 **The copy of the cryptography of Odin.** `src/library/support/cryptography/origin.manifest` names the files that the system took from the cryptography of Odin. They keep the imports of their origin, and `modustool cryptography-origin` proves that nothing else changed. A file that the manifest does not name follows the rule of its folder.
 
+**A kernel part is pure.** The same parser walk reads each source of a kernel part that is not a test, so that its host tests run each procedure with no machine. It refuses, with the file and the line:
+
+- a package variable with no `@(rodata)`: the compiler refuses a write to a variable that is `@(rodata)`, and the memory of the machine refuses a write through a pointer to it, so the attribute is the whole check;
+- a variable marked `@(static)` or `@(thread_local)`, which keeps state from one call to the next;
+- a foreign import and a foreign block, which link to code outside the part;
+- an asm template;
+- an intrinsic that reads or changes the machine (`read_cycle_counter`, `volatile_`, `non_temporal_`, `atomic_`, `cpu_relax`, `x86_`, `arm64_`, `wasm_`, `syscall`, `trap`, `debug_trap`, `prefetch_`, `objc_`, `valgrind_` and the names that start with them), under any local name of `base:intrinsics`. An intrinsic that computes a value from its arguments (`count_ones`) stays open.
+
+The package of the kernel itself holds the state of the kernel, and this rule does not read it.
+
 **Why this is complete.** If no file of `src/` imports outside its list, no chain of imports from the kernel reaches a support package, and no source that a build of the system reads imports a package of the core library.
 
-**What it reads.** Each `.odin` file of `src/` and of each folder under it, with the parser of the library of the compiler. It reads more than the compiler compiles: a host test, a file that a build tag leaves out, and an import inside a `when` whatever its condition. The check is stricter than the compiler, never looser. A file with an error of syntax is refused as a file, because the parser does not read it whole. A foreign import names a file of assembly or an object, not a package: the check does not read it.
+**What it reads.** Each `.odin` file of `src/` and of each folder under it, with the parser of the library of the compiler. It reads more than the compiler compiles: a host test, a file that a build tag leaves out, and an import inside a `when` whatever its condition. The check is stricter than the compiler, never looser. A file with an error of syntax is refused as a file, because the parser does not read it whole. A foreign import names a file of assembly or an object, not a package: the check does not read its path, and refuses it only in a kernel part.
 
 **When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `modustool check` runs it first, and `modustool library-imports` runs it alone. A refused import, and a test with no build line, stop the build with the file, the line and the text:
 
 ```
-modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel imports a package of base: or under modus:contract/, by a path with no ".."; the kernel imports no support package
+modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel imports a package of base:, under modus:contract/ or under kernel:, by a path with no ".."; the kernel imports no support package
 modustool: src/library/support/sentence/parse_test.odin:4: the test imports "core:testing" and has no build line: a test of src/ that imports a package of core: starts with "#+build !freestanding", so that no build of the system reads it
 ```
 

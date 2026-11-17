@@ -67,9 +67,11 @@ Fuzz_Target :: struct {
 	name:        string, // The name of the target in the commands and in the folder of its corpus.
 	kind:        Fuzz_Target_Kind,
 	about:       string, // What it checks, for `fuzz list`.
-	// The folders of the packages under test, under the source library
-	// ("contract/module"): the instrumented build counts their edges, and
-	// the dictionary reads their constants.
+	// The folders of the packages under test, from the root of the
+	// repository and made from the constants of the folders
+	// (SOURCE_FOLDER_CONTRACT + "/module", SOURCE_FOLDER_KERNEL + "/iommu"):
+	// the instrumented build counts their edges, and the dictionary reads
+	// their constants.
 	packages:    []string,
 	input_limit: int, // The most bytes of one input, at most FUZZ_INPUT_CAPACITY.
 	// The new executions of the target in `modustool check`; 0 gives

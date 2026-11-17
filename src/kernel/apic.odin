@@ -1,7 +1,7 @@
 package kernel
 
 import info "modus:contract/boot_info"
-import "modus:contract/acpi_processors"
+import "kernel:acpi_processors"
 import "base:intrinsics"
 
 // The interrupt controller of each processor (local APIC): the timer, and

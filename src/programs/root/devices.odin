@@ -2,9 +2,9 @@ package root
 
 import "modus:contract/block"
 import "modus:support/bochs_display"
+import "modus:contract/bridge_requester"
 import "modus:contract/entropy_service"
 import "modus:contract/frame"
-import "modus:contract/iommu"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/pci"
@@ -111,11 +111,11 @@ bridge_group_of :: proc "contextless" (bus: u32) -> (group: Bridge_Group, found:
 					numbers := pci.read_32(place, pci.OFFSET_BUS_NUMBERS)
 					secondary, subordinate := numbers >> 8 & 0xFF, numbers >> 16 & 0xFF
 					if secondary > current && secondary <= bus && bus <= subordinate {
-						configuration: [iommu.CONFIGURATION_WORDS]u32
+						configuration: [bridge_requester.CONFIGURATION_WORDS]u32
 						for &word, index in configuration {
 							word = pci.read_32(place, u32(index * 4))
 						}
-						if !iommu.bridge_passes_requesters(&configuration) {
+						if !bridge_requester.bridge_passes_requesters(&configuration) {
 							return {first_bus = secondary, last_bus = subordinate}, true
 						}
 						current = secondary

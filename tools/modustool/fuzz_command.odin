@@ -267,13 +267,23 @@ fuzz_finding_keep :: proc(binary: string, target: ^Fuzz_Target, outcome: Fuzz_Ch
 }
 
 // fuzz_sources_seed gives the seed of `modustool check`: the BLAKE3 hash of
-// the paths and the bytes of each source of the tool and of the source
-// library, the inputs of the child. The same sources run the same inputs;
-// a change of the code under test explores other ones.
+// the paths and the bytes of each source of the tool, of the source
+// library and of the kernel parts, the inputs of the child. The same
+// sources run the same inputs; a change of the code under test explores
+// other ones.
 fuzz_sources_seed :: proc() -> u64 {
 	paths := make([dynamic]string, context.temp_allocator)
 	fuzz_sources_list(TOOL_SOURCE_FOLDER, &paths, recursive = false)
 	fuzz_sources_list(SOURCE_FOLDER_LIBRARY, &paths, recursive = true)
+	// The kernel parts are the folders under the kernel; the files of the
+	// kernel itself are no input of the child.
+	if kernel_entries, kernel_error := os.read_all_directory_by_path(SOURCE_FOLDER_KERNEL, context.temp_allocator); kernel_error == nil {
+		for entry in kernel_entries {
+			if entry.type == .Directory {
+				fuzz_sources_list(entry.fullpath, &paths, recursive = true)
+			}
+		}
+	}
 	slice.sort(paths[:])
 	all := make([dynamic]u8, context.temp_allocator)
 	for path in paths {

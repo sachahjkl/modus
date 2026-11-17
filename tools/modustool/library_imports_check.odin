@@ -10,9 +10,23 @@
 //     only, and no package of core:, which reaches the host. The files that
 //     the manifest of the cryptography of Odin names are the one exception,
 //     below.
-//   - The kernel imports the contract packages only, and a contract package
-//     imports no support package. A chain of imports from the kernel then
-//     reaches no support package.
+//   - The kernel imports the contract packages and its kernel parts only,
+//     and a contract package imports no support package. A chain of imports
+//     from the kernel then reaches no support package.
+//   - A kernel part ("kernel:iommu", a folder under src/kernel) is imported
+//     from src/kernel only. The compiler already refuses it in a module,
+//     which gets no flag of the kernel parts; the check refuses it in each
+//     other file of src/ too, because a language server gives one set of
+//     source libraries to every folder and then compiles the import. A
+//     relative path that lands under src/kernel from outside it is refused
+//     too: the compiler accepts a relative import in a host test.
+//   - A source of a kernel part is pure, so that its host tests run each
+//     procedure with no machine: each package variable is @(rodata), no
+//     variable is @(static) or @(thread_local), and it holds no foreign
+//     block, no foreign import, no asm and no intrinsic that reads the
+//     machine. The compiler refuses a write to a variable that is
+//     @(rodata), and the memory of the machine refuses a write through a
+//     pointer to it: the check needs only the attributes.
 //   - A test that imports a package of core: runs on the host: its first
 //     build line is "#+build !freestanding", so that no build of the system
 //     reads it. A test, and a file of the copy, may also import a relative
@@ -54,10 +68,10 @@ LIBRARY_HOST_BUILD_LINE :: "#+build !freestanding"
 LIBRARY_TEST_ARCHITECTURES :: [?]string{"amd64", "arm64"}
 
 // The folder of src/ that a file is in: the kernel and the contract packages
-// import the contract packages only, and a source of another folder imports
-// each part of the library.
+// import the contract packages only, the kernel its kernel parts too, and a
+// source of another folder imports each part of the library.
 Library_Source_Kind :: enum {
-	Kernel,
+	Kernel, // src/kernel and each kernel part under it.
 	Contract,
 	System,
 }
@@ -67,6 +81,7 @@ Library_Source_Form :: struct {
 	kind: Library_Source_Kind,
 	test: bool, // A host test: its name ends in "_test.odin" or in "_test_<arch>.odin".
 	copy: bool, // A file that src/library/support/cryptography/origin.manifest names.
+	part: bool, // A file of a kernel part: a folder under src/kernel.
 }
 
 // Why the check refuses a file or an import of it.
@@ -74,14 +89,18 @@ Library_Import_Breach_Reason :: enum {
 	Unreadable_File, // The parser does not read the file whole, so an import of it can be unread.
 	Refused_Import, // The import names a package that the rule of the file refuses.
 	Test_Without_Build_Line, // A test imports a package of core: and has no build line of the host.
+	Impure_Kernel_Part, // A source of a kernel part keeps state or reaches the machine.
 }
 
-// One refused import, one test without its build line, or one file that the
-// parser cannot read whole.
+// One refused import, one test without its build line, one impure
+// construct of a kernel part, or one file that the parser cannot read whole.
 Library_Import_Breach :: struct {
 	file: string,
 	line: int, // 0: the parser refuses the file.
-	text: string, // The import as the source writes it, with its quotes. "": the parser refuses the file.
+	// The import as the source writes it, with its quotes; for an impure
+	// construct, its words ("the package variable TABLE with no @(rodata)").
+	// "": the parser refuses the file.
+	text: string,
 	reason: Library_Import_Breach_Reason,
 	form: Library_Source_Form,
 }
@@ -137,6 +156,14 @@ library_source_kind_of :: proc(file: string) -> Library_Source_Kind {
 	return .System
 }
 
+// library_source_is_in_a_kernel_part says if a path from the root of the
+// tree names a file of a folder under src/kernel, and not a file of the
+// package of the kernel itself.
+library_source_is_in_a_kernel_part :: proc(file: string) -> bool {
+	start := SOURCE_FOLDER_KERNEL + "/"
+	return strings.has_prefix(file, start) && strings.contains(file[len(start):], "/")
+}
+
 // library_source_relative_to_root gives the path of a file as a manifest of
 // the repository names it: from the root of the tree.
 library_source_relative_to_root :: proc(root, file: string) -> string {
@@ -184,6 +211,16 @@ library_import_is_allowed :: proc(path: string, form: Library_Source_Form) -> bo
 	if strings.contains(path, "..") {
 		return false
 	}
+	// A part "." after the name of a library names the folder that holds
+	// it: "kernel:." is the package of the kernel itself, and
+	// "modus:contract/./ring" a second spelling of a package.
+	if colon := strings.index_byte(path, ':'); colon >= 0 {
+		for part in strings.split(path[colon + 1:], "/", context.temp_allocator) {
+			if part == "." {
+				return false
+			}
+		}
+	}
 	if library_import_names_a_package_under(path, LIBRARY_IMPORT_BASE_START) {
 		return true
 	}
@@ -195,6 +232,11 @@ library_import_is_allowed :: proc(path: string, form: Library_Source_Form) -> bo
 	}
 	library_start := form.kind == .System ? SOURCE_LIBRARY_IMPORT_START : CONTRACT_IMPORT_START
 	if library_import_names_a_package_under(path, library_start) {
+		return true
+	}
+	// "kernel:" alone names the package of the kernel itself, which no
+	// file imports: a kernel part names its folder.
+	if form.kind == .Kernel && library_import_names_a_package_under(path, KERNEL_IMPORT_START) {
 		return true
 	}
 	return form.test && library_import_names_a_package_under(path, LIBRARY_IMPORT_CORE_START)
@@ -209,9 +251,9 @@ library_import_rule_words :: proc(form: Library_Source_Form) -> string {
 	}
 	if form.kind == .Kernel {
 		if form.test {
-			return "a test of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, of core: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
+			return "a test of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, of core:, under " + CONTRACT_IMPORT_START + " or under " + KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
 		}
-		return "a source of " + SOURCE_FOLDER_KERNEL + " imports a package of base: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
+		return "a source of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, under " + CONTRACT_IMPORT_START + " or under " + KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
 	}
 	if form.kind == .Contract {
 		if form.test {
@@ -220,9 +262,9 @@ library_import_rule_words :: proc(form: Library_Source_Form) -> string {
 		return "a source of " + SOURCE_FOLDER_CONTRACT + " imports a package of base: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; a contract package imports no support package"
 	}
 	if form.test {
-		return "a test of src/ imports a package of base:, of core: or of " + SOURCE_LIBRARY_IMPORT_START + ", or a relative path of the repository, by a path with no \"..\" after the name of a library"
+		return "a test of src/ imports a package of base:, of core: or of " + SOURCE_LIBRARY_IMPORT_START + ", or a relative path of the repository, by a path with no \"..\" after the name of a library; a kernel part (" + KERNEL_IMPORT_START + ") is imported from " + SOURCE_FOLDER_KERNEL + " only"
 	}
-	return "a source of src/ that is not a test imports a package of base: or of " + SOURCE_LIBRARY_IMPORT_START + ", by a path with no \"..\""
+	return "a source of src/ that is not a test imports a package of base: or of " + SOURCE_LIBRARY_IMPORT_START + ", by a path with no \"..\"; a kernel part (" + KERNEL_IMPORT_START + ") is imported from " + SOURCE_FOLDER_KERNEL + " only"
 }
 
 // library_source_has_host_build_line says if the first build line of a
@@ -249,6 +291,149 @@ library_source_has_host_build_line :: proc(source: string) -> bool {
 		return false
 	}
 	return false
+}
+
+// library_relative_import_reaches_a_kernel_part says if a relative import of
+// a file outside src/kernel lands in src/kernel or in a folder under it. The
+// compiler reads a relative path from the folder of the file, and accepts it
+// in a host test, which gets no flag of the kernel parts: only the place
+// where the path lands shows that it names a kernel part. file is a path
+// from the root of the tree.
+library_relative_import_reaches_a_kernel_part :: proc(file, path: string, form: Library_Source_Form) -> bool {
+	if form.kind == .Kernel || !(strings.has_prefix(path, "./") || strings.has_prefix(path, "../")) {
+		return false
+	}
+	folder := ""
+	if slash := strings.last_index_byte(file, '/'); slash >= 0 {
+		folder = file[:slash]
+	}
+	landing := path_without_dots(join(folder, "/", path))
+	return landing == SOURCE_FOLDER_KERNEL || strings.has_prefix(landing, SOURCE_FOLDER_KERNEL + "/")
+}
+
+// The intrinsics that read or change the machine, by the start of their
+// names: a kernel part that calls one reads the processor of the host in
+// its host test, or does not link there. The intrinsics that compute a
+// value from their arguments (count_ones, overflow_add) stay open.
+KERNEL_PART_MACHINE_INTRINSIC_STARTS :: [?]string{"read_cycle_counter", "volatile_", "non_temporal_", "atomic_", "cpu_relax", "x86_", "arm64_", "wasm_", "syscall", "trap", "debug_trap", "prefetch_", "objc_", "valgrind_"}
+
+// The walk of a source of a kernel part: the local name of base:intrinsics,
+// and the list that each impure construct joins.
+@(private = "file")
+Kernel_Part_Walk :: struct {
+	file:            string,
+	form:            Library_Source_Form,
+	intrinsics_name: string, // "": the file does not import base:intrinsics.
+	breaches:        ^[dynamic]Library_Import_Breach,
+}
+
+// kernel_part_attribute_names gives the name of each attribute of a
+// declaration: "rodata" for @(rodata), "link_name" for @(link_name = "x").
+@(private = "file")
+kernel_part_attribute_names :: proc(attributes: []^ast.Attribute) -> []string {
+	names := make([dynamic]string, context.temp_allocator)
+	for attribute in attributes {
+		for element in attribute.elems {
+			#partial switch item in element.derived {
+			case ^ast.Ident:
+				append(&names, item.name)
+			case ^ast.Field_Value:
+				if name, is_name := item.field.derived.(^ast.Ident); is_name {
+					append(&names, name.name)
+				}
+			}
+		}
+	}
+	return names[:]
+}
+
+@(private = "file")
+kernel_part_breach_add :: proc(walk: ^Kernel_Part_Walk, line: int, words: string) {
+	append(walk.breaches, Library_Import_Breach{file = walk.file, line = line, text = strings.clone(words, context.temp_allocator), reason = .Impure_Kernel_Part, form = walk.form})
+}
+
+// kernel_part_intrinsic_reads_the_machine says if an intrinsic is one of
+// those that read or change the machine.
+kernel_part_intrinsic_reads_the_machine :: proc(name: string) -> bool {
+	starts := KERNEL_PART_MACHINE_INTRINSIC_STARTS
+	for start in starts {
+		if strings.has_prefix(name, start) {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+kernel_part_visit :: proc(visitor: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
+	if node == nil {
+		return nil
+	}
+	walk := (^Kernel_Part_Walk)(visitor.data)
+	#partial switch item in node.derived {
+	case ^ast.Value_Decl:
+		for name in kernel_part_attribute_names(item.attributes[:]) {
+			if name == "static" || name == "thread_local" {
+				kernel_part_breach_add(walk, item.pos.line, fmt.tprintf("a variable marked @(%s)", name))
+			}
+		}
+	case ^ast.Foreign_Block_Decl:
+		kernel_part_breach_add(walk, item.pos.line, "a foreign block")
+	case ^ast.Foreign_Import_Decl:
+		kernel_part_breach_add(walk, item.pos.line, "a foreign import")
+	case ^ast.Asm_Template:
+		kernel_part_breach_add(walk, item.pos.line, "an asm template")
+	case ^ast.Selector_Expr:
+		if walk.intrinsics_name == "" || item.field == nil {
+			break
+		}
+		if base, is_name := item.expr.derived.(^ast.Ident); is_name && base.name == walk.intrinsics_name && kernel_part_intrinsic_reads_the_machine(item.field.name) {
+			kernel_part_breach_add(walk, item.pos.line, fmt.tprintf("the intrinsic %s.%s, which reads the machine", base.name, item.field.name))
+		}
+	}
+	return visitor
+}
+
+// kernel_part_impure_constructs adds a breach for each construct of a source
+// of a kernel part that keeps state or reaches the machine: a package
+// variable with no @(rodata), a variable marked @(static) or
+// @(thread_local), a foreign block or import, an asm template, and an
+// intrinsic that reads the machine.
+kernel_part_impure_constructs :: proc(file: string, tree: ^ast.File, form: Library_Source_Form, list: ^[dynamic]Library_Import_Breach) {
+	walk := Kernel_Part_Walk {
+		file     = file,
+		form     = form,
+		breaches = list,
+	}
+	for declaration in tree.imports {
+		if strings.trim(declaration.fullpath, "\"`") != "base:intrinsics" {
+			continue
+		}
+		walk.intrinsics_name = declaration.name.text != "" ? strings.clone(declaration.name.text, context.temp_allocator) : "intrinsics"
+	}
+	for statement in tree.decls {
+		declaration, is_value := statement.derived.(^ast.Value_Decl)
+		if !is_value || !declaration.is_mutable {
+			continue
+		}
+		if slice.contains(kernel_part_attribute_names(declaration.attributes[:]), "rodata") {
+			continue
+		}
+		name := "?"
+		if len(declaration.names) > 0 {
+			if identifier, is_name := declaration.names[0].derived.(^ast.Ident); is_name {
+				name = identifier.name
+			}
+		}
+		kernel_part_breach_add(&walk, declaration.pos.line, fmt.tprintf("the package variable %s with no @(rodata)", name))
+	}
+	visitor := ast.Visitor {
+		visit = kernel_part_visit,
+		data  = &walk,
+	}
+	for statement in tree.decls {
+		ast.walk(&visitor, statement)
+	}
 }
 
 // library_import_breaches_of_source gives each refused import of one source
@@ -281,10 +466,14 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 		import_count = len(tree.imports)
 		for declaration in tree.imports {
 			text := declaration.relpath.text
-			if library_import_is_allowed(strings.trim(text, "\"`"), form) {
+			path := strings.trim(text, "\"`")
+			if library_import_is_allowed(path, form) && !library_relative_import_reaches_a_kernel_part(file, path, form) {
 				continue
 			}
 			append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Refused_Import, form = form})
+		}
+		if form.part && !form.test {
+			kernel_part_impure_constructs(file, tree, form, &list)
 		}
 		// One breach names the file: the line that the writer adds is the
 		// first line of the file, whatever the count of its imports of core:.
@@ -339,6 +528,7 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 			kind = library_source_kind_of(file),
 			test = library_source_is_a_test(file),
 			copy = file in copied,
+			part = library_source_is_in_a_kernel_part(file),
 		}
 		file_breaches, file_imports := library_import_breaches_of_source(file, source, form)
 		append(&reading.breaches, ..file_breaches)
@@ -361,6 +551,8 @@ library_import_breach_sentence :: proc(breach: Library_Import_Breach) -> string 
 	switch breach.reason {
 	case .Unreadable_File:
 		return fmt.tprintf("%s: the parser cannot read the file whole, so its imports are not checked: a source of src/ has no error of syntax, and no import inside a procedure", breach.file)
+	case .Impure_Kernel_Part:
+		return fmt.tprintf("%s:%d: %s is refused: a kernel part is pure, so each package variable is @(rodata), no variable is @(static) or @(thread_local), and it holds no foreign block, no foreign import, no asm and no intrinsic that reads the machine", breach.file, breach.line, breach.text)
 	case .Test_Without_Build_Line:
 		return fmt.tprintf("%s:%d: the test imports %s and has no build line: a test of src/ that imports a package of core: starts with %q, so that no build of the system reads it", breach.file, breach.line, breach.text, LIBRARY_HOST_BUILD_LINE)
 	case .Refused_Import:
@@ -389,10 +581,10 @@ library_imports_hold :: proc() -> (reading: Library_Import_Reading, hold: bool) 
 library_imports_check :: proc() -> bool {
 	reading, hold := library_imports_hold()
 	if !hold {
-		fmt.eprintln("modustool: test failed: an import of a source of src/, or the build line of a host test, is refused")
+		fmt.eprintln("modustool: test failed: an import of a source of src/, the build line of a host test, or a construct of a kernel part that is not pure, is refused")
 		return false
 	}
-	test_passed_print("each of the %d imports of the %d sources and of the %d host tests of src/ is allowed, each host test that imports a package of core: starts with the build line of the host, and the %d files of the copy of the cryptography of Odin are exempt", reading.import_count, reading.source_count, reading.test_count, reading.copy_count)
+	test_passed_print("each of the %d imports of the %d sources and of the %d host tests of src/ is allowed, each host test that imports a package of core: starts with the build line of the host, each source of a kernel part is pure, and the %d files of the copy of the cryptography of Odin are exempt", reading.import_count, reading.source_count, reading.test_count, reading.copy_count)
 	return true
 }
 

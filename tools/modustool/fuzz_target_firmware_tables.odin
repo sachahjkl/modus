@@ -1,16 +1,16 @@
 package modustool
 
 import "core:slice"
-import "modus:contract/acpi_processors"
-import iommu "modus:contract/iommu"
+import "kernel:acpi_processors"
+import iommu "kernel:iommu"
 
 // The fuzz targets of the tables of the firmware
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
 // kernel reads the ACPI tables DMAR, IVRS and MCFG at its start with the
-// readers of `contract/iommu`, and the list of the processors in the table
-// APIC with `contract/acpi_processors`. They run on the host as they run in
-// the kernel; the walk of the root of ACPI to a table stays in the kernel,
-// as it reads physical memory.
+// readers of the kernel part `iommu`, and the list of the processors in the
+// table APIC with the kernel part `acpi_processors`. They run on the host
+// as they run in the kernel; the walk of the root of ACPI to a table stays
+// in the kernel, as it reads physical memory.
 
 // The first byte of an input chooses the table; the bytes after it are the
 // table, with its ACPI header.

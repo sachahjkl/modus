@@ -1,7 +1,7 @@
 package modustool
 
 import info "modus:contract/boot_info"
-import iommu "modus:contract/iommu"
+import iommu "kernel:iommu"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:os"

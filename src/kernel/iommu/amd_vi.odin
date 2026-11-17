@@ -1,5 +1,7 @@
 package iommu
 
+import "modus:contract/bridge_requester"
+
 // The formats of the IOMMU of AMD (AMD-Vi) that the kernel reads and
 // writes: the ACPI table IVRS, the registers of a unit, the entry of the
 // device table, the entries of the page tables, the commands of the queue
@@ -684,8 +686,8 @@ OFFSET_COMMAND :: 4
 // capability_offset gives the place of the first capability of a kind in
 // the first 256 bytes of the configuration of a function, or 0. The walk
 // stops after 48, as a list that loops would never end.
-capability_offset :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32, kind: u32) -> u32 {
-	if configuration[1] & STATUS_CAPABILITIES == 0 {
+capability_offset :: proc "contextless" (configuration: ^[bridge_requester.CONFIGURATION_WORDS]u32, kind: u32) -> u32 {
+	if configuration[1] & bridge_requester.STATUS_CAPABILITIES == 0 {
 		return 0
 	}
 	offset := configuration[0x34 / 4] & 0xFC

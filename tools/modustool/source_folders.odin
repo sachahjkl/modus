@@ -47,13 +47,38 @@ SUPPORT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_SUPPORT + "/"
 // (library_imports_check.odin).
 SOURCE_LIBRARY_FLAG :: "-collection:" + SOURCE_LIBRARY_NAME + "=" + SOURCE_FOLDER_LIBRARY
 
+// The second source library: the kernel parts, the pure packages in the
+// folders under src/kernel that the kernel alone compiles in
+// (src/md/infrastructure/repository_layout.md, "The kernel parts and the
+// second source library"). Its folder is the folder of the kernel:
+// "kernel:iommu" is the folder iommu of the kernel. Only the compile of the
+// kernel, the host tests of the folders under src/kernel and the compile of
+// this tool get its flag, so the compiler refuses the import in each module
+// and in each host test of the library. The check of the imports refuses
+// it in each other file of src/ too, because a language server gives one
+// set of source libraries to every folder.
+KERNEL_LIBRARY_NAME :: "kernel"
+KERNEL_IMPORT_START :: KERNEL_LIBRARY_NAME + ":"
+KERNEL_LIBRARY_FLAG :: "-collection:" + KERNEL_LIBRARY_NAME + "=" + SOURCE_FOLDER_KERNEL
+
+// source_folder_takes_kernel_library says if the compile or the host test
+// of a folder gets the flag of the kernel parts: the kernel, each folder
+// under it, and this tool.
+source_folder_takes_kernel_library :: proc(folder: string) -> bool {
+	return folder == SOURCE_FOLDER_KERNEL || strings.has_prefix(folder, SOURCE_FOLDER_KERNEL + "/") || folder == TOOL_SOURCE_FOLDER
+}
+
 // source_library_package_folder gives the folder of the package that the
-// path of an import line names in the source library:
-// "modus:contract/ring" is the folder ring of the contract packages. A
-// path of another library ("core:fmt") and a relative path are not found.
+// path of an import line names in one of the two source libraries of the
+// system: "modus:contract/ring" is the folder ring of the contract
+// packages, "kernel:iommu" the kernel part iommu. A path of another library
+// ("core:fmt") and a relative path are not found.
 source_library_package_folder :: proc(import_path: string, allocator := context.temp_allocator) -> (folder: string, found: bool) {
 	if len(import_path) > len(SOURCE_LIBRARY_IMPORT_START) && strings.has_prefix(import_path, SOURCE_LIBRARY_IMPORT_START) {
 		return strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", import_path[len(SOURCE_LIBRARY_IMPORT_START):]}, allocator), true
+	}
+	if len(import_path) > len(KERNEL_IMPORT_START) && strings.has_prefix(import_path, KERNEL_IMPORT_START) {
+		return strings.concatenate({SOURCE_FOLDER_KERNEL, "/", import_path[len(KERNEL_IMPORT_START):]}, allocator), true
 	}
 	return "", false
 }

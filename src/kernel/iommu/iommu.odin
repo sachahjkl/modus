@@ -5,14 +5,18 @@
 // table and the address of a remapped message, and a fault record. The
 // formats are those of the "Intel Virtualization Technology for Directed
 // I/O, Architecture Specification". amd_vi.odin holds those of AMD
-// (AMD-Vi). The two parties are the kernel and the hardware. The design is
-// src/md/infrastructure/iommu.md.
+// (AMD-Vi). It is a kernel part: the hardware writes these formats, and
+// the kernel alone compiles in their readers and writers. The rule of a
+// bridge, which the root service reads too, is the contract package
+// bridge_requester. The design is src/md/infrastructure/iommu.md.
 //
 // Each procedure here is pure: it reads bytes or values and gives values,
 // so the host tests check each format with no machine.
 //
 // This package allocates no memory and calls no kernel operation.
 package iommu
+
+import "modus:contract/bridge_requester"
 
 // The table DMAR: the ACPI header, the host address width minus 1, the
 // flags, 10 reserved bytes, then the remapping structures.
@@ -386,63 +390,15 @@ bridge_buses :: proc "contextless" (header: [HEADER_WORDS]u32) -> (secondary: u3
 	return header[6] >> 8 & 0xFF, header[6] >> 16 & 0xFF
 }
 
-// The words of the configuration of a function that the kernel reads to
-// know the kind of a bridge: the first 256 bytes, the space of PCI before
-// PCI Express, which holds the capability of PCI Express.
-CONFIGURATION_WORDS :: 64
-CAPABILITY_PCI_EXPRESS :: 0x10
-STATUS_CAPABILITIES :: u32(1) << 20 // The bit of the status, in the word 1: the function has a list of capabilities.
-
-// The port types of the capability of PCI Express (bits 7:4 of its
-// capability register) whose bridge passes the requester of each device
-// behind it unchanged: a root port, the upstream and the downstream port of
-// a switch.
-PORT_ROOT :: 4
-PORT_SWITCH_UPSTREAM :: 5
-PORT_SWITCH_DOWNSTREAM :: 6
-// The port type of a bridge from PCI Express to PCI: a conventional bridge
-// that gives the devices behind it the requester of its secondary bus.
-PORT_PCI_EXPRESS_TO_PCI :: 7
-
-// express_port_type gives the port type of the capability of PCI Express of
-// a function. found: the function has that capability. The walk of the
-// capabilities stops after 48, as a list that loops would never end.
-express_port_type :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32) -> (port: u32, found: bool) {
-	if configuration[1] & STATUS_CAPABILITIES == 0 {
-		return 0, false
-	}
-	offset := configuration[0x34 / 4] & 0xFC
-	for _ in 0 ..< 48 {
-		if offset < 0x40 || offset > 0xFC {
-			return 0, false
-		}
-		word := configuration[offset / 4]
-		if word & 0xFF == CAPABILITY_PCI_EXPRESS {
-			return word >> 20 & 0xF, true
-		}
-		offset = word >> 8 & 0xFC
-	}
-	return 0, false
-}
-
-// bridge_passes_requesters says if a bridge gives each device behind it
-// its own requester. A bridge of PCI Express does. A conventional bridge (a
-// bridge from PCI Express to PCI, or one with no capability of PCI Express)
-// gives the accesses of the devices behind it one shared requester
-// (bridge_shared_requester).
-bridge_passes_requesters :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32) -> bool {
-	port, found := express_port_type(configuration)
-	return found && (port == PORT_ROOT || port == PORT_SWITCH_UPSTREAM || port == PORT_SWITCH_DOWNSTREAM)
-}
-
 // bridge_shared_requester gives the requester that a conventional bridge at
 // a place, with its secondary bus, gives the accesses of each device behind
-// it: the shared requester. A bridge from PCI Express to PCI makes each
-// request with its secondary bus, the device 0 and the function 0; another
-// conventional bridge makes it with its own requester. QEMU 10 and Linux
-// take the same rule.
-bridge_shared_requester :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32, bus, device, function, secondary: u32) -> u16 {
-	if port, found := express_port_type(configuration); found && port == PORT_PCI_EXPRESS_TO_PCI {
+// it: the shared requester. A bridge is conventional when
+// bridge_requester.bridge_passes_requesters says no. A bridge from PCI
+// Express to PCI makes each request with its secondary bus, the device 0
+// and the function 0; another conventional bridge makes it with its own
+// requester. QEMU 10 and Linux take the same rule.
+bridge_shared_requester :: proc "contextless" (configuration: ^[bridge_requester.CONFIGURATION_WORDS]u32, bus, device, function, secondary: u32) -> u16 {
+	if port, found := bridge_requester.express_port_type(configuration); found && port == bridge_requester.PORT_PCI_EXPRESS_TO_PCI {
 		return requester(secondary, 0, 0)
 	}
 	return requester(bus, device, function)

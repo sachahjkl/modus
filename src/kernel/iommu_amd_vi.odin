@@ -1,6 +1,7 @@
 package kernel
 
-import "modus:contract/iommu"
+import "modus:contract/bridge_requester"
+import "kernel:iommu"
 import op "modus:contract/operation"
 import "base:intrinsics"
 
@@ -101,7 +102,7 @@ amd_unit_check :: proc "contextless" (unit: ^Iommu_Unit, block: iommu.Amd_Unit) 
 @(private = "file")
 amd_message_capability :: proc "contextless" (requester: u16) -> u32 {
 	bus, device, function := iommu.requester_bus(requester), iommu.requester_device(requester), iommu.requester_function(requester)
-	configuration: [iommu.CONFIGURATION_WORDS]u32
+	configuration: [bridge_requester.CONFIGURATION_WORDS]u32
 	for &word, index in configuration {
 		word = configuration_read(bus, device, function, u32(index) * 4)
 	}

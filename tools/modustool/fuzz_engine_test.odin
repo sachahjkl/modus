@@ -162,11 +162,13 @@ the_printed_commands_of_the_compiler_are_split :: proc(t: ^testing.T) {
 the_package_of_a_folder_is_the_name_that_its_sources_declare :: proc(t: ^testing.T) {
 	// The folder support/terminal holds the package terminal_records: a
 	// selection by the name of the folder counted none of its edges.
-	testing.expect_value(t, fuzz_package_name_of_folder("support/terminal"), "terminal_records")
-	testing.expect_value(t, fuzz_package_name_of_folder("contract/module"), "module")
+	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_SUPPORT + "/terminal"), "terminal_records")
+	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_CONTRACT + "/module"), "module")
+	// A kernel part is a folder under the kernel.
+	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_KERNEL + "/iommu"), "iommu")
 	// A folder that does not exist gives the name of the folder.
-	testing.expect_value(t, fuzz_package_name_of_folder("support/no_such_folder"), "no_such_folder")
-	names := fuzz_package_names({"support/terminal", "support/quic"})
+	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_SUPPORT + "/no_such_folder"), "no_such_folder")
+	names := fuzz_package_names({SOURCE_FOLDER_SUPPORT + "/terminal", SOURCE_FOLDER_SUPPORT + "/quic"})
 	testing.expect(t, slice.equal(names, []string{"terminal_records", "quic"}))
 	// The name ends at a space or a "/": a comment after it is no part of
 	// it. A line with no name, or that is no package line, gives none.
@@ -199,7 +201,7 @@ each_fuzz_target_has_a_name_a_limit_and_its_packages :: proc(t: ^testing.T) {
 		testing.expectf(t, target.input_limit > 0 && target.input_limit <= FUZZ_INPUT_CAPACITY, "%s: the limit %d", target.name, target.input_limit)
 		testing.expectf(t, target.execute != nil && len(target.packages) > 0, "%s has no procedure or no package", target.name)
 		for package_folder in target.packages {
-			testing.expectf(t, os.is_dir(strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", package_folder}, context.temp_allocator)), "%s: no package %s", target.name, package_folder)
+			testing.expectf(t, os.is_dir(package_folder), "%s: no package %s", target.name, package_folder)
 		}
 		for other in targets[index + 1:] {
 			testing.expectf(t, other.name != target.name, "two fuzz targets have the name %s", target.name)

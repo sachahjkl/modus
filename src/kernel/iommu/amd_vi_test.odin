@@ -2,6 +2,7 @@
 package iommu
 
 import "core:testing"
+import "modus:contract/bridge_requester"
 
 // A table IVRS that a test builds, block after block.
 Ivrs_Builder :: struct {
@@ -570,8 +571,8 @@ the_interrupt_entry :: proc(t: ^testing.T) {
 // capability, and its registers of 32 and of 64 bits.
 @(test)
 the_message_interrupt_of_a_unit :: proc(t: ^testing.T) {
-	configuration: [CONFIGURATION_WORDS]u32
-	configuration[1] = STATUS_CAPABILITIES
+	configuration: [bridge_requester.CONFIGURATION_WORDS]u32
+	configuration[1] = bridge_requester.STATUS_CAPABILITIES
 	configuration[0x34 / 4] = 0x40
 	configuration[0x40 / 4] = 0x0F | 0x54 << 8 // The capability of a unit of AMD, then the next one.
 	configuration[0x54 / 4] = CAPABILITY_MESSAGE | u32(MESSAGE_CONTROL_64_BITS) << 16
