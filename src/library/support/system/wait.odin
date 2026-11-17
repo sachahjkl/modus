@@ -156,11 +156,14 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 		}
 	}
 	// The kernel reads each word again: a record that arrived before the
-	// `waits` word was set ends the wait at once.
-	kernel := kernel_ring()
-	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&wait.words)), 1 = u64(total)}})
-	now := enter(max(deadline, 1))
-	ring.pop(&kernel.completions)
+	// `waits` word was set ends the wait at once. On a kernel ring that holds
+	// other records, commands_call pushes nothing and gives the time: an
+	// early end is an answer of each wait, as its caller reads its words
+	// again, and no held command keeps the address of these words after
+	// this frame ends (src/md/api/kernel_ring_completion_room.md).
+	commands := [1]ring.Record{wait_command(&wait.words, total)}
+	completions: [1]ring.Record
+	now, _ := commands_call(commands[:], completions[:], max(deadline, 1))
 	// The thread does not wait now: the other side does not need to wake it.
 	for index in 0 ..< wait.count {
 		// A flag that several threads set stays: another thread can still
@@ -174,6 +177,13 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 		}
 	}
 	return now
+}
+
+// wait_command gives the command Word_Wait of the first count words of a
+// list. A pure part of wait_end, so the host tests what it pushes.
+@(private = "package")
+wait_command :: proc "contextless" (words: ^[op.WORD_WAIT_CAPACITY]op.Word, count: int) -> ring.Record {
+	return {kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(words)), 1 = u64(count)}}
 }
 
 // word_wait stops the thread while the word holds value, until word_wake
