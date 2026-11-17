@@ -38,7 +38,10 @@ Ready_Kind :: enum u8 {
 
 // A switch below names each member of the enumeration, with no default
 // case: a new strategy does not build until each of the six has its call.
-// A queue with no strategy runs as round robin.
+// No queue has the strategy None: strategy_start gives each queue its
+// strategy before its first thread, and Strategy_Set refuses None. The
+// case None shares the call of round robin so that the switch is whole
+// with no stop of the machine on the path of the scheduler.
 
 // queue_strategy_ready: a thread becomes ready in the queue of its home. It
 // is not yet in the list: the generic code puts it at the end after this

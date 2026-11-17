@@ -108,15 +108,54 @@ a_choice_out_of_its_range :: proc(t: ^testing.T) {
 	values[1] = u64(Inspect_Kind.System)
 	problem, _ = argument_value_problem(.Inspect, 1, values)
 	testing.expect_value(t, problem, errors.Kind.None)
-	// The level Info of Log and the end 0 of Fault_Handler_Set are 0.
+	// The level Info of Log and the action Set of Fault_Handler_Set are 0.
 	values = {}
 	problem, _ = argument_value_problem(.Log, 3, values)
 	testing.expect_value(t, problem, errors.Kind.None)
+	values[1] = u64(Fault_Handler_Action.Set)
 	problem, _ = argument_value_problem(.Fault_Handler_Set, 1, values)
 	testing.expect_value(t, problem, errors.Kind.None)
-	values[1] = 2
+	values[1] = u64(max(Fault_Handler_Action)) + 1
+	problem, limit = argument_value_problem(.Fault_Handler_Set, 1, values)
+	testing.expect_value(t, problem, errors.Kind.Bad_Value)
+	testing.expect_value(t, limit, u64(max(Fault_Handler_Action)))
+	values[1] = max(u64)
 	problem, _ = argument_value_problem(.Fault_Handler_Set, 1, values)
 	testing.expect_value(t, problem, errors.Kind.Bad_Value)
+}
+
+// Each bound of the table is the named constant that the kernel checks, so
+// the table and the kernel cannot drift apart; each flag mask holds each
+// member of its set, and no other bit.
+@(test)
+the_bounds_of_the_table_are_the_named_constants :: proc(t: ^testing.T) {
+	testing.expect_value(t, OPERATIONS[.Log].parameters[2].limit, u64(LOG_TEXT_BYTES_MOST))
+	testing.expect_value(t, OPERATIONS[.Program_Create].parameters[2].limit, u64(PROGRAM_NAME_BYTES_MOST))
+	testing.expect_value(t, OPERATIONS[.Memory_Create].parameters[2].limit, MEMORY_FLAGS_KNOWN)
+	testing.expect_value(t, OPERATIONS[.Memory_Map].parameters[3].limit, MAP_FLAGS_KNOWN)
+	testing.expect_value(t, OPERATIONS[.Memory_Protect].parameters[2].limit, MAP_FLAGS_KNOWN)
+	testing.expect_value(t, OPERATIONS[.Memory_Commit].parameters[4].limit, COMMIT_FLAGS_KNOWN)
+	testing.expect_value(t, OPERATIONS[.Fault_Handler_Set].parameters[1].limit, u64(max(Fault_Handler_Action)))
+	memory_flags: Memory_Flags
+	for flag in Memory_Flag {
+		memory_flags += {flag}
+	}
+	testing.expect_value(t, MEMORY_FLAGS_KNOWN, transmute(u64)memory_flags)
+	map_flags: Map_Flags
+	for flag in Map_Flag {
+		map_flags += {flag}
+	}
+	testing.expect_value(t, MAP_FLAGS_KNOWN, transmute(u64)map_flags)
+	commit_flags: Commit_Flags
+	for flag in Commit_Flag {
+		commit_flags += {flag}
+	}
+	testing.expect_value(t, COMMIT_FLAGS_KNOWN, transmute(u64)commit_flags)
+	// The name of a program fits its field, with the zero byte after it.
+	report: Program_Report
+	testing.expect_value(t, len(report.name), PROGRAM_NAME_BYTES_MOST + 1)
+	// The code of Machine_Stop fits the one byte that the host receives.
+	testing.expect_value(t, u64(MACHINE_STOP_CODE_MOST), u64(max(u8)))
 }
 
 // An argument that the other values make unused is not read, so it gets no
@@ -137,10 +176,18 @@ the_arguments_that_the_operation_reads :: proc(t: ^testing.T) {
 	testing.expect(t, !argument_is_read(.Thread_Control, 0, values))
 	values[2] = u64(Thread_Control_Command.Stop)
 	testing.expect(t, argument_is_read(.Thread_Control, 0, values))
-	// Fault_Handler_Set: the end of the delivery reads no thread.
-	values = {5, 1, 0, 0, 0, 0, 0}
+	// A command of no member, past the width of a cast, reads no thread.
+	values[2] = u64(max(u32)) + 1 + u64(Thread_Control_Command.Stop)
+	testing.expect(t, !argument_is_read(.Thread_Control, 0, values))
+	values[2] = max(u64)
+	testing.expect(t, !argument_is_read(.Thread_Control, 0, values))
+	// Fault_Handler_Set: the end of the delivery, and a word of no action,
+	// read no thread.
+	values = {5, u64(Fault_Handler_Action.End), 0, 0, 0, 0, 0}
 	testing.expect(t, !argument_is_read(.Fault_Handler_Set, 0, values))
-	values[1] = 0
+	values[1] = u64(max(Fault_Handler_Action)) + 1
+	testing.expect(t, !argument_is_read(.Fault_Handler_Set, 0, values))
+	values[1] = u64(Fault_Handler_Action.Set)
 	testing.expect(t, argument_is_read(.Fault_Handler_Set, 0, values))
 	// A parameter that the operation does not have.
 	testing.expect(t, !argument_is_read(.Memory_Size, 1, values))

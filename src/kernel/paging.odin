@@ -82,7 +82,7 @@ paging_start :: proc "contextless" (boot: ^info.Boot_Info) {
 				table := frames_allocate(1)
 				if table == 0 {
 					log("kernel: no memory for the page tables of the kernel")
-					machine_stop(1)
+					machine_stop(.Start_Failed)
 				}
 				first := large^ & PAGE_ADDRESS
 				for &entry, page in direct(table, [512]u64) {
@@ -98,7 +98,7 @@ paging_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	// address space copies the top entries of the kernel half.
 	if kernel_entry(op.KERNEL_STACK_BASE) == nil {
 		log("kernel: no memory for the page tables of the kernel")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 	control_register_3_write(kernel_table)
 }
@@ -290,7 +290,7 @@ paging_audit :: proc "contextless" () {
 	log_in("paging", .Info, "kernel: paging: the kernel ", kernel_no_execute ? "cannot" : "can", " execute memory of programs, and ", user_access_guard != 0 ? "cannot" : "can", " use it outside a copy")
 	if audit.write_execute_pages != 0 || audit.guard_pages != audit.guards_expected {
 		log("kernel: the page tables of the kernel do not keep their rules")
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 }
 
@@ -333,5 +333,5 @@ self_test :: proc "contextless" (test: info.Self_Test, boot: ^info.Boot_Info) {
 		register_trial_self_test()
 	}
 	log("kernel: self test: the processor did not refuse")
-	machine_stop(1)
+	machine_stop(.Start_Failed)
 }

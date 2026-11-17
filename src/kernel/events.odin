@@ -234,12 +234,10 @@ event_current :: #force_inline proc "contextless" (cpu: ^Processor) -> (program:
 
 // events_set is the operation Events_Set. The caller holds the program lock
 // of the caller (execute); the table changes under the control lock.
-events_set :: proc "contextless" (program_index: u32, v: [7]u64, results: ^[7]u64) -> op.Status {
+events_set :: proc "contextless" (program_index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	program := &programs[program_index]
 	_ = handle_find(program, v[0], .Machine, {.Events}) or_return
-	if need_control() {
-		return STATUS_RETRY
-	}
+	require_control() or_return
 	owned := event_table.owner == program_index && event_table.owner_serial == program.serial
 	if v[1] == 0 {
 		if !owned {
@@ -298,7 +296,7 @@ events_set :: proc "contextless" (program_index: u32, v: [7]u64, results: ^[7]u6
 // event_rule_check checks one rule of the caller and gives it as the kernel
 // tests it. The program of a rule is a handle of the caller with Read.
 @(private = "file")
-event_rule_check :: proc "contextless" (program: ^Program, rule: op.Event_Rule) -> (kept: Event_Rule_In_Kernel, status: op.Status) {
+event_rule_check :: proc "contextless" (program: ^Program, rule: op.Event_Rule) -> (kept: Event_Rule_In_Kernel, status: Operation_Outcome) {
 	if rule.kind == .None || rule.kind > max(op.Event_Kind) || rule.flags - {.Match_Detail} != {} || rule.reserved[0] | rule.reserved[1] | rule.reserved[2] != 0 {
 		return {}, .Bad_Operation
 	}

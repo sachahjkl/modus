@@ -111,7 +111,7 @@ queue_push :: proc "contextless" (thread: ^Thread) {
 		if !thread_allowed(thread, thread.home) {
 			fault_report_begin()
 			log("kernel: a thread entered the run queue of processor ", u64(thread.home), ", which is not in its placement ", Hex(thread.processors))
-			machine_stop(3)
+			machine_stop(.Invariant_Broken)
 		}
 	}
 	queue := &run_queues[thread.home]
@@ -621,7 +621,7 @@ schedule :: proc "contextless" () -> ! {
 		left_program, left_number = 0, 0
 		if intrinsics.atomic_load(&root_started) && !threads_alive() {
 			log("kernel: no program is left")
-			machine_stop(0)
+			machine_stop(.Normal_End)
 		}
 		// Idle: a processor that makes a thread ready sees the flag and sends
 		// an interrupt. The flag is set before the last look at the queues.

@@ -388,7 +388,7 @@ guest_frame_return :: proc "contextless" (program: ^Program, frame: u64) {
 // that the guest reaches only what its program mapped. Nothing changes when
 // the budget cannot pay. The caller holds the program lock; the program is
 // Created, with no thread.
-guest_create :: proc "contextless" (index: u32) -> op.Status {
+guest_create :: proc "contextless" (index: u32) -> Operation_Outcome {
 	program := &programs[index]
 	control_block := frame_paid(&program.budget)
 	if control_block == 0 {
@@ -568,7 +568,7 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 // for each page on first use, and no lock while the guest runs. A run holds
 // the guest program as a thread on a processor holds its program: a stop
 // during the run cleans the program up after it.
-guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> op.Status {
+guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if !intrinsics.atomic_load(&guest_support.ready) {
 		return .Bad_Operation
 	}
@@ -632,7 +632,7 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> op.
 		if exit.code == GUEST_EXIT_MACHINE_CHECK {
 			fault_report_begin()
 			log("kernel: machine check while a guest of program ", Module_Name{program_name(caller)}, " ran: a fault of the machine, not of the guest: the machine stops")
-			machine_stop(2)
+			machine_stop(.Fault)
 		}
 		if exit.code == GUEST_EXIT_NESTED_PAGE_FAULT && exit.information_1 & FAULT_RESERVED_BIT != 0 {
 			// The guest can perhaps cause it with an address past the

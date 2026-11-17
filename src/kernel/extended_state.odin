@@ -41,7 +41,7 @@ Extended_State_Components :: bit_set[Extended_State_Component; u64]
 
 AVX_512_COMPONENTS :: Extended_State_Components{.Opmask, .Zmm_High_Halves, .Zmm_High_Registers}
 LEGACY_COMPONENTS :: Extended_State_Components{.X87, .Sse}
-LEGACY_AREA_SIZE :: 512 // What fxsave writes.
+LEGACY_AREA_SIZE :: op.EXTENDED_STATE_LEGACY_BYTES // What fxsave writes.
 
 CR4_OSFXSR :: 1 << 9 // The processor saves the SSE registers with fxsave, and programs can use them.
 CR4_OSXMMEXCPT :: 1 << 10 // A SIMD floating-point exception is vector 19, not an invalid opcode.
@@ -49,10 +49,10 @@ CR4_OSXSAVE :: 1 << 18 // xsave, xrstor and xgetbv work, and CPUID says so to pr
 
 // The offsets in the start state of a thread.
 X87_CONTROL_OFFSET :: 0
-MXCSR_OFFSET :: 24
+MXCSR_OFFSET :: op.EXTENDED_STATE_MXCSR_OFFSET
 MXCSR_MASK_OFFSET :: 28 // The bits of MXCSR that the processor takes: fxsave writes it.
 MXCSR_MASK_DEFAULT :: 0xFFBF // The mask of a processor that writes 0 there (Intel SDM, volume 1, section 11.6.6).
-HEADER_OFFSET :: 512 // XSTATE_BV, then XCOMP_BV, then reserved bytes.
+HEADER_OFFSET :: op.EXTENDED_STATE_LEGACY_BYTES // XSTATE_BV, then XCOMP_BV, then reserved bytes.
 X87_CONTROL_START :: 0x037F // Every exception masked, 64-bit precision, round to nearest.
 MXCSR_START :: 0x1F80 // Every exception masked, round to nearest.
 
@@ -241,7 +241,7 @@ extended_state_prove :: proc "contextless" () {
 	extended_state_restore(first, extended_state_form) // The registers go back to the start state.
 	if read[0] & 0xFFFF != PROOF_X87_CONTROL || read[1] & 0xFFFF_FFFF != PROOF_MXCSR || read[2] != PROOF_XMM0 || (with_avx && read[3] != PROOF_YMM0_HIGH) {
 		log("kernel: extended state: the processor does not read the area where the kernel writes it: x87 control ", Hex(read[0] & 0xFFFF), ", MXCSR ", Hex(read[1] & 0xFFFF_FFFF), ", xmm0 ", Hex(read[2]), ", ymm0 high ", Hex(read[3]))
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 
 	extended_state_start(first)
@@ -253,7 +253,7 @@ extended_state_prove :: proc "contextless" () {
 	header := (^u64)(&second.bytes[HEADER_OFFSET])^
 	if control != X87_CONTROL_START || mxcsr != MXCSR_START || (extended_state_form != .Fxsave && header &~ transmute(u64)extended_state_components != 0) {
 		log("kernel: extended state: the processor does not give back the start state of a thread: x87 control ", Hex(u64(control)), ", MXCSR ", Hex(u64(mxcsr)), ", XSTATE_BV ", Hex(header))
-		machine_stop(1)
+		machine_stop(.Start_Failed)
 	}
 
 	extended_state_mxcsr_mask = extended_state_mxcsr_mask_measure(second)

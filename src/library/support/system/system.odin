@@ -366,7 +366,7 @@ memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_
 // }
 // ```
 fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kinds = {}, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0, transmute(u64)kinds)
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), u64(op.Fault_Handler_Action.Set), transmute(u64)kinds)
 	return status
 }
 
@@ -374,7 +374,7 @@ fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kin
 // If a thread waits for an answer, its record is lost with the ring: the
 // program stops with STOP_CODE_FAULT_UNANSWERED. Answer first.
 fault_handler_end :: proc "contextless" () -> Status {
-	_, status := call(.Fault_Handler_Set, 0, 1)
+	_, status := call(.Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End))
 	return status
 }
 
@@ -437,7 +437,7 @@ fault_record_next :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> (recor
 // the last handle with Debug closes, and when the program stops: the
 // program then gets back each thread that the debugger held.
 debug_attach :: proc "contextless" (program: Handle, kinds: op.Fault_Kinds = {}, thread: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0, transmute(u64)kinds, u64(program))
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), u64(op.Fault_Handler_Action.Set), transmute(u64)kinds, u64(program))
 	return status
 }
 
@@ -446,7 +446,7 @@ debug_attach :: proc "contextless" (program: Handle, kinds: op.Fault_Kinds = {},
 // flag that the debugger wrote, takes back the stops that it made, and
 // resumes each thread that waits for its answer.
 debug_detach :: proc "contextless" (program: Handle, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, 0, 1, 0, u64(program))
+	_, status := call_with_error(error, .Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End), 0, u64(program))
 	return status
 }
 
