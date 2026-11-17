@@ -35,6 +35,14 @@
 // - `disk: a read of 2 blocks from the last block: ...`, the error record of
 //   a read past the end of the disk, which the program checks field by
 //   field;
+// - one line for each word of a command record that names no command
+//   (None, one past the last command, the largest word): `disk: the
+//   command word 0 of the block ring: refused with Bad_Command and the
+//   record Unsupported of the word, and the next Info is served: as it
+//   must`;
+// - `disk: the window sent the command words 0, 6 and 4294967295: the
+//   compositor read the three: as it must`; the compositor writes its own
+//   line at the first one, and the count when the window closes;
 // - `disk: ok, 5 runs, 0 errors, write then read back: 0 wrong`, or
 //   `disk: wrong: ...`.
 //
@@ -49,6 +57,7 @@
 // blocks (16 MiB) of the disk only.
 package disk
 
+import "base:intrinsics"
 import "modus:contract/block"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -100,7 +109,13 @@ statistics_tag: u32 = 1 << 31
 
 // request sends one command, and waits for room if the queue is full.
 request :: proc "contextless" (command: block.Command, tag: u32, values: [7]u64 = {}) {
-	record := ring.Record{kind = u32(command), tag = tag, values = values}
+	request_word(u32(command), tag, values)
+}
+
+// request_word sends one record with the word of its kind as it is: the
+// cases of the words that name no command send it.
+request_word :: proc "contextless" (word: u32, tag: u32, values: [7]u64 = {}) {
+	record := ring.Record{kind = word, tag = tag, values = values}
 	for !system.send(&blocks.commands, record) {
 		wait: system.Wait
 		system.wait_room(&wait, &blocks.commands)
@@ -124,8 +139,14 @@ answer :: proc "contextless" () -> ring.Record {
 
 // call sends one command and waits for its completion.
 call :: proc "contextless" (command: block.Command, values: [7]u64 = {}) -> ring.Record {
+	return call_word(u32(command), values)
+}
+
+// call_word sends one record with the word of its kind as it is, and waits
+// for its completion.
+call_word :: proc "contextless" (word: u32, values: [7]u64 = {}) -> ring.Record {
 	statistics_tag += 1
-	request(command, statistics_tag, values)
+	request_word(word, statistics_tag, values)
 	for {
 		record := answer()
 		if record.tag == statistics_tag {
@@ -240,6 +261,70 @@ refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) -> st
 	return system.written(&writer)
 }
 
+// The words of the kind of a command record that name no command: None,
+// the word one past the last command, and the largest word of the field.
+// The block service decides each one at its border, which a host test
+// gives the same words (block.command_of_ring_word); this case shows that
+// the service answers what its border decided.
+@(rodata)
+refused_block_words := [3]u32{u32(block.Command.None), u32(max(block.Command)) + 1, max(u32)}
+
+// The same three words for the kind of a record of the ring of a window
+// (display.command_of_ring_word).
+@(rodata)
+refused_window_words := [3]u32{u32(display.Command.None), u32(max(display.Command)) + 1, max(u32)}
+
+// block_words_check sends each refused word to the block service, checks
+// that the completion is Bad_Command with the record Unsupported of the
+// word, and that the next Info gives the same disk: the refusal changed
+// nothing. One line for each word.
+block_words_check :: proc "contextless" () {
+	for word in refused_block_words {
+		refused := call_word(word)
+		error := errors.completion_record(refused.values)
+		after := call(.Info)
+		right := refused.kind == u32(block.Status.Bad_Command) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && after.kind == u32(block.Status.Ok) && after.values[0] == disk_blocks
+		if right {
+			system.log("disk: the command word ", u64(word), " of the block ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
+		} else {
+			system.log("disk: the command word ", u64(word), " of the block ring: WRONG: the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
+		}
+	}
+}
+
+// window_words_check writes each refused word on the ring of the window,
+// then waits until the compositor read the three records. The compositor
+// sends no answer on that ring: its answer is one line of the log at the
+// first refused word, and the count when the window closes, which the
+// scenario of the tool waits for. The wait wakes at each turn of the
+// compositor that took a record of this window; the bound only ends a hang.
+window_words_check :: proc "contextless" (window: ^display.Window) {
+	for word in refused_window_words {
+		for !system.send(&window.ring.commands, ring.Record{kind = word}) {
+			list: system.Wait
+			system.wait_room(&list, &window.ring.commands)
+			system.wait_end(&list)
+		}
+	}
+	counters := window.ring.commands.counters
+	written := intrinsics.atomic_load_explicit(&counters.write, .Relaxed)
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for {
+		read := intrinsics.atomic_load_explicit(&counters.read, .Relaxed)
+		if i32(read - written) >= 0 {
+			system.log("disk: the window sent the command words ", u64(refused_window_words[0]), ", ", u64(refused_window_words[1]), " and ", u64(refused_window_words[2]), ": the compositor read the three: as it must")
+			return
+		}
+		if system.time() >= deadline {
+			system.log("disk: the window sent the command words ", u64(refused_window_words[0]), ", ", u64(refused_window_words[1]), " and ", u64(refused_window_words[2]), ": WRONG: the compositor did not read them in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+			return
+		}
+		list: system.Wait
+		system.wait_word(&list, &counters.read, read, &counters.writer_waits)
+		system.wait_end(&list, deadline)
+	}
+}
+
 checked: bool
 
 // The columns of a row of the table, from the left margin: the kind of the
@@ -322,7 +407,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 // 6. It reads 2 blocks from the last block of the disk, and checks the
 //    error record of the refusal: kind `Out_Of_Range`, argument 1, value
 //    the count of blocks + 1, limit the count of blocks.
-// 7. It writes the summary line, then draws the window at each event.
+// 7. It sends the three words that name no command to the block service
+//    and checks each answer (`block_words_check`), then writes them on the
+//    ring of its window and waits until the compositor read them
+//    (`window_words_check`).
+// 8. It writes the summary line, then draws the window at each event.
 //
 // **The stop**: with no window, no block ring, no data region, no block
 // service, or a refused `Attach`, it writes the reason on the log and stops
@@ -385,6 +474,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	text: [240]u8
 	past_right := block.Status(past.kind) == .Out_Of_Range && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
 	system.log("disk: a read of 2 blocks from the last block: ", past_right ? "" : "WRONG: ", refusal_text(text[:], past))
+	// Each of these writes its own line with "as it must" or "WRONG": the
+	// scenario of the tool waits for each line.
+	block_words_check()
+	window_words_check(&window)
 	if error_count == 0 && wrong == 0 {
 		system.log("disk: ok, ", u64(len(measures)), " runs, 0 errors, write then read back: 0 wrong")
 	} else {

@@ -2348,7 +2348,7 @@ Do not use: drop window, loss burst.
 
 The terminal ring is the ring between a program and its terminal.
 
-In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. The queue of keys holds 4096 keys: the keys typed ahead. The terminal never waits for a program: when the queue is full, a new key is lost and counted in a loss period.
+In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record. The queue of keys holds 4096 keys: the keys typed ahead. The terminal never waits for a program: when the queue is full, a new key is lost and counted in a loss period. A record whose kind names no record is refused and counted: the terminal writes one line at the first one, and the count when the program stops. The test program `hostile_terminal` writes three such records in the machine test.
 
 The contract: `src/library/support/terminal/terminal.odin`.
 
