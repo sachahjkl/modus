@@ -111,7 +111,7 @@ A host program cannot load a module, so the code of an export that a host progra
 
 Refused forms:
 
-- **The code in a support package (`support/cryptography_operations`).** One module alone compiles it in; the tool and the host tests are no owners, so the package has one owner, and the owner rule refuses it.
+- **The code in a support package of its own.** One module alone compiles it in; the tool and the host tests are no owners, so the package has one owner, and the owner rule refuses it.
 - **The relative import of the module folder, as before.** It names a module by its path, which a move of the module group changes, and it hides from the check of the imports a reader of the module.
 - The word `private` tells a third party that the package is not for it, in the import line itself.
 
