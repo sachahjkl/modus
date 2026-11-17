@@ -1249,10 +1249,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.eprintfln("modustool: the boot volume %s, or the variable store of Secure Boot, was not built or kept by the build of this command: add it to the volumes of the command (boot_volumes.odin)", volume)
 		return nil, false
 	}
-	// The machine of AMD gives the disk of the measures a new size during
-	// its test (iommu_scenario.odin): it starts from a new disk of the
-	// first size.
-	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, iommu == .Amd) {
+	// Each machine starts from a new disk of the measures, of the first
+	// size: the machine of AMD gives that disk a new size during its test
+	// (iommu_scenario.odin), and a machine that kept the file would see that
+	// size. The disk holds no data that a program keeps.
+	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, true) {
 		return nil, false
 	}
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
