@@ -1025,7 +1025,7 @@ A raw target reads its input as the bytes that the system reads. A generated tar
 
 **A long run.** `modustool fuzz <target> <executions>` runs for its count of executions, with one child for each process. With no count it runs the count of the check, and it refuses a count of 0: a forgotten argument never starts a run with no end. The children share the inputs that they keep through `build/fuzzing/<target>/kept/`. It prints the executions in one second as a measure, never as a condition.
 
-**A fuzz finding.** The tool minimizes the input while its signature stays (the oracle and the place of the fault), and writes it with a text to `build/fuzzing/<target>/findings/`. `modustool fuzz show <target> <file>` prints its outcome and its bytes as an Odin array, for a named host test of the reader. After the fix, `modustool fuzz regression <target> <file>` adds it to the regression inputs, which each check runs again; the command refuses an input that still breaks an oracle. `modustool fuzz corpus <target>` replaces the reach inputs with the smallest set of the kept inputs that gives each edge class.
+**A fuzz finding.** The tool minimizes the input while its signature stays (the oracle and the place of the fault), and writes it with a text to `build/fuzzing/<target>/findings/`. `modustool fuzz show <target> <file>` prints its outcome and its bytes as an Odin array, for a named host test of the reader. After the fix, `modustool fuzz regression <target> <file>` adds it to the regression inputs, which each check runs again; the command refuses an input that still breaks an oracle. `modustool fuzz corpus <target>` replaces the reach inputs with the smallest set of the kept inputs that gives each edge class. `modustool fuzz replay operations <file>` runs one operation sequence on a machine of the kernel that ships ("The operation sequences").
 
 ### The parts of the machine test
 
@@ -1066,6 +1066,7 @@ The table is in the tool (`test_parts`, `tools/modustool/test_parts.odin`), and 
 | `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") | `main` |
 | `fails` | The machine of a start that fails: a boot image with no compositor | `fails` |
 | `shortage` | The machine of the shortage of frames | `shortage` |
+| `operation_sequences` | The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence ("The operation sequences") | `operation_sequences` |
 
 ### A step that fails
 
@@ -1092,6 +1093,25 @@ The instruction address is RIP in 64-bit code, and the base of CS plus EIP in th
 - **No known code**: any other address. The firmware also runs code that it copied to memory, and the boot program is where the firmware loaded it; the tool knows neither range, so such an address is no known code. The registers in the file still give it.
 
 This read never makes a test fail, and never hides the first fault: the line of the failed step comes first. If QEMU ended or does not answer, the tool writes one line, "modustool: the processors of <log> at the failure: none: ...", and goes on. A text that the reader of the tool refuses gives one line with the fault, and the file keeps the text. A host test gives the reader damaged texts first (`tools/modustool/processor_state_test.odin`).
+
+### The operation sequences
+
+The test part `operation_sequences` boots the volume `operation_sequences`: the kernel that ships, one processor, and the memory of the machine in a file of the host (`memory-backend-file` with `share=on`). Its boot image holds the program `operation_fuzzing` and its runner, which no other image holds; a release refuses an image that holds one of them. The design is in `src/md/infrastructure/kernel_fuzzing.md`.
+
+The root service starts only `operation_fuzzing`, with the machine with the right Physical only, the boot image and the log. The program makes its mailbox, a contiguous memory object, and writes its physical address on the log: `operation_fuzzing: mailbox at <address>, <pages> pages`. For each operation sequence that the tool writes there, it starts a new runner with a new budget, waits for its stop, and writes the answers of the kernel and the budget before and after.
+
+The tool reads and writes the mailbox at that offset of the memory file. It checks each execution:
+
+- the runner ran or stopped; a refused sequence, a runner that did not start and a runner that did not stop are faults;
+- the budget of the sequence holds after the runner what it held before: pages, programs, threads;
+- each status is `Ok` or a status of the list "**Statuses**" of the reference comment of its operation, and a word that names no operation gives `Bad_Operation`;
+- no value that the form of its parameter refuses gives `Ok`;
+- each table of error details agrees with the forms: unchanged after `Ok`; after a refusal, the error record first, then one detail of the right problem and limit for each other argument that the form refuses;
+- a planted `Handle_State` gives the kind that the reference names, and two planted `Budget_Read` with only refusals between them give the same amounts.
+
+The part runs the seed sequences: one step of each operation with arguments that fit their forms where a start handle can, then the cases that must succeed or be refused with their details. The line of the end is "the machine ran <n> operation sequences, <m> steps, through the mailbox: ...".
+
+`modustool fuzz replay operations <file>` runs one sequence file on a new machine of the same volume, with every oracle, and ends with the exit code 0 when no oracle breaks. A file that is no operation sequence is refused before the build.
 
 ### The disk of the disk programs
 
@@ -1265,13 +1285,14 @@ A damaged record is never an error. The tool decides for a module after its impo
 
 **When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the build read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. The conversion reads the sources too, so the rule holds for a module that was only converted: its record of the conversion is removed. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
 
-**The boot volumes.** The build has 19 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
+**The boot volumes.** The build has 20 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
 
 | Volume | Its boot image | What differs from the main volume |
 |---|---|---|
 | `main` (`build/boot_volume.img`) | `boot.image`: every module of the image | The system as it is |
 | `fails` | `boot_fails.image`: no compositor | The start must fail |
 | `shortage` | `boot_shortage.image`: no input service | The root service starts only the program `shortage` |
+| `operation_sequences` | `boot_operation_sequences.image`: every module, and `operation_fuzzing` and `operation_sequence_runner`, which no other image holds | The root service starts only the program `operation_fuzzing` ("The operation sequences") |
 | `measure` | `boot_measure.image`: every module, and the resource `measure_run` | A measure run ("A check by count, a measure by time") |
 | `without_return_check` | `boot.image` | The kernel `kernel_without_return_check` |
 | `changed_module`, `stated_hash` | `boot.image` | One byte of a module, or its stated hash, changed after the system description was made |

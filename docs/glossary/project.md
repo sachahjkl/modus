@@ -1106,11 +1106,31 @@ Do not use: crash (for every finding), bug report.
 
 An operation sequence is the fuzz input of the kernel operations: a list of sequence steps whose arguments follow the forms of `OPERATIONS`, which a child program runs in a test machine.
 
-Its format is the contract package `operation_sequence`: a header, the sequence areas, the sequence steps, and the content of the areas. A handle argument names a start handle or the result of an earlier sequence step by its place, so the sequence does not depend on the values of the handles of one run. The tool builds sequences from choices with a generator, and `check` reads them; the machine that runs them is planned work of `ROADMAP.md`.
+Its format is the contract package `operation_sequence`: a header, the sequence areas, the sequence steps, and the content of the areas. A handle argument names a start handle or the result of an earlier sequence step by its place, so the sequence does not depend on the values of the handles of one run. The tool builds sequences from choices with a generator, and `check` reads them. The test part `operation_sequences` runs the seed sequences on the kernel that ships, and `modustool fuzz replay operations <file>` runs one.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
 Do not use: syscall program, call trace.
+
+### Runner
+
+The runner is the program `operation_sequence_runner`, which runs one operation sequence: one new runner for each sequence, with the budget of that sequence.
+
+The program `operation_fuzzing` starts it with its start handles, the copy of the sequence and its sequence areas. It writes each sequence step as a command record, then what the kernel answered: the completion and the table of error details. It then stops itself. It is not a fuzz target, which is a procedure of the tool.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: executor, harness (for this).
+
+### Mailbox
+
+A mailbox is memory that the tool and a program that it tests share, through which the tool gives each fuzz input and reads its outcome.
+
+On the host, it is a file that the tool and its fuzz child map. In the machine of the operation sequences, it is a contiguous memory object of the program `operation_fuzzing`, which the tool reads and writes through the memory file of QEMU at the physical address that the log gives. Each side copies what the other wrote, then checks it.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: shared buffer, queue (for this).
 
 ### Sequence step
 
