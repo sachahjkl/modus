@@ -1001,7 +1001,10 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	mappings := [1]system.Mapping{{memory = memory, address = MEASURE_ADDRESS, flags = {.Write}}}
 	control, frame := lock_takes(machine)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
+	// The child is this module: its start pays for the private pages of the
+	// module, which grow with its cases, so the budget keeps room past them.
+	// A start that the budget cannot pay is a WRONG line below, not silence.
+	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
 	if status == .Ok {
 		for intrinsics.atomic_load(&page.done) == 0 {
 			if state, _ := system.program_state(program); state == .Stopped {
@@ -1029,6 +1032,10 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
 		}
 		system.close(program)
+	} else {
+		// A child that does not start measures nothing: the case says so,
+		// and does not pass in silence.
+		system.log("errors: WRONG: the child of the refusals did not start: ", u64(status), ", the stage ", u64(error.stage), ", the status of the kernel ", u64(error.status), ", the error of the file ", u64(error.file_error))
 	}
 	control_after, frame_after := lock_takes(machine)
 	refused_log_ns, refused_log_control, refused_log_frame = page.log_ns, control_after - control, frame_after - frame
