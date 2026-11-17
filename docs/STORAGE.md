@@ -2,7 +2,7 @@
 
 This guide gives the model of the stored data of the system: what a program, a package and a principal keep, and how a program reaches only what it was granted. It also gives the format on the disk, the interface of the storage service, the limits, and the order of construction. Each part says if it is **built** or **not built**.
 
-The terms are in `GLOSSARY.md`, section Storage. The versions and the date are in `ARCHITECTURE.md`, "Versions" and "The date".
+The terms are in `GLOSSARY.md`, section Storage. The versions and the date are in `ARCHITECTURE.md`, "U5. Storage service", and `ARCHITECTURE.md`, "The date".
 
 ## About this guide
 
@@ -123,16 +123,18 @@ The format is the contract `src/library/contract/store`, `STORAGE4`. A disk of `
 
 ### 3.1 The blocks
 
-- **Root block**: the generation, and one store entry for each store: its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The disk has two places for the root block.
+- **Root block** (`Root` of `src/library/contract/store`): the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores (`STORE_CAPACITY`): its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
-- **Node**: a node of the B+ tree of one tree. A leaf holds up to 24 entries; a branch up to 50 children. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
-- **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6).
-- **Data**: 4096 bytes of an object, at one place of it.
+- **Node**: a node of the B+ tree of one tree. A leaf holds up to 24 records of a name (64 bytes) and its entry (104 bytes); a branch up to 50 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
+- **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6). It starts with the mark "BLOB".
+- **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the program `disk` one of 1 MiB.
 - **Version index, version leaf**: the versions of an object, as before; a version names the root of the block tree of its state.
 
 A pointer is a block number and a check. The check of a block of data is the first 8 bytes of its value (section 4.6); the check of each other block is the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
 
 ### 3.2 An entry
+
+An entry is 104 bytes (`Entry` of `src/library/contract/store`):
 
 | Field | An object | A tree |
 |---|---|---|
@@ -150,7 +152,7 @@ In a branch, the name of the record 0 is a bound that the search never reads. It
 
 ### 3.3 The commit and the open
 
-A commit is one change of one store. It changes the entries of the trees on one or two paths from the root of the store. Each changed node of each tree is written to a free block, then the node above it, up to the root node of the store, then the store block, then the root block: copy on write, as before. A loss of power leaves the disk with the last commit or the one in flight, never a mix: the tool checks each image that a loss can leave (section 6).
+A commit is one change of one store. It plans its work in memory first (the blocks to write, the counts to change, the versions to thin); a refusal drops the plan and changes nothing on the disk. It changes the entries of the trees on one or two paths from the root of the store. Each changed node of each tree is written to a free block, then the node above it, up to the root node of the store, then the store block, then the root block: copy on write, as before. A loss of power leaves the disk with the last commit or the one in flight, never a mix: the tool checks each image that a loss can leave (section 6).
 
 The open of the disk at the start walks each node of each tree once, checks each block, and counts the names of each block. A block of data is checked by its value at its place; an object node by its check, by the rules of its format, and by the counts and the values of its children. A block that an earlier state named is not read again. A node that breaks a rule (its count, its level, the order of its keys) is damage, as a wrong check. A wrong node damages its store: the service gives nothing of that store and changes nothing in it. A wrong object node or a wrong block of data damages the state of the object that names it only: a read of it gives Damaged, and a write or a remove replaces it.
 
@@ -268,7 +270,7 @@ Built. An object can be far larger than one call: its bytes are a tree of blocks
 
 An object is a tree of blocks. The block n of an object holds its bytes from n × 4096. A block whose bytes are all zero is a hole: nothing names it, it costs no block, and it reads as zero bytes. The service never writes a block of zero bytes: a write that leaves one makes a hole, so the blocks of a state come from its bytes alone. The open takes a block of data of zero bytes for damage.
 
-The object nodes are above the blocks. A node has 64 children: 64 is a power of two, so a node covers a whole subtree of the BLAKE3 tree of the bytes. A child holds its block number, its check, the count of blocks under it (itself included), and its value. The level of the root comes from the size: level 0 when the object has at most one block (the root is that block), else the least level whose node covers each block. A child whose blocks start at or past the size is a hole. A node with no child is a hole too.
+The object nodes are above the blocks. A node has 64 children: 64 is a power of two, so a node covers a whole subtree of the BLAKE3 tree of the bytes. A child holds its block number, its check, the count of blocks under it (itself included), and its value of 32 bytes (`Block_Value` of `src/library/contract/store`). The level of the root comes from the size: level 0 when the object has at most one block (the root is that block), else the least level whose node covers each block. A child whose blocks start at or past the size is a hole. A node with no child is a hole too.
 
 The value of a part of an object is the BLAKE3 chaining value of its bytes as a subtree of the BLAKE3 tree of the object, with zero bytes past the size. The value of a block is the chaining value of its 4 chunks of 1 KiB at its place: it is the check of the block. The value of a node is the parent of the values of its children, two by two; a whole part with no block (a hole) has the value zero, and two halves of value zero give zero.
 
