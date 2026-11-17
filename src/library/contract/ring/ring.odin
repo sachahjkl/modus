@@ -20,8 +20,13 @@
 //
 // Choose the capacity for the largest burst of the writer. When a queue is
 // full, `push` writes nothing and says so: the writer waits for room, or it
-// refuses the request that it serves and says so. No record is dropped in
-// silence: a full queue slows the writer to the speed of the reader.
+// refuses the request that it serves and says so: a full queue slows the
+// writer to the speed of the reader. Two writers do not follow this rule
+// yet, and drop a record that does not fit with no word: the kernel drops
+// the completion of a command when the program left its completion queue
+// full (`enter` in src/kernel/enter.odin), and
+// `system.command_call` ignores a refused push of its command. The fix of
+// both is planned work of the roadmap.
 //
 // Who uses it: the kernel (the kernel ring of each thread), every service
 // (its rings to its callers) and every program. The parts:
@@ -173,10 +178,13 @@ push :: proc "contextless" (queue: ^Queue, record: Record) -> bool {
 }
 
 // pop takes the first record of a queue, as a copy. ok is false when the
-// queue is empty. The side that reads a queue calls it.
+// queue is empty, and when the counters say more records than the queue
+// holds: no honest writer writes that, and the counters then stay as they
+// are. The side that reads a queue calls it.
 pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
 	read := intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
-	if intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire) == read {
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire)
+	if write == read || write - read > queue.mask + 1 {
 		return {}, false
 	}
 	record = queue.records[read & queue.mask]

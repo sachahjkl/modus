@@ -75,6 +75,46 @@ a_run_at_the_top_of_the_addresses_joins_no_run :: proc(t: ^testing.T) {
 	testing.expect_value(t, report.range_count, 2)
 	testing.expect_value(t, report.ranges[0].page_count, below_top)
 	testing.expect_value(t, report.ranges[1], Boot_Range{start = end, page_count = 2, kind = FREE})
+	// A join whose end is exactly 2^64 is refused too: the end is no
+	// address of the type. No physical memory is there, so nothing is lost.
+	report^ = {}
+	boot_range_add(report, PAGE, below_top, FREE)
+	boot_range_add(report, end, 1, FREE)
+	testing.expect_value(t, report.range_count, 2)
+	testing.expect_value(t, report.ranges[0].page_count, below_top)
+	testing.expect_value(t, report.ranges[1], Boot_Range{start = end, page_count = 1, kind = FREE})
+	// The successful case last: the largest join that fits, whose end is
+	// the last page of the addresses.
+	report^ = {}
+	boot_range_add(report, PAGE, below_top - 1, FREE)
+	boot_range_add(report, end - PAGE, 1, FREE)
+	testing.expect_value(t, report.range_count, 1)
+	testing.expect_value(t, report.ranges[0], Boot_Range{start = PAGE, page_count = below_top, kind = FREE})
+	testing.expect_value(t, report.ranges[0].start + report.ranges[0].page_count * PAGE, top_page)
+}
+
+// A report whose count of runs is past the capacity is a damaged report:
+// a run then joins no run and is not kept, and no run changes.
+@(test)
+a_count_of_runs_past_the_capacity_changes_no_run :: proc(t: ^testing.T) {
+	report := new(Boot_Report)
+	defer free(report)
+	for index in 0 ..< u64(BOOT_RANGE_CAPACITY) {
+		boot_range_add(report, index * PAGE, 1, FREE)
+	}
+	// Each run followed the one before: one run of every page.
+	testing.expect_value(t, report.range_count, 1)
+	for index: u64 = 1; index < BOOT_RANGE_CAPACITY; index += 1 {
+		report.ranges[index] = {start = (BOOT_RANGE_CAPACITY + 2 * index) * PAGE, page_count = 1, kind = FREE}
+	}
+	report.range_count = BOOT_RANGE_CAPACITY + 1
+	before := report.ranges
+	last := report.ranges[BOOT_RANGE_CAPACITY - 1]
+	boot_range_add(report, last.start + PAGE, 1, FREE)
+	boot_range_add(report, max(u64) - (PAGE - 1), 1, LOADED)
+	testing.expect(t, report.ranges == before, "a damaged count of runs changes no run")
+	testing.expect_value(t, report.range_count, BOOT_RANGE_CAPACITY + 1)
+	testing.expect_value(t, report.firmware_ranges, BOOT_RANGE_CAPACITY + 2)
 }
 
 // A run joins the last run only when it follows it with the same kind.

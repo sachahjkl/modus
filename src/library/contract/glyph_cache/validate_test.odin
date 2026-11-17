@@ -215,7 +215,9 @@ validate_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		{"an adjustment one past the limit", true, proc(file: ^Test_File) {pair_of(file, 0).adjustment = ADVANCE_LIMIT + 1}, .Bad_Pair, 0, 1},
 		{"an adjustment one past the negative limit", true, proc(file: ^Test_File) {pair_of(file, 1).adjustment = -ADVANCE_LIMIT - 1}, .Bad_Pair, 1, 2},
 		{"the most negative adjustment", true, proc(file: ^Test_File) {pair_of(file, 1).adjustment = min(i32)}, .Bad_Pair, 1, 2},
-		{"a reserved field of a pair of 1", true, proc(file: ^Test_File) {pair_of(file, 0).reserved = 1}, .Bad_Pair, 0, 1},
+		// The value is the field, not the key of the pair: the two differ.
+		{"a reserved field of a pair of 7", true, proc(file: ^Test_File) {pair_of(file, 1).reserved = 7}, .Bad_Pair, 1, 7},
+		{"the largest reserved field of a pair", true, proc(file: ^Test_File) {pair_of(file, 0).reserved = max(u16)}, .Bad_Pair, 0, u64(max(u16))},
 		// The flags.
 		{"a flag that no reader knows", false, proc(file: ^Test_File) {header_of(file).flags = FLAG_PROPORTIONAL << 1}, .Bad_Flags, 0, FLAG_PROPORTIONAL << 1},
 		{"a flag past the filter", false, proc(file: ^Test_File) {header_of(file).flags = 1 << (FILTER_SHIFT + 8)}, .Bad_Flags, 0, 1 << (FILTER_SHIFT + 8)},

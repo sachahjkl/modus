@@ -315,8 +315,12 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 		previous := -1
 		for pair, offset in cache.pairs[index * int(header.pair_count):][:int(header.pair_count)] {
 			key := int(pair.left) << 8 | int(pair.right)
-			if int(pair.left) >= character_count || int(pair.right) >= character_count || key <= previous || pair.adjustment < -ADVANCE_LIMIT || pair.adjustment > ADVANCE_LIMIT || pair.reserved != 0 {
+			if int(pair.left) >= character_count || int(pair.right) >= character_count || key <= previous || pair.adjustment < -ADVANCE_LIMIT || pair.adjustment > ADVANCE_LIMIT {
 				return {}, {kind = .Bad_Pair, index = u32(index * int(header.pair_count) + offset), value = u64(key), limit = u64(previous + 1)}
+			}
+			// Its own record, so that a reader sees the field and not an order.
+			if pair.reserved != 0 {
+				return {}, {kind = .Bad_Pair, index = u32(index * int(header.pair_count) + offset), value = u64(pair.reserved), limit = 0}
 			}
 			previous = key
 		}

@@ -2253,7 +2253,9 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 		return {.Inspect}
 	}
 	// Only a cast that skipped the border of the command reaches this line:
-	// every right, which no handle holds with a bit of no right.
+	// every right, with the bits of no right, which no handle holds. The
+	// result is a requirement, never a grant: a caller that used it as the
+	// rights of a handle or as a mask would give every right.
 	return transmute(Rights)max(u32)
 }
 
@@ -3388,9 +3390,11 @@ Boot_Range :: struct {
 // address. A run that continues the last one, with the same kind, joins it.
 // A run after the first `BOOT_RANGE_CAPACITY` runs is counted in
 // `firmware_ranges` and not kept. A run of no page is counted and not kept:
-// it holds no memory. A run whose end would pass the top of the addresses
-// joins no run: the end of the last run would wrap to a low address and
-// join a run that does not follow it.
+// it holds no memory. A join whose end would pass the last address, or be
+// exactly 2^64, is refused, and the run is a run of its own: the end of
+// the last run would wrap to a low address and join a run that does not
+// follow it. No physical memory is at the top, so the refusal of an end of
+// 2^64 loses nothing.
 boot_range_add :: proc "contextless" (report: ^Boot_Report, start, page_count, kind: u64) {
 	report.firmware_ranges += 1
 	if page_count == 0 {

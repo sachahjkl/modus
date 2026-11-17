@@ -181,11 +181,12 @@ the_counters_wrap_at_the_top_of_their_type :: proc(t: ^testing.T) {
 }
 
 // Counters that the other side wrote false (the read past the write, a
-// distance above the capacity) give a count of at most the capacity,
-// refuse each push with no byte written, and keep each pop inside the
-// records: the record of a pop is the record of the place of its count.
+// distance above the capacity) give a count of at most the capacity, and
+// refuse each push and each pop with no byte and no counter changed. The
+// true counts across the wrap and at the capacity then pop the record of
+// the place of their count.
 @(test)
-hostile_counters_keep_each_read_inside_the_records :: proc(t: ^testing.T) {
+hostile_counters_are_refused :: proc(t: ^testing.T) {
 	memory := memory_of_pages(PAGE_COUNT)
 	defer delete(memory)
 	ring, opened := open(raw_data(memory), PAGE_COUNT)
@@ -198,25 +199,35 @@ hostile_counters_keep_each_read_inside_the_records :: proc(t: ^testing.T) {
 		write: u32,
 		read:  u32,
 	}
-	cases := [?]Hostile_Counters {
+	hostile := [?]Hostile_Counters {
 		{write = 0, read = 1}, // The read one past the write.
-		{write = 0, read = max(u32)}, // A distance of 1, across the wrap: a true count.
 		{write = CAPACITY + 1, read = 0}, // One past the capacity.
 		{write = max(u32), read = 0},
 		{write = 0, read = 1 << 31},
-		{write = max(u32), read = max(u32) - CAPACITY}, // The capacity: a true full queue.
+		{write = CAPACITY, read = max(u32)}, // One past the capacity, across the wrap.
 	}
-	for counters in cases {
+	for counters in hostile {
 		queue.counters.write = counters.write
 		queue.counters.read = counters.read
-		distance := counters.write - counters.read
-		testing.expectf(t, count(queue) == min(distance, u32(CAPACITY)), "write %v and read %v give the count %v", counters.write, counters.read, count(queue))
-		if distance > queue.mask {
-			before := slice.clone(memory)
-			testing.expectf(t, !push(queue, numbered_record(max(u32))), "write %v and read %v refuse a push", counters.write, counters.read)
-			testing.expect(t, slice.equal(before, memory), "a refused push writes no byte")
-			delete(before)
-		}
+		testing.expectf(t, count(queue) == u32(CAPACITY), "write %v and read %v give the count %v", counters.write, counters.read, count(queue))
+		before := slice.clone(memory)
+		testing.expectf(t, !push(queue, numbered_record(max(u32))), "write %v and read %v refuse a push", counters.write, counters.read)
+		record, popped := pop(queue)
+		testing.expectf(t, !popped, "write %v and read %v refuse a pop", counters.write, counters.read)
+		testing.expect_value(t, record, Record{})
+		testing.expect(t, slice.equal(before, memory), "a refused push and a refused pop change no byte and no counter")
+		delete(before)
+	}
+	// The successful cases last: true counts.
+	true_counts := [?]Hostile_Counters {
+		{write = 0, read = max(u32)}, // A distance of 1, across the wrap.
+		{write = max(u32), read = max(u32) - CAPACITY}, // The capacity: a full queue.
+		{write = CAPACITY - 1, read = max(u32)}, // The capacity, across the wrap.
+	}
+	for counters in true_counts {
+		queue.counters.write = counters.write
+		queue.counters.read = counters.read
+		testing.expect_value(t, count(queue), counters.write - counters.read)
 		record, popped := pop(queue)
 		testing.expect(t, popped)
 		testing.expect_value(t, record, numbered_record(counters.read & queue.mask))
@@ -337,7 +348,10 @@ ring_reader :: proc(work: ^Ring_Work) {
 
 // The writer and the reader of one queue on two threads: each record
 // arrives once, whole and in the order of the writer, across many wraps
-// of the places.
+// of the places. This checks the counting of the queue under a real
+// interleaving. It does not check the order of the memory accesses: an
+// x86 host keeps the order of the stores, so a push with a relaxed store
+// of its counter passes here too.
 @(test)
 a_writer_and_a_reader_on_two_threads_keep_the_order :: proc(t: ^testing.T) {
 	memory := memory_of_pages(PAGE_COUNT)
@@ -596,7 +610,10 @@ shared_reader :: proc(work: ^Shared_Work) {
 
 // Two writers and two readers on four threads: each record arrives whole
 // and exactly once, none is lost and none is read twice, across many laps
-// of the places.
+// of the places. This checks the turn protocol and the compare-and-exchange
+// of the counts under a real interleaving. It does not check the order of
+// the memory accesses: an x86 host keeps the order of the stores, so a
+// turn word written with a relaxed store passes here too.
 @(test)
 two_writers_and_two_readers_move_each_record_once :: proc(t: ^testing.T) {
 	memory := memory_of_pages(shared_pages(SHARED_CAPACITY))
