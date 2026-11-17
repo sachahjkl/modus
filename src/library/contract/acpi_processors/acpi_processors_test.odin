@@ -37,13 +37,15 @@ local_add :: proc(builder: ^Table_Builder, identifier: u8, flags: u32, length :=
 
 // extended_add writes an entry of an identifier of 32 bits.
 @(private = "file")
-extended_add :: proc(builder: ^Table_Builder, identifier: u32, flags: u32) {
+extended_add :: proc(builder: ^Table_Builder, identifier: u32, flags: u32, length := LOCAL_CONTROLLER_EXTENDED_SIZE) {
 	start := builder.length
 	builder.bytes[start] = ENTRY_LOCAL_CONTROLLER_EXTENDED
-	builder.bytes[start + 1] = LOCAL_CONTROLLER_EXTENDED_SIZE
+	builder.bytes[start + 1] = u8(length)
+	// The identifier and the flags fit an entry one byte short too: such an
+	// entry is refused by its length alone.
 	store_32(builder.bytes[:], start + LOCAL_CONTROLLER_EXTENDED_IDENTIFIER, identifier)
 	store_32(builder.bytes[:], start + LOCAL_CONTROLLER_EXTENDED_FLAGS, flags)
-	builder.length += LOCAL_CONTROLLER_EXTENDED_SIZE
+	builder.length += length
 }
 
 @(test)
@@ -64,8 +66,11 @@ an_entry_out_of_the_table_ends_the_walk :: proc(t: ^testing.T) {
 	start := builder.length
 	local_add(&builder, 2, FLAG_ENABLED)
 	identifiers: [4]u32
-	// A length below the header, a length one past the table, and the
-	// table cut one byte before the end of its last entry.
+	// A length of 0, which would never advance the walk; a length below the
+	// header; a length one past the table; and the table cut one byte
+	// before the end of its last entry.
+	builder.bytes[start + 1] = 0
+	testing.expect_value(t, processors_read(builder.bytes[:builder.length], false, identifiers[:]), 1)
 	builder.bytes[start + 1] = ENTRY_HEADER_SIZE - 1
 	testing.expect_value(t, processors_read(builder.bytes[:builder.length], false, identifiers[:]), 1)
 	builder.bytes[start + 1] = u8(builder.length - start + 1)
@@ -73,6 +78,10 @@ an_entry_out_of_the_table_ends_the_walk :: proc(t: ^testing.T) {
 	builder.bytes[start + 1] = LOCAL_CONTROLLER_SIZE
 	testing.expect_value(t, processors_read(builder.bytes[:builder.length - 1], false, identifiers[:]), 1)
 	testing.expect_value(t, identifiers[0], 1)
+	// The last entry ends exactly at the end of the table: it counts.
+	identifiers = {}
+	testing.expect_value(t, processors_read(builder.bytes[:builder.length], false, identifiers[:]), 2)
+	testing.expect_value(t, identifiers, [4]u32{1, 2, 0, 0})
 }
 
 @(test)
@@ -82,16 +91,19 @@ a_processor_needs_its_flag_its_length_and_its_mode :: proc(t: ^testing.T) {
 	local_add(&builder, 1, 0) // Not enabled.
 	local_add(&builder, 2, ~FLAG_ENABLED) // Each other flag, not enabled.
 	local_add(&builder, 3, FLAG_ENABLED, LOCAL_CONTROLLER_SIZE - 1) // One byte short of its flags.
+	extended_add(&builder, 4, FLAG_ENABLED, LOCAL_CONTROLLER_EXTENDED_SIZE - 1) // One byte short, in each mode.
 	extended_add(&builder, max(u32), FLAG_ENABLED)
-	local_add(&builder, max(u8), FLAG_ENABLED)
+	// An entry of 10 bytes: the walk goes on after its 10 bytes, not
+	// after 8, so the next entry is read whole.
+	local_add(&builder, max(u8), FLAG_ENABLED, LOCAL_CONTROLLER_SIZE + 2)
+	local_add(&builder, max(u8) - 1, FLAG_ENABLED)
 	identifiers: [4]u32
 	// The extended entry counts only in the mode of extended identifiers.
-	testing.expect_value(t, processors_read(builder.bytes[:builder.length], false, identifiers[:]), 1)
-	testing.expect_value(t, identifiers[0], u32(max(u8)))
+	testing.expect_value(t, processors_read(builder.bytes[:builder.length], false, identifiers[:]), 2)
+	testing.expect_value(t, identifiers, [4]u32{u32(max(u8)), u32(max(u8) - 1), 0, 0})
 	identifiers = {}
-	testing.expect_value(t, processors_read(builder.bytes[:builder.length], true, identifiers[:]), 2)
-	testing.expect_value(t, identifiers[0], max(u32))
-	testing.expect_value(t, identifiers[1], u32(max(u8)))
+	testing.expect_value(t, processors_read(builder.bytes[:builder.length], true, identifiers[:]), 3)
+	testing.expect_value(t, identifiers, [4]u32{max(u32), u32(max(u8)), u32(max(u8) - 1), 0})
 }
 
 @(test)

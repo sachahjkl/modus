@@ -54,19 +54,34 @@ fuzz_shaping_part :: proc($T: typeid, rest: ^[]u8, count: int) -> []T {
 	return records
 }
 
-// fuzz_pair_model gives the pair adjustment of two glyphs in sorted pairs,
-// by a walk of each pair: the binary search of the reader must agree.
+// The model of the pairs: the adjustment of each pair of glyphs, from the
+// first pair of the table that names it. It is filled by one walk of the
+// pairs, with no search, so the binary search of the reader must agree.
 @(private = "file")
-fuzz_pair_model :: proc(pairs: []glyph_cache.Pair_Entry, left, right: u32) -> i32 {
+Fuzz_Pair_Model :: [text_shaping.CHARACTER_COUNT][text_shaping.CHARACTER_COUNT]i32
+
+@(private = "file")
+fuzz_pair_model_of :: proc(pairs: []glyph_cache.Pair_Entry) -> ^Fuzz_Pair_Model {
+	model := new(Fuzz_Pair_Model, context.temp_allocator)
+	named := new([text_shaping.CHARACTER_COUNT][text_shaping.CHARACTER_COUNT]bool, context.temp_allocator)
+	for pair in pairs {
+		if int(pair.left) >= text_shaping.CHARACTER_COUNT || int(pair.right) >= text_shaping.CHARACTER_COUNT || named[pair.left][pair.right] {
+			continue
+		}
+		named[pair.left][pair.right] = true
+		model[pair.left][pair.right] = clamp(pair.adjustment, -glyph_cache.ADVANCE_LIMIT, glyph_cache.ADVANCE_LIMIT)
+	}
+	return model
+}
+
+// fuzz_pair_model gives the adjustment of two glyphs: 0 for the
+// replacement glyph, which has no pair.
+@(private = "file")
+fuzz_pair_model :: proc(model: ^Fuzz_Pair_Model, left, right: u32) -> i32 {
 	if left >= text_shaping.CHARACTER_COUNT || right >= text_shaping.CHARACTER_COUNT {
 		return 0
 	}
-	for pair in pairs {
-		if u32(pair.left) == left && u32(pair.right) == right {
-			return clamp(pair.adjustment, -glyph_cache.ADVANCE_LIMIT, glyph_cache.ADVANCE_LIMIT)
-		}
-	}
-	return 0
+	return model[left][right]
 }
 
 // fuzz_text_shaping_execute: a text gives one placed glyph for each
@@ -98,6 +113,7 @@ fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	pairs_before := slice.clone(pairs, context.temp_allocator)
 	text_before := slice.clone(text, context.temp_allocator)
 	spacing := text_shaping.Spacing{advances = advances, pairs = pairs, fallback = .None, scale = 1}
+	pair_model := fuzz_pair_model_of(pairs)
 
 	placed := make([]text_shaping.Placed_Glyph, len(text) + 1, context.temp_allocator)
 	count, width, ok := text_shaping.shape(&spacing, text, placed)
@@ -126,7 +142,7 @@ fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			advance_glyph := glyph >= text_shaping.CHARACTER_COUNT ? text_shaping.glyph_of(text_shaping.REPLACEMENT_ADVANCE_CHARACTER) : glyph
 			expected := clamp(advances[advance_glyph], 0, glyph_cache.ADVANCE_LIMIT)
 			if index + 1 < count {
-				expected += fuzz_pair_model(pairs, glyph, placed[index + 1].glyph)
+				expected += fuzz_pair_model(pair_model, glyph, placed[index + 1].glyph)
 			}
 			if item.advance != expected {
 				return fuzz_broken(.Model, "the glyph %d has the advance %d; its advance and its pair give %d", index, item.advance, expected)

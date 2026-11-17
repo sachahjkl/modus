@@ -165,6 +165,8 @@ Fuzz_Value_Runs_Head :: struct {
 #assert(size_of(Fuzz_Value_Runs_Head) == 12)
 
 FUZZ_VALUE_RUN_LIMIT :: 256
+// The most records of a text that the model of the records walks.
+FUZZ_VALUE_RECORD_LIMIT :: 64
 FUZZ_VALUE_RUNS_INPUT_LIMIT :: size_of(Fuzz_Value_Runs_Head) + FUZZ_VALUE_RUN_LIMIT * size_of(value_kinds.Value_Run_In_Call)
 
 // fuzz_value_runs_execute: runs that the check refuses stay as they were;
@@ -227,7 +229,11 @@ fuzz_value_runs_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if full_count != written_count || empty_count != 0 || empty[0] != (value_kinds.Value_Run_In_Call{}) || !slice.equal(written, runs) {
 		return fuzz_broken(.Contract, "value_run_add adds a run that it must refuse")
 	}
-	if verdict := fuzz_value_runs_of_records_check(runs, length, max(int(head.record_length), 1)); verdict.oracle != .None {
+	// The model walks the first records of the text only: each record
+	// reads each run, so a bound on the records keeps one execution short.
+	record_length := max(int(head.record_length), 1)
+	walked := min(length, FUZZ_VALUE_RECORD_LIMIT * record_length)
+	if verdict := fuzz_value_runs_of_records_check(runs, length, record_length, walked); verdict.oracle != .None {
 		return verdict
 	}
 	// The cut and the rest.
@@ -245,15 +251,16 @@ fuzz_value_runs_execute :: proc(input: []u8) -> Fuzz_Verdict {
 }
 
 // fuzz_value_runs_of_records_check: the parts of the runs in each record of
-// the text are the runs cut at the bounds of the records, each inside its
-// record with the kind of its run.
+// the first `walked` bytes of the text are the runs cut at the bounds of
+// the records, each inside its record with the kind of its run. `walked`
+// is the length of the text, or a whole count of records.
 @(private = "file")
-fuzz_value_runs_of_records_check :: proc(runs: []value_kinds.Value_Run_In_Call, length: int, record_length: int) -> Fuzz_Verdict {
+fuzz_value_runs_of_records_check :: proc(runs: []value_kinds.Value_Run_In_Call, length: int, record_length: int, walked: int) -> Fuzz_Verdict {
 	// A record of 255 bytes holds at most 255 parts: the table of the
 	// parts never cuts them.
 	into: [256]value_kinds.Value_Run
 	given := make([dynamic][3]int, context.temp_allocator)
-	for record_start := 0; record_start < length; record_start += record_length {
+	for record_start := 0; record_start < walked; record_start += record_length {
 		bytes := min(record_length, length - record_start)
 		parts := value_kinds.value_runs_of_record(runs, record_start, bytes, into[:])
 		for part in into[:parts] {
@@ -266,7 +273,7 @@ fuzz_value_runs_of_records_check :: proc(runs: []value_kinds.Value_Run_In_Call, 
 	}
 	expected := make([dynamic][3]int, context.temp_allocator)
 	for run in runs {
-		start, end := int(run.start), int(run.start) + int(run.length)
+		start, end := int(run.start), min(int(run.start) + int(run.length), walked)
 		for start < end {
 			record_end := (start / record_length + 1) * record_length
 			piece_end := min(end, record_end)

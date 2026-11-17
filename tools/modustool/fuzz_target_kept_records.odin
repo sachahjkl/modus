@@ -244,6 +244,8 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		principal := fuzz_choice_below(&choices, FUZZ_STOP_REPORT_PRINCIPALS)
 		number := fuzz_choice_below(&choices, FUZZ_STOP_REPORT_NAMES)
 		name := fuzz_stop_report_name(number)
+		// Only a keep can take the place of another report.
+		eviction_allowed := false
 		switch Fuzz_Stop_Report_Step(fuzz_choice_below(&choices, len(Fuzz_Stop_Report_Step))) {
 		case .Keep:
 			report := fuzz_stop_report_of(&choices)
@@ -263,6 +265,12 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			}
 			model.kept[principal][number] = true
 			model.reports[principal][number] = {module_hash = hash, report = report}
+			// The report just kept is found at once: a keep never gives
+			// away the place that it wrote.
+			if found := disk_program.kept_stop_report_find(&table, u64(principal), name); found == nil || found^ != model.reports[principal][number] {
+				return fuzz_broken(.Model, "the report just kept for the principal %d is not found as it was kept", principal)
+			}
+			eviction_allowed = true
 		case .Forget:
 			disk_program.kept_stop_report_forget(&table, u64(principal), name)
 			model.kept[principal][number] = false
@@ -280,25 +288,33 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 				return fuzz_broken(.Contract, "a refused keep changed the table")
 			}
 		}
-		if verdict := fuzz_stop_reports_model_check(&table, &model); verdict.oracle != .None {
+		if verdict := fuzz_stop_reports_model_check(&table, &model, eviction_allowed); verdict.oracle != .None {
 			return verdict
 		}
 	}
 	return FUZZ_PASSED
 }
 
-// fuzz_stop_reports_model_check compares the table with its model. A keep
-// can take the place of another report, so the model only knows that a
-// report it holds is the report of the table, if the table still has one.
+// fuzz_stop_reports_model_check compares the table with its model. Each
+// report of the model is found, with one exception: a keep can take the
+// place of one other report, so after a keep (eviction_allowed) at most one
+// report of the model is missing, and the model forgets it.
 @(private = "file")
-fuzz_stop_reports_model_check :: proc(table: ^disk_program.Kept_Stop_Reports, model: ^Fuzz_Stop_Report_Model) -> Fuzz_Verdict {
+fuzz_stop_reports_model_check :: proc(table: ^disk_program.Kept_Stop_Reports, model: ^Fuzz_Stop_Report_Model, eviction_allowed: bool) -> Fuzz_Verdict {
+	missing := 0
 	for principal in 0 ..< FUZZ_STOP_REPORT_PRINCIPALS {
 		held := 0
 		for number in 0 ..< FUZZ_STOP_REPORT_NAMES {
 			found := disk_program.kept_stop_report_find(table, u64(principal), fuzz_stop_report_name(number))
 			if found == nil {
-				// Its place went to another report: the model forgets it.
-				model.kept[principal][number] = false
+				if model.kept[principal][number] {
+					missing += 1
+					if !eviction_allowed || missing > 1 {
+						return fuzz_broken(.Model, "the table lost a report of the principal %d: %d missing, a keep before: %v", principal, missing, eviction_allowed)
+					}
+					// Its place went to the report just kept.
+					model.kept[principal][number] = false
+				}
 				continue
 			}
 			held += 1

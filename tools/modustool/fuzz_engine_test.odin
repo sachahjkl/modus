@@ -168,6 +168,21 @@ the_package_of_a_folder_is_the_name_that_its_sources_declare :: proc(t: ^testing
 	testing.expect_value(t, fuzz_package_name_of_folder("support/no_such_folder"), "no_such_folder")
 	names := fuzz_package_names({"support/terminal", "support/quic"})
 	testing.expect(t, slice.equal(names, []string{"terminal_records", "quic"}))
+	// The name ends at a space or a "/": a comment after it is no part of
+	// it. A line with no name, or that is no package line, gives none.
+	for pair in ([][2]string{{"package foo // x", "foo"}, {"package foo/* x */", "foo"}, {"package  foo\r", "foo"}, {"package bar\tbaz", "bar"}}) {
+		name, found := fuzz_package_name_of_line(pair[0])
+		testing.expectf(t, found && name == pair[1], "%q gives %q, %v", pair[0], name, found)
+	}
+	for line in ([]string{"package ", "package  // x", "// package foo", "packages foo", ""}) {
+		_, found := fuzz_package_name_of_line(line)
+		testing.expectf(t, !found, "%q names no package", line)
+	}
+	// Each IR file names the index of its package.
+	file_index, file_found := fuzz_package_of_file(FUZZ_INSTRUMENTED_NAME + "-terminal_records-code_runs.ll", {"quic", "terminal_records"})
+	testing.expect(t, file_found && file_index == 1)
+	_, file_found = fuzz_package_of_file(FUZZ_INSTRUMENTED_NAME + "-terminal.ll", {"quic", "terminal_records"})
+	testing.expect(t, !file_found)
 }
 
 @(test)

@@ -74,25 +74,46 @@ fuzz_command_tokens :: proc(line: string) -> []string {
 // the package, then ".ll", "-" and the name of a file of the package, or
 // "$" and a number.
 fuzz_package_is_instrumented :: proc(file_name: string, package_names: []string) -> bool {
+	_, found := fuzz_package_of_file(file_name, package_names)
+	return found
+}
+
+// fuzz_package_of_file gives the index of the package of package_names
+// that an IR file belongs to.
+fuzz_package_of_file :: proc(file_name: string, package_names: []string) -> (index: int, found: bool) {
 	prefix := FUZZ_INSTRUMENTED_NAME + "-"
 	if !strings.has_prefix(file_name, prefix) || !strings.has_suffix(file_name, ".ll") {
-		return false
+		return 0, false
 	}
 	stem := file_name[len(prefix):len(file_name) - len(".ll")]
-	for name in package_names {
+	for name, number in package_names {
 		if stem == name || strings.has_prefix(stem, strings.concatenate({name, "-"}, context.temp_allocator)) || strings.has_prefix(stem, strings.concatenate({name, "$"}, context.temp_allocator)) {
-			return true
+			return number, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+// fuzz_package_name_of_line gives the name of a line `package <name>`: the
+// name ends at the first space, tab or "/", so a comment after it is no
+// part of it.
+fuzz_package_name_of_line :: proc(line: string) -> (name: string, found: bool) {
+	if !strings.has_prefix(line, "package ") {
+		return "", false
+	}
+	name = strings.trim_left_space(line[len("package "):])
+	if end := strings.index_any(name, " \t\r/"); end >= 0 {
+		name = name[:end]
+	}
+	return name, len(name) > 0
 }
 
 // fuzz_package_name_of_folder gives the name that the sources of a folder
 // of the source library declare. The compiler names an IR file by it, and
 // it can differ from the name of the folder: the folder support/terminal
 // holds the package terminal_records. A folder whose sources cannot be read
-// gives the name of the folder, and the build then reports that no IR file
-// belongs to it.
+// gives the name of the folder, and the build then fails, naming each
+// folder that no IR file belongs to.
 fuzz_package_name_of_folder :: proc(package_folder: string) -> string {
 	folder_name := package_folder[strings.last_index_byte(package_folder, '/') + 1:]
 	folder := strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", package_folder}, context.temp_allocator)
@@ -110,8 +131,8 @@ fuzz_package_name_of_folder :: proc(package_folder: string) -> string {
 			continue
 		}
 		for line in strings.split_lines(string(bytes), context.temp_allocator) {
-			if strings.has_prefix(line, "package ") {
-				return strings.trim_space(line[len("package "):])
+			if name, found := fuzz_package_name_of_line(line); found {
+				return name
 			}
 		}
 	}
@@ -221,13 +242,22 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 	objects := make([dynamic]string, context.temp_allocator)
 	instrumented_count := 0
 	package_names := fuzz_package_names(packages)
+	// The IR files of each package: a package with none would run with no
+	// edge counted, and no message would say so.
+	files_of_package := make([]int, len(package_names), context.temp_allocator)
 	for entry in entries {
 		if !strings.has_suffix(entry.name, ".ll") {
 			continue
 		}
 		ir := strings.concatenate({FUZZ_INSTRUMENTED_FOLDER, "/", entry.name}, context.temp_allocator)
 		object := strings.concatenate({FUZZ_INSTRUMENTED_FOLDER, "/objects/", entry.name[:len(entry.name) - len(".ll")], ".o"}, context.temp_allocator)
-		if fuzz_package_is_instrumented(entry.name, package_names) {
+		if package_index, found := fuzz_package_of_file(entry.name, package_names); found {
+			// Two folders of one declared name share their IR files.
+			for name, index in package_names {
+				if name == package_names[package_index] {
+					files_of_package[index] += 1
+				}
+			}
 			command := make([dynamic]string, context.temp_allocator)
 			append(&command, "opt")
 			options := FUZZ_COVERAGE_PASS_OPTIONS
@@ -240,8 +270,17 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 		append(&objects_commands, slice.clone([]string{"llc", "-O1", "-relocation-model=pic", "-filetype=obj", "-o", object, ir}, context.temp_allocator))
 		append(&objects, object)
 	}
-	if instrumented_count == 0 {
-		fmt.eprintfln("modustool: no IR file of the compiler belongs to the packages under test: %v", packages)
+	all_found := instrumented_count > 0
+	if len(packages) == 0 {
+		fmt.eprintln("modustool: the instrumented child names no package under test")
+	}
+	for count, index in files_of_package {
+		if count == 0 {
+			fmt.eprintfln("modustool: no IR file of the compiler belongs to the package %s of the folder %s: its edges would not be counted", package_names[index], packages[index])
+			all_found = false
+		}
+	}
+	if !all_found {
 		return false
 	}
 	// The objects of the assembly files: the command that the compiler

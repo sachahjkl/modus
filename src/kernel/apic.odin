@@ -139,7 +139,8 @@ timer_pause :: proc "contextless" (pause: bool) {
 // map does not hold them.
 @(private = "file")
 acpi_bytes :: proc "contextless" (address: u64, count: u64) -> [^]u8 {
-	if address == 0 || address + count > direct_map_size {
+	// No sum: an address of the firmware near 2^64 would wrap it.
+	if address == 0 || count > direct_map_size || address > direct_map_size - count {
 		return nil
 	}
 	return ([^]u8)(direct(address, u8))

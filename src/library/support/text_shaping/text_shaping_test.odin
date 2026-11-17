@@ -247,3 +247,25 @@ ten_thousand_texts_in_one_call :: proc(t: ^testing.T) {
 	stopped, index, end := measure_ranges(&spacing, bytes[:], ranges)
 	testing.expect(t, stopped == .Past_The_Text && index == 7 && end == u64(len(bytes)) + 1)
 }
+
+// A range of one byte past the limit of a text, inside its bytes, stops the
+// measure as too long and keeps its width; a range at the limit is
+// measured.
+@(test)
+a_range_past_the_limit_of_a_text :: proc(t: ^testing.T) {
+	spacing, memory := test_spacing(t)
+	defer delete(memory)
+	bytes := make([]u8, TEXT_LIMIT + 1)
+	defer delete(bytes)
+	for &value in bytes {
+		value = 'a'
+	}
+	ranges := [3]Text_Range{{start = 0, count = 1}, {start = 0, count = TEXT_LIMIT + 1, width = 7}, {start = 0, count = 1, width = 7}}
+	stopped, index, end := measure_ranges(&spacing, bytes, ranges[:])
+	testing.expect(t, stopped == .Too_Long && index == 1 && end == TEXT_LIMIT + 1)
+	testing.expect(t, ranges[0].width > 0 && ranges[1].width == 7 && ranges[2].width == 7)
+	at_limit := [1]Text_Range{{start = 1, count = TEXT_LIMIT}}
+	problem, measured, _ := measure_ranges(&spacing, bytes, at_limit[:])
+	width, _ := text_width(&spacing, bytes[1:])
+	testing.expect(t, problem == .None && measured == 1 && at_limit[0].width == width)
+}
