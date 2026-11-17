@@ -12,7 +12,7 @@ The grant of a network endpoint (`datagram.Grant`) crosses two borders as one `u
 
 - The word: the port in bits 0 to 15, the address in bits 16 to 47, the flags `inspect`, `tcp` and `listen` in bits 48 to 50. `GRANT_KNOWN_BIT_COUNT` (51) bits are known.
 - `datagram.grant_unpack` is the one border. A word with a bit from 51 to 63 gives the zero grant and `false`. The zero grant names no remote, so a caller that forgets the flag still gets no right.
-- The decisions of the service on the word are pure procedures of `support/network` (`endpoint_grants.odin`): `endpoint_add_grant` and `endpoint_grant_change`. Each gives the completion record of its refusal. `endpoint_grant_change` writes the grant of the endpoint only when it takes the word. The service acts on the result only, so the host test of these procedures is the test of the refusal of the service: its status, its record, and that the grant did not change.
+- The decisions of the service on the word are pure procedures of `src/library/support/network` (`endpoint_grants.odin`): `endpoint_add_grant` and `endpoint_grant_change`. Each gives the completion record of its refusal. `endpoint_grant_change` writes the grant of the endpoint only when it takes the word. The service acts on the result only, so the host test of these procedures is the test of the refusal of the service: its status, its record, and that the grant did not change.
 - On a refused `Endpoint_Add` the service maps no region and opens no ring: no work runs on a word that it refuses.
 - The value of the record is the unknown bits shifted down by `GRANT_KNOWN_BIT_COUNT`. It is positive for each word, also with bit 63, and says which bits were wrong.
 
@@ -25,4 +25,4 @@ The grant of a network endpoint (`datagram.Grant`) crosses two borders as one `u
 
 ## State
 
-Built: the border, its refusal in the service, the host tests of `datagram` and of `support/network`. Left: no machine test sends a refused word through the control ring; the root service writes no such word.
+Built: the border, its refusal in the service, the host tests of `datagram` and of `src/library/support/network`. Left: no machine test sends a refused word through the control ring; the root service writes no such word.

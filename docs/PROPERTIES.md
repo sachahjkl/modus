@@ -379,7 +379,7 @@ Status: Decided. The detail below is proposed.
 - **Cost**: The system needs a key management story for the principal that signs the system: creation, enrolment in the firmware, backup, loss.
 - **Reuse**: UEFI firmware services. OVMF and a software TPM under QEMU give Secure Boot and a TPM 2.0 on the first machine. The TCG TPM 2.0 specification. A small permissive TPM command library, to be selected.
 - **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
-- **State**: built: the signed system description, the measure into PCR 11 and Secure Boot (`docs/TRUSTED_BOOT.md`); the seal of the machine key and of the keys of a named principal by the TPM service (`docs/PRINCIPALS.md`, "The machine key sealed by the TPM", "The keys sealed by the TPM"); the TPM floors, which refuse an older signed system and a revoked key (`docs/TRUSTED_BOOT.md`, "10. The TPM floors"). The work that is left is in `ROADMAP.md`.
+- **State**: built: the signed system description, the measure into PCR 11 and Secure Boot (`docs/TRUSTED_BOOT.md`); the seal of the machine key and of the keys of a named principal by the TPM service (`docs/PRINCIPALS.md`, "The machine key sealed by the TPM" and "The keys sealed by the TPM"); the TPM floors, which refuse an older signed system and a revoked key (`docs/TRUSTED_BOOT.md`, "10. The TPM floors"). The work that is left is in `ROADMAP.md`.
 
 ## 18. One graphics interface: WebGPU with WGSL
 

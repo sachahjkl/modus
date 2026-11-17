@@ -38,7 +38,7 @@ The root ring is the border between the root service and each program that asks 
 - **The role read again from the name at each command.** The nickname of a disk program is a name that the principal chose: a rule by name is a rule that a name can meet. The rule had to rely on a refusal of the nickname at its start.
 - **One boolean expression for the sender.** It named each exception in one line, and the reader could not see which grant sends which command.
 - **A chain of `command != ...` for the record that the command wrote itself.** A new command that writes its record and is missing from the chain had its record written over.
-- **The table of the context slots in `contract/root_ring`.** The contract packages of the readers would import it, but the site reads the table of `system`, and `system` already names the slots for the support packages.
+- **The table of the context slots in `src/library/contract/root_ring`.** The contract packages of the readers would import it, but the site reads the table of `system`, and `system` already names the slots for the support packages.
 - **The terms of a role and its grants in one table.** The site reads the grants from the switch `grants_of`; the terms are the rows beside it until the reader of the site reads a table.
 - **A check of a taken value.** The values of the context are written by the procedures of each page, which take an array; the table names the values, and the check covers the handles, where a lost handle is a lost authority.
 
