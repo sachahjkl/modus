@@ -5775,7 +5775,7 @@ A step is one tested commit on `master` that adds one capability to a system tha
 
 The project grows in steps: each step leaves the system whole, built and tested, with its documents up to date in the same commit. Several features can be written at once on branches; each merge still needs its build and the test of its own part.
 
-A step is not a stage of the start of the machine (the "Step of the start" of the group "Running code"), and not a step of a machine test, which waits for one line of the log.
+A step is not a stage of the start of the machine (the "Step of the start" of the group "Running code"), not a step of a machine test, which waits for one line of the log, and not a sequence step of an operation sequence.
 
 The design: `AGENTS.md`.
 
@@ -6841,13 +6841,43 @@ Do not use: crash (for every finding), bug report.
 
 ### Operation sequence
 
-An operation sequence is the fuzz input of the kernel operations: a list of command records whose arguments follow the forms of `OPERATIONS`, which a child program runs in a test machine.
+An operation sequence is the fuzz input of the kernel operations: a list of sequence steps whose arguments follow the forms of `OPERATIONS`, which a child program runs in a test machine.
 
-The fuzzing of the kernel operations is planned work of `ROADMAP.md`. A handle argument names the result of an earlier command of the sequence by its place, so the sequence does not depend on the values of the handles of one run. An address that an operation reads as a record gets the bytes of that record.
+Its format is the contract package `operation_sequence`: a header, the sequence areas, the sequence steps, and the content of the areas. A handle argument names a start handle or the result of an earlier sequence step by its place, so the sequence does not depend on the values of the handles of one run. The tool builds sequences from choices with a generator, and `check` reads them; the machine that runs them is planned work of `ROADMAP.md`.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
 Do not use: syscall program, call trace.
+
+### Sequence step
+
+A sequence step is one command of an operation sequence: an operation word, its flags, and seven arguments, each with its argument source.
+
+The runner writes one command record for each sequence step, and enters the kernel for each one, or once for the steps that the flag "same kernel entry" joins. A sequence step names the result of an earlier step by the place of that step, never by a handle number. It is not a step of the project, which is a commit, and not a step of a machine test.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: call (for this), syscall, instruction.
+
+### Argument source
+
+An argument source is where the value of one argument of a sequence step comes from: a plain value, a start handle, an address in a sequence area, a thread entry of the runner, or the result of an earlier sequence step.
+
+It is the enumeration `operation_sequence.Argument_Source`. `check` refuses a word that names no member, and a word that the source does not use and that is not 0. The runner converts each argument into the word of the command record at its run, so one sequence means the same at each run.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: argument kind, argument type (for this).
+
+### Sequence area
+
+A sequence area is a memory object of 1 to 16 pages that the runner maps for an operation sequence, with a page with no access after it, and that an address argument names with an offset.
+
+The sequence gives the bytes of the start of each area, at most 4096 bytes for all its areas. An offset can reach the page with no access, so a record that crosses the end of an area is an input of the kernel. The runner holds a start handle with each right of memory for each area. It is not a thread area and not the extended state area.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: buffer (for this), region (for this).
 
 ### Counted kernel
 

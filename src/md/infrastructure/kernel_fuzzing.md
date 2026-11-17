@@ -107,22 +107,28 @@ The ring, the copy of the sequence and the result area are in no area. A sequenc
 
 ### The sequence format and the grammar
 
-The format is the new contract package `operation_sequence`. The tool writes it, and `operation_fuzzing` and the runner read it. A sequence has a head (the magic, the format, the count of steps, at most `OPERATION_SEQUENCE_STEPS_MOST`, which is 64) and its steps. A step has:
+The format is the contract package `operation_sequence`. The tool writes it, and `operation_fuzzing` and the runner read it. In this file, a step is a sequence step (`docs/GLOSSARY.md`). A sequence has a header (the magic, the format, the count of steps, at most `STEPS_MOST`, which is 64, and the count of sequence areas, at most 8), then a record for each area, then the steps, then the content of the areas. An area has 1 to 16 pages and the bytes of its start, at most 4096 for all the areas together. A step has:
 
-- the operation word;
-- its flags: no table of error details, or the same kernel entry as the step before, which tests a batch of records;
-- seven arguments, each one an `Argument_Source` with its fields.
+- the operation word, as it passes to the kernel;
+- its flags: no table of error details, or the same kernel entry as the step before, which tests several records of one entry;
+- seven arguments, each one an `Argument_Source` and three words whose meaning the source gives.
 
-`Argument_Source` is an enum, and `check` refuses a word that names no member, at the one border. `check` also refuses a step that names a later step, or a step of the same batch, and an area outside the list.
+The sources are a plain value, a start handle (the budget, the log, the machine, the memory object of an area), an address in an area with an offset, a thread entry of the runner, and the result of an earlier step with the place of its value in the completion and an offset. The offset of a result makes a mapping that an earlier step gave an address of the sequence, as an area is. The fixed addresses (0, the kernel half, an address that is not canonical) are plain values.
 
-The grammar is `OPERATIONS` of `forms.odin`. The generator of the tool reads one choice for each decision of the form of each parameter: a handle of the kind and the rights of the form, of another kind, 0, or a value that names nothing; a count of 0, 1, the limit, the limit plus one, or the largest value; a subset of the known flags, then one unknown bit; each choice up to the largest, then the largest plus one; an address at the start, at the last byte, across the end of an area, or in a fixed form. An address that an operation reads as a record (a `Page_Range` table, a register image, a breakpoint image, an extended state area) gets the bytes of that record from the field mutator, by its type. The tool keeps one table of these records, with one row for each address parameter of `OPERATIONS`, and refuses a parameter with no row. A new operation then stops the generator until its records are described. A row can say "plain bytes" until its record type is described.
+`check` reads the bytes into a `Sequence` of the caller and is the one border of the words: it refuses an argument source, a thread entry or a flag that names no member, with its problem, its step and its argument. It also refuses a count past its bound, a size that is not the records and the contents exactly, a word that its source does not use and that is not 0, an area that the sequence does not have, an offset past its area and the page with no access after it, a result of the same step, of a later step or of a step of the same kernel entry, and the operation word with the bit `COMMAND_NAMES_ERROR_DETAILS`, because the flag says that fact. A refused sequence leaves the `Sequence` zero. `write` refuses only a count that does not fit its record, so a test writes a sequence that `check` must refuse.
+
+The operation word is not checked: a word that names no operation reaches the kernel, which must refuse it with `Bad_Operation`. With a table of error details, the runner writes the place of the table into the seventh value, so the seventh argument of the step does not pass: `Log` is fuzzed on its seventh parameter only with the flag "no table of error details".
+
+The grammar is `OPERATIONS` of `forms.odin`, and the kind of the first result of each operation, which the tool reads from the reference comment (`-> memory handle`; `-> address` for the mapping of `Memory_Map`) with the reader of the site. The reference is in the binary of the tool (`#load`), so a fuzz child reads no file. The generator of the tool reads one choice for each decision of the form of each parameter: a handle of the kind and the rights of the form, of another kind, 0, or a value that names nothing; a count of 0, 1, the limit, the limit plus one, or the largest value; a subset of the known flags, then one unknown bit; each choice up to the largest, then the largest plus one; an address at the start, at the last byte, across the end of an area, or in a fixed form. An address that an operation reads as a record (a `Page_Range` table, a register image, a breakpoint image, an extended state area) gets the bytes of that record from the field mutator, by its type. The tool keeps one table of these records, with one row for each address parameter of `OPERATIONS`, and refuses a parameter with no row. A new operation then stops the generator until its records are described. A row can say "plain bytes" until its record type is described.
 
 The generator also plants the steps that some oracles read:
 
 - after a step that gives a handle, a `Handle_State` of that handle;
-- after some refused steps, a `Budget_Read` of the budget of the sequence.
+- before and after a step with a value that its form refuses, a `Budget_Read` of the budget of the sequence. The generator knows that it chose such a value; a step that the kernel refuses for another reason gets none.
 
-These steps are steps like the others: the mutator can remove them, and an oracle checks only the pattern that it finds.
+These steps are steps like the others: the mutator can remove them, and an oracle checks only the pattern that it finds. A choice decides each planted step, and the zero choice plants it.
+
+The zero choices give the simplest sequence: one area of one page, and no step. Each sequence that the generator builds is one that `check` accepts and reads back whole; a host test and the fuzz target `operation_sequence_generated` check this. A row of the table of the address parameters also says whether the address is code: for the entry of `Thread_Create`, the zero choice names a thread entry of the runner.
 
 ### The oracles
 
@@ -236,17 +242,16 @@ One cost stays in the system that ships: the root service of the release has the
 
 ## State
 
-Built: nothing of the machine. The host engine, its corpus format, and the forms and the error details of the kernel are built.
+Built: the host engine, its corpus format, the forms and the error details of the kernel, and the first layer: the sequence format and the generator, on the host. The contract package `operation_sequence` has its check, its writer and its host tests of each refusal. The generator reads `OPERATIONS` and the kind of each result from the reference comments, and its table of the address parameters has a row for each address parameter, each one "plain bytes". The fuzz targets `operation_sequence` (raw: `check` and the round trip through `write`) and `operation_sequence_generated` (each sequence of the generator passes `check`) run in `modustool check`. Nothing of the machine is built.
 
 Left, in this order. Each layer adds one capability to a fuzzing that works:
 
-1. **The sequence format and the generator, on the host.** The contract package `operation_sequence` with its check and its host tests of each refusal. The generator from `OPERATIONS`, with the result kinds and the statuses read from the reference comments, and the table of the address parameters. A host fuzz target of `check`. No kernel code.
-2. **The machine with the kernel that ships.** `operation_fuzzing`, the runner, the boot image, the volume `operation_sequences`, the memory file and the mailbox, the oracles of the statuses, of the error details and of the budget, the seed sequences, the test part `operation_sequences` and `fuzz replay operations`. No kernel code.
-3. **The loop with no counters.** `fuzz operations` with generated sequences on `operation_sequences`: the life of a machine, the restart after a stop, the signatures, the minimization by lives and by steps, the rate printed as a measure. No kernel code.
-4. **The counted kernel.** The define, the pass in the build of one module, the callback and the array in assembly, the counted program, the counting flag, the boot line, the refusal of the release, the row of the stack measure, the volume `operation_fuzzing`, and the engine guided by the counters of the kernel. This layer changes kernel code, under the define only, and gets the independent review of kernel code.
-5. **The corpus of the operations.** The reach inputs, the regression inputs as sequence lists, `fuzz regression operations` and `fuzz corpus operations`, and their checks in `modustool check`. No kernel code.
-6. **The records at the addresses.** The rows of the table of the address parameters with their record types, for the field mutator. No kernel code.
-7. **The ring of counter sets**, only if the measure of the third and fourth layers shows that the waits across the border cost more than the sequences. This layer changes kernel code, under the define only.
-8. **Two processors and several threads of one sequence.** The lock order and the lost wakes between processors, with sequences that give other edges by the order of the processors. The oracles read a state, then, not an order. This layer changes kernel code, under the define only.
+1. **The machine with the kernel that ships.** `operation_fuzzing`, the runner, the boot image, the volume `operation_sequences`, the memory file and the mailbox, the statuses read from the reference comments, the oracles of the statuses, of the error details and of the budget, the seed sequences, the test part `operation_sequences` and `fuzz replay operations`. No kernel code.
+2. **The loop with no counters.** `fuzz operations` with generated sequences on `operation_sequences`: the life of a machine, the restart after a stop, the signatures, the minimization by lives and by steps, the rate printed as a measure. No kernel code.
+3. **The counted kernel.** The define, the pass in the build of one module, the callback and the array in assembly, the counted program, the counting flag, the boot line, the refusal of the release, the row of the stack measure, the volume `operation_fuzzing`, and the engine guided by the counters of the kernel. This layer changes kernel code, under the define only, and gets the independent review of kernel code.
+4. **The corpus of the operations.** The reach inputs, the regression inputs as sequence lists, `fuzz regression operations` and `fuzz corpus operations`, and their checks in `modustool check`. No kernel code.
+5. **The records at the addresses.** The rows of the table of the address parameters with their record types, for the field mutator. No kernel code.
+6. **The ring of counter sets**, only if the measure of the second and third layers shows that the waits across the border cost more than the sequences. This layer changes kernel code, under the define only.
+7. **Two processors and several threads of one sequence.** The lock order and the lost wakes between processors, with sequences that give other edges by the order of the processors. The oracles read a state, then, not an order. This layer changes kernel code, under the define only.
 
 Each fault that a layer finds is a fix of the kernel, with its regression input, and not a layer.

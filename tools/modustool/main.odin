@@ -132,6 +132,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/replacement_list",
 	SOURCE_FOLDER_SUPPORT + "/replacement_signature",
 	SOURCE_FOLDER_CONTRACT + "/operation",
+	SOURCE_FOLDER_CONTRACT + "/operation_sequence",
 	SOURCE_FOLDER_CONTRACT + "/debug_object",
 	SOURCE_FOLDER_CONTRACT + "/value_kinds",
 	SOURCE_FOLDER_SUPPORT + "/source_comment_markdown",

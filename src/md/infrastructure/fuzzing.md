@@ -177,4 +177,6 @@ The oracle of `palette_table` named one fault of a border before its first run: 
 
 The instrumented build selects the IR files of a package by the name that its sources declare, not by the name of its folder: the folder `src/library/support/terminal` holds the package `terminal_records`, whose edges `ring_records` now counts. The name ends at the first space or `/` of its line. The build fails, and names the folder, for each package under test that no IR file belongs to: a package whose edges are not counted would otherwise run in silence.
 
+The format of the operation sequences has its two targets on the host: `operation_sequence`, raw, with its seeds and its regions, and `operation_sequence_generated`, whose generator is the one that the kernel fuzzing uses ([kernel_fuzzing.md](kernel_fuzzing.md), "State").
+
 Left, in this order: the kernel operations in a test machine, in the layers of [kernel_fuzzing.md](kernel_fuzzing.md), "State"; a scheduled workflow that runs `fuzz all` and keeps its fuzz findings as files of the run; two threads of one operation sequence on two processors.
