@@ -173,6 +173,12 @@ The scheduler decides which ready thread runs on each processor, and for how lon
 - **Does not**: know about priorities of services by name. Policy is data that the root service sets.
 - **Example**: the program `scheduler` runs the three strategies side by side and shows the wakes, the delay of a wake and the shares of spinners with weights (`docs/screenshots/scheduler.png`). The locks and the order of a wake are in "Locks of the kernel", "Rules that keep each path correct".
 
+#### Processor time
+
+The kernel counts the processor time of a thread with the cycle counter, from the pick of the thread to the moment when its processor leaves it, at each tick and at each switch. One charge goes to the budget of the thread, to each budget above it, and to the virtual time of its strategy. The limit of a budget holds in each period of 100 ms, and the tick checks it.
+
+Under KVM the cycle counter goes on while the host runs another task on the physical processor. That time is stolen time: no thread of the machine ran in it. Each processor registers the steal-time record of KVM at its start, and each charge subtracts the time stolen since the charge before, at most the whole run. A steal counter that goes back is refused: the whole run is charged. A real machine, and QEMU with TCG, have no record: each cycle of a run is charged. The boot line `kernel: steal time:` says which processors registered, or why none did. Without the subtraction, a budget with a limit of 50 ms read 327 ms in one second on a loaded host. The length of a turn, the length of a period and the run time in ticks are times of the machine and do not change. The design is `src/md/features/stolen_time.md`.
+
 ### K4. Rings and wait
 
 A thread talks to the kernel through a ring, and waits through the kernel. Rings between programs need no kernel at all: they are memory that both programs map.

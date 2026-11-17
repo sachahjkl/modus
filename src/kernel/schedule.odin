@@ -592,6 +592,7 @@ schedule :: proc "contextless" () -> ! {
 			thread := &threads[index]
 			cpu.charged_from = cycles_now()
 			cpu.turn_start = cpu.charged_from
+			stolen_time_run_start(cpu)
 			cpu.slice_left = TIME_SLICE
 			// The registers of this processor hold the thread that it left,
 			// or nothing of use: the area of the thread that it takes is

@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
+import "kernel:stolen_time"
 
 // The processor: segments, the interrupt table, the interrupt controller and
 // the timer. The frame layout is the one of src/kernel/processor.asm.
@@ -153,6 +154,11 @@ Processor :: struct {
 	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
 	slice_left:    u64, // Ticks left of the time slice, the longest turn under each strategy; 0: the turn ends (strategy.odin).
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
+	// The steal counter of the record below when the kernel last counted
+	// the time of the current thread, in nanoseconds (stolen_time.odin).
+	// Only this processor reads and writes it.
+	stolen_counted: u64,
+	stolen_time_registered: bool, // The host fills the record below: written once, in the setup of this processor.
 	turn_start:    u64, // The cycle counter when the processor picked its current thread.
 	// The scheduler (strategy.odin): counts of this processor only.
 	picks:         u64, // Threads that a pick gave to this processor.
@@ -205,6 +211,10 @@ Processor :: struct {
 	event_written:   u64,
 	event_read_seen: u64,
 	event_lost:      u64,
+	// The steal-time record that the host fills for this processor under
+	// KVM (stolen_time.odin). The record is in the direct map and aligned on
+	// 64 bytes, so it does not cross a page.
+	stolen_time_record: stolen_time.Record,
 	frame_cache:   Frame_Cache,
 	// The table of ranges of the Memory_Commit or Memory_Protect that runs
 	// on this processor (a copy of the table of the caller).
@@ -475,6 +485,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	apic_setup(cpu)
 	guest_processor_setup(cpu)
 	thread_counters_processor_setup(cpu)
+	stolen_time_processor_setup(cpu)
 }
 
 // processor_start prepares the first processor.

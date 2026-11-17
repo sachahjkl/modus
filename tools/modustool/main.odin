@@ -90,6 +90,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/bridge_requester",
 	SOURCE_FOLDER_KERNEL + "/debug_exception",
 	SOURCE_FOLDER_KERNEL + "/processor_counters",
+	SOURCE_FOLDER_KERNEL + "/stolen_time",
 	SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
 	SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
 	SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",

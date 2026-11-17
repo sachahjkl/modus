@@ -22,10 +22,11 @@ import "base:intrinsics"
 //
 // The kernel counts processor time with the cycle counter, from the moment
 // when a processor takes a thread to the moment when it leaves it: the time
-// of the kernel entries of the thread is time of the thread. The limit
-// holds in each period of 100 ms. What a budget used above its part of a
-// period, it has less in the next period: over many periods the limit is
-// exact.
+// of the kernel entries of the thread is time of the thread. Under KVM the
+// time in which the host took the processor away is not (stolen_time.odin).
+// The limit holds in each period of 100 ms. What a budget used above its
+// part of a period, it has less in the next period: over many periods the
+// limit is exact.
 //
 // A period starts at the first tick that is 100 ms or more after the start
 // of the period before, and a tick can come late: a machine that runs
@@ -42,10 +43,13 @@ LIMIT_PERIOD :: 100 // Milliseconds.
 LOG_PERIOD :: 1000 // Milliseconds.
 
 // budget_charge counts the time of the thread of a processor, up to now,
-// and gives it: the strategy charges the same time (strategy.odin).
+// and gives it: the strategy charges the same time (strategy.odin). The
+// time that the host stole from the processor in the run is not time of
+// the thread (stolen_time.odin). The steal counter is read also when the
+// processor has no thread, so that time goes to no later thread.
 budget_charge :: proc "contextless" (cpu: ^Processor) -> (spent: u64) {
 	now := cycles_now()
-	spent = now - cpu.charged_from
+	spent = stolen_time_charged(cpu, now - cpu.charged_from)
 	cpu.charged_from = now
 	if cpu.current == 0 {
 		return 0
