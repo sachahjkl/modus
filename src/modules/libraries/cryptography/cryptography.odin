@@ -133,6 +133,32 @@ hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_
 	return cryptography_primitives.hkdf_sha256_expand(key, info, length, result, error)
 }
 
+// header_protection_mask_with_aes_128 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 16 bytes: AES-128 of the sample (RFC 9001, section 5.4.3). The result is 5, or a negative number with an error record for a key or a sample of another size.
+//
+// - **key**: the header protection key of 16 bytes (argument 1).
+// - **sample**: the 16 bytes of the protected packet that the standard names (argument 2).
+// - **result**: a buffer of 5 bytes at least; a shorter buffer receives nothing, and the result is 5.
+//
+// The errors: `Empty`, `Too_Small` or `Too_Long` for a key or a sample of another size, with the number of the
+// argument. The copy of the key is erased. The QUIC library of the system calls it for each packet of a suite with
+// AES.
+@(export, link_name = "header_protection_mask_with_aes_128")
+header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	return cryptography_primitives.header_protection_mask_with_aes_128(key, sample, result, error)
+}
+
+// header_protection_mask_with_chacha20 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 32 bytes: the ChaCha20 keystream at the counter and the nonce that the sample gives (RFC 9001, section 5.4.4). The result is 5, or a negative number with an error record for a key or a sample of another size.
+//
+// - **key**: the header protection key of 32 bytes (argument 1).
+// - **sample**: 16 bytes of the protected packet: the first 4 are the counter, the other 12 the nonce (argument 2).
+// - **result**: a buffer of 5 bytes at least; a shorter buffer receives nothing, and the result is 5.
+//
+// The errors are those of [the mask with AES-128](cryptography.header_protection_mask_with_aes_128).
+@(export, link_name = "header_protection_mask_with_chacha20")
+header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	return cryptography_primitives.header_protection_mask_with_chacha20(key, sample, result, error)
+}
+
 // x25519 gives the shared secret of a scalar of 32 bytes and a point of 32 bytes (RFC 7748); with the point 9 it is the public key of the scalar.
 //
 // A point of small order, whose shared secret is 32 zero bytes, is refused with `Bad_Value` (RFC 7748, section
