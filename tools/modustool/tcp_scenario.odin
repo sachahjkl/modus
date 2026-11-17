@@ -204,10 +204,10 @@ scenario_tcp_real := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-tcp_tests_run :: proc() -> bool {
-	if !machine_test(scenario_tcp[:], BOOT_VOLUME, TEST_OUTPUT_TCP, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_tcp_real[:], BOOT_VOLUME, TEST_OUTPUT_TCP_REAL, MACHINE_STOP_OK, TEST_DATA_DISK, user_network = true) {
+tcp_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	if !machine_test(part, scenario_tcp[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_TCP, exit_status = MACHINE_STOP_OK}) || !machine_test(part, scenario_tcp_real[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_TCP_REAL, exit_status = MACHINE_STOP_OK, user_network = true}) {
 		return false
 	}
-	frames_of_the_fetch_report()
+	frames_of_the_fetch_report(TEST_OUTPUT_TCP_REAL)
 	return true
 }

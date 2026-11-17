@@ -215,7 +215,7 @@ peer_quic_case :: proc(peer: ^Peer, name: string) -> (passed: bool, result: stri
 		if time.tick_since(start) > PEER_QUIC_TIME_LIMIT + 10 * time.Second {
 			return false, "the peer did not end the case"
 		}
-		time.sleep(20 * time.Millisecond)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	return state.passed, state.result
 }

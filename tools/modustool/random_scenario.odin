@@ -95,7 +95,6 @@ scenario_random_without_the_processor := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-random_tests_run :: proc() -> bool {
-	clear(&remembered_values)
-	return machine_test(scenario_random_with_the_processor[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK, entropy_device = true) && machine_test(scenario_random_restart[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_random_without_the_processor[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK, processor = .Without_Random)
+random_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_random_with_the_processor[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = MACHINE_STOP_OK, entropy_device = true}) && machine_test(part, scenario_random_restart[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_random_without_the_processor[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = MACHINE_STOP_OK, processor = .Without_Random})
 }

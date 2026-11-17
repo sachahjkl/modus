@@ -54,16 +54,105 @@ Listener :: struct {
 	files:      []Listener_File, // Set before the thread starts, and never changed: the thread reads it with no lock.
 }
 
-// free_port gives a port of the loopback that no socket holds now. Another
-// program can take it before QEMU: the tests run one at a time.
-free_port :: proc() -> (port: int, ok: bool) {
-	socket, err := net.listen_tcp({net.IP4_Loopback, 0})
-	if err != nil {
-		return 0, false
+// The ports of the loopback that this process gave to a QEMU, which binds
+// each one itself after the tool closed its own socket. Between the close
+// and the bind of QEMU, the system can give the same number to the next
+// socket of another machine that runs at the same time: so the tool never
+// gives a number again while it is in this list. Another program of the
+// host can still take a port in that time; the system then refuses the
+// bind of QEMU, and the machine fails at its start with that reason.
+Given_Loopback_Ports :: struct {
+	lock:  sync.Mutex,
+	ports: [dynamic]int,
+}
+
+given_loopback_ports: Given_Loopback_Ports
+
+// The sockets that one search for a free port holds open: each new socket
+// gets a number that none of them has. A bound: the list of the given ports
+// holds a few numbers for each machine that runs.
+FREE_PORT_TRIES :: 16
+
+// loopback_port_give adds a port to the given ports, and says if it was not
+// there.
+loopback_port_give :: proc(port: int) -> bool {
+	sync.mutex_lock(&given_loopback_ports.lock)
+	defer sync.mutex_unlock(&given_loopback_ports.lock)
+	for given in given_loopback_ports.ports {
+		if given == port {
+			return false
+		}
 	}
-	defer net.close(socket)
-	bound, bound_err := net.bound_endpoint(socket)
-	return bound.port, bound_err == nil
+	append(&given_loopback_ports.ports, port)
+	return true
+}
+
+// loopback_port_take_back removes a port from the given ports, when the
+// QEMU that bound it ended. 0 is no port.
+loopback_port_take_back :: proc(port: int) {
+	if port == 0 {
+		return
+	}
+	sync.mutex_lock(&given_loopback_ports.lock)
+	defer sync.mutex_unlock(&given_loopback_ports.lock)
+	for given, place in given_loopback_ports.ports {
+		if given == port {
+			unordered_remove(&given_loopback_ports.ports, place)
+			return
+		}
+	}
+}
+
+// free_port gives a TCP port of the loopback that no socket holds now and
+// that this process gave to no QEMU that runs. The caller takes it back
+// with loopback_port_take_back.
+free_port :: proc() -> (port: int, ok: bool) {
+	held := make([dynamic]net.TCP_Socket, context.temp_allocator)
+	defer {
+		for socket in held {
+			net.close(socket)
+		}
+	}
+	for _ in 0 ..< FREE_PORT_TRIES {
+		socket, err := net.listen_tcp({net.IP4_Loopback, 0})
+		if err != nil {
+			return 0, false
+		}
+		append(&held, socket)
+		bound, bound_err := net.bound_endpoint(socket)
+		if bound_err != nil {
+			return 0, false
+		}
+		if loopback_port_give(bound.port) {
+			return bound.port, true
+		}
+	}
+	return 0, false
+}
+
+// free_udp_port gives a UDP port of the loopback as free_port does.
+free_udp_port :: proc() -> (endpoint: net.Endpoint, ok: bool) {
+	held := make([dynamic]net.UDP_Socket, context.temp_allocator)
+	defer {
+		for socket in held {
+			net.close(socket)
+		}
+	}
+	for _ in 0 ..< FREE_PORT_TRIES {
+		socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
+		if err != nil {
+			return {}, false
+		}
+		append(&held, socket)
+		bound, bound_err := net.bound_endpoint(socket)
+		if bound_err != nil {
+			return {}, false
+		}
+		if loopback_port_give(bound.port) {
+			return bound, true
+		}
+	}
+	return {}, false
 }
 
 listener_start :: proc(listener: ^Listener, files: []Listener_File = nil) -> bool {
@@ -301,15 +390,23 @@ forward_fetch :: proc(forward: Forward, path: string, clock_offset_seconds: i64)
 	return true
 }
 
+// The frames of the machine with libslirp, beside its log: two machines
+// that run at the same time write two files. `run` has no log file.
 FRAMES_OF_USER_NETWORK :: BUILD_FOLDER + "/frames_of_user_network.pcap"
+FRAMES_OF_USER_NETWORK_SUFFIX :: "_frames_of_user_network.pcap"
+
+frames_of_user_network_file :: proc(test_output: string) -> string {
+	return test_output != "" ? machine_file(test_output, FRAMES_OF_USER_NETWORK_SUFFIX) : FRAMES_OF_USER_NETWORK
+}
 
 // frames_of_the_fetch_report reads the frames that QEMU wrote for the
 // machine with libslirp (filter-dump, the pcap format) and prints the frames
 // of `GET /hello` of `fetch`: from its request to the end of the answer,
 // each with its time after the request, its direction, its flags and its
-// bytes of data. It is a measure, not a check.
-frames_of_the_fetch_report :: proc() {
-	bytes, err := os.read_entire_file(FRAMES_OF_USER_NETWORK, context.temp_allocator)
+// bytes of data. It is a measure, not a check. test_output is the log of
+// the machine.
+frames_of_the_fetch_report :: proc(test_output: string) {
+	bytes, err := os.read_entire_file(frames_of_user_network_file(test_output), context.temp_allocator)
 	if err != nil || len(bytes) < 24 {
 		fmt.println("modustool: no frames of the machine with libslirp")
 		return

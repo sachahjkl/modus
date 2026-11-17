@@ -61,11 +61,48 @@ test_bound_check :: proc() -> bool {
 			}
 		}
 	}
+	sleeps := 0
+	for text, index in texts {
+		rest := text
+		line_number := 0
+		for line in strings.split_lines_iterator(&rest) {
+			line_number += 1
+			period, has_sleep := sleep_period_of_a_line(line)
+			if !has_sleep {
+				continue
+			}
+			sleeps += 1
+			if period == "" || period[0] >= '0' && period[0] <= '9' {
+				fmt.eprintfln("modustool: test failed: %s:%d: a time.sleep of the tool has the number %s: a poll uses CONDITION_POLL_PERIOD, and any other period is a constant whose comment gives its reason", files[index], line_number, period)
+				found += 1
+			}
+		}
+	}
 	if found > 0 {
 		return false
 	}
-	test_passed_print("each of the %d steps with a bound of its own names a constant with its reason (%d files read)", bounds, len(files))
+	test_passed_print("each of the %d steps with a bound of its own names a constant with its reason, and each of the %d time.sleep of the tool names its period (%d files read)", bounds, sleeps, len(files))
 	return true
+}
+
+// sleep_period_of_a_line gives the argument of a call of time.sleep in a
+// line of source, before any comment: a wait of a fixed time with a number
+// in place of a named period is a time tuned to the speed of some host.
+sleep_period_of_a_line :: proc(line: string) -> (period: string, has_sleep: bool) {
+	SLEEP_CALL :: "time.sleep("
+	code := line
+	if comment := strings.index(code, "//"); comment >= 0 {
+		code = code[:comment]
+	}
+	at := strings.index(code, SLEEP_CALL)
+	if at < 0 {
+		return "", false
+	}
+	// The call, not a longer name that ends with it.
+	if at > 0 && byte_of_a_name(code[at - 1]) {
+		return "", false
+	}
+	return strings.trim_space(code[at + len(SLEEP_CALL):]), true
 }
 
 // test_bound_constant_has_reason says if a file declares the constant name

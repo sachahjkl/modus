@@ -13,6 +13,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **The main machine test in named sections.** The main machine holds about a quarter of the machine time and bounds the whole test that runs its parts at once; in sections that each state what they need, its sections run as parts at once, and a developer runs one section alone. [Design](src/md/infrastructure/machine_test_parts.md)
+- **The host tests of the check at once.** `modustool check` runs the `odin test` of each folder at the same time as the others, bounded by the processors, so a full check spends less time before its machine test. [Design](src/md/infrastructure/full_check.md)
+- **A step of a scenario as a tagged union of its kinds.** Each kind of step has only its own fields, so the compiler refuses a field that the kind does not read, and the run of each kind is one small procedure that a whole switch calls.
 - **Byte layouts of the other formats.** The guides show the records of the kernel operations, the fault ring and the disk formats of the storage service byte by byte, as the guide of the module contract shows the module file. [Design](src/md/features/byte_layout.md)
 - **A serial port that keeps every line of a flood.** A principal who debugs a flood of log lines sees every line on the serial port, and not a count of the lines that it lost. [Design](src/md/features/log_side_channels.md)
 - **No defence against a cut int1 once the hosts run Linux 7.3.** The kernel stops reading the bytes of a program at a debug exception with no status, when every host of the test machines runs Linux 7.3 or later, whose KVM no longer gives a cut `int1` again. A debug exception then costs no read of the program, and the kernel keeps no rule for one bug of one hypervisor.

@@ -207,7 +207,7 @@ host_gives_thread_counters :: proc() -> (gives: bool, reason: string) {
 	return true, "KVM with enable_pmu, on a host processor with the counters that the kernel uses"
 }
 
-kernel_events_tests_run :: proc() -> bool {
+kernel_events_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// The heap, not the temporary allocator: the tool frees that one after
 	// each step of the machine test.
 	steps := make([dynamic]Step, 0, len(scenario_kernel_events) + len(scenario_thread_counters) + len(scenario_kernel_events_end))
@@ -215,7 +215,7 @@ kernel_events_tests_run :: proc() -> bool {
 	append(&steps, ..scenario_kernel_events[:])
 	append(&steps, ..scenario_thread_counters[:])
 	append(&steps, ..scenario_kernel_events_end[:])
-	if !machine_test(steps[:], BOOT_VOLUME, TEST_OUTPUT_KERNEL_EVENTS, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if !machine_test(part, steps[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_KERNEL_EVENTS, exit_status = MACHINE_STOP_OK}) {
 		return false
 	}
 	log, read_err := os.read_entire_file(TEST_OUTPUT_KERNEL_EVENTS, context.temp_allocator)

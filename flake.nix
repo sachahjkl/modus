@@ -211,7 +211,10 @@
     '';
 
     # modustool check: the host code passes -vet and its tests, the system builds,
-    # and the machine test passes under QEMU (console, desktop, tools).
+    # and the machine test passes under QEMU (console, desktop, tools). This is
+    # the one run of the machine test of the full check: its output holds the
+    # pictures and the logs, which `modustool screenshots` takes from the store
+    # (src/md/infrastructure/full_check.md).
     bootTest = pkgs.stdenvNoCC.mkDerivation ({
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
@@ -230,8 +233,13 @@
           mkdir -p build
           modustool check
         '';
+        # The logs and the records of build/ (the logs of the machines, the
+        # times of the test, the record of the second build, the count of
+        # the checks) and the pictures of the test.
         installPhase = ''
-          cp build/test_output.txt $out
+          mkdir -p $out/logs $out/screenshots
+          cp build/*.txt $out/logs/
+          cp build/screenshots/*.png $out/screenshots/
         '';
       }
       // firmware

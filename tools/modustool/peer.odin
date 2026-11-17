@@ -100,24 +100,25 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 	// the next sends, and the QUIC flood waits for its answers.
 	_ = net.set_option(socket, .Receive_Buffer_Size, 4 << 20)
 	// The port where QEMU receives the frames for the machine: the peer
-	// chooses it, so that it can send the first frame (a SYN).
-	machine_socket, machine_err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
-	if machine_err != nil {
+	// chooses it, so that it can send the first frame (a SYN). QEMU binds
+	// it: the peer takes it back at its stop.
+	machine_bound, machine_free := free_udp_port()
+	if !machine_free {
 		net.close(socket)
 		return false
 	}
-	machine_bound, _ := net.bound_endpoint(machine_socket)
-	net.close(machine_socket)
 	peer^ = {socket = socket, port = bound.port, machine = machine_bound}
 	peer.remote = peer_remote_make()
 	socket_name := call_socket_name
 	if socket_name == "" {
-		peers_started += 1
-		socket_name = fmt.tprintf("test-%d-%d", int(linux.getpid()), peers_started)
+		// Machines start peers on several threads at once.
+		number := sync.atomic_add(&peers_started, 1) + 1
+		socket_name = fmt.tprintf("test-%d-%d", int(linux.getpid()), number)
 	}
 	if !peer_remote_socket_start(peer.remote, socket_name) {
 		peer_remote_free(peer.remote)
 		peer.remote = nil
+		loopback_port_take_back(machine_bound.port)
 		net.close(socket)
 		return false
 	}
@@ -130,6 +131,7 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 		peer_remote_socket_stop(peer.remote)
 		peer_remote_free(peer.remote)
 		peer.tcp, peer.quic, peer.remote = nil, nil, nil
+		loopback_port_take_back(machine_bound.port)
 		net.close(socket)
 		return false
 	}
@@ -150,6 +152,7 @@ peer_stop :: proc(peer: ^Peer) {
 	thread.join(peer.call_thread)
 	thread.destroy(peer.call_thread)
 	net.close(peer.socket)
+	loopback_port_take_back(peer.machine.port)
 	peer_remote_socket_stop(peer.remote)
 	peer.call_socket = ""
 	peer.thread = nil

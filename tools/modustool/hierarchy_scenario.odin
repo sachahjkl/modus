@@ -79,8 +79,8 @@ scenario_hierarchy_second := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-hierarchy_tests_run :: proc() -> bool {
+hierarchy_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_HIERARCHY_DISK, DATA_DISK_SIZE, true) or_return
-	machine_test(scenario_hierarchy_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_HIERARCHY, 1), MACHINE_STOP_OK, TEST_HIERARCHY_DISK) or_return
-	return machine_test(scenario_hierarchy_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_HIERARCHY, 2), MACHINE_STOP_OK, TEST_HIERARCHY_DISK)
+	machine_test(part, scenario_hierarchy_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_HIERARCHY, 1), exit_status = MACHINE_STOP_OK, data_disk = TEST_HIERARCHY_DISK}) or_return
+	return machine_test(part, scenario_hierarchy_second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_HIERARCHY, 2), exit_status = MACHINE_STOP_OK, data_disk = TEST_HIERARCHY_DISK})
 }

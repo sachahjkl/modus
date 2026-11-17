@@ -53,8 +53,8 @@ scenario_quic_real := [?]Step {
 }
 
 // quic_real_tests_run runs the machine of `modustool test quic-real`.
-quic_real_tests_run :: proc() -> bool {
-	return machine_test(scenario_quic_real[:], BOOT_VOLUME, TEST_OUTPUT_QUIC_REAL, MACHINE_STOP_OK, TEST_DATA_DISK)
+quic_real_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_quic_real[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_QUIC_REAL, exit_status = MACHINE_STOP_OK})
 }
 
 // openssl_quic_command gives the command of the step: the line, then {fin}

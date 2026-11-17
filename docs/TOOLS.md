@@ -875,10 +875,10 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `modustool call`, draws the key of its client for this run, and prints it with the line to type in a console of the machine: `remote_allow("<key>")` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result. The call acts for the principal that allowed the key of the client of the peer; with no such principal it fails: "remote refused the key of this client in the handshake (access_denied)" |
-| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "modustool: all tests passed", then the times of the test (below) |
+| `test [part]` | The parts of the machine test (below), several at once; the part `host_modules` holds the tests of the loader, of the system descriptions and of the debug objects on the host. It prints the time of each part, then the times of the test (below), and ends with "modustool: all tests passed" |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
-| `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests, the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `screenshots` | Builds the check `boot-test` of the flake, which Nix takes from the store when `nix flake check` passed on the same tree: the one run of the machine test of the full check (`src/md/infrastructure/full_check.md`). Then the copy of its pictures to `docs/screenshots` and to the development log, the copy of its logs to `build/`, the measure runs on the host whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
+| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests, the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests and the periods of each `time.sleep` of the tool, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test`, a second build that must give the same bytes, and the count of its checks in `build/checks_passed.txt`. Each of its builds is a whole build |
 | `fuzz list`, `fuzz <target> [executions [processes [seed]]]`, `fuzz all [executions]`, `fuzz show <target> <file>`, `fuzz minimize <target> <file>`, `fuzz regression <target> <file>`, `fuzz corpus <target>` | Fuzzes the readers of the system on the host: the module file, the debug object, the storage format, QUIC and TLS, TCP and HTTP. It builds the instrumented child, runs a fuzz target, and minimizes each fuzz finding ("The fuzzing") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
@@ -933,45 +933,43 @@ A raw target reads its input as the bytes that the system reads. A generated tar
 
 ### The parts of the machine test
 
-`modustool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the IOMMU of Intel, the IOMMU of AMD, the cryptography, the persistence, the principals, the hierarchy, the ranges, the disk programs, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
+The machine test is a list of test parts. A test part is one or more machines that share a data disk, a TPM state or a value from one machine to the next; two test parts share nothing. The design is in `src/md/infrastructure/machine_test_parts.md`.
 
-`modustool test <part>` runs one part only, for the work on it. The parts that the command accepts:
+`modustool test` with no argument runs every part, several at once: at most one part for each four processors of the host, since each machine has four. The parts start in the order of the table below, the longest first. After a part fails no new part starts, and the parts that run end. Each part starts from a new data disk of its own, `build/test_data_disk_<part>.img`, so it does the same work alone and in the whole test; the disk of a part that failed stays. Each machine writes its log in a file `build/test_output*.txt`, the other files of the machine beside its log (the picture of the screen that QEMU writes, the disk of the measures, the variable store of its firmware), and its pictures in `build/screenshots`. The lines of two parts that run at once are mixed on the terminal; the line `modustool: measure: the part <name> passed` ends each part.
 
-| Part | The machines that it runs |
-|---|---|
-| `main` | The main machine: the desktop, the console, the programs and the developer tools |
-| `network` | The machine of the network service |
-| `tcp` | The two machines of TCP |
-| `quic` | The machine of QUIC through the network service |
-| `quic-real` | The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer |
-| `random` | The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none |
-| `crypto` | The machine of the module `cryptography` |
-| `extended_state` | The three machines of the extended state |
-| `return_fault` | The machine of the return to a program |
-| `fault_ring` | The machine of the fault ring |
-| `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
-| `kernel_events` | The machine of the kernel events, then the thread counters on the same machine: `counters` counts a loop of 1 000 000 turns (at least one instruction retired for each turn, the one count that the test checks) and the same reads of 2 MiB in order and by page, as measures. After the machine, the tool reads the last boot line "kernel: performance counters" of the test machine; a line with counters must say that the first processor passed the trial of the registers. When the kernel found no counters, or a processor refused their trial, it checks only that the commands gave `Unsupported`, and it writes what the host gives as the explanation (`ARCHITECTURE.md`, "The counters of a thread") |
-| `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") |
-| `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express and the entropy device: the system with translation and interrupt remapping on, the two reads of the entropy device through the unit, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
-| `iommu_amd` | The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures and an entropy device behind a conventional bridge (`i82801b11-bridge`) at the place 28 of bus 0: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, which also holds the registers of the entropy device, so the kernel gives both one domain of the requester of the bridge; its message interrupt arrives through the interrupt table of that requester, and its device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; without the registers of the entropy device, its declaration is refused, with the line of the kernel, and a read of the disk into a page that it declared before does not end: the tool stops the machine (which ends each read that QEMU took), gives the disk a new size with `block_resize` and starts it again, and the service then finds its page as it was and no interrupt of the device, the configuration interrupt of the new size too; then `net` through a device window |
-| `shortage` | The machine of the shortage of frames |
-| `principals` | The two machines of the principals, then the ten machines of the keys sealed by the TPM, with a software TPM whose state they share: nine with Secure Boot on, on the volumes `secure_boot` and `other_system`, and one with Secure Boot off, where the seal is refused (`PRINCIPALS.md`, "8. The tests") |
-| `hierarchy` | The machines of the hierarchy of storage |
-| `ranges` | The machines of the ranges of storage |
-| `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock ("The disk of the disk programs") |
-| `power` | The loss of power: of the storage, of the settings, of the ranges |
-| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign |
+`modustool test <part>` runs one part only, for the work on it, and builds only the boot volumes of its row ("The incremental build", "The volumes of a command"). An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
 
-A part builds only the boot volumes that its machines boot ("The incremental build", "The volumes of a command"). Each part boots the main boot volume, `build/boot_volume.img`, with these differences:
+The table is in the tool (`test_parts`, `tools/modustool/test_parts.odin`), and a host test checks each line below against it: a new part is one row there and one line here.
 
-| Part | The boot volumes that its build builds |
-|---|---|
-| `shortage` | The volume of the shortage of frames only |
-| `return_fault` | The main volume, and the volume of the kernel with one check skipped |
-| `trusted_boot` | The main volume, the five volumes that the boot program must refuse, the volume of the other system, the two volumes of Secure Boot with the variable store, and the two volumes of the TPM floors (the newer system and the newer key) |
-| Each other part | The main volume only |
-
-The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
+| Part | What it checks | Its boot volumes |
+|---|---|---|
+| `main` | The main machine: the desktop, the console, the programs and the developer tools | `main` |
+| `tcp` | The two machines of TCP | `main` |
+| `random` | The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none | `main` |
+| `quic` | The machine of QUIC through the network service | `main` |
+| `network` | The machine of the network service | `main` |
+| `principals` | The two machines of the principals, then the ten machines of the keys sealed by the TPM, with a software TPM whose state they share: nine with Secure Boot on, on the volumes `secure_boot` and `other_system`, and one with Secure Boot off, where the seal is refused (`PRINCIPALS.md`, "8. The tests") | `main`, `secure_boot`, `other_system` |
+| `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock ("The disk of the disk programs") | `main` |
+| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign | `main`, `changed_module`, `wrong_signature`, `other_system`, `changed_kernel`, `without_description`, `stated_hash`, `secure_boot`, `secure_boot_changed`, `newer_system`, `newer_key` |
+| `hierarchy` | The machines of the hierarchy of storage | `main` |
+| `power` | The loss of power: of the storage, of the settings, of the ranges, and the write that the disk drops | `main` |
+| `persist` | The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines | `main` |
+| `extended_state` | The three machines of the extended state | `main` |
+| `return_fault` | The machine of the return to a program | `main`, `without_return_check` |
+| `kernel_events` | The machine of the kernel events, then the thread counters on the same machine: `counters` counts a loop of 1 000 000 turns (at least one instruction retired for each turn, the one count that the test checks) and the same reads of 2 MiB in order and by page, as measures. After the machine, the tool reads the last boot line "kernel: performance counters" of the test machine; a line with counters must say that the first processor passed the trial of the registers. When the kernel found no counters, or a processor refused their trial, it checks only that the commands gave `Unsupported`, and it writes what the host gives as the explanation (`ARCHITECTURE.md`, "The counters of a thread") | `main` |
+| `self_tests` | The machines of the self tests of the kernel: each one does one thing that the processor must refuse, from its own boot volume | `self_test_1`, `self_test_2`, `self_test_3`, `self_test_4`, `self_test_5`, `self_test_6`, `self_test_7` |
+| `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` | `main` |
+| `ranges` | The machines of the ranges of storage | `main` |
+| `quic-real` | The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer | `main` |
+| `outside_module` | No machine: the build of the examples of a module outside the sources, as a developer types it | `main` |
+| `host_modules` | No machine: the loader, the descriptions of the exports and the debug objects of the build, on the host | `main` |
+| `iommu_amd` | The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures and an entropy device behind a conventional bridge (`i82801b11-bridge`) at the place 28 of bus 0: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, which also holds the registers of the entropy device, so the kernel gives both one domain of the requester of the bridge; its message interrupt arrives through the interrupt table of that requester, and its device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; without the registers of the entropy device, its declaration is refused, with the line of the kernel, and a read of the disk into a page that it declared before does not end: the tool stops the machine (which ends each read that QEMU took), gives the disk a new size with `block_resize` and starts it again, and the service then finds its page as it was and no interrupt of the device, the configuration interrupt of the new size too; then `net` through a device window | `main` |
+| `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express and the entropy device: the system with translation and interrupt remapping on, the two reads of the entropy device through the unit, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") | `main` |
+| `fault_ring` | The machine of the fault ring | `main` |
+| `crypto` | The machine of the module `cryptography` | `main` |
+| `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") | `main` |
+| `fails` | The machine of a start that fails: a boot image with no compositor | `fails` |
+| `shortage` | The machine of the shortage of frames | `shortage` |
 
 ### The disk of the disk programs
 
@@ -1048,7 +1046,7 @@ The test of the time zone (`src/md/features/time_zone.md`) sets `settings.set("t
 
 `modustool test` reads the monotonic clock of the host at the start and at the end of the build, of each machine and of each step. At the end of a test that ran a machine, passed or failed, it writes `build/test_times.txt` and prints a summary. Each number is a measure: no test reads one, and no time makes a test fail ("The bounds of the tests").
 
-The file has one line for each machine: its log file, its result, its whole time, the time from the start of QEMU to the first line of its log, the time of its steps and the time of its stop. Under it, one line for each step, in the order of the run, in fixed columns:
+Each part keeps the times of its own machines, and the file joins them in the order of the table of the parts. The file has one line for each machine: its log file, its part, its result, its whole time, the time from the start of QEMU to the first line of its log, the time of its steps and the time of its stop. Under it, one line for each step, in the order of the run, in fixed columns:
 
 | Column | What it holds |
 |---|---|
@@ -1065,6 +1063,7 @@ The last step of a machine that failed is the step that failed, when a step fail
 The summary is a list of lines that start with `modustool: measure:`:
 
 - the whole test, the build, and the machines (the start to the first line of the log, the steps, the stops);
+- when several parts ran, the sum of their times beside the time of the test, then each part with its time and its count of machines, the longest first: the longest part bounds the whole test;
 - for each kind of step, the count of its steps and the sum of their durations;
 - the count of the keys and the time in their sends;
 - the count of the pictures and their time: in the step, the wait for a settled screen, each `screendump` of QEMU and the read of its file; on a worker thread, while the scenario goes on, the conversion to PNG and the write;
@@ -1179,13 +1178,13 @@ The outputs of the record are the files of the volume that a machine or a test r
 
 | Command | The boot volumes that its build builds |
 |---|---|
-| `build`, `test` with no part, `check`, `screenshots` | The 19 volumes. `screenshots` then starts its measure runs from the volume `measure` of that build |
+| `build`, `test` with no part, `check` | The 19 volumes |
 | `test <part>` | The volumes of its part ("The parts of the machine test") |
 | `run`, `film` | The main volume |
-| `measure`, with each argument but `shortage` | The volume `measure` |
+| `measure`, with each argument but `shortage`, and `screenshots` | The volume `measure`: `screenshots` takes the machine test from the check of the flake, and starts only its measure runs on the host |
 | `measure shortage` | The volume `shortage` |
 
-The table is in the tool (`test_part_volumes`, `command_volumes`), with the procedures that start the machines of each part: a host test reads the sources of the tool and fails when such a procedure names a volume that is not in its row, or when a part has no row.
+The volumes of the parts are in the table of the parts (`test_parts`, `tools/modustool/test_parts.odin`), and those of the other commands in `command_volumes`, with the procedures that start the machines of each row: a host test reads the sources of the tool and fails when such a procedure names a volume that is not in its row, or is in no row.
 
 A volume that a command does not need is not built and not checked. It stays with its record, and the next command that needs it compares the record with the inputs of that time. A machine never starts from such a volume: the tool starts a machine only from a volume that the build of the same process built or kept, and refuses any other with an error.
 
@@ -1193,7 +1192,7 @@ A volume that a command does not need is not built and not checked. It stays wit
 
 **What runs at each build.** The debug image, the pointer themes, the glyph caches, the link pages of the manual (`MODULE_CONTRACT.md`, "The links of a page of the manual") and the four boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
 
-**How to force a whole build.** `modustool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check`, `screenshots` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
+**How to force a whole build.** `modustool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
 
 **What costs a whole build.** A change of a file of `tools/modustool`, or of a package that the tool imports, changes the identity of the tool, so every module and every boot volume that the command needs is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that compiles the package in, also when the file is a host test that a build tag leaves out. A change of a file of a module that other modules import (an import of the module table, not a package) builds that module and converts the others.
 
@@ -1634,6 +1633,8 @@ A test checks a condition: a value, a state, a line of the log. A test that depe
 
 `modustool check` checks the steps of the machine tests (`tools/modustool/test_bound_check.odin`). The field `seconds` of a step is a named constant, never a number, and a line of comment just above the constant gives its reason. The steps with a bound of their own today: the long case of the fault ring (its progress) and the firmware of the TPM and of Secure Boot (a command of the TPM that the firmware abandons costs it about two minutes).
 
+The same check reads each `time.sleep` of the tool: its period is a name, never a number. A poll inside a bounded wait sleeps `CONDITION_POLL_PERIOD` (`tools/modustool/machine_input.odin`); any other period is a constant with its reason, as the pause between the sends of the HTTP case "split" (`HTTP_SPLIT_SEND_PAUSE`), which shapes the input and waits for no state.
+
 The check does not read the checks of the programs: `system.time() + 1000` is a poll interval in one place and a bound in another, and no rule on the text tells them apart. The rule for them is this section.
 
 ### A check by count, a measure by time
@@ -1647,7 +1648,7 @@ So a program separates the two:
 
 A **measure run** is a machine whose boot image holds the resource `measure_run`. The root service then writes 1 in the value 22 of the context (`CONTEXT_VALUE_MEASURE_RUN`) of each program that it starts, and a program reads it with `system.measure_run()`. The modules are the modules of the test, byte for byte: the tool builds one boot image more (`build/boot_measure.image`, `build/boot_volume_measure.img`) from the same modules. A measure is then a measure of the code that the test checked. `modustool test` never starts a measure run; each form of `modustool measure` does.
 
-`modustool measure <program>` starts one program alone on a measure run, waits for the lines of its measures and for its last line, stops the machine, and prints the lines of the program. The log is `build/test_output_measure_<program>.txt`. `modustool screenshots` runs the measure runs whose numbers the measure record holds, after the test.
+`modustool measure <program>` starts one program alone on a measure run, waits for the lines of its measures and for its last line, stops the machine, and prints the lines of the program. The log is `build/test_output_measure_<program>.txt`. `modustool screenshots` runs the measure runs whose numbers the measure record holds on the host, one machine at a time, after it took the test from the check of the flake.
 
 | Program | The check of a test, by count | The measure of a measure run |
 |---|---|---|

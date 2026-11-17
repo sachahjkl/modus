@@ -29,6 +29,6 @@ scenario_cryptography := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-cryptography_tests_run :: proc() -> bool {
-	return machine_test(scenario_cryptography[:], BOOT_VOLUME, TEST_OUTPUT_CRYPTOGRAPHY, MACHINE_STOP_OK, TEST_DATA_DISK)
+cryptography_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_cryptography[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_CRYPTOGRAPHY, exit_status = MACHINE_STOP_OK})
 }

@@ -672,7 +672,7 @@ Each number is a line that a program printed in the log of a machine test, quote
 
 The first paragraph of the page states the run of the measure record: its time, its commit and whether its tree had changes that were not committed, its release, its host and its count of checks that passed. When the release of the record is not the newest release of the changelog, a paragraph says that the numbers were measured before the release that the site shows. With no measure record, a paragraph says so.
 
-A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by count, a measure by time"): the test checks by count and writes no rate. `modustool screenshots` runs these measure runs after the test, so their logs are in `build/` when it writes the measure record.
+A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by count, a measure by time"): the test checks by count and writes no rate. `modustool screenshots` runs these measure runs on the host after it took the logs of the test from the check of the flake, so all the logs are in `build/` when it writes the measure record.
 
 | Number | Log in `build/` | Text of the line | Required |
 |---|---|---|---|
@@ -691,7 +691,7 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | ChaCha20-Poly1305 on 1200 bytes | `test_output_cryptography.txt` | `cryptography_vectors: seal ChaCha20-Poly1305` | yes |
 | The same bytes after a second build | `reproducible_build.txt` | `the same bytes after a second build` | yes |
 
-`modustool check` and `modustool screenshots` write `build/reproducible_build.txt` after their comparison of two builds.
+`modustool check` writes `build/reproducible_build.txt` after its comparison of two builds; `modustool screenshots` copies the file from the output of the check of the flake.
 
 Under the table, the section "How to read each number" says that a number is one run on the host of the record, that no test asserts it, and then, for each number, the text `reading` of its entry in `site_measures`: what the program does to measure it, and what the number does not say.
 
@@ -699,7 +699,7 @@ A required number is a line that a scenario of `modustool test` waits for (a ste
 
 ## The measure record
 
-The site workflow builds the site on a clean checkout and runs no machine test: the logs of `build/` are absent there. So the pass that commits the pictures also commits the numbers. `modustool screenshots` runs the machine tests (`modustool test`) and the second build, then writes `docs/measures/measures.txt` before it copies the pictures. The file is in the repository.
+The site workflow builds the site on a clean checkout and runs no machine test: the logs of `build/` are absent there. So the pass that commits the pictures also commits the numbers. `modustool screenshots` takes the pictures and the logs of the machine test and of the second build from the check of the flake (`src/md/infrastructure/full_check.md`), runs the measure runs on the host, then writes `docs/measures/measures.txt`. The file is in the repository.
 
 The form, one line for each fact, a key, one space and a value:
 
@@ -1787,7 +1787,6 @@ The work is in layers; each layer adds pages to a site that works.
 - (e) Done: what other sites read (`tools/modustool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
 - Done: the module graph, the identity card and the neighbours of each module (see "The module graph").
 - (f) Done: one section Docs in the bar, the guides and the reference under `docs/`, the docs home with its own search field, and the redirect pages of the two generations of old addresses. See "The sections", "The redirect pages" and "The docs home".
-- The count of checks of `modustool check` on the site: the measure record counts the checks of `modustool screenshots` only (the machine tests and the second build), not the host tests of `modustool check`.
 - An embedded font for the text: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system for its text; its one font file is the font of the name of the mark.
 
 ## How the site is published
@@ -1820,7 +1819,7 @@ What a clean checkout gives to `modustool site`:
 | `build/boot.image` | `modustool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
 | The measure record, `docs/measures/measures.txt` | `modustool screenshots` | Committed: the measured numbers, the second build and the stages of the start of the last full check, with its date, its commit and its host |
 | The logs of the machine tests, `build/test_output*.txt` | `modustool test`, `modustool measure` | Absent: the site reads the measure record. With no record, each number says "Not measured.", and so does the start of the machine on the home. The command does not fail |
-| `build/reproducible_build.txt` | `modustool check`, `modustool screenshots` | Absent: the line of the measure record |
+| `build/reproducible_build.txt` | `modustool check`; `modustool screenshots` copies it from the check of the flake | Absent: the line of the measure record |
 
 The time of the step `modustool build` on a runner of GitHub is not measured yet: the first run gives it.
 

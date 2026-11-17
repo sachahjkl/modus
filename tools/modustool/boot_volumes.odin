@@ -5,6 +5,7 @@ import "modus:contract/system_description"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 // The boot volumes of the build: what each one is, how one is built, when
@@ -615,9 +616,14 @@ boot_volume_record_write :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared
 // The boot volumes that this process built or kept in its last build: a
 // machine starts only from one of them. A volume that the command did not
 // ask for can be the volume of older sources.
+// The parts of the test read it at once, and the part of the release image
+// adds its disk: the lock holds each read and each change.
 boot_volumes_ready: [dynamic]string
+boot_volumes_ready_lock: sync.Mutex
 
 boot_volumes_ready_forget :: proc() {
+	sync.mutex_lock(&boot_volumes_ready_lock)
+	defer sync.mutex_unlock(&boot_volumes_ready_lock)
 	for path in boot_volumes_ready {
 		delete(path)
 	}
@@ -626,12 +632,21 @@ boot_volumes_ready_forget :: proc() {
 }
 
 boot_volume_ready_note :: proc(path: string) {
-	if !boot_volume_is_ready(path) {
+	sync.mutex_lock(&boot_volumes_ready_lock)
+	defer sync.mutex_unlock(&boot_volumes_ready_lock)
+	if !boot_volume_is_ready_with_the_lock(path) {
 		append(&boot_volumes_ready, strings.clone(path))
 	}
 }
 
 boot_volume_is_ready :: proc(path: string) -> bool {
+	sync.mutex_lock(&boot_volumes_ready_lock)
+	defer sync.mutex_unlock(&boot_volumes_ready_lock)
+	return boot_volume_is_ready_with_the_lock(path)
+}
+
+@(private = "file")
+boot_volume_is_ready_with_the_lock :: proc(path: string) -> bool {
 	for ready in boot_volumes_ready {
 		if ready == path {
 			return true
@@ -792,10 +807,11 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	return true
 }
 
-// The boot volumes of one part of the machine test, or of one other
-// command that starts a machine. procedures names each procedure of the
-// tool that starts a machine of the part: a host test reads the sources and
-// checks that each volume that such a procedure names is in volumes
+// The boot volumes of one command that starts a machine outside the
+// machine test, whose parts have their volumes in test_parts
+// (test_parts.odin). procedures names each procedure of the tool that
+// starts a machine of the command: a host test reads the sources and checks
+// that each volume that such a procedure names is in volumes
 // (boot_volumes_test.odin).
 Volumes_Of_Part :: struct {
 	part:       string,
@@ -803,51 +819,11 @@ Volumes_Of_Part :: struct {
 	volumes:    []string, // The paths of the volumes.
 }
 
-// The table of the parts of `test`: one row for each part of test_parts.
-// `test <part>` builds the volumes of its row only. The whole test builds
-// every volume.
-test_part_volumes := [?]Volumes_Of_Part {
-	{part = "main", procedures = {"main_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "network", procedures = {"network_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "power", procedures = {"power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run"}, volumes = {BOOT_VOLUME}},
-	{part = "hierarchy", procedures = {"hierarchy_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "ranges", procedures = {"ranges_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "disk_programs", procedures = {"disk_programs_tests_run", "disk_programs_named_principal_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "tcp", procedures = {"tcp_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "quic", procedures = {"quic_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "quic-real", procedures = {"quic_real_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "crypto", procedures = {"cryptography_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "random", procedures = {"random_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "shortage", procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
-	{part = "extended_state", procedures = {"extended_state_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "return_fault", procedures = {"return_fault_tests_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_WITHOUT_RETURN_CHECK}},
-	{part = "fault_ring", procedures = {"fault_ring_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "debugger", procedures = {"debugger_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "kernel_events", procedures = {"kernel_events_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "iommu", procedures = {"iommu_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "iommu_amd", procedures = {"iommu_amd_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "guest", procedures = {"guest_tests_run"}, volumes = {BOOT_VOLUME}},
-	// The machines of the keys sealed by the TPM too: the signed main
-	// volume, whose build writes the variable store of Secure Boot, and the
-	// other system, signed.
-	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "principals_tpm_machine_passphrase_tests_run", "principal_change_with_a_dropped_zero_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_OTHER_SYSTEM}},
-	// No machine starts: the part needs the built modules, which the build
-	// of a volume gives.
-	{part = "outside_module", procedures = {"outside_module_examples_check"}, volumes = {BOOT_VOLUME}},
-	// The two machines of the measure boot the main volume and the other
-	// system.
-	{
-		part = "trusted_boot",
-		procedures = {"trusted_boot_tests_run", "release_image_machine_run", "floor_tests_run"},
-		volumes = {BOOT_VOLUME, BOOT_VOLUME_CHANGED_MODULE, BOOT_VOLUME_WRONG_SIGNATURE, BOOT_VOLUME_OTHER_SYSTEM, BOOT_VOLUME_CHANGED_KERNEL, BOOT_VOLUME_WITHOUT_DESCRIPTION, BOOT_VOLUME_STATED_HASH, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_SECURE_BOOT_CHANGED, BOOT_VOLUME_NEWER_SYSTEM, BOOT_VOLUME_NEWER_KEY},
-	},
-}
-
 // The other commands that start a machine, and their volumes. Each form
 // of `measure` boots the volume of a measure run, but `measure shortage`,
-// which boots the volume of the shortage of frames. `screenshots` builds
-// every volume, as the whole test that it runs first: its row names the
-// volume of the measure runs that it starts after the test.
+// which boots the volume of the shortage of frames. `screenshots` takes
+// the machine test from the check of the flake: its row names the volume of
+// the measure runs that it starts on the host.
 MEASURE_COMMAND :: "measure"
 MEASURE_SHORTAGE_COMMAND :: "measure shortage"
 command_volumes := [?]Volumes_Of_Part {
@@ -856,21 +832,6 @@ command_volumes := [?]Volumes_Of_Part {
 	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
-}
-
-// boot_volumes_of_test gives the volumes that `test` with these arguments
-// boots: those of the row of its part. nil is every volume: the whole test,
-// and a part that has no row yet (a host test refuses such a table).
-boot_volumes_of_test :: proc(args: []string) -> []string {
-	if len(args) == 0 {
-		return nil
-	}
-	for &row in test_part_volumes {
-		if row.part == args[0] {
-			return row.volumes
-		}
-	}
-	return nil
 }
 
 // boot_volumes_of_command gives the volumes that a command of

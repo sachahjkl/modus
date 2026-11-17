@@ -113,48 +113,61 @@ a_release_ships_no_volume_of_a_test :: proc(t: ^testing.T) {
 	}
 }
 
+// row_has_volume says if a row has a volume. BOOT_VOLUME_SELF_TEST is the
+// pattern of the self test volumes: a row has it when it has one of them.
 @(private = "file")
 row_has_volume :: proc(row: Volumes_Of_Part, path: string) -> bool {
+	pattern: string = BOOT_VOLUME_SELF_TEST
+	self_test_start := pattern[:strings.index(pattern, "%d")]
 	for volume in row.volumes {
-		if volume == path {
+		if volume == path || (path == BOOT_VOLUME_SELF_TEST && strings.has_prefix(volume, self_test_start)) {
 			return true
 		}
 	}
 	return false
 }
 
-// The table part -> volumes is complete: one row for each part of the
-// machine test, and each volume of a row is a volume of the build.
+// The rows of the volumes of each part and of each command, with their
+// names and their procedures: the parts of the machine test, then the
+// commands that start a machine outside it. Of the temporary memory.
+@(private = "file")
+rows_of_volumes :: proc() -> []Volumes_Of_Part {
+	rows := make([dynamic]Volumes_Of_Part, context.temp_allocator)
+	for part in test_parts {
+		append(&rows, Volumes_Of_Part{part = part.name, procedures = part.procedures, volumes = test_part_volumes_of(part)})
+	}
+	append(&rows, ..command_volumes[:])
+	return rows[:]
+}
+
+// Each part of the machine test names its boot volumes, and each volume of
+// a row is a volume of the build.
 @(test)
 each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
 	for part in test_parts {
-		rows := 0
-		for row in test_part_volumes {
-			rows += row.part == part ? 1 : 0
-		}
-		testing.expectf(t, rows == 1, "the part %s has %d rows in test_part_volumes, and must have one: a part with no row builds every volume", part, rows)
-		needed := boot_volumes_of_test([]string{part})
-		testing.expectf(t, len(needed) > 0, "the part %s names its volumes", part)
+		needed := boot_volumes_of_test([]string{part.name})
+		testing.expectf(t, len(needed) > 0, "the part %s names its volumes: a part with no volume would build none", part.name)
 	}
-	for row in test_part_volumes {
-		known := false
-		for part in test_parts {
-			known = known || part == row.part
-		}
-		testing.expectf(t, known, "the row %s is a part of the machine test", row.part)
-	}
-	for table in ([][]Volumes_Of_Part{test_part_volumes[:], command_volumes[:]}) {
-		for row in table {
-			testing.expectf(t, len(row.volumes) > 0 && len(row.procedures) > 0, "the row %s has its volumes and its procedures", row.part)
-			for path in row.volumes {
-				found := false
-				for volume in volumes {
-					found = found || volume.path == path
-				}
-				testing.expectf(t, found, "the volume %s of the row %s is a volume of the build", path, row.part)
+	for row in rows_of_volumes() {
+		testing.expectf(t, len(row.volumes) > 0 && len(row.procedures) > 0, "the row %s has its volumes and its procedures", row.part)
+		for path in row.volumes {
+			found := false
+			for volume in volumes {
+				found = found || volume.path == path
 			}
+			testing.expectf(t, found, "the volume %s of the row %s is a volume of the build", path, row.part)
 		}
+	}
+	// The part of the self tests builds one volume for each self test, and
+	// no other part builds one.
+	self_test_part, found := test_part_find("self_tests")
+	testing.expect(t, found, "the self tests of the kernel are a part")
+	if found {
+		testing.expect_value(t, len(boot_volumes_of_test([]string{self_test_part.name})), len(self_tests))
+	}
+	for part in test_parts {
+		testing.expectf(t, part.self_test_volumes == (part.name == "self_tests"), "only the part self_tests builds the self test volumes, not %s", part.name)
 	}
 	// The whole test builds every volume.
 	testing.expect(t, boot_volumes_of_test(nil) == nil, "the whole test builds every volume")
@@ -214,15 +227,15 @@ volume_constants := [?][2]string {
 
 // The procedures that only the whole test runs: it builds every volume.
 @(private = "file")
-whole_test_procedures := [?]string{"run_test", "self_tests_run", "persistence_run"}
+whole_test_procedures := [?]string{"run_test"}
 
 // The procedures that name a volume and start no machine from it by that
-// name: the table of the volumes, the build of the main volume for the
-// checks of two builds, the refusal of a volume that is not ready, the
-// comparison of the machine test, and the release volume, which only the
-// release command builds and no machine starts.
+// name: the table of the volumes, the volumes of a part, the build of the
+// main volume for the checks of two builds, the refusal of a volume that is
+// not ready, the comparison of the machine test, and the release volume,
+// which only the release command builds and no machine starts.
 @(private = "file")
-procedures_that_start_no_machine := [?]string{"boot_volumes", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume"}
+procedures_that_start_no_machine := [?]string{"boot_volumes", "test_part_volumes_of", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume"}
 
 // One volume constant in the body of one procedure of the tool.
 @(private = "file")
@@ -330,11 +343,10 @@ each_volume_that_a_scenario_names_is_in_the_table_of_its_part :: proc(t: ^testin
 	}
 	// Each procedure of a table is a procedure of the tool: a name with a
 	// mistake would check nothing.
-	for table in ([][]Volumes_Of_Part{test_part_volumes[:], command_volumes[:]}) {
-		for row in table {
-			for procedure in row.procedures {
-				testing.expectf(t, is_declared(declared[:], procedure), "the procedure %s of the row %s is a procedure of the tool", procedure, row.part)
-			}
+	rows_of_parts_and_commands := rows_of_volumes()
+	for row in rows_of_parts_and_commands {
+		for procedure in row.procedures {
+			testing.expectf(t, is_declared(declared[:], procedure), "the procedure %s of the row %s is a procedure of the tool", procedure, row.part)
 		}
 	}
 	for procedure in whole_test_procedures {
@@ -362,20 +374,18 @@ each_volume_that_a_scenario_names_is_in_the_table_of_its_part :: proc(t: ^testin
 			continue
 		}
 		rows := 0
-		for table in ([][]Volumes_Of_Part{test_part_volumes[:], command_volumes[:]}) {
-			for row in table {
-				in_row := false
-				for procedure in row.procedures {
-					in_row = in_row || procedure == item.procedure
-				}
-				if !in_row {
-					continue
-				}
-				rows += 1
-				testing.expectf(t, row_has_volume(row, path), "the procedure %s of the part %s names %s, which is not in the volumes of the part: the part would boot a volume that its build did not build", item.procedure, row.part, item.constant)
+		for row in rows_of_parts_and_commands {
+			in_row := false
+			for procedure in row.procedures {
+				in_row = in_row || procedure == item.procedure
 			}
+			if !in_row {
+				continue
+			}
+			rows += 1
+			testing.expectf(t, row_has_volume(row, path), "the procedure %s of the part %s names %s, which is not in the volumes of the part: the part would boot a volume that its build did not build", item.procedure, row.part, item.constant)
 		}
-		testing.expectf(t, rows > 0, "the procedure %s names %s and is in no row of test_part_volumes or command_volumes", item.procedure, item.constant)
+		testing.expectf(t, rows > 0, "the procedure %s names %s and is in no row of test_parts or command_volumes", item.procedure, item.constant)
 	}
 }
 

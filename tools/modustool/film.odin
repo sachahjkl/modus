@@ -447,8 +447,10 @@ run_film :: proc(args: []string) -> int {
 			paused = true
 		}
 	}
+	part := test_part_run_make("film")
+	defer test_part_run_free(&part)
 	// The tool ends QEMU: status 0.
-	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(film.steps, BOOT_VOLUME, film.output, 0, TEST_DATA_DISK, vnc = true, paused = paused) {
+	if !test_part_run_start(&part) || !machine_test(&part, film.steps, {volume = BOOT_VOLUME, output = film.output, exit_status = 0, vnc = true, paused = paused}) {
 		return EXIT_FAILURE
 	}
 	return film_write(film.name) ? 0 : EXIT_FAILURE

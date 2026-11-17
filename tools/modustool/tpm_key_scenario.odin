@@ -659,7 +659,7 @@ scenario_tpm_machine_passphrase_after_the_new_seal := [?]Step {
 // the end, with the state of the TPM given, then prints what the log of
 // its software TPM shows.
 @(private = "file")
-tpm_key_machine_run :: proc(parts: [][]Step, volume: string, firmware: Machine_Firmware, number: int, disk: string = TEST_TPM_KEY_DISK, tpm_state: string = TPM_KEY_STATE_FOLDER, disk_server: ^Network_Block_Device = nil) -> bool {
+tpm_key_machine_run :: proc(part: ^Test_Part_Run, step_groups: [][]Step, volume: string, firmware: Machine_Firmware, number: int, disk: string = TEST_TPM_KEY_DISK, tpm_state: string = TPM_KEY_STATE_FOLDER, disk_server: ^Network_Block_Device = nil) -> bool {
 	// Not in the temporary allocator: the tool frees it after each step.
 	all := make([dynamic]Step)
 	defer delete(all)
@@ -674,12 +674,12 @@ tpm_key_machine_run :: proc(parts: [][]Step, volume: string, firmware: Machine_F
 	// its ring. The lines of the lockout value come at the first use of a
 	// passphrase, in the steps of machines 7 to 10.
 	append(&all, Step{kind = .Wait, text = TPM_COUNT_LIMITS_LINE, any_order = true})
-	for part in parts {
-		append(&all, ..part)
+	for group in step_groups {
+		append(&all, ..group)
 	}
 	append(&all, ..tpm_key_end[:])
 	output := self_test_file(TEST_OUTPUT_TPM_KEY, number)
-	passed := machine_test(all[:], volume, output, MACHINE_STOP_OK, disk, disk_server = disk_server, firmware = firmware, tpm_state = tpm_state, tpm_device = true)
+	passed := machine_test(part, all[:], {volume = volume, output = output, exit_status = MACHINE_STOP_OK, data_disk = disk, disk_server = disk_server, firmware = firmware, tpm_state = tpm_state, tpm_device = true})
 	tpm_traffic_report(output)
 	return passed
 }
@@ -787,7 +787,7 @@ principal_file_parts_read :: proc() -> (parts: Principal_File_Parts, ok: bool) {
 // and in the row that unlock writes must be the count of the zeros that
 // the disk kept. It gives the block that the disk did not write with zeros.
 @(private = "file")
-principal_change_with_a_dropped_zero_run :: proc(parts: ^Principal_File_Parts) -> (dropped_block: u64, ok: bool) {
+principal_change_with_a_dropped_zero_run :: proc(part: ^Test_Part_Run, parts: ^Principal_File_Parts) -> (dropped_block: u64, ok: bool) {
 	image, read_error := os.read_entire_file(TEST_TPM_PRINCIPAL_DISK, context.allocator)
 	if read_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read %s: %v", TEST_TPM_PRINCIPAL_DISK, read_error)
@@ -808,7 +808,7 @@ principal_change_with_a_dropped_zero_run :: proc(parts: ^Principal_File_Parts) -
 	// Not in the temporary allocator: the tool frees it after each step.
 	address := fmt.aprintf("nbd://127.0.0.1:%d", server.port)
 	defer delete(address)
-	ran := tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_change[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, address, disk_server = &server)
+	ran := tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_change[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, address, disk_server = &server)
 	disk_server_stop(&server)
 	if !ran {
 		return 0, false
@@ -1002,7 +1002,7 @@ tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alo
 			tpm_stop(&alone.tpm)
 			return {}, false
 		}
-		time.sleep(10 * time.Millisecond)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	// The bound only ends a wait for a TPM that does not answer.
 	_ = net.set_option(alone.socket, .Receive_Timeout, HANG_BOUND)
@@ -1079,30 +1079,30 @@ tpm_lockout_reset_tests_run :: proc() -> bool {
 // the six of the keys of a named principal, on a new disk and a new state
 // of the software TPM, then the four of the machine passphrase with the
 // TPM, on a disk and a state of their own.
-principals_tpm_tests_run :: proc() -> bool {
+principals_tpm_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_KEY_DISK, DATA_DISK_SIZE, true) or_return
 	reset_folder(TPM_KEY_STATE_FOLDER) or_return
-	screen_text_forget()
-	tpm_key_machine_run([][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_key_seal[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 1) or_return
+	screen_text_forget(part)
+	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_key_seal[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 1) or_return
 	test_passed_print("%s", "machine_seal() sealed the machine key by the TPM, and the window of unlock showed its recovery key")
-	tpm_key_machine_run([][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 2) or_return
+	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 2) or_return
 	test_passed_print("%s", "the same system: the TPM proved the creation and released the machine key with no typing")
-	tpm_key_machine_run([][]Step{scenario_tpm_key_recovery[:], scenario_tpm_key_reseal[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 3) or_return
+	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_recovery[:], scenario_tpm_key_reseal[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 3) or_return
 	test_passed_print("%s", "another system: the TPM refused, the recovery key opened the machine key, and it was sealed again")
-	tpm_key_machine_run([][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 4) or_return
+	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 4) or_return
 	test_passed_print("%s", "the other system after the recovery: the TPM released the machine key with no typing")
 	// The record that machine 4 opened, with one byte of its ticket changed,
 	// on a disk of its own: the disk of the part stays as it is.
 	tpm_key_changed_ticket_disk_write() or_return
-	tpm_key_machine_run([][]Step{scenario_tpm_key_changed_ticket[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 5, TEST_TPM_KEY_CHANGED_TICKET_DISK) or_return
+	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_changed_ticket[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 5, TEST_TPM_KEY_CHANGED_TICKET_DISK) or_return
 	test_passed_print("%s", "one byte of the creation ticket changed: the TPM refused the ticket, and nothing was unsealed")
 	// The system of the seal of machine 3 with Secure Boot off: the firmware
 	// with no Secure Boot starts the signed boot program too, so only PCR 7
 	// differs.
-	tpm_key_machine_run([][]Step{scenario_tpm_key_recovery[:], scenario_tpm_key_secure_boot_off[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Tpm_Driver, 6) or_return
+	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_recovery[:], scenario_tpm_key_secure_boot_off[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Tpm_Driver, 6) or_return
 	test_passed_print("%s", "the same system with Secure Boot off: the TPM refused for PCR 7 alone, the recovery key opened the machine key, and no seal trusts the boot program")
 	fmt.println("modustool: the machine key sealed by the TPM: 6 machines passed")
-	principals_tpm_principal_tests_run() or_return
+	principals_tpm_principal_tests_run(part) or_return
 	return true
 }
 
@@ -1110,30 +1110,30 @@ principals_tpm_tests_run :: proc() -> bool {
 // named principal, on a new disk and the state of the software TPM that the
 // machines of the machine key left.
 @(private = "file")
-principals_tpm_principal_tests_run :: proc() -> bool {
+principals_tpm_principal_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_PRINCIPAL_DISK, DATA_DISK_SIZE, true) or_return
-	screen_text_forget()
-	tpm_key_machine_run([][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_principal_create[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 7, TEST_TPM_PRINCIPAL_DISK) or_return
+	screen_text_forget(part)
+	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_principal_create[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 7, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "principal_create() sealed the keys of alice by the TPM with her passphrase, and the window of unlock showed her recovery key")
-	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 8, TEST_TPM_PRINCIPAL_DISK) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 8, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "the same system: the TPM counted a wrong passphrase, and released the keys to the right one")
-	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 9, TEST_TPM_PRINCIPAL_DISK) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 9, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: the TPM refused the passphrase, the recovery key opened the keys, and a new passphrase sealed them again")
 	// The file of alice before the change, as the store holds it: its secret
 	// parts must leave the disk with the change.
 	old_parts := principal_file_parts_read() or_return
-	dropped_block := principal_change_with_a_dropped_zero_run(&old_parts) or_return
+	dropped_block := principal_change_with_a_dropped_zero_run(part, &old_parts) or_return
 	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the lock stopped the window that showed the recovery key of a machine passphrase, which was not written; the old passphrase was refused and counted, and the new one opened the keys")
 	principal_file_parts_absent(&old_parts, dropped_block) or_return
-	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_recovery_with_no_try[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_recovery_with_no_try[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: Ctrl+R asked for the recovery key with no try, the recovery key before the change opened nothing, and the new one opened the keys")
-	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 12, TEST_TPM_PRINCIPAL_DISK) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 12, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "the TPM counted each wrong passphrase, refused each try after three, and the recovery key opened the keys")
 	fmt.println("modustool: the keys of a named principal sealed by the TPM: 6 machines passed")
 	// After the last machine of the TPM: the try of the reset closes the
 	// lockout hierarchy of that TPM for its recovery time.
 	tpm_lockout_reset_tests_run() or_return
-	principals_tpm_machine_passphrase_tests_run() or_return
+	principals_tpm_machine_passphrase_tests_run(part) or_return
 	return true
 }
 
@@ -1141,17 +1141,17 @@ principals_tpm_principal_tests_run :: proc() -> bool {
 // machine passphrase with the TPM, on a new disk and a new state of the
 // software TPM.
 @(private = "file")
-principals_tpm_machine_passphrase_tests_run :: proc() -> bool {
+principals_tpm_machine_passphrase_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_MACHINE_PASSPHRASE_DISK, DATA_DISK_SIZE, true) or_return
 	reset_folder(TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
-	screen_text_forget()
-	tpm_key_machine_run([][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_machine_passphrase_set[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 13, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
+	screen_text_forget(part)
+	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_machine_passphrase_set[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 13, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
 	test_passed_print("%s", "machine_passphrase() on a machine with the TPM: the TPM sealed the machine key with the machine passphrase, and the window of unlock showed its recovery key")
-	tpm_key_machine_run([][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 14, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 14, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
 	test_passed_print("%s", "the same system: the TPM counted a wrong machine passphrase, and released the machine key to the right one")
-	tpm_key_machine_run([][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_other_system[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 15, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_other_system[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 15, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
 	test_passed_print("%s", "another system: the TPM refused the right machine passphrase, the recovery key opened the machine key, and a new machine passphrase sealed it again")
-	tpm_key_machine_run([][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_after_the_new_seal[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 16, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
+	tpm_key_machine_run(part, [][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_after_the_new_seal[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 16, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
 	test_passed_print("%s", "the other system after the new seal: Ctrl+R asked for the recovery key with no try, the passphrase before the new seal was refused and counted, and the new one opened the machine key")
 	fmt.println("modustool: the machine passphrase with the TPM: 4 machines passed")
 	return true

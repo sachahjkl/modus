@@ -416,8 +416,8 @@ QEMU_QUIT_STATUS :: 0
 // debugger_tests_run runs the two machines of the debugger: the contract
 // of the kernel, then the commands. The second one runs also when the
 // first one fails: each one has its own verdict.
-debugger_tests_run :: proc() -> bool {
-	kernel_contract := machine_test(scenario_debugger[:], BOOT_VOLUME, TEST_OUTPUT_DEBUGGER, MACHINE_STOP_OK, TEST_DATA_DISK)
-	commands := machine_test(scenario_debugger_commands[:], BOOT_VOLUME, TEST_OUTPUT_DEBUGGER_COMMANDS, QEMU_QUIT_STATUS, TEST_DATA_DISK)
+debugger_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	kernel_contract := machine_test(part, scenario_debugger[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER, exit_status = MACHINE_STOP_OK})
+	commands := machine_test(part, scenario_debugger_commands[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER_COMMANDS, exit_status = QEMU_QUIT_STATUS})
 	return kernel_contract && commands
 }

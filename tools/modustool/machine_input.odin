@@ -15,9 +15,10 @@ import "core:time"
 // compositor received each record. A picture waits until the screen is
 // settled (screen_settle.odin). No wait of this file is a fixed time.
 
-// The period of the poll of a condition that the tool reads through QEMU
-// or through the remote service: the time between two reads, never the
-// time of a wait.
+// The period of the poll of a condition that the tool reads through QEMU,
+// through the remote service, or in a thread of the tool (the disk that it
+// serves, the peer, a child process): the time between two reads, never
+// the time of a wait. Each poll has a bound that ends a hang.
 CONDITION_POLL_PERIOD :: time.Millisecond
 // The period of the poll of the log of the machine when no change of the
 // file woke the wait (log_watch_linux.odin).
@@ -350,8 +351,9 @@ Screen_Dump :: struct {
 // file. QEMU replies when the file is whole.
 screen_dump_read :: proc(machine: ^Machine) -> (dump: Screen_Dump, ok: bool) {
 	dump_started := time.tick_now()
-	_ = os.remove(SCREEN_DUMP)
-	if _, dumped := qmp_command(&machine.qmp, qmp_screendump_command(SCREEN_DUMP)); !dumped {
+	screen_dump := machine_file(machine.output, SCREEN_DUMP_SUFFIX)
+	_ = os.remove(screen_dump)
+	if _, dumped := qmp_command(&machine.qmp, qmp_screendump_command(screen_dump)); !dumped {
 		fmt.eprintln("modustool: QEMU did not save the screen")
 		return {}, false
 	}
@@ -360,9 +362,9 @@ screen_dump_read :: proc(machine: ^Machine) -> (dump: Screen_Dump, ok: bool) {
 	defer machine.picture_time.read += time.tick_since(read_started)
 	// Not in the temporary allocator: the worker reads the bytes after the
 	// scenario freed it.
-	file, read_error := os.read_entire_file(SCREEN_DUMP, context.allocator)
+	file, read_error := os.read_entire_file(screen_dump, context.allocator)
 	if read_error != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", SCREEN_DUMP, read_error)
+		fmt.eprintfln("modustool: cannot read %s: %v", screen_dump, read_error)
 		return {}, false
 	}
 	// "P6", width, height, 255, one space character, then the bytes.
@@ -382,7 +384,7 @@ screen_dump_read :: proc(machine: ^Machine) -> (dump: Screen_Dump, ok: bool) {
 	width, _ := strconv.parse_int(fields[1])
 	height, _ := strconv.parse_int(fields[2])
 	if fields[0] != "P6" || width <= 0 || height <= 0 || len(file) - position < width * height * 3 {
-		fmt.eprintfln("modustool: QEMU wrote %s, which is not a whole picture of the screen (%d bytes)", SCREEN_DUMP, len(file))
+		fmt.eprintfln("modustool: QEMU wrote %s, which is not a whole picture of the screen (%d bytes)", screen_dump, len(file))
 		delete(file)
 		return {}, false
 	}
@@ -444,7 +446,7 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 		height     = dump.height,
 		file       = dump.file,
 		pixels     = dump.pixels,
-		step_place = len(test_times.steps),
+		step_place = len(machine.part.times.steps),
 	}
 	// The wait for a settled screen is the time of the step that is in no
 	// picture of QEMU and in no read of its file.
@@ -470,7 +472,7 @@ pictures_join :: proc(machine: ^Machine) -> bool {
 		} else {
 			fmt.printfln("modustool: screen saved: %s (%dx%d, %d bytes)", job.path, job.width, job.height, job.bytes)
 		}
-		test_times_picture_worker_note(job.step_place, job.conversion, job.write)
+		test_times_picture_worker_note(&machine.part.times, job.step_place, job.conversion, job.write)
 		delete(job.failure)
 		delete(job.path)
 		delete(job.file)

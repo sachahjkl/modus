@@ -1,0 +1,341 @@
+package modustool
+
+import "core:fmt"
+import "core:os"
+import "core:strings"
+import "core:sync"
+import "core:thread"
+import "core:time"
+
+// The parts of the machine test (src/md/infrastructure/machine_test_parts.md).
+// One table holds each part: `test <part>` finds its row, the whole test
+// runs every row, the build reads the boot volumes of a row, and a host test
+// checks the table of docs/TOOLS.md, "The parts of the machine test",
+// against it.
+
+// One part of the machine test.
+Test_Part :: struct {
+	name:              string,
+	does:              string, // The cell of the table of the guide: what the part checks.
+	run:               proc(part: ^Test_Part_Run) -> bool,
+	// Each procedure of the tool that starts a machine of the part, or that
+	// reads what the build of its volumes gives: a host test checks that each
+	// volume that one of them names is in volumes (boot_volumes_test.odin).
+	procedures:        []string,
+	volumes:           []string, // The paths of the boot volumes that its machines boot: `test <part>` builds these only.
+	self_test_volumes: bool, // The volumes of the self tests of the kernel too, one for each row of self_tests.
+}
+
+// What one run of a part keeps across its machines. Two parts that run at
+// the same time share none of it: each machine of a part reaches it through
+// its machine record. A command that starts machines outside the test
+// (`measure`, `film`) has one too, with the name of the command.
+Test_Part_Run :: struct {
+	name:               string,
+	data_disk:          string, // The data disk of the machines of the part, new at its start.
+	remembered_values:  [dynamic]string, // The values that the steps Remember kept: the step Distinct compares them.
+	screen_text_kept:   string, // The text that the last step Screen_Text read: a later machine of the part types it.
+	screen_text_before: string, // The text that the step Screen_Text before the last one read.
+	times:              Test_Times,
+	passed:             bool,
+	duration:           time.Duration, // A measure: from the start of its first machine to the end of its last one.
+}
+
+// The rows are in the order of the start of the whole test: the longest
+// parts first, so that the last part to end starts early. The time of each
+// part is in build/test_times.txt.
+test_parts := [?]Test_Part {
+	{name = "main", does = "The main machine: the desktop, the console, the programs and the developer tools", run = main_tests_run, procedures = {"main_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "tcp", does = "The two machines of TCP", run = tcp_tests_run, procedures = {"tcp_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "random", does = "The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none", run = random_tests_run, procedures = {"random_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "quic", does = "The machine of QUIC through the network service", run = quic_tests_run, procedures = {"quic_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "network", does = "The machine of the network service", run = network_tests_run, procedures = {"network_tests_run"}, volumes = {BOOT_VOLUME}},
+	// The machines of the keys sealed by the TPM too: the signed main
+	// volume, whose build writes the variable store of Secure Boot, and the
+	// other system, signed.
+	{
+		name = "principals",
+		does = "The two machines of the principals, then the ten machines of the keys sealed by the TPM, with a software TPM whose state they share: nine with Secure Boot on, on the volumes `secure_boot` and `other_system`, and one with Secure Boot off, where the seal is refused (`PRINCIPALS.md`, \"8. The tests\")",
+		run = principals_tests_run,
+		procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "principals_tpm_machine_passphrase_tests_run", "principal_change_with_a_dropped_zero_run", "tpm_key_machine_run"},
+		volumes = {BOOT_VOLUME, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_OTHER_SYSTEM},
+	},
+	{
+		name = "disk_programs",
+		does = "The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock (\"The disk of the disk programs\")",
+		run = disk_programs_tests_run,
+		procedures = {"disk_programs_tests_run", "disk_programs_named_principal_tests_run"},
+		volumes = {BOOT_VOLUME},
+	},
+	// The two machines of the measure boot the main volume and the other
+	// system.
+	{
+		name = "trusted_boot",
+		does = "The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign",
+		run = trusted_boot_tests_run,
+		procedures = {"trusted_boot_tests_run", "release_image_machine_run", "floor_tests_run"},
+		volumes = {BOOT_VOLUME, BOOT_VOLUME_CHANGED_MODULE, BOOT_VOLUME_WRONG_SIGNATURE, BOOT_VOLUME_OTHER_SYSTEM, BOOT_VOLUME_CHANGED_KERNEL, BOOT_VOLUME_WITHOUT_DESCRIPTION, BOOT_VOLUME_STATED_HASH, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_SECURE_BOOT_CHANGED, BOOT_VOLUME_NEWER_SYSTEM, BOOT_VOLUME_NEWER_KEY},
+	},
+	{name = "hierarchy", does = "The machines of the hierarchy of storage", run = hierarchy_tests_run, procedures = {"hierarchy_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "power", does = "The loss of power: of the storage, of the settings, of the ranges, and the write that the disk drops", run = power_tests_run, procedures = {"power_tests_run", "power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run"}, volumes = {BOOT_VOLUME}},
+	{name = "persist", does = "The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines", run = persistence_run, procedures = {"persistence_run"}, volumes = {BOOT_VOLUME}},
+	{name = "extended_state", does = "The three machines of the extended state", run = extended_state_tests_run, procedures = {"extended_state_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "return_fault", does = "The machine of the return to a program", run = return_fault_tests_run, procedures = {"return_fault_tests_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_WITHOUT_RETURN_CHECK}},
+	{
+		name = "kernel_events",
+		does = "The machine of the kernel events, then the thread counters on the same machine: `counters` counts a loop of 1 000 000 turns (at least one instruction retired for each turn, the one count that the test checks) and the same reads of 2 MiB in order and by page, as measures. After the machine, the tool reads the last boot line \"kernel: performance counters\" of the test machine; a line with counters must say that the first processor passed the trial of the registers. When the kernel found no counters, or a processor refused their trial, it checks only that the commands gave `Unsupported`, and it writes what the host gives as the explanation (`ARCHITECTURE.md`, \"The counters of a thread\")",
+		run = kernel_events_tests_run,
+		procedures = {"kernel_events_tests_run"},
+		volumes = {BOOT_VOLUME},
+	},
+	{name = "self_tests", does = "The machines of the self tests of the kernel: each one does one thing that the processor must refuse, from its own boot volume", run = self_tests_run, procedures = {"self_tests_run"}, self_test_volumes = true},
+	{name = "debugger", does = "The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger`", run = debugger_tests_run, procedures = {"debugger_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "ranges", does = "The machines of the ranges of storage", run = ranges_tests_run, procedures = {"ranges_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "quic-real", does = "The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer", run = quic_real_tests_run, procedures = {"quic_real_tests_run"}, volumes = {BOOT_VOLUME}},
+	// No machine starts: the part needs the built modules, which the build
+	// of a volume gives.
+	{name = "outside_module", does = "No machine: the build of the examples of a module outside the sources, as a developer types it", run = outside_module_tests_run, procedures = {"outside_module_tests_run", "outside_module_examples_check"}, volumes = {BOOT_VOLUME}},
+	{name = "host_modules", does = "No machine: the loader, the descriptions of the exports and the debug objects of the build, on the host", run = host_modules_tests_run, procedures = {"host_modules_tests_run", "test_modules", "test_descriptions", "test_debug_objects"}, volumes = {BOOT_VOLUME}},
+	{
+		name = "iommu_amd",
+		does = "The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures and an entropy device behind a conventional bridge (`i82801b11-bridge`) at the place 28 of bus 0: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, which also holds the registers of the entropy device, so the kernel gives both one domain of the requester of the bridge; its message interrupt arrives through the interrupt table of that requester, and its device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; without the registers of the entropy device, its declaration is refused, with the line of the kernel, and a read of the disk into a page that it declared before does not end: the tool stops the machine (which ends each read that QEMU took), gives the disk a new size with `block_resize` and starts it again, and the service then finds its page as it was and no interrupt of the device, the configuration interrupt of the new size too; then `net` through a device window",
+		run = iommu_amd_tests_run,
+		procedures = {"iommu_amd_tests_run"},
+		volumes = {BOOT_VOLUME},
+	},
+	{
+		name = "iommu",
+		does = "The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express and the entropy device: the system with translation and interrupt remapping on, the two reads of the entropy device through the unit, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, \"K5. Device grant and interrupts\")",
+		run = iommu_tests_run,
+		procedures = {"iommu_tests_run"},
+		volumes = {BOOT_VOLUME},
+	},
+	{name = "fault_ring", does = "The machine of the fault ring", run = fault_ring_tests_run, procedures = {"fault_ring_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "crypto", does = "The machine of the module `cryptography`", run = cryptography_tests_run, procedures = {"cryptography_tests_run"}, volumes = {BOOT_VOLUME}},
+	{
+		name = "guest",
+		does = "The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, \"A guest\")",
+		run = guest_tests_run,
+		procedures = {"guest_tests_run"},
+		volumes = {BOOT_VOLUME},
+	},
+	{name = "fails", does = "The machine of a start that fails: a boot image with no compositor", run = fails_tests_run, procedures = {"fails_tests_run"}, volumes = {BOOT_VOLUME_FAILS}},
+	{name = "shortage", does = "The machine of the shortage of frames", run = shortage_tests_run, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
+}
+
+// test_part_find gives the row of a part by its name.
+test_part_find :: proc(name: string) -> (part: ^Test_Part, found: bool) {
+	for &row in test_parts {
+		if row.name == name {
+			return &row, true
+		}
+	}
+	return nil, false
+}
+
+// test_part_names gives the names of the parts, in the order of the table,
+// separated by ", ".
+test_part_names :: proc() -> string {
+	names := make([]string, len(test_parts), context.temp_allocator)
+	for row, index in test_parts {
+		names[index] = row.name
+	}
+	return strings.join(names, ", ", context.temp_allocator)
+}
+
+// test_arguments_problem gives the refusal of the arguments of `test`, or
+// "" when they name the whole test or one part. A word that is not a part
+// is refused: the whole test in its place takes minutes and passes, and the
+// reader believes that the part passed.
+test_arguments_problem :: proc(args: []string) -> string {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 1 {
+		if _, found := test_part_find(args[0]); found {
+			return ""
+		}
+	}
+	given := strings.join(args, " ", context.temp_allocator)
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test", given, test_part_names())
+}
+
+// test_part_volumes_of gives the paths of the boot volumes of one part, in
+// the temporary memory: the paths of the self test volumes are made there.
+test_part_volumes_of :: proc(part: Test_Part) -> []string {
+	volumes := make([dynamic]string, context.temp_allocator)
+	append(&volumes, ..part.volumes)
+	if part.self_test_volumes {
+		for test in self_tests {
+			append(&volumes, fmt.tprintf(BOOT_VOLUME_SELF_TEST, test.number))
+		}
+	}
+	return volumes[:]
+}
+
+// boot_volumes_of_test gives the volumes that `test` with these arguments
+// boots: those of the row of its part. nil is every volume: the whole test,
+// and a name that is no part (test_arguments_problem refuses it first).
+boot_volumes_of_test :: proc(args: []string) -> []string {
+	if len(args) == 0 {
+		return nil
+	}
+	part, found := test_part_find(args[0])
+	if !found {
+		return nil
+	}
+	return test_part_volumes_of(part^)
+}
+
+// test_part_guide_row gives the line of the table of the guide for a part:
+// its name, what it checks, and the short names of its boot volumes. The
+// host test compares the guide with these lines, and prints the line that
+// it expected.
+test_part_guide_row :: proc(part: Test_Part) -> string {
+	volume_names := make([dynamic]string, context.temp_allocator)
+	for path in test_part_volumes_of(part) {
+		append(&volume_names, fmt.tprintf("`%s`", boot_volume_name(path)))
+	}
+	return fmt.tprintf("| `%s` | %s | %s |", part.name, part.does, strings.join(volume_names[:], ", ", context.temp_allocator))
+}
+
+// test_part_run_make makes the run of one part, or of a command that starts
+// machines outside the test. Its texts are in memory of its own: a scenario
+// frees the temporary memory after each step.
+test_part_run_make :: proc(name: string) -> Test_Part_Run {
+	return {name = strings.clone(name), data_disk = fmt.aprintf("%s/test_data_disk_%s.img", BUILD_FOLDER, name)}
+}
+
+// test_part_run_start makes the new data disk of the part: a part starts
+// from no data that another part wrote, as it does when it runs alone.
+test_part_run_start :: proc(part: ^Test_Part_Run) -> bool {
+	return disk_prepare(part.data_disk, DATA_DISK_SIZE, true)
+}
+
+test_part_run_free :: proc(part: ^Test_Part_Run) {
+	remembered_values_forget(part)
+	delete(part.remembered_values)
+	screen_text_forget(part)
+	test_times_free(&part.times)
+	// The disk of a part that failed stays for the reader of the failure;
+	// the disks of the parts that passed would fill the build folder.
+	if part.passed {
+		_ = os.remove(part.data_disk)
+	}
+	delete(part.data_disk)
+	delete(part.name)
+	part^ = {}
+}
+
+// remembered_values_forget forgets the values that the steps Remember of a
+// part kept.
+remembered_values_forget :: proc(part: ^Test_Part_Run) {
+	for value in part.remembered_values {
+		delete(value)
+	}
+	clear(&part.remembered_values)
+}
+
+// The processors of each test machine: the -smp of machine_command. The
+// whole test starts at most one part for each MACHINE_PROCESSOR_COUNT
+// processors of the host, so that each machine can have its processors.
+// A part runs its machines one after the other.
+test_parts_at_once :: proc(part_count: int, processors: int) -> int {
+	return max(1, min(part_count, processors / MACHINE_PROCESSOR_COUNT))
+}
+
+// The parts that the worker threads of the whole test share.
+Test_Parts_Pool :: struct {
+	parts:  []Test_Part,
+	runs:   []Test_Part_Run, // By place in parts.
+	next:   int, // The next place in parts to take (atomic).
+	failed: bool, // A part failed: no new part starts (atomic).
+}
+
+// test_parts_run runs each part of a list, at most `at_once` at the same
+// time, each on a worker thread of its own. After a failure no new part
+// starts; the parts that run end. It prints the time of each part as a
+// measure. The caller frees the runs, which have the order of the parts.
+test_parts_run :: proc(parts: []Test_Part, at_once: int) -> (runs: []Test_Part_Run, passed: bool) {
+	pool := Test_Parts_Pool {
+		parts = parts,
+		runs  = make([]Test_Part_Run, len(parts)),
+	}
+	for part, place in parts {
+		pool.runs[place] = test_part_run_make(part.name)
+	}
+	if at_once <= 1 {
+		test_parts_worker(&pool)
+	} else {
+		workers := make([]^thread.Thread, min(at_once, len(parts)), context.temp_allocator)
+		for &worker in workers {
+			worker = thread.create_and_start_with_data(&pool, test_parts_worker_of_thread)
+		}
+		thread.join_multiple(..workers)
+		for worker in workers {
+			thread.destroy(worker)
+		}
+	}
+	passed = !sync.atomic_load(&pool.failed)
+	for part_run in pool.runs {
+		passed = passed && part_run.passed
+	}
+	return pool.runs, passed
+}
+
+@(private = "file")
+test_parts_worker_of_thread :: proc(data: rawptr) {
+	test_parts_worker((^Test_Parts_Pool)(data))
+}
+
+// test_parts_worker takes the parts of a pool one at a time and runs each.
+@(private = "file")
+test_parts_worker :: proc(pool: ^Test_Parts_Pool) {
+	for {
+		place := sync.atomic_add(&pool.next, 1)
+		if place >= len(pool.parts) || sync.atomic_load(&pool.failed) {
+			return
+		}
+		part := pool.parts[place]
+		part_run := &pool.runs[place]
+		started := time.tick_now()
+		part_run.passed = test_part_run_start(part_run) && part.run(part_run)
+		part_run.duration = time.tick_since(started)
+		free_all(context.temp_allocator)
+		fmt.printfln("modustool: measure: the part %s %s, %d machines, %.1f s", part.name, part_run.passed ? "passed" : "failed", len(part_run.times.machines), time.duration_seconds(part_run.duration))
+		if !part_run.passed {
+			sync.atomic_store(&pool.failed, true)
+		}
+	}
+}
+
+// The procedures of the parts whose machines no other file runs.
+
+main_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT, exit_status = MACHINE_STOP_OK})
+}
+
+network_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_network[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_NETWORK, exit_status = MACHINE_STOP_OK})
+}
+
+shortage_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_shortage[:], {volume = BOOT_VOLUME_SHORTAGE, output = TEST_OUTPUT_SHORTAGE, exit_status = MACHINE_STOP_OK})
+}
+
+// A start that fails ends when the tool ends QEMU: status 0.
+fails_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_fails[:], {volume = BOOT_VOLUME_FAILS, output = TEST_OUTPUT_FAILS, exit_status = 0})
+}
+
+power_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return power_loss_run(part) && power_loss_settings_run(part) && power_loss_ranges_run(part) && dropped_write_run(part)
+}
+
+outside_module_tests_run :: proc(_: ^Test_Part_Run) -> bool {
+	return outside_module_examples_check()
+}
+
+host_modules_tests_run :: proc(_: ^Test_Part_Run) -> bool {
+	return test_modules() && test_descriptions() && test_debug_objects()
+}

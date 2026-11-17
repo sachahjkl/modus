@@ -1036,7 +1036,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 				sync.mutex_unlock(&state.lock)
 				return false, fmt.tprintf("the connection to remote did not become quiet (no call, no stream, no acknowledgement owed) in %v: the silence would not test the idle bound alone", PEER_REMOTE_QUIET_LIMIT)
 			}
-			time.sleep(5 * time.Millisecond)
+			time.sleep(CONDITION_POLL_PERIOD)
 		}
 		return true, "the connection was quiet (no call, no stream, no acknowledgement owed); the peer now drops each datagram of it, both ways"
 	case "silence ends":
@@ -1080,7 +1080,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 			if time.tick_since(start) > PEER_REMOTE_QUIET_LIMIT {
 				return false, fmt.tprintf("the connection of the peer to remote did not end in %v after its close", PEER_REMOTE_QUIET_LIMIT)
 			}
-			time.sleep(5 * time.Millisecond)
+			time.sleep(CONDITION_POLL_PERIOD)
 		}
 		return true, "the peer closed its connection to remote, and the connection ended"
 	case "unknown client key":
@@ -1125,7 +1125,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 			if time.tick_since(start) > PEER_REMOTE_QUIET_LIMIT {
 				return false, fmt.tprintf("remote did not end the connection of the revoked key with the code Revoked in %v (%d such ends, the connection active: %v)", PEER_REMOTE_QUIET_LIMIT, revoked, active)
 			}
-			time.sleep(5 * time.Millisecond)
+			time.sleep(CONDITION_POLL_PERIOD)
 		}
 		// A new connection with the same key: refused in its handshake.
 		request, problem := remote_case_request(machine, "monitor.count(\"processors\")")
