@@ -14,10 +14,15 @@ import "modus:support/vector_font"
 // caches and the font outlines once, then trusts each entry. A signed
 // image writes them today; a fault there still stops a service.
 
-// fuzz_aligned_copy copies an input to memory on a multiple of 8: the
-// readers of a cache and of the outlines refuse other memory, as the
-// starter maps them on a page.
-fuzz_aligned_copy :: proc(input: []u8) -> []u8 {
+// fuzz_aligned_input gives an input on a multiple of 8: the readers of a
+// cache, of the outlines and of a theme refuse other memory, as the
+// starter maps them on a page. An input that is aligned already is given
+// as it is, so the page with no access beside it still catches a read past
+// its ends; only another input is copied, and loses that guard.
+fuzz_aligned_input :: proc(input: []u8) -> []u8 {
+	if uintptr(raw_data(input)) % 8 == 0 {
+		return input
+	}
 	words := make([]u64, (len(input) + 7) / 8, context.temp_allocator)
 	bytes := slice.to_bytes(words)[:len(input)]
 	copy(bytes, input)
@@ -114,7 +119,7 @@ fuzz_vector_font_seeds :: proc(seeds: ^[dynamic][]u8) {
 // in the words of the file, each advance and each pair; a refusal gives no
 // cache.
 fuzz_glyph_cache_execute :: proc(input: []u8) -> Fuzz_Verdict {
-	bytes := fuzz_aligned_copy(input)
+	bytes := fuzz_aligned_input(input)
 	cache, problem := glyph_cache.validate(bytes)
 	if problem.kind > max(glyph_cache.Problem_Kind) {
 		return fuzz_broken(.Contract, "validate gives a problem out of its enumeration: %d", u8(problem.kind))
@@ -253,7 +258,7 @@ fuzz_glyph_cache_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {
 // font file inside it, and its fonts written again by resource_write give
 // a resource that validate accepts with the same names and the same bytes.
 fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
-	bytes := fuzz_aligned_copy(input)
+	bytes := fuzz_aligned_input(input)
 	outlines, problem := font_outlines.validate(bytes)
 	if problem.kind > max(font_outlines.Problem_Kind) {
 		return fuzz_broken(.Contract, "validate gives a problem out of its enumeration: %d", u8(problem.kind))
@@ -268,7 +273,7 @@ fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	for &record, index in outlines.records {
 		fonts[index] = {name = font_outlines.name_of(&record), bytes = font_outlines.font_bytes(&outlines, index)}
 	}
-	out := fuzz_aligned_copy(make([]u8, font_outlines.resource_size(fonts), context.temp_allocator))
+	out := fuzz_aligned_input(make([]u8, font_outlines.resource_size(fonts), context.temp_allocator))
 	if _, written := font_outlines.resource_write(fonts, out); !written {
 		return fuzz_broken(.Round_Trip, "resource_write refuses the fonts of a resource that validate accepted")
 	}
@@ -291,7 +296,7 @@ fuzz_font_outlines_seeds :: proc(seeds: ^[dynamic][]u8) {
 		for &font, index in fonts {
 			font = {name = fmt.tprintf("font_%d", index), bytes = fuzz_font_seed[index * 16:][:16 + index]}
 		}
-		out := fuzz_aligned_copy(make([]u8, font_outlines.resource_size(fonts), context.temp_allocator))
+		out := fuzz_aligned_input(make([]u8, font_outlines.resource_size(fonts), context.temp_allocator))
 		_, _ = font_outlines.resource_write(fonts, out)
 		append(seeds, slice.clone(out))
 	}

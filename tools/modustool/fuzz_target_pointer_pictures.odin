@@ -20,7 +20,7 @@ fuzz_pointer_times := [?]u64{0, 1, 1 << 40}
 // picture of each shape in each form, at each size and each time, with
 // its pixels in the file, and the arrow for a shape that the theme lacks.
 fuzz_pointer_pictures_execute :: proc(input: []u8) -> Fuzz_Verdict {
-	file := fuzz_aligned_copy(input)
+	file := fuzz_aligned_input(input)
 	problem := pointer_pictures.validate(file)
 	if problem.kind > max(pointer_pictures.Problem_Kind) || problem.part > max(pointer_pictures.Part) || problem.field > max(pointer_pictures.Field) {
 		return fuzz_broken(.Contract, "validate gives a problem out of its enumerations: %v", problem)

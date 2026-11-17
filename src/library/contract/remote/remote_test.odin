@@ -211,8 +211,9 @@ answer_refusals :: proc(t: ^testing.T) {
 	testing.expect(t, !ok, "shorter than the header")
 	header := (^Answer)(&out[0])
 	header.total = 2999
-	_, _, ok = answer_check(bytes)
-	testing.expect(t, !ok, "more bytes than the total")
+	refused, refused_result, refused_total := answer_check(bytes)
+	testing.expect(t, !refused_total, "more bytes than the total")
+	testing.expect(t, refused == (Answer{}) && refused_result == nil, "a refusal of the total gives no header and no result, as each refusal")
 	header.total = REGION_SIZE + 1
 	_, _, ok = answer_check(bytes)
 	testing.expect(t, !ok, "a total larger than a call region")

@@ -1,5 +1,6 @@
 package modustool
 
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "modus:contract/enum_word"
@@ -326,14 +327,26 @@ fuzz_isolated_call_start :: proc() -> bool {
 	copy(file, mem.ptr_to_bytes(&header))
 	copy(file[size_of(module.Header):], mem.ptr_to_bytes(&directory))
 	fuzz_call_module_size = int(offset)
+	// A module that the reader does not take makes each Record and Table
+	// input a refusal: the target then reaches no code behind them, so it
+	// stops before its first execution.
+	written := fuzz_call_module[:fuzz_call_module_size]
+	first, first_found := module.record_type(written, 1)
+	second, second_found := module.record_type(written, 2)
+	if !first_found || !second_found || first.size != records[1].size || second.size != records[2].size {
+		fmt.eprintln("modustool: the module of the target isolated_call does not give its records 1 and 2")
+		return false
+	}
 	return true
 }
 
 // The bytes of the description at the start of an input, then the place
 // of the argument record, then the call region.
 FUZZ_CALL_DESCRIPTION_SIZE :: 2 + 2 * module.PARAMETER_CAPACITY + 4 * module.PARAMETER_CAPACITY + 8 + 1 + 2
-// The most bytes of the call region of one input: the call region of a
-// connection, so a place at its end is in reach.
+// The most bytes of the call region of one input. The call region of a
+// connection has REGION_SIZE bytes, 64 KiB; this region is smaller, so
+// the inputs stay small, and decode reads each place against the length
+// of the region that it is given.
 FUZZ_CALL_REGION_LIMIT :: 4 << 10
 
 // fuzz_call_function reads a description from the choices: types and
@@ -426,7 +439,11 @@ fuzz_isolated_call_execute :: proc(input: []u8) -> Fuzz_Verdict {
 // fuzz_isolated_call_seeds gives a call of each type of parameter, encoded
 // by the writer of the caller.
 fuzz_isolated_call_seeds :: proc(seeds: ^[dynamic][]u8) {
-	_ = fuzz_isolated_call_start()
+	// The seeds name the records of the fixed module: a caller that gives
+	// the seeds before the start of the target still gets them whole.
+	if !fuzz_isolated_call_start() {
+		fmt.panicf("modustool: the target isolated_call has no module for its seeds")
+	}
 	// The choices of fuzz_call_function, in its order.
 	Seed :: struct {
 		types:  []module.Type,
@@ -470,7 +487,9 @@ fuzz_isolated_call_seeds :: proc(seeds: ^[dynamic][]u8) {
 		region := make([]u8, 256)
 		offset, _, _, _, encoded := isolated.encode(fuzz_call_module[:fuzz_call_module_size], function, arguments, region)
 		if !encoded {
-			continue
+			// A seed that the writer of the caller refuses is a fault of
+			// the target, never a seed to leave out.
+			fmt.panicf("modustool: the writer of a call refuses the seed %v of the target isolated_call", item.types)
 		}
 		seed := make([dynamic]u8)
 		append(&seed, u8(len(item.types)), u8(item.result))
