@@ -15,6 +15,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The text grid measured against text runs.** The terminal draws a full grid both ways through the drawing module, and the kind `Text_Grid` stays only if the runs cost more than 1 ms more for a frame or more than 4 096 records. The format then has one text form, or a measured reason for two. [Design](src/md/api/draw_table.md)
 - **Fuzzing of the kernel operations.** A test machine runs operation sequences that the tool builds from the forms of the 35 kernel operations, guided by the edge counters of a test kernel, with the checks of the kernel as oracles. A fault of the kernel that a sequence finds is confirmed on the kernel that ships. [Design](src/md/infrastructure/kernel_fuzzing.md)
 - **The tool in packages.** The tool is one command over packages for the build, the checks, the resources, the fuzzer, the similarity finder, the machine tests and the site. A developer reads one concern in one folder and runs the host tests of one package. [Design](src/md/infrastructure/repository_layout.md)
+- **Memory that grows with the data, paid by the budget.** A program holds a document, a page of the web or the heap of a language of any size, and a lack of memory is a refusal that it reads, never a stop. [Design](src/md/features/memory_without_a_bound.md)
+- **Windows that the principal resizes.** The principal drags an edge of a window, and the program draws its next frame at the new size. [Design](src/md/features/desktop_to_browser.md)
+- **Copy and paste between windows.** The principal copies in one window and pastes in another, and a program reads the clipboard only at a paste of the principal. [Design](src/md/features/desktop_to_browser.md)
 
 ## Later
 
@@ -68,6 +71,32 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A document service with a picker.** A service owns the objects of the principal that belong to no one program, and gives a program a handle to a document only when the principal picks it. The principal then lists and revokes each grant of a document (`docs/ARCHITECTURE.md`, section U6).
 - **The host tests of the check in the measure record.** The measure record counts the host tests of `modustool check` beside the machine tests and the second build of `modustool screenshots`. The site then shows the count of every check of a release.
 - **The boot program named in the processors of a failed step.** The tool learns where the firmware loaded the boot program, so an instruction address of a processor there names the boot program and not "no known code". A stall between the start of the boot program and the kernel then says which of the two held the processor.
+- **Layout from the size of the content.** A label is as wide as its text and a column as wide as its widest child, so a window keeps its order at any size. [Design](src/md/features/desktop_to_browser.md)
+- **A resolution and a scale that the principal chooses.** The principal sets the mode of the display and a scale of the interface, and every window draws at that scale. [Design](src/md/features/desktop_to_browser.md)
+- **Maximize, minimize, snap and global shortcuts.** The principal arranges the windows with the keys and the pointer, and a global shortcut always reaches the system. [Design](src/md/features/desktop_to_browser.md)
+- **Drag and drop between windows.** The principal drags a document onto a window, and that program receives it at the drop only. [Design](src/md/features/desktop_to_browser.md)
+- **PNG and JPEG pictures in a program.** A program shows a picture of these formats, and a hostile file stops only the decoder that read it. [Design](src/md/features/desktop_to_browser.md)
+- **Notifications.** A program shows a short text to the principal, in a place that no program can imitate, and the focus stays where it was. [Design](src/md/features/desktop_to_browser.md)
+- **Buffers that pass through several programs with no copy.** A picture goes from the network to a decoder to the screen with no copy, and each program reads it with no right to change it. [Design](src/md/features/desktop_to_browser.md)
+- **Large pages for surfaces, decoded pictures and arenas.** A program that holds large buffers misses the translation cache of the processor less, where a measure shows a gain. [Design](src/md/features/desktop_to_browser.md)
+- **TLS 1.3 over TCP.** A program opens an encrypted TCP connection with the same TLS code as QUIC. [Design](src/md/features/desktop_to_browser.md)
+- **HTTP/1.1 and HTTP/3 for a program.** A program fetches a resource of the web from a server of either version. [Design](src/md/features/desktop_to_browser.md)
+- **Cookies and a cache for each principal.** A browser keeps the cookies and the cache of each principal apart, so two principals share neither. [Design](src/md/features/desktop_to_browser.md)
+- **An HTML parser that fuzz targets try to break.** A program reads the HTML of any page into a tree as the WHATWG defines it, and a hostile page stops only the parser. [Design](src/md/features/desktop_to_browser.md)
+- **Web pages with a subset of CSS.** A page shows its block, inline and flex layout, with its text shaped by the system. [Design](src/md/features/desktop_to_browser.md)
+- **A light web browser, one program for each origin.** A principal reads pages of documents, follows links, goes back and sends forms, and a page of one origin reads nothing of another. [Design](src/md/features/desktop_to_browser.md)
+- **3D drawn on the processor.** A program draws triangles with a depth buffer into a picture that its window shows, with no GPU. [Design](src/md/features/desktop_to_browser.md)
+- **The screen through the virtual GPU.** The compositor shows its screen through the virtual GPU of the test machine, the first step to the GPU. [Design](src/md/features/gpu_access.md)
+- **A USB keyboard and a USB pointer.** A principal types and points with USB devices, which reach only the window that has the focus. [Design](src/md/features/device_services.md)
+- **NVMe disks.** The storage service keeps its stores on an NVMe disk as on a virtio disk. [Design](src/md/features/device_services.md)
+- **Sound.** A program plays a stream of samples through the sound device of the test machine. [Design](src/md/features/desktop_to_browser.md)
+- **Device services for the devices of a real machine.** The root service starts the device service of each device by its identity, and a principal grants a device service from the disk for one device. [Design](src/md/features/device_services.md)
+- **A device service that fails starts again.** The class service keeps its ring, so the programs above it see a delay and not a stop. [Design](src/md/features/device_services.md)
+- **Devices that only Linux serves, through a driver domain.** A principal uses a Wi-Fi card or another device with only a Linux driver, through a guest that serves its class protocol. [Design](src/md/features/device_services.md)
+- **Odin programs of other projects on the system.** A program written for the core library of Odin runs on the system, with its files in its private store. [Design](src/md/features/desktop_to_browser.md)
+- **The applications of gui_toolkit on the system.** Each application of the toolkit runs in a window of the system. [Design](src/md/features/desktop_to_browser.md)
+- **Code that a program writes, then runs.** A program such as an engine of WebAssembly compiles code and runs it, and no page is writable and executable at once. [Design](src/md/features/desktop_to_browser.md)
+- **The browser wren whole in a Linux guest.** A principal runs wren, with no port, in a Linux guest that shows it in a window of the system. [Design](src/md/features/desktop_to_browser.md)
 
 ## Maybe
 
@@ -83,3 +112,5 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The option for the debug information in the compiler of the Odin project.** The kind of debug information that adds no instruction is offered to the Odin project, so a developer builds the modules of the system with the compiler of that project, with no fork. One way is open, and it waits for an issue opened upstream, then for the answer of the Odin project. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **The cache of the site workflow.** The workflow keeps the store paths of the development shell in the cache of GitHub Actions or in FlakeHub Cache. The cache of GitHub Actions is in use; FlakeHub Cache waits for a FlakeHub account for the repository.
 - **An embedded font for the text of the site.** The site carries the ASCII subsets of Paper Mono, whose license (the SIL OFL 1.1 with no Reserved Font Name) allows the copy, in place of the fonts of the system of the reader. One way is open, and it waits for a choice between one more download for each reader and one look on every system.
+- **JavaScript in the light browser.** Two ways are open: an engine written for the system, which waits for the light browser and a measure of its size, or the engine in Odin of gui_toolkit, which waits for the target of the core library of Odin. [Design](src/md/features/desktop_to_browser.md)
+- **The browser wren on the system with no guest.** Two ways are open for its Rust libraries, a Rust target for the system or Odin code in their place, and each waits for that work; both wait for code that a program writes then runs, and for WebGPU on a GPU. [Design](src/md/features/desktop_to_browser.md)
