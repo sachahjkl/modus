@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "modus:contract/debug_exception"
 import op "modus:contract/operation"
 
 // The breakpoints of a thread, and the read of the memory of a program
@@ -109,16 +110,26 @@ thread_breakpoints_write :: proc "contextless" (thread: ^Thread, breakpoints: ^o
 // control register of this processor is cleared here.
 //
 // true: nothing is left that a ring or a stop must see: a breakpoint that
-// was removed, or a single step that a debugger asked for and that came
-// after the end of the debugging. The thread goes on. An execute
-// breakpoint that was removed does not come again: the control register
-// is clear.
+// was removed, a single step that a debugger asked for and that came after
+// the end of the debugging, or an int1 that a hypervisor gave again before
+// it ran (debug_exception.int1_given_again). The thread goes on. An execute
+// breakpoint that was removed does not come again: the control register is
+// clear.
 debug_exception_is_dropped :: proc "contextless" (program: ^Program, thread: ^Thread) -> bool {
 	cpu := processor_self()
 	given := thread.frame.error
 	status := given & (op.DEBUG_STATUS_STEP | breakpoints_enabled(thread))
 	if cpu.breakpoints_loaded && !intrinsics.atomic_load(&thread.has_breakpoints) {
 		breakpoints_unload(cpu)
+	}
+	// KVM with SVM before Linux 7.3 gives a cut int1 again as a fault at
+	// the int1 itself, with no status; the thread then runs it again and
+	// gets its true trap. The bytes are read only for an exception with no
+	// status, under the program lock that the caller holds; each one by
+	// itself, so the byte before can be on another page.
+	if given == 0 && debug_exception.int1_given_again(given, program_byte_read(program, thread.frame.rip), program_byte_before(program, thread.frame.rip)) {
+		thread.frame.error = 0
+		return true
 	}
 	if status & op.DEBUG_STATUS_STEP != 0 && thread.debugger_step && program.debug_handler == 0 {
 		thread.debugger_step = false
@@ -127,6 +138,28 @@ debug_exception_is_dropped :: proc "contextless" (program: ^Program, thread: ^Th
 	}
 	thread.frame.error = status
 	return given != 0 && status == 0
+}
+
+// program_byte_read gives a byte of a program, for
+// debug_exception.int1_given_again. It reads through the direct map under
+// the program lock that the caller holds (program_page_physical): no read
+// faults, and a byte of a page that the program cannot read now, or of
+// device memory, is not readable.
+program_byte_read :: proc "contextless" (program: ^Program, address: u64) -> debug_exception.Program_Byte {
+	physical := program_page_physical(program, address)
+	if physical == 0 {
+		return {}
+	}
+	return {value = direct(physical, u8)^, readable = true}
+}
+
+// program_byte_before gives the byte before an address of a program. The
+// address 0 has none: not readable.
+program_byte_before :: proc "contextless" (program: ^Program, address: u64) -> debug_exception.Program_Byte {
+	if address == 0 {
+		return {}
+	}
+	return program_byte_read(program, address - 1)
 }
 
 // breakpoint_resume_flag_set sets the resume flag of a thread that goes on
