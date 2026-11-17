@@ -181,6 +181,7 @@ Status: Decided. The rules follow Blow. [Blow §5, §6]
 **In short.** The code that drives a device is an ordinary program, so a fault in it stops that program and not the machine. The system targets one fixed machine at a time, starting with a virtual one.
 
 - **Rule**: The kernel contains no device driver. The code that knows a device is a library or a user-space program.
+- **Rule**: The IOMMU is what makes a driver outside the kernel safe. A device service reaches only the memory that it was given, and the device that it drives reaches only the windows that the kernel opens for it in the IOMMU (`src/md/infrastructure/iommu.md`). Without the IOMMU, a device that a program drives could write any memory by DMA, and the program would hold the whole machine. The machine tests check it on QEMU, with the IOMMU of Intel and of AMD.
 - **Rule**: The system targets one fixed machine at a time. The first machine is virtual: QEMU on x86-64 with virtio devices, UEFI firmware (OVMF) and a TPM 2.0 (property 17).
 - **Position**: Hardware support is not the main problem of the project. The design of the system is.
 - **Rule**: Each device class has one standard queue protocol. Virtio is that protocol for the first machine. Real hardware that differs gets a user-space translator, with no kernel access.
