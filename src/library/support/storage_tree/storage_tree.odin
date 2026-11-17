@@ -9,8 +9,10 @@
 // a node in a commit copies it into a slot of the Pool (it becomes dirty),
 // and each node above it becomes dirty too, so that its parent can name
 // the copy. A parent names a dirty node with a reference to its slot: a
-// Pointer with no block. finish writes the dirty nodes, the children
-// before their parent, and gives the new root. The blocks that the tree
+// Pointer with no block. A node or a root of the disk in that form is
+// damage, so each reference is one that this package made. finish writes
+// the dirty nodes, the children before their parent, and gives the new
+// root. The blocks that the tree
 // stops naming are in Pool.released: the caller frees them with its
 // commit, or forgets them when it drops the commit.
 //
@@ -122,11 +124,17 @@ Pool :: struct {
 // One tree of a commit: its shape and its root, a Pointer of the disk or a
 // reference to a dirty slot. A root with no block and a check of 0: the
 // tree is empty.
+//
+// The caller gives a root that it read from the disk, and a damaged disk
+// can hold a Pointer with no block and any check, which has the form of a
+// reference. So the form of the root does not say what it names: only
+// root_is_reference does, and this package alone sets it.
 Work :: struct {
-	pool:   ^Pool, // The slots of the commit.
-	source: ^Source, // Where the nodes of the disk come from.
-	shape:  Shape, // The sizes of the records: TREE_SHAPE for the disk.
-	root:   Pointer, // The root of the tree: of the disk, or a reference to a dirty slot.
+	pool:              ^Pool, // The slots of the commit.
+	source:            ^Source, // Where the nodes of the disk come from.
+	shape:             Shape, // The sizes of the records: TREE_SHAPE for the disk.
+	root:              Pointer, // The root of the tree: of the disk, or a reference to a dirty slot.
+	root_is_reference: bool, // The root is a reference that this package made. False: the root is a Pointer of the disk.
 }
 
 // pool_reset frees each slot of a pool, for a new commit: the released
@@ -225,11 +233,22 @@ copy_bytes :: #force_inline proc "contextless" (to, from: []u8) {
 }
 
 // node_valid checks the rules of the format for a node: its magic, its
-// level, its count, and the order of its keys.
+// level, its count, the block of each child, and the order of its keys.
 node_valid :: proc "contextless" (bytes: ^Block, shape: Shape) -> bool {
 	head := header(bytes)
 	if head.magic != format.NODE_MAGIC || head.level >= DEPTH_LIMIT || head.count == 0 || int(head.count) > capacity_of(shape, head.level) {
 		return false
+	}
+	// A node of the disk names its children by their blocks. A child with
+	// no block has the form of a reference to a slot of the pool: the
+	// commit would take its check for the number of a slot, and read or
+	// write a node that this tree does not own.
+	if head.level > 0 {
+		for index in 0 ..< int(head.count) {
+			if child_at(bytes, shape, index).block == 0 {
+				return false
+			}
+		}
 	}
 	// In a branch, the key of the record 0 is a bound that the search never
 	// reads, and it can be stale: a smaller key that went into the child 0
@@ -264,6 +283,26 @@ is_empty :: #force_inline proc "contextless" (pointer: Pointer) -> bool {
 	return pointer.block == 0 && pointer.check == 0
 }
 
+// slot_of_reference gives the slot that a reference names, or -1 with the
+// failure Damaged when it names no dirty slot of the pool. node_valid and
+// root_is_reference keep the Pointers of the disk out, so each reference
+// here is one that this package made; the check is the one place where a
+// reference becomes an index, so that a broken rule gives a refusal and
+// not a bounds fault. The check is compared as a u64 before it becomes an
+// index, as a value above 2^63 would give a negative index.
+slot_of_reference :: proc "contextless" (work: ^Work, pointer: Pointer) -> int {
+	if !is_reference(pointer) || pointer.check > POOL_CAPACITY {
+		fail(work, .Damaged)
+		return -1
+	}
+	index := int(pointer.check - 1)
+	if work.pool.slots[index].state != .Dirty {
+		fail(work, .Damaged)
+		return -1
+	}
+	return index
+}
+
 // slot_take gives a free slot of the pool, or -1 with the failure Full.
 slot_take :: proc "contextless" (work: ^Work) -> int {
 	for &slot, index in work.pool.slots {
@@ -283,19 +322,7 @@ load :: proc "contextless" (work: ^Work, pointer: Pointer, level: int) -> int {
 		return -1
 	}
 	if is_reference(pointer) {
-		// The check comes from the disk: it is compared as a u64 before it
-		// becomes an index, as 0 or a value above 2^63 would give a negative
-		// index that the bound below does not catch.
-		if pointer.check == 0 || pointer.check > POOL_CAPACITY {
-			fail(work, .Damaged)
-			return -1
-		}
-		index := int(pointer.check - 1)
-		if work.pool.slots[index].state != .Dirty {
-			fail(work, .Damaged)
-			return -1
-		}
-		return index
+		return slot_of_reference(work, pointer)
 	}
 	index := slot_take(work)
 	if index < 0 {
@@ -328,6 +355,12 @@ dirty :: proc "contextless" (work: ^Work, index: int) {
 		return
 	}
 	if slot.original.block != 0 {
+		// A merge frees a dirty slot for a later node, so the released
+		// blocks of one commit can pass the slots of the pool.
+		if work.pool.released_count >= len(work.pool.released) {
+			fail(work, .Full)
+			return
+		}
 		work.pool.released[work.pool.released_count] = slot.original
 		work.pool.released_count += 1
 	}
@@ -402,10 +435,24 @@ leaf_position :: proc "contextless" (bytes: ^Block, shape: Shape, key: []u8) -> 
 	return low, low < int(header(bytes).count) && compare(key_at(bytes, shape, low), key) == 0
 }
 
+// root_of_disk_valid refuses, with the failure Damaged, a root of the disk
+// that has no block and a check: it has the form of a reference, and
+// names no node of the disk.
+root_of_disk_valid :: proc "contextless" (work: ^Work) -> bool {
+	if !work.root_is_reference && is_reference(work.root) {
+		fail(work, .Damaged)
+		return false
+	}
+	return true
+}
+
 // descend finds the leaf of a key. ok is false for an empty tree or a
 // failure.
 descend :: proc "contextless" (work: ^Work, key: []u8) -> (path: Path, ok: bool) {
 	if is_empty(work.root) {
+		return path, false
+	}
+	if !root_of_disk_valid(work) {
 		return path, false
 	}
 	index := load(work, work.root, -1)
@@ -437,6 +484,7 @@ path_dirty :: proc "contextless" (work: ^Work, path: ^Path) {
 		dirty(work, path.slots[depth])
 		if depth == 0 {
 			work.root = reference(path.slots[0])
+			work.root_is_reference = true
 		} else {
 			parent := bytes_of(work, path.slots[depth - 1])
 			child_at(parent, work.shape, path.positions[depth - 1])^ = reference(path.slots[depth])
@@ -595,6 +643,7 @@ node_insert :: proc "contextless" (work: ^Work, path: ^Path, depth: int, positio
 		record_insert(root_bytes, shape, 0, key_at(bytes, shape, 0), ([^]u8)(&left)[:size_of(Pointer)])
 		record_insert(root_bytes, shape, 1, separator[:shape.key_size], pointer_bytes)
 		work.root = reference(root)
+		work.root_is_reference = true
 		return
 	}
 	node_insert(work, path, depth - 1, path.positions[depth - 1] + 1, separator[:shape.key_size], pointer_bytes)
@@ -615,6 +664,7 @@ put :: proc "contextless" (work: ^Work, key: []u8, value: []u8, replace: bool) -
 		}
 		record_insert(bytes_of(work, leaf), work.shape, 0, key, value)
 		work.root = reference(leaf)
+		work.root_is_reference = true
 		return false
 	}
 	path, ok := descend(work, key)
@@ -673,8 +723,12 @@ rebalance :: proc "contextless" (work: ^Work, path: ^Path, depth: int) {
 		if count == 0 {
 			slot_free(work, index)
 			work.root = {}
+			work.root_is_reference = false
 		} else if level > 0 && count == 1 {
+			// The child is a block that node_valid checked when the root came
+			// from the disk, or a reference that a change of this commit made.
 			work.root = child_at(bytes, shape, 0)^
+			work.root_is_reference = is_reference(work.root)
 			slot_free(work, index)
 		}
 		return
@@ -743,7 +797,13 @@ rebalance :: proc "contextless" (work: ^Work, path: ^Path, depth: int) {
 // and gives the Pointer of the root on the disk. The root is unchanged
 // when no node of the tree is dirty.
 finish :: proc "contextless" (work: ^Work, writer: ^Writer) -> Pointer {
-	if failed(work) || !is_reference(work.root) {
+	if failed(work) {
+		return work.root
+	}
+	if !work.root_is_reference {
+		// No node of the tree is dirty; a root of the disk in the form of a
+		// reference is still damage, which the commit must not write back.
+		_ = root_of_disk_valid(work)
 		return work.root
 	}
 	write_node :: proc "contextless" (work: ^Work, writer: ^Writer, index: int, depth: int) -> Pointer {
@@ -756,7 +816,11 @@ finish :: proc "contextless" (work: ^Work, writer: ^Writer) -> Pointer {
 			for child in 0 ..< int(header(bytes).count) {
 				pointer := child_at(bytes, work.shape, child)
 				if is_reference(pointer^) {
-					pointer^ = write_node(work, writer, int(pointer.check - 1), depth + 1)
+					child_index := slot_of_reference(work, pointer^)
+					if child_index < 0 {
+						return {}
+					}
+					pointer^ = write_node(work, writer, child_index, depth + 1)
 					if failed(work) {
 						return {}
 					}
@@ -771,9 +835,14 @@ finish :: proc "contextless" (work: ^Work, writer: ^Writer) -> Pointer {
 		work.pool.written += 1
 		return written
 	}
-	root := write_node(work, writer, int(work.root.check - 1), 0)
+	root_index := slot_of_reference(work, work.root)
+	if root_index < 0 {
+		return work.root
+	}
+	root := write_node(work, writer, root_index, 0)
 	if !failed(work) {
 		work.root = root
+		work.root_is_reference = false
 	}
 	return work.root
 }

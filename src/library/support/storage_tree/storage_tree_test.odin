@@ -489,9 +489,8 @@ a_stale_name_at_the_record_0_of_a_branch :: proc(t: ^testing.T) {
 	}
 }
 
-// A reference to a slot comes from a node of the disk, so its check can be
-// any value: one past the pool, or one above 2^63 that a conversion to int
-// makes negative, is a damaged node and names no slot.
+// A reference to a slot that names no slot of the pool: one past the pool,
+// or one above 2^63 that a conversion to int makes negative, is damage.
 @(test)
 a_reference_out_of_the_pool_is_damaged :: proc(t: ^testing.T) {
 	disk := disk_make()
@@ -504,4 +503,192 @@ a_reference_out_of_the_pool_is_damaged :: proc(t: ^testing.T) {
 		testing.expect_value(t, load(&work, Pointer{block = 0, check = check}, -1), -1)
 		testing.expect_value(t, pool.failure, Failure.Damaged)
 	}
+}
+
+// The checks of a Pointer with no block that a damaged disk can hold: no
+// node, the first slot (the root that a change makes dirty), the edges of
+// the pool, a value that a conversion to int makes negative, the value
+// that the fuzz target found, and the largest.
+DAMAGED_REFERENCE_CHECKS :: [?]u64{0, 1, POOL_CAPACITY, POOL_CAPACITY + 1, 1 << 63, 7534161270214233299, max(u64)}
+
+// two_level_tree writes a tree whose root is a branch over leaves.
+two_level_tree :: proc(t: ^testing.T, disk: ^Test_Disk, pool: ^Pool) -> Pointer {
+	pool_reset(pool)
+	work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE}
+	for identifier in 16 ..< u64(16 + 2 * TREE_SHAPE.leaf_capacity) {
+		key := name_of_number(identifier)
+		value := entry_of_number(identifier)
+		put(&work, key[:], ([^]u8)(&value)[:size_of(value)], false)
+	}
+	root := finish(&work, &disk.writer)
+	testing.expect_value(t, pool.failure, Failure.None)
+	testing.expect(t, header(&disk.blocks[root.block]).level > 0)
+	pool_reset(pool)
+	return root
+}
+
+// A branch of the disk whose last child has no block: its check has the
+// form of a reference to a slot. The commit of a change in another child
+// took that check for the number of a slot and faulted; the read refuses
+// the branch, and nothing changes: no block is written or released, and
+// the root stays the one of the disk.
+@(test)
+a_child_with_no_block_is_damaged :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	pool := new(Pool)
+	defer free(pool)
+	root := two_level_tree(t, disk, pool)
+	checks := DAMAGED_REFERENCE_CHECKS
+	for check in checks {
+		damaged := disk.blocks[root.block]
+		last := int(header(&damaged).count) - 1
+		child_at(&damaged, TREE_SHAPE, last)^ = Pointer{block = 0, check = check}
+		testing.expectf(t, !node_valid(&damaged, TREE_SHAPE), "the check %d: the branch is valid", check)
+		damaged_root := test_write(&disk.writer, &damaged)
+		keys, _, walk_failure, _ := walk_all(disk, damaged_root)
+		delete(keys)
+		testing.expectf(t, walk_failure == .Damaged, "the check %d: the walk gives %v", check, walk_failure)
+		// A change in the child 0, then the commit: the path of the fault.
+		pool_reset(pool)
+		work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = damaged_root}
+		blocks_before := len(disk.blocks)
+		key := name_of_number(16)
+		value := entry_of_number(16)
+		testing.expect(t, !put(&work, key[:], ([^]u8)(&value)[:size_of(value)], true))
+		testing.expectf(t, pool.failure == .Damaged, "the check %d: the failure %v", check, pool.failure)
+		testing.expect_value(t, pool.failed_block, damaged_root.block)
+		testing.expect_value(t, finish(&work, &disk.writer), damaged_root)
+		testing.expect_value(t, work.root, damaged_root)
+		testing.expect(t, !work.root_is_reference)
+		testing.expect_value(t, len(disk.blocks), blocks_before)
+		testing.expect_value(t, pool.written, 0)
+		testing.expect_value(t, pool.released_count, 0)
+		// The reads refuse it too.
+		pool_reset(pool)
+		testing.expect(t, !get(&work, key[:], ([^]u8)(&value)[:size_of(value)]))
+		testing.expect_value(t, pool.failure, Failure.Damaged)
+	}
+	// The branch of the disk with a block for each child is still read.
+	pool_reset(pool)
+	work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = root}
+	key := name_of_number(16)
+	value: format.Entry
+	testing.expect(t, get(&work, key[:], ([^]u8)(&value)[:size_of(value)]))
+	testing.expect_value(t, value.size, 16 * 3)
+}
+
+// A root that the caller read from a damaged disk, with no block and a
+// check: it names no node of the disk, even when its check is the number
+// of a dirty slot of another tree of the same commit. Each operation and
+// the commit refuse it, and the other tree keeps its node.
+@(test)
+a_root_of_the_disk_with_no_block_is_damaged :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	pool := new(Pool)
+	defer free(pool)
+	// The check 0 is the empty tree, the last case.
+	checks := DAMAGED_REFERENCE_CHECKS
+	for check in checks[1:] {
+		// Another tree of the commit makes the slot 0 dirty.
+		pool_reset(pool)
+		other := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE}
+		other_key := name_of_number(7)
+		other_value := entry_of_number(7)
+		put(&other, other_key[:], ([^]u8)(&other_value)[:size_of(other_value)], false)
+		testing.expect(t, other.root_is_reference)
+		other_node := pool.slots[0].bytes
+		damaged_root := Pointer{block = 0, check = check}
+		work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = damaged_root}
+		key := name_of_number(8)
+		value := entry_of_number(8)
+		testing.expect(t, !put(&work, key[:], ([^]u8)(&value)[:size_of(value)], false))
+		testing.expectf(t, pool.failure == .Damaged, "the check %d: the failure %v", check, pool.failure)
+		testing.expect_value(t, work.root, damaged_root)
+		testing.expect(t, !work.root_is_reference)
+		testing.expect(t, pool.slots[0].state == .Dirty)
+		testing.expect(t, pool.slots[0].bytes == other_node)
+		testing.expect(t, !get(&work, key[:], ([^]u8)(&value)[:size_of(value)]))
+		testing.expect(t, !remove(&work, key[:]))
+		blocks_before := len(disk.blocks)
+		testing.expect_value(t, finish(&work, &disk.writer), damaged_root)
+		testing.expect_value(t, len(disk.blocks), blocks_before)
+		testing.expect_value(t, pool.written, 0)
+		// The commit of a tree that no change touched refuses that root too.
+		pool_reset(pool)
+		untouched := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = damaged_root}
+		testing.expect_value(t, finish(&untouched, &disk.writer), damaged_root)
+		testing.expect_value(t, pool.failure, Failure.Damaged)
+		testing.expect_value(t, len(disk.blocks), blocks_before)
+	}
+	// An empty root is no damage.
+	pool_reset(pool)
+	empty := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE}
+	testing.expect_value(t, finish(&empty, &disk.writer), Pointer{})
+	testing.expect_value(t, pool.failure, Failure.None)
+}
+
+// A reference that a dirty node holds is checked where it becomes an
+// index: one out of the pool, or one that names a slot with no dirty
+// node, refuses the commit, and no block is written.
+@(test)
+a_reference_to_no_dirty_slot_refuses_the_commit :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	pool := new(Pool)
+	defer free(pool)
+	root := two_level_tree(t, disk, pool)
+	// A reference with the check 0 is no reference: the first case is 1.
+	checks := DAMAGED_REFERENCE_CHECKS
+	for check in checks[1:] {
+		pool_reset(pool)
+		work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = root}
+		// A change in the last child: the first child, which the commit
+		// writes first, keeps the Pointer of the disk until the damage.
+		key := name_of_number(16 + 2 * u64(TREE_SHAPE.leaf_capacity) - 1)
+		value := entry_of_number(16 + 2 * u64(TREE_SHAPE.leaf_capacity) - 1)
+		testing.expect(t, put(&work, key[:], ([^]u8)(&value)[:size_of(value)], true))
+		testing.expect_value(t, pool.failure, Failure.None)
+		testing.expect(t, work.root_is_reference)
+		root_index := int(work.root.check - 1)
+		branch := &pool.slots[root_index].bytes
+		testing.expect(t, int(header(branch).count) >= 2)
+		child_at(branch, TREE_SHAPE, 0)^ = Pointer{block = 0, check = check}
+		// The check 1 names the slot of the root itself: a cycle that the
+		// bound of the depth ends before any write.
+		blocks_before := len(disk.blocks)
+		finish(&work, &disk.writer)
+		testing.expectf(t, pool.failure == .Damaged, "the check %d: the failure %v", check, pool.failure)
+		testing.expect(t, work.root_is_reference)
+		testing.expect_value(t, len(disk.blocks), blocks_before)
+	}
+}
+
+// The list of the released blocks of a commit has a bound: one release
+// past it is the failure Full, and the slot stays as it was.
+@(test)
+a_release_past_the_list_is_full :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	pool := new(Pool)
+	defer free(pool)
+	root := two_level_tree(t, disk, pool)
+	work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = root}
+	index := load(&work, root, -1)
+	testing.expect(t, index >= 0)
+	pool.released_count = len(pool.released)
+	dirty(&work, index)
+	testing.expect_value(t, pool.failure, Failure.Full)
+	testing.expect_value(t, pool.released_count, len(pool.released))
+	testing.expect(t, pool.slots[index].state == .Clean)
+	testing.expect_value(t, pool.slots[index].original, root)
+	// One place left: the release is recorded.
+	pool_reset(pool)
+	index = load(&work, root, -1)
+	pool.released_count = len(pool.released) - 1
+	dirty(&work, index)
+	testing.expect_value(t, pool.failure, Failure.None)
+	testing.expect_value(t, pool.released[len(pool.released) - 1], root)
+	testing.expect(t, pool.slots[index].state == .Dirty)
 }
