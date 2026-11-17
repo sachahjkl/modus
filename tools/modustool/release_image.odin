@@ -315,6 +315,27 @@ release_checksum_list_parse :: proc(text: string) -> (rows: []Release_Checksum, 
 // boot image of the build, in this order.
 RELEASE_VOLUME_RESOURCES :: [3]string{replacement_list.RESOURCE_NAME, system_description.RESOURCE_DESCRIPTION, system_description.RESOURCE_SIGNATURE}
 
+// release_test_module_problem names the first module of a boot image that
+// only the image of a test holds (a row of module_builds with
+// only_in_image), such as operation_fuzzing, which holds the machine with
+// the right Physical; "" when the image holds none. An image that is not a
+// boot image is refused too.
+release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
+	modules, _, valid := info.image_tables(image)
+	if !valid {
+		return fmt.tprintf("%s is not a boot image", image_name)
+	}
+	for &entry in modules {
+		name := system_description.name_of(&entry.name)
+		for build in module_builds {
+			if build.only_in_image != "" && build.name == name {
+				return fmt.tprintf("%s holds the module %s, which only the boot image of a test holds: a release never publishes it", image_name, name)
+			}
+		}
+	}
+	return ""
+}
+
 // release_volume_problem says why a boot volume must not be packaged, or
 // gives "". build_image is the boot image of the build (build/boot.image),
 // and kernel_hash the BLAKE3 hash of its kernel module. The boot image of
@@ -351,6 +372,15 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	build_modules_table, build_resources, build_valid := info.image_tables(build_image)
 	if !valid || !build_valid {
 		return fmt.tprintf("%s or the boot image of the build is not a boot image", image_path)
+	}
+	// A module that only the image of a test holds is refused by its name,
+	// in the volume and in the boot image of the build: the comparison
+	// below alone would pass a build whose own image held it.
+	if problem := release_test_module_problem(image, image_path); problem != "" {
+		return problem
+	}
+	if problem := release_test_module_problem(build_image, "the boot image of the build"); problem != "" {
+		return problem
 	}
 	added := RELEASE_VOLUME_RESOURCES
 	if len(modules) != len(build_modules_table) || len(resources) != len(build_resources) + len(added) {

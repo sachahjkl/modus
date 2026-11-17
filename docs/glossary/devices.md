@@ -170,6 +170,16 @@ The design: `src/md/features/device_services.md`.
 
 Do not use: device interface, HAL, ioctl.
 
+### Timed stream
+
+A timed stream is a class protocol whose records carry the time at which their content must reach the device: the samples of sound, later the frames of a video.
+
+A ring of the block or the frame class says what to do; a timed stream also says when. Sound through virtio-snd is its first user, and it comes early because it forces this design. Its records and the rule of a late record are not designed yet.
+
+The design: `src/md/features/desktop_to_browser.md`.
+
+Do not use: audio stream, media pipe.
+
 ### Disk
 
 A disk is a device that keeps blocks when the machine stops.

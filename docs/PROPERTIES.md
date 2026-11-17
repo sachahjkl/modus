@@ -185,8 +185,9 @@ Status: Decided. The rules follow Blow. [Blow §5, §6]
 - **Rule**: The system targets one fixed machine at a time. The first machine is virtual: QEMU on x86-64 with virtio devices, UEFI firmware (OVMF) and a TPM 2.0 (property 17).
 - **Position**: Hardware support is not the main problem of the project. The design of the system is.
 - **Rule**: Each device class has one standard queue protocol. Virtio is that protocol for the first machine. Real hardware that differs gets a user-space translator, with no kernel access.
+- **Rule**: The translator is a device service: a program that holds the handles of its device only (its registers, its interrupts, a budget of memory declared to the IOMMU) and serves the class protocol of its device. A device service of the boot image is trusted by the signed system description. A device service from the disk runs only with a grant of a principal for one device, and only with an IOMMU (`src/md/features/device_services.md`).
 - **Why virtio**: It is a published standard for network, block, console, input and display. Each device is a set of queues in shared memory. This is the "standard packet format over DMA" that Blow asks for, and it exists today. [Blow §5]
-- **Forbids**: loadable kernel modules, vendor code in the kernel, support for hardware that nobody on the project owns.
+- **Forbids**: loadable kernel modules, vendor code in the kernel, support in the boot image for hardware that nobody on the project owns. This forbid binds the boot image: a device service that a principal grants from the disk is not support of the system.
 - **Cost**: The system runs on few real machines for a long time. This is accepted. [Blow §6]
 - **Graphics**: See property 18.
 - **Reuse**: Virtio specification. UEFI firmware for boot (property 17).
@@ -259,13 +260,14 @@ Status: Decided. The detail below is proposed.
 
 - **Rule**: The identity of a module is the hash of its content. A module refers to another module by hash, never by path or by name.
 - **Rule**: A system is a list of hashes. Two machines with the same list run the same code.
+- **Rule**: When a program compiles code at run time (a compiler of WebAssembly, of a script), that code is not a module and has no hash. It is confined to the program that wrote it, in its own memory, and is never shared with another program or kept as a module. The compiler is a module, named by its hash, so the hash of the compiler names what the program can run. A page of such code is never writable and executable at once.
 - **Rule**: An upgrade writes a new list. A rollback selects an old list. Both are atomic. A rollback below the security version of the version floor of the TPM is refused: the publisher raises the security version only for a flaw that the old list would bring back (property 17).
 - **Why property 10 makes this cheaper**: Nix reaches the same goal on Linux, and it must fix the store at one absolute path, because binaries contain absolute paths. Modules that are relocatable and that refer by hash contain no path. The store can be at any location, and a module needs no patch after a copy.
 - **Consequence**: "Install" becomes "the store contains the hash". This matches "no installs". [Blow §9] Identical modules are stored one time and their pages are shared, with no global library directory.
 - **Consequence**: A security fix is a query: "which bundles contain the hash of the bad module". [Blow §9]
 - **Cost**: A build must be deterministic for the hash to mean something. The compiler and the linker must not write times, host names or random identifiers. Old modules need garbage collection.
 - **Reuse**: The Nix store model and its closure concept. Content-addressed derivations in Nix.
-- **Open**: the hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
+- **Open**: whether the first engine of WebAssembly compiles at run time, under the rule above, or interprets, which needs no such rule (`src/md/features/desktop_to_browser.md`, "I. WebAssembly as a program format"). The hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
 - **State**: the build is deterministic for the compiler of the flake: a fork of the release `dev-2026-11a` of Odin that adds one option for the debug information and is the release without it, on all its threads (`docs/REPRODUCIBLE_BUILD.md`). Measured on 2026-11-11: with the release `dev-2026-05` and a patch that gives it one thread, 100 builds of each of the 61 modules and of the boot program, under a host load of 9.5 to 62, gave one module, one LLVM IR file and one object each; with `dev-2026-11a` and no patch, 20 builds of each of 64 modules gave the same. The stock `dev-2026-05` with `-thread-count:1` runs two threads, and a rare build with it gives other code. Each full check builds everything two times and compares the three.
 
 ## 12. Module metadata in flat tables, read through functions
@@ -335,6 +337,7 @@ Status: Decided. Blow names it as an unsolved problem. [Blow §11]
 - **Proposal**: A process can contain several protection domains. A domain is a set of page rights inside one address space. A switch between domains costs less than a process switch. A domain can be destroyed alone.
 - **Cost**: The hardware support differs by processor. The x86-64 memory protection keys give 16 domains and do not stop all attacks by themselves. Shared lock-free state stays the problem that Blow describes.
 - **Alternative**: A standard sandboxed bytecode for untrusted code, in the role of WebAssembly. [Blow §11]
+- **Direction**: WebAssembly becomes a portable and confined program format, after the port of `gui_toolkit`. A WebAssembly file is data named by its hash; an engine module of the system, named by its hash, runs it inside one program, with only the imports that the program gives. The engine compiles at run time under the rule of property 11, or interprets: that choice is open (`src/md/features/desktop_to_browser.md`, "I. WebAssembly as a program format").
 - **Recommendation**: Do not design this now. Keep the handle table and the module format free of assumptions that prevent it. Decide after the first desktop program exists.
 
 ## 16. Removed concepts
@@ -390,6 +393,7 @@ Status: Decided. The rationalised form of the record is designed, not built (`sr
 
 - **Rule**: A program draws in 2D through one interface: the draw table. A frame is a table of draw records of one fixed size, in the memory of the program (property 14). The system exposes no other 2D interface.
 - **Rule**: The records are a closed set of primitives: a rectangle, a gradient along a line, a path with a fill and a stroke, a text run, a picture, a clip that is pushed and popped. Each record has a kind and the fields of that kind only. A color has an alpha, and one blending rule serves every kind. The look of the system (the grid of points, the folded gap) is elements of the interface package, drawn with the primitives, never a kind of the format.
+- **Rule**: The interface puts no limit of look on what a program draws: any form, alpha, paths, and effects as they come. The closed set grows when a program needs a primitive. Its only limits are the bounds of cost that refuse a hostile record. The sober look (rectangles, sharp shadows, transparency only where it informs, short animations that inform) is a rule of the desktop of the system (`DESIGN.md`, "2. Forms"), never of the format.
 - **Rule**: A record names its bytes and its pixels by values, never by an address. The execution refuses a hostile record within stated bounds. The damage of a frame is the difference of two tables, and a frame drawn in its damage gives the same pixels as the frame drawn whole.
 - **Rule**: The compositor draws its screen with the same records as the programs.
 - **Why it fits**:
@@ -398,18 +402,24 @@ Status: Decided. The rationalised form of the record is designed, not built (`sr
   3. The drawing is code that runs on the processor in the address space of the program, through one library module (property 10). It needs no device and no driver (property 7).
   4. Its size is the size of the 2D drawing: a rasterizer in integers that the vector font already has, the blends, the text from the glyph caches.
 - **Rule**: WebGPU, with shaders in WGSL, is the later interface of the GPU. When a GPU exists, the drawing module has a back end that draws the draw table through WebGPU. The draw table is never drawn through a software WebGPU.
-- **Refused**: a software adapter of WebGPU as the 2D interface. It needs a compiler of WGSL for the processor, larger than the whole 2D drawing, and it draws a rectangle through a shader.
+- **Rule**: The WebGPU of the system is its own subset: only what the draw table, the compositor and 3D need. WGSL is compiled to SPIR-V before the run, by the build; the system holds no compiler of shaders.
+- **Rule**: A program that draws 3D with no GPU uses the processor back end of the same subset: the same buffers, pipelines, command lists and draw calls, so only the back end changes. Its shaders are a small fixed set written in Odin with SIMD, not WGSL. It is not a separate drawer of 3D.
+- **Refused**: a software adapter of WebGPU as the 2D interface, and a compiler of WGSL for the processor. Such a compiler is larger than the whole 2D drawing, and the adapter draws a rectangle through a shader.
 - **Layers of the GPU** (grow in this order, each after the draw table works on the processor):
-  1. A virtio-gpu back end under QEMU (`src/md/features/gpu_access.md`).
-  2. A back end for one real graphics device.
+  1. virtio-gpu under QEMU: the 2D scanout, then Vulkan to the host through Venus, then the WebGPU subset on it (`src/md/features/gpu_access.md`).
+  2. A real GPU through the Linux driver domain, with the same serialization.
+- **Rule**: The standard of quality of the desktop has two quality profiles. The GPU profile is 120 Hz at 1920 × 1080: a frame in less than 8.3 ms, a key to the screen in less than 20 ms, and a window shown less than 100 ms after its start. The processor profile, for a machine with no GPU, has a lower resolution or 60 Hz, and fewer effects; its thresholds come from a measure of a frame at 1920 × 1080 on the processor, not from a guess. The system chooses its profile at its start, from what the machine has, and writes it on the log.
+- **Rule**: The tool records the three measures of each profile and follows them over the releases; they are measures, never tests. A change that makes one worse is a regression that a developer reads to its cause.
+- **Why this property**: the three measures are the path from an input to drawn pixels, which the draw table, the drawing module and the compositor own. A new property would hold one rule.
 - **Forbids**: a second 2D interface beside the draw table, OpenGL, vendor shader languages as a program-facing format, a window system protocol that carries drawing commands to another program. [Blow §10]
 - **Cost**: A record is 48 bytes, and alpha, antialiased edges and paths cost more on the processor than the fills of today; each cost is an estimate to measure (`src/md/api/draw_table.md`, "What costs more than version 10").
-- **Cost**: A program that needs 3D or compute has no interface until the GPU layers exist. This is accepted: the first machine has no GPU.
-- **Cost of the GPU layers**: A WebGPU implementation is large. The existing ones, wgpu and Dawn, sit on Vulkan, Metal or Direct3D, which this system does not have. This is the largest piece of device work in the plan.
+- **Cost**: A program that needs 3D has the processor back end only until the GPU layers exist, and compute waits for them. This is accepted: the first machine has no GPU.
+- **Cost of the GPU layers**: A WebGPU implementation is large. The existing ones, wgpu and Dawn, sit on Vulkan, Metal or Direct3D, which this system does not have. The subset of the system is smaller, and it sits on Vulkan through Venus. This is the largest piece of device work in the plan.
 - **Tension with property 7**: Blow wants a very thin graphics driver. A WebGPU back end for a real device is not thin. The draw table on the processor delays this problem; it does not remove it.
-- **Reuse**: the exact-area rasterizer of font-rs and stb_truetype 2, as ideas. The WebGPU and WGSL specifications for the GPU layers.
-- **Rule**: The project writes the drawing from nothing. It does not port wgpu, Dawn, Skia or another 2D library. Graphical code is a program of this system and uses no existing toolkit.
-- **Open**: The role of the kernel for a GPU: the proposal is none beyond the mapping of device queues (property 5).
+- **Reuse**: the exact-area rasterizer of font-rs and stb_truetype 2, as ideas. The WebGPU and WGSL specifications, SPIR-V, and the Venus protocol of virtio-gpu for the GPU layers.
+- **Rule**: The code of the system writes its drawing and its WebGPU subset from nothing. It does not port wgpu, Dawn, Skia or another 2D library, and it uses no existing toolkit. The code of the system is the kernel, the boot program, `src/library` and the modules of `src/modules`.
+- **Rule**: A rich program and a ported program can use `gui_toolkit`, the toolkit of rich programs. Such a program is an outside module, not a source of `src/`, and it still draws through the draw table, and later through the WebGPU subset (`src/md/features/desktop_to_browser.md`, "The toolkit of rich programs").
+- **Open**: The role of the kernel for a GPU: the proposal is none beyond the mapping of device queues (property 5). A port of wgpu or Dawn as a module of a program of a third party, over the WebGPU of the system.
 - **State**: built: a surface is shared memory of pixels, the compositor copies the changed rectangles to the framebuffer, and programs draw on the processor through the draw table, version 10, and the drawing module (`src/library/support/graphics`, `src/library/support/interface`, `INTERFACE.md`). On the standard VGA of the test machine, the compositor writes the screen page that the display does not show and flips (`src/md/infrastructure/whole_frame.md`). Left: the rationalised form of the record, in the steps of `ROADMAP.md`; no virtio-gpu and no real GPU are built.
 
 ## 19. A command is a function: no text between programs
@@ -567,7 +577,7 @@ The table does not name the tools of the host that build and test the system (th
 
 1. **Module contract**: the open questions of `MODULE_CONTRACT.md`.
 
-Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, then the stack past the sixth integer, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn).
+Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, then the stack past the sixth integer, `MODULE_CONTRACT.md` section 4), graphics implementation (the drawing and the WebGPU subset of the system written from nothing, no port of wgpu or Dawn in the code of the system; property 18).
 
 Open: the limit of the kernel operations. The modus tool counts them against property 1; the limit itself is open there.
 

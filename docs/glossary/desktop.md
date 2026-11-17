@@ -661,3 +661,33 @@ The picker is not a file dialog that a program draws: it is the surface of anoth
 The design: `docs/ARCHITECTURE.md`, "U6. Document service".
 
 Do not use: file dialog, powerbox.
+
+### Quality profile
+
+A quality profile is one of the two sets of thresholds of the standard of quality of the desktop: the GPU profile and the processor profile.
+
+The GPU profile is 120 Hz at 1920 × 1080: a frame in less than 8.3 ms, a key to the screen in less than 20 ms, a window shown less than 100 ms after its start. The processor profile, for a machine with no GPU, has a lower resolution or 60 Hz and fewer effects, with thresholds from a measure. The system chooses its profile at its start and writes it on the log. A threshold is a measure that the tool follows, never a test.
+
+The design: `src/md/features/desktop_to_browser.md`.
+
+Do not use: performance mode, power profile, quality setting.
+
+### Reference screen
+
+The reference screen is the screen for which the desktop is laid out and on which the test machines take their pictures: 1920 × 1080, with a scale factor from 1.25 to 2.
+
+A layout is made in logical pixels, on the grid of 8; the scale factor turns them into pixels of the screen. The screenshots, the sizes of the windows, the glyph caches and the pointers follow the reference screen. It was 1024 × 768 at scale 1 before.
+
+The design: `src/md/features/desktop_to_browser.md`.
+
+Do not use: default resolution, target screen.
+
+### WebGPU subset
+
+The WebGPU subset is the part of WebGPU that the system writes itself: only what the draw table, the compositor and 3D need.
+
+Its shaders are compiled from WGSL to SPIR-V by the build, so the system holds no compiler of shaders. It has two back ends with the same objects (buffers, pipelines, command lists, draw calls): the GPU back end, over Vulkan through Venus, and the processor back end, with a small fixed set of shaders in Odin. It is not wgpu or Dawn.
+
+The design: `src/md/features/gpu_access.md`.
+
+Do not use: WebGPU implementation, software WebGPU.

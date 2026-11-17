@@ -117,6 +117,15 @@ The field `text` of `Draw_Table` becomes `bytes`: the byte table. It holds the b
 - **The folded gap** (`draw_folded_gap`): a `Rectangle` of `colors.track`, then a `Path` of two subpaths of one segment each, stroked 1 pixel wide in `colors.dim`, with its ends on the centers of pixels. The two lines become antialiased: these pixels change.
 - **The line** (`draw_line`): a `Path` of two points, stroked. The kind `Line` leaves the format with the paths. Its pixels change too: the squares of the line of Bresenham become an antialiased stroke.
 
+### The limits of the format: cost, never look
+
+The format puts no limit of look on what a program draws. Each bound of a kind (`PATH_POINT_LIMIT`, `STROKE_WIDTH_LIMIT`, `TEXT_BYTES_LIMIT`, `CLIP_DEPTH_LIMIT`, `COORDINATE_LIMIT`) is there to bound the cost of a hostile record, and for no other reason. The look of the desktop of the system is sober by choice: rectangles, sharp shadows, transparency only where it informs, short animations that inform ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). That look is a rule of the elements of the interface package and of the compositor. It is never a reason to refuse a primitive.
+
+- A program can draw any form: round, at an angle, curved. A round form is a path.
+- A shadow is a rectangle or a path with alpha. A sharp shadow needs no new kind.
+- An effect that the set lacks today (a blur, a blend mode, an even-odd fill, a cubic curve, a round join, a dash, a gradient of more than two colors) is added when a program needs it, as a kind or a field under the version rule. A blur waits for the GPU, where it costs little; on the processor it is the largest cost of a frame.
+- The set stays closed: each kind that is added has its fields, its border and its bound of cost, as each kind of today.
+
 ### The text grid: the measure that decides
 
 A grid as text runs needs one `Text` record for each run of one color in each row, and a `Rectangle` for each run of reverse or filled cells. A plain terminal is one run for each row: about 32 records. The worst case is one run for each cell: 3 328 runs and up to 3 328 rectangles, past the 512 records of a usual window memory.
@@ -138,7 +147,7 @@ The measure: the terminal at 104 by 32 cells, in the frame of a plain text, of c
 
 **The compositor** draws the parts of its screen with the same export, one call for each part ([picture.md](picture.md), "The compositor: one call for each part"). The surface of a window is an `Opaque` picture. With alpha, a menu, a shadow or the palette can lie translucent over the windows, by the one rule.
 
-**Through a GPU, later.** When a GPU exists, a back end of the drawing module draws the same table through WebGPU ([../features/gpu_access.md](../features/gpu_access.md)):
+**Through a GPU, later.** When a GPU exists, a back end of the drawing module draws the same table through the WebGPU subset of the system, whose shaders the build compiles from WGSL to SPIR-V ([../features/gpu_access.md](../features/gpu_access.md)):
 
 - each record is one instance over its box; a rectangle and a gradient are a quad with the coverage of its edges in the shader;
 - a path gets its coverage in a pass of its own, as a glyph gets it; a text reads the glyph caches in a texture;
@@ -167,7 +176,7 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 ## The refused forms
 
-- **A software adapter of WebGPU as the 2D interface.** It needs a compiler of WGSL for the processor, larger than the whole 2D drawing, and it draws a rectangle through a shader. The draw table is drawn through WebGPU when a GPU exists, not the other way round.
+- **A software adapter of WebGPU as the 2D interface.** It needs a compiler of WGSL for the processor, larger than the whole 2D drawing, and it draws a rectangle through a shader. The draw table is drawn through WebGPU when a GPU exists, not the other way round. The processor back end of the WebGPU subset, for 3D, is not this form: its shaders are a fixed set in Odin, and the draw table never goes through it ([../features/desktop_to_browser.md](../features/desktop_to_browser.md), "F. 3D").
 - **A union of the language as the contract.** The layout and the tag of a `union` of Odin belong to the compiler, and property 19 forbids a contract that depends on one language. The record is bytes with an explicit kind; the union is the view past the border.
 - **Records of variable size**, as a stream of commands. The difference compares two tables at one index, and a table of fixed records has that index with no parse. A length in each record is one more field that a hostile caller sets.
 - **One record with the fields of every kind**, the form of version 10. It is the union with no tag that the review found.
@@ -175,10 +184,11 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 - **1/16 pixel.** It loses two bits of the measure of a text, which is in 1/64, so a right-aligned text could move by a third of a pixel. **1/256 pixel**, the unit of the rasterizer, gives no visible gain and a range four times smaller.
 - **Premultiplied alpha in a record.** A transparent color then has many forms, and a token of the appearance names a straight color. The execution multiplies.
 - **The blend in encoded values for the colors**, as the pointer pictures blend. It darkens the edges of a shape and of a text, which is why the text blends in linear light today. One rule serves every kind.
-- **Blend modes past source over.** No window needs one: one rule for one concept.
-- **The even-odd rule, cubic curves, round joins and ends, dashes.** The fonts and the pointer theme are quadratic outlines with the nonzero rule. A writer cuts a cubic curve into quadratic curves within a tolerance. A round form is against the forms of the design rules, which prefer rectangles ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms").
+- **Blend modes past source over, in this version.** No program needs one yet. One comes as a field under the version rule when a program needs it ("The limits of the format: cost, never look").
+- **The even-odd rule, cubic curves, round joins and ends, dashes, in this version.** The fonts and the pointer theme are quadratic outlines with the nonzero rule, and a writer cuts a cubic curve into quadratic curves within a tolerance. Each comes when a program needs it. The look of the desktop is never the reason: it binds the elements, not the format.
+- **A limit of the format that is a rule of the look.** It would make the one 2D interface of the system unfit for a program of a third party, whose look is its own.
 - **A clip by a path, or a clip with edges inside a pixel.** It needs a mask for each pixel, and a GPU cuts by a scissor rectangle. A form with a curved edge is a path.
-- **A gradient with more than two colors, or a gradient that fills a path.** No window needs one. Each is a list of variable length or a second kind of paint for each shape; a need comes first.
+- **A gradient with more than two colors, or a gradient that fills a path, in this version.** No program needs one yet. Each is a list of variable length or a second kind of paint for each shape; a need comes first.
 - **The point grid as a repeated picture.** The tile of pixels must be in the one picture memory of the call, which the program owns: the interface package has no place for it. A repeated rectangle needs no pixels.
 - **`Point_Grid` and `Folded_Gap` kept as kinds.** The look of the system is in the elements of the package; the format holds primitives only.
 - **The old and the new form side by side in the drawing module.** The rule of the project is no backward compatibility: change a format in place and remove the old path. Each step below changes the format in place, with its version, and each writer moves in the same step.

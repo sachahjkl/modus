@@ -60,7 +60,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 15 fixed ones and one
+// boot_volumes gives every boot volume of the build: 16 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -69,6 +69,9 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// input service): the two other boot images of the build.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_FAILS, image = BOOT_IMAGE_FAILS, kernel = "kernel"})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SHORTAGE, image = BOOT_IMAGE_SHORTAGE, kernel = "kernel"})
+	// The operation sequences on the kernel that ships: the image that
+	// holds the program operation_fuzzing and its runner.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_SEQUENCES, image = BOOT_IMAGE_OPERATION_SEQUENCES, kernel = "kernel"})
 	// A measure run: the modules of the test, and the resource that tells
 	// the root service that the machine runs for a measure.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_MEASURE, image = BOOT_IMAGE_MEASURE, kernel = "kernel"})
@@ -832,6 +835,7 @@ command_volumes := [?]Volumes_Of_Part {
 	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
+	{part = OPERATION_REPLAY_COMMAND, procedures = {"operation_sequences_replay"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 }
 
 // boot_volumes_of_command gives the volumes that a command of

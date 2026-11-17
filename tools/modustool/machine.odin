@@ -155,6 +155,11 @@ Step_Kind :: enum {
 	// A later step of the part, in this machine or the next, names it with
 	// {screen text} in its text.
 	Screen_Text,
+	// Run operation sequences through the mailbox of the program
+	// operation_fuzzing, whose address the log gives after the text of the
+	// last Wait, and check each oracle (operation_sequences.odin). text: ""
+	// for the seed sequences, or the file of one sequence to replay.
+	Operation_Sequences,
 }
 
 Step :: struct {
@@ -3602,6 +3607,7 @@ Machine :: struct {
 	clock_offset_seconds: i64, // The seconds that the real-time clock of the machine is ahead of the clock of the host (machine_clock.odin).
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
+	memory_file: string, // The file of the memory of the machine, or "" (Machine_Options).
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -4011,6 +4017,9 @@ Machine_Options :: struct {
 	entropy_device: bool,
 	tpm_device:     bool, // A software TPM, on any firmware.
 	tpm_state:      string, // The state of the TPM that the machines of a part share, or "" for a new one.
+	// The memory of the machine in this file, and one processor: the
+	// machine of the operation sequences (operation_sequences.odin). "": none.
+	memory_file:    string,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4067,7 +4076,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file)
 		if !ok {
 			return false
 		}
@@ -4137,6 +4146,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		peer      = &peer,
 		forward   = forward,
 		disk_server = options.disk_server,
+		memory_file = options.memory_file,
 	}
 	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
@@ -4496,6 +4506,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			element_click(machine, step.text, step.element, index) or_return
 		case .Wheel:
 			element_wheel(machine, step.text, step.element, step.notches, index) or_return
+		case .Operation_Sequences:
+			operation_sequences_step(machine, index, step.text) or_return
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
 			if !step.shown_only {
