@@ -39,6 +39,7 @@
 // [TPM secret](term:tpm-secret).
 package principals
 
+import "modus:contract/byte_order"
 import "modus:contract/text_encoding"
 import blake2 "modus:support/cryptography/_blake2"
 import "modus:support/tpm2"
@@ -452,23 +453,13 @@ store_name_principal :: proc "contextless" (name: string) -> u64 {
 	return value
 }
 
-@(private)
-u32_put :: proc "contextless" (bytes: []u8, value: u32) {
-	bytes[0], bytes[1], bytes[2], bytes[3] = u8(value), u8(value >> 8), u8(value >> 16), u8(value >> 24)
-}
-
-@(private)
-u32_get :: proc "contextless" (bytes: []u8) -> u32 {
-	return u32(bytes[0]) | u32(bytes[1]) << 8 | u32(bytes[2]) << 16 | u32(bytes[3]) << 24
-}
-
 // file_encode writes the bytes of a file. The caller checked the name.
 file_encode :: proc "contextless" (file: ^Principal_File, out: ^[FILE_SIZE]u8) {
 	out^ = {}
 	copy(out^[OFFSET_MAGIC:][:8], FILE_MAGIC)
-	u32_put(out^[OFFSET_FORMAT:], FILE_FORMAT)
-	u32_put(out^[OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
-	u32_put(out^[OFFSET_PASSES:], DERIVATION_PASSES)
+	byte_order.write_u32_little_endian(out^[OFFSET_FORMAT:], 0, FILE_FORMAT)
+	byte_order.write_u32_little_endian(out^[OFFSET_MEMORY:], 0, DERIVATION_MEMORY_KIBIBYTES)
+	byte_order.write_u32_little_endian(out^[OFFSET_PASSES:], 0, DERIVATION_PASSES)
 	length := clamp(file.name_length, 0, NAME_LIMIT)
 	out^[OFFSET_NAME_LENGTH] = u8(length)
 	copy(out^[OFFSET_NAME:][:length], file.name[:length])
@@ -491,10 +482,10 @@ file_decode :: proc "contextless" (bytes: []u8) -> (file: Principal_File, kept: 
 	if string(kept[OFFSET_MAGIC:][:8]) != FILE_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if u32_get(kept[OFFSET_FORMAT:]) != FILE_FORMAT {
+	if byte_order.read_u32_little_endian(kept[OFFSET_FORMAT:], 0) != FILE_FORMAT {
 		return {}, {}, .Wrong_Format
 	}
-	if u32_get(kept[OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[OFFSET_PASSES:]) != DERIVATION_PASSES {
+	if byte_order.read_u32_little_endian(kept[OFFSET_MEMORY:], 0) != DERIVATION_MEMORY_KIBIBYTES || byte_order.read_u32_little_endian(kept[OFFSET_PASSES:], 0) != DERIVATION_PASSES {
 		return {}, {}, .Other_Parameters
 	}
 	length := int(kept[OFFSET_NAME_LENGTH])
@@ -558,9 +549,9 @@ Machine_File :: struct {
 machine_file_encode :: proc "contextless" (file: ^Machine_File, out: ^[MACHINE_FILE_SIZE]u8) {
 	out^ = {}
 	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_MAGIC)
-	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_FORMAT)
-	u32_put(out^[MACHINE_OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
-	u32_put(out^[MACHINE_OFFSET_PASSES:], DERIVATION_PASSES)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_FORMAT:], 0, MACHINE_FORMAT)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_MEMORY:], 0, DERIVATION_MEMORY_KIBIBYTES)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_PASSES:], 0, DERIVATION_PASSES)
 	copy(out^[MACHINE_OFFSET_SALT:][:SALT_SIZE], file.salt[:])
 	copy(out^[MACHINE_OFFSET_NONCE:][:NONCE_SIZE], file.nonce[:])
 	copy(out^[MACHINE_OFFSET_SEALED:][:MACHINE_SEALED_SIZE], file.sealed[:])
@@ -579,10 +570,10 @@ machine_file_decode :: proc "contextless" (bytes: []u8) -> (file: Machine_File, 
 	if string(kept[MACHINE_OFFSET_MAGIC:][:8]) != MACHINE_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if u32_get(kept[MACHINE_OFFSET_FORMAT:]) != MACHINE_FORMAT {
+	if byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_FORMAT:], 0) != MACHINE_FORMAT {
 		return {}, {}, .Wrong_Format
 	}
-	if u32_get(kept[MACHINE_OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[MACHINE_OFFSET_PASSES:]) != DERIVATION_PASSES {
+	if byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_MEMORY:], 0) != DERIVATION_MEMORY_KIBIBYTES || byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_PASSES:], 0) != DERIVATION_PASSES {
 		return {}, {}, .Other_Parameters
 	}
 	copy(file.salt[:], kept[MACHINE_OFFSET_SALT:][:SALT_SIZE])
@@ -694,10 +685,10 @@ sealed_object_encode :: proc "contextless" (object: ^Sealed_Object, out: []u8) {
 	private_bytes := clamp(object.private_bytes, 0, tpm2.PRIVATE_AREA_LIMIT)
 	creation_bytes := clamp(object.creation_bytes, 0, tpm2.CREATION_DATA_LIMIT)
 	ticket_bytes := clamp(object.ticket_bytes, 0, tpm2.CREATION_TICKET_LIMIT)
-	u16_put(out[SEALED_OBJECT_OFFSET_PUBLIC_BYTES:], u16(public_bytes))
-	u16_put(out[SEALED_OBJECT_OFFSET_PRIVATE_BYTES:], u16(private_bytes))
-	u16_put(out[SEALED_OBJECT_OFFSET_CREATION_BYTES:], u16(creation_bytes))
-	u16_put(out[SEALED_OBJECT_OFFSET_TICKET_BYTES:], u16(ticket_bytes))
+	byte_order.write_u16_little_endian(out[SEALED_OBJECT_OFFSET_PUBLIC_BYTES:], 0, u16(public_bytes))
+	byte_order.write_u16_little_endian(out[SEALED_OBJECT_OFFSET_PRIVATE_BYTES:], 0, u16(private_bytes))
+	byte_order.write_u16_little_endian(out[SEALED_OBJECT_OFFSET_CREATION_BYTES:], 0, u16(creation_bytes))
+	byte_order.write_u16_little_endian(out[SEALED_OBJECT_OFFSET_TICKET_BYTES:], 0, u16(ticket_bytes))
 	copy(out[SEALED_OBJECT_OFFSET_PUBLIC:][:public_bytes], object.public_area[:public_bytes])
 	copy(out[SEALED_OBJECT_OFFSET_PRIVATE:][:private_bytes], object.private_area[:private_bytes])
 	copy(out[SEALED_OBJECT_OFFSET_CREATION:][:creation_bytes], object.creation_data[:creation_bytes])
@@ -713,10 +704,10 @@ sealed_object_decode :: proc "contextless" (parts: []u8) -> (object: Sealed_Obje
 	if len(parts) != SEALED_OBJECT_SIZE {
 		return {}, false
 	}
-	public_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_PUBLIC_BYTES:]))
-	private_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_PRIVATE_BYTES:]))
-	creation_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_CREATION_BYTES:]))
-	ticket_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_TICKET_BYTES:]))
+	public_bytes := int(byte_order.read_u16_little_endian(parts[SEALED_OBJECT_OFFSET_PUBLIC_BYTES:], 0))
+	private_bytes := int(byte_order.read_u16_little_endian(parts[SEALED_OBJECT_OFFSET_PRIVATE_BYTES:], 0))
+	creation_bytes := int(byte_order.read_u16_little_endian(parts[SEALED_OBJECT_OFFSET_CREATION_BYTES:], 0))
+	ticket_bytes := int(byte_order.read_u16_little_endian(parts[SEALED_OBJECT_OFFSET_TICKET_BYTES:], 0))
 	if public_bytes > tpm2.PUBLIC_AREA_LIMIT || private_bytes > tpm2.PRIVATE_AREA_LIMIT || creation_bytes > tpm2.CREATION_DATA_LIMIT || ticket_bytes > tpm2.CREATION_TICKET_LIMIT {
 		return {}, false
 	}
@@ -762,23 +753,13 @@ zero_after :: proc "contextless" (place: []u8, used: int) -> bool {
 	return true
 }
 
-@(private)
-u16_put :: proc "contextless" (bytes: []u8, value: u16) {
-	bytes[0], bytes[1] = u8(value), u8(value >> 8)
-}
-
-@(private)
-u16_get :: proc "contextless" (bytes: []u8) -> u16 {
-	return u16(bytes[0]) | u16(bytes[1]) << 8
-}
-
 // machine_tpm_file_encode writes the bytes of the record. The caller took
 // the four parts from the TPM service, within their limits.
 machine_tpm_file_encode :: proc "contextless" (file: ^Machine_Tpm_File, out: ^[MACHINE_TPM_FILE_SIZE]u8) {
 	out^ = {}
 	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_TPM_MAGIC)
-	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_TPM_FORMAT)
-	u32_put(out^[MACHINE_TPM_OFFSET_PCRS:], file.pcrs)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_FORMAT:], 0, MACHINE_TPM_FORMAT)
+	byte_order.write_u32_little_endian(out^[MACHINE_TPM_OFFSET_PCRS:], 0, file.pcrs)
 	sealed_object_encode(&file.object, out^[MACHINE_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
 	copy(out^[MACHINE_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE], file.recovery_nonce[:])
 	copy(out^[MACHINE_TPM_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE], file.recovery_sealed[:])
@@ -800,10 +781,10 @@ machine_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Machine_Tp
 	if string(kept[MACHINE_OFFSET_MAGIC:][:8]) != MACHINE_TPM_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if u32_get(kept[MACHINE_OFFSET_FORMAT:]) != MACHINE_TPM_FORMAT {
+	if byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_FORMAT:], 0) != MACHINE_TPM_FORMAT {
 		return {}, {}, .Wrong_Format
 	}
-	if u32_get(kept[MACHINE_TPM_OFFSET_PCRS:]) != tpm2.PCR_SET {
+	if byte_order.read_u32_little_endian(kept[MACHINE_TPM_OFFSET_PCRS:], 0) != tpm2.PCR_SET {
 		return {}, {}, .Other_Parameters
 	}
 	object, object_ok := sealed_object_decode(kept[MACHINE_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
@@ -897,11 +878,11 @@ Machine_Tpm_Passphrase_File :: struct {
 machine_tpm_passphrase_file_encode :: proc "contextless" (file: ^Machine_Tpm_Passphrase_File, out: ^[MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8) {
 	out^ = {}
 	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_TPM_PASSPHRASE_MAGIC)
-	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_TPM_PASSPHRASE_FORMAT)
-	u32_put(out^[MACHINE_OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
-	u32_put(out^[MACHINE_OFFSET_PASSES:], DERIVATION_PASSES)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_FORMAT:], 0, MACHINE_TPM_PASSPHRASE_FORMAT)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_MEMORY:], 0, DERIVATION_MEMORY_KIBIBYTES)
+	byte_order.write_u32_little_endian(out^[MACHINE_OFFSET_PASSES:], 0, DERIVATION_PASSES)
 	copy(out^[MACHINE_OFFSET_SALT:][:SALT_SIZE], file.salt[:])
-	u32_put(out^[MACHINE_TPM_PASSPHRASE_OFFSET_PCRS:], file.pcrs)
+	byte_order.write_u32_little_endian(out^[MACHINE_TPM_PASSPHRASE_OFFSET_PCRS:], 0, file.pcrs)
 	sealed_object_encode(&file.object, out^[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
 	copy(out^[MACHINE_TPM_PASSPHRASE_OFFSET_NONCE:][:NONCE_SIZE], file.nonce[:])
 	copy(out^[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED:][:MACHINE_SEALED_SIZE], file.sealed[:])
@@ -923,10 +904,10 @@ machine_tpm_passphrase_file_decode :: proc "contextless" (bytes: []u8) -> (file:
 	if string(kept[MACHINE_OFFSET_MAGIC:][:8]) != MACHINE_TPM_PASSPHRASE_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if u32_get(kept[MACHINE_OFFSET_FORMAT:]) != MACHINE_TPM_PASSPHRASE_FORMAT {
+	if byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_FORMAT:], 0) != MACHINE_TPM_PASSPHRASE_FORMAT {
 		return {}, {}, .Wrong_Format
 	}
-	if u32_get(kept[MACHINE_OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[MACHINE_OFFSET_PASSES:]) != DERIVATION_PASSES || u32_get(kept[MACHINE_TPM_PASSPHRASE_OFFSET_PCRS:]) != tpm2.PCR_SET {
+	if byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_MEMORY:], 0) != DERIVATION_MEMORY_KIBIBYTES || byte_order.read_u32_little_endian(kept[MACHINE_OFFSET_PASSES:], 0) != DERIVATION_PASSES || byte_order.read_u32_little_endian(kept[MACHINE_TPM_PASSPHRASE_OFFSET_PCRS:], 0) != tpm2.PCR_SET {
 		return {}, {}, .Other_Parameters
 	}
 	object, object_ok := sealed_object_decode(kept[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
@@ -1204,16 +1185,16 @@ Principal_Tpm_File :: struct {
 principal_tpm_file_encode :: proc "contextless" (file: ^Principal_Tpm_File, out: ^[PRINCIPAL_TPM_FILE_SIZE]u8) {
 	out^ = {}
 	copy(out^[OFFSET_MAGIC:][:8], PRINCIPAL_TPM_MAGIC)
-	u32_put(out^[OFFSET_FORMAT:], PRINCIPAL_TPM_FORMAT)
-	u32_put(out^[OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
-	u32_put(out^[OFFSET_PASSES:], DERIVATION_PASSES)
+	byte_order.write_u32_little_endian(out^[OFFSET_FORMAT:], 0, PRINCIPAL_TPM_FORMAT)
+	byte_order.write_u32_little_endian(out^[OFFSET_MEMORY:], 0, DERIVATION_MEMORY_KIBIBYTES)
+	byte_order.write_u32_little_endian(out^[OFFSET_PASSES:], 0, DERIVATION_PASSES)
 	length := clamp(file.name_length, 0, NAME_LIMIT)
 	out^[OFFSET_NAME_LENGTH] = u8(length)
 	copy(out^[OFFSET_NAME:][:length], file.name[:length])
 	copy(out^[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.signing_public_key[:])
 	copy(out^[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.unlock_public_key[:])
 	copy(out^[OFFSET_SALT:][:SALT_SIZE], file.salt[:])
-	u32_put(out^[PRINCIPAL_TPM_OFFSET_PCRS:], file.pcrs)
+	byte_order.write_u32_little_endian(out^[PRINCIPAL_TPM_OFFSET_PCRS:], 0, file.pcrs)
 	sealed_object_encode(&file.object, out^[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
 	copy(out^[PRINCIPAL_TPM_OFFSET_NONCE:][:NONCE_SIZE], file.nonce[:])
 	copy(out^[PRINCIPAL_TPM_OFFSET_SEALED:][:SEALED_SIZE], file.sealed[:])
@@ -1234,10 +1215,10 @@ principal_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Principa
 	if string(kept[OFFSET_MAGIC:][:8]) != PRINCIPAL_TPM_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if u32_get(kept[OFFSET_FORMAT:]) != PRINCIPAL_TPM_FORMAT {
+	if byte_order.read_u32_little_endian(kept[OFFSET_FORMAT:], 0) != PRINCIPAL_TPM_FORMAT {
 		return {}, {}, .Wrong_Format
 	}
-	if u32_get(kept[OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[OFFSET_PASSES:]) != DERIVATION_PASSES || u32_get(kept[PRINCIPAL_TPM_OFFSET_PCRS:]) != tpm2.PCR_SET {
+	if byte_order.read_u32_little_endian(kept[OFFSET_MEMORY:], 0) != DERIVATION_MEMORY_KIBIBYTES || byte_order.read_u32_little_endian(kept[OFFSET_PASSES:], 0) != DERIVATION_PASSES || byte_order.read_u32_little_endian(kept[PRINCIPAL_TPM_OFFSET_PCRS:], 0) != tpm2.PCR_SET {
 		return {}, {}, .Other_Parameters
 	}
 	length := int(kept[OFFSET_NAME_LENGTH])

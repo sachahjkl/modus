@@ -18,6 +18,7 @@ package disk_program
 //
 // See [disk grant table](term:disk-grant-table) and [nickname](term:nickname).
 
+import "modus:contract/byte_order"
 import "modus:contract/remote"
 import "modus:contract/start_grant"
 import blake2 "modus:support/cryptography/_blake2"
@@ -500,15 +501,6 @@ tags_equal :: proc "contextless" (first, second: [TAG_SIZE]u8) -> bool {
 	return difference == 0
 }
 
-@(private)
-table_u32_put :: proc "contextless" (bytes: []u8, value: u32) {
-	bytes[0], bytes[1], bytes[2], bytes[3] = u8(value), u8(value >> 8), u8(value >> 16), u8(value >> 24)
-}
-
-@(private)
-table_u32_get :: proc "contextless" (bytes: []u8) -> u32 {
-	return u32(bytes[0]) | u32(bytes[1]) << 8 | u32(bytes[2]) << 16 | u32(bytes[3]) << 24
-}
 
 // table_encode writes the persisted table: the global setting, then each
 // row that persists (row_persists), then the client keys of remote unless
@@ -517,7 +509,7 @@ table_u32_get :: proc "contextless" (bytes: []u8) -> u32 {
 table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out: ^[TABLE_SIZE]u8) {
 	out^ = {}
 	copy(out^[TABLE_OFFSET_MAGIC:][:8], TABLE_MAGIC)
-	table_u32_put(out^[TABLE_OFFSET_FORMAT:], TABLE_FORMAT)
+	byte_order.write_u32_little_endian(out^[TABLE_OFFSET_FORMAT:], 0, TABLE_FORMAT)
 	out^[TABLE_OFFSET_SETTING] = table.forget_by_default ? 1 : 0
 	count := 0
 	for &row in table.rows[:clamp(table.count, 0, ROW_CAPACITY)] {
@@ -564,7 +556,7 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 	if string(kept[TABLE_OFFSET_MAGIC:][:8]) != TABLE_MAGIC {
 		return {}, .Wrong_Magic
 	}
-	if table_u32_get(kept[TABLE_OFFSET_FORMAT:]) != TABLE_FORMAT {
+	if byte_order.read_u32_little_endian(kept[TABLE_OFFSET_FORMAT:], 0) != TABLE_FORMAT {
 		return {}, .Wrong_Format
 	}
 	count := int(kept[TABLE_OFFSET_COUNT])

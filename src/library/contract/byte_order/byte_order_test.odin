@@ -134,6 +134,10 @@ the_known_answers :: proc(t: ^testing.T) {
 	// The example of RFC 1071, section 3, and an IPv4 header with a correct
 	// checksum, 0xB861, which sums to all ones.
 	words := []u8{0x00, 0x01, 0xF2, 0x03, 0xF4, 0xF5, 0xF6, 0xF7}
+	// The sum keeps its carries: the fold comes once, at the end. RFC 1071
+	// gives 0x2DDF0 before its fold to 0xDDF2.
+	testing.expect_value(t, internet_checksum_add(0, words), 0x2DDF0)
+	testing.expect_value(t, internet_checksum_add(0x2DDF0, nil), 0x2DDF0)
 	testing.expect_value(t, internet_checksum_end(internet_checksum_add(0, words)), 0x220D)
 	header := []u8{0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0xB8, 0x61, 0xC0, 0xA8, 0x00, 0x01, 0xC0, 0xA8, 0x00, 0xC7}
 	testing.expect_value(t, internet_checksum_end(internet_checksum_add(0, header)), 0)

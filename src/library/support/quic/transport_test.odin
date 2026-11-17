@@ -685,6 +685,12 @@ transport_parameters_of_a_peer :: proc(t: ^testing.T) {
 		{"initial_max_streams_bidi over 2^60", .Client, "0808d000000000000001" + "0f01aa", .Transport_Parameter_Error},
 		{"an integer shorter than its length", .Client, "040201" + "0f01aa", .Transport_Parameter_Error},
 		{"a connection identifier of 21 bytes", .Client, "0f15000102030405060708090a0b0c0d0e0f1011121314", .Transport_Parameter_Error},
+		// Each identifier parameter refuses 21 bytes by itself, in a server
+		// record that is whole without it; 20 bytes are taken.
+		{"original_destination_connection_id of 21 bytes", .Server, "0015000102030405060708090a0b0c0d0e0f1011121314" + "0f01aa", .Transport_Parameter_Error},
+		{"original_destination_connection_id of 20 bytes", .Server, "0014000102030405060708090a0b0c0d0e0f10111213" + "0f01aa", .No_Error},
+		{"retry_source_connection_id of 21 bytes", .Server, "0001aa" + "1015000102030405060708090a0b0c0d0e0f1011121314" + "0f01aa", .Transport_Parameter_Error},
+		{"retry_source_connection_id of 20 bytes", .Server, "0001aa" + "1014000102030405060708090a0b0c0d0e0f10111213" + "0f01aa", .No_Error},
 		{"a length past the end", .Client, "0f05aa", .Transport_Parameter_Error},
 		{"disable_active_migration with a value", .Client, "0c0101" + "0f01aa", .Transport_Parameter_Error},
 		// RFC 9000, section 18.2, gives max_udp_payload_size no largest

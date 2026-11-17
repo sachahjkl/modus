@@ -940,7 +940,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 		// ports of client grants. The ports of an endpoint are the ones of
 		// its creation, whatever its grant is now: an endpoint whose grant
 		// was revoked keeps its port taken until it is removed.
-		asked, asked_known := datagram.grant_unpack(record.values[2])
+		asked, asked_refusal, asked_known := network.endpoint_add_grant(record.values[2])
 		taken := false
 		if asked_known && asked.listen {
 			held: [ENDPOINT_CAPACITY]network.Local_Ports
@@ -955,7 +955,9 @@ controlled :: proc "contextless" (record: ring.Record) {
 				taken = network.listen_port_taken(false, asked.port, PORT_FIRST, ENDPOINT_CAPACITY, held[:])
 			}
 		}
-		if taken {
+		// A refused word or a taken port: no endpoint is made, so the region
+		// is not mapped and the ring is not opened.
+		if taken || !asked_known {
 			free = -1
 		}
 		region_address: rawptr
@@ -963,7 +965,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 		// Give: this service gives the region to the frame service, with
 		// Read only, so that the device reads the data of each send there.
 		needed := system.Rights{.Read, .Write, .Give}
-		if region_kind == .Memory && region_through && needed <= region_rights && system.memory_size(region_handle) == datagram.REGION_PAGES {
+		if free >= 0 && region_kind == .Memory && region_through && needed <= region_rights && system.memory_size(region_handle) == datagram.REGION_PAGES {
 			region_address, region_status = system.memory_map(region_handle, {.Write})
 		}
 		opened: ring.Ring
@@ -976,7 +978,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 			// A bit that names no right: the endpoint is not made, so that
 			// no grant with fewer rights than the root service wrote exists.
 			result = .Bad_Command
-			values = errors.ring_fail(ADD, .Bad_Value, .None, 3, i64(record.values[2]))
+			values = asked_refusal
 		} else if taken {
 			result = .Busy
 			values = errors.ring_fail(ADD, .Bad_Value, .None, 3, i64(asked.port)) // A listen port that another endpoint has.
@@ -1047,24 +1049,14 @@ controlled :: proc "contextless" (record: ring.Record) {
 		values = errors.ring_fail(record.kind, .Absent, .None, 1, i64(handle))
 		for &item, index in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
-				// A grant changes to none (a revocation), or to a grant of the
-				// same form and the same local ports: the local ports and their
-				// check of overlap come from Endpoint_Add only.
-				// The form is the one of the creation of the endpoint, not the
-				// one of its grant now: after a revocation, a client grant on an
-				// endpoint that was made for a listen port would send from that
-				// port.
-				new_grant, new_grant_known := datagram.grant_unpack(record.values[1])
-				if !new_grant_known {
-					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))
+				// The local ports and their check of overlap come from
+				// Endpoint_Add only: a new grant keeps the form of the creation.
+				form := network.Endpoint_Form{tcp = item.tcp, listen = item.listen, local_port = item.local_port}
+				refusal, changed := network.endpoint_grant_change(form, &item.grant, record.values[1])
+				if !changed {
+					values = refusal
 					break
 				}
-				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.listen && (!new_grant.listen || new_grant.port == item.local_port)
-				if datagram.granted(new_grant) && !same_form {
-					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))
-					break
-				}
-				item.grant = new_grant
 				item.admitted = {}
 				sends_waiting_refuse(&item, index)
 				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")

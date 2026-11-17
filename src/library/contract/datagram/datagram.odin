@@ -223,7 +223,8 @@ Control :: enum u32 {
 	// the network service names them (the root service gives them through
 	// the memory of the control ring). values[2]: the grant (grant_pack),
 	// with or without the right Inspect. A grant word with a bit outside
-	// GRANT_KNOWN_BITS: Bad_Command, Bad_Value of the argument 3.
+	// GRANT_KNOWN_BITS: Bad_Command, Bad_Value of the argument 3, value:
+	// the unknown bits shifted down by GRANT_KNOWN_BIT_COUNT, limit 0.
 	// values[3..6]: the name of the program, 32 bytes. The completion:
 	// values[0] the local port of the endpoint.
 	Endpoint_Add    = 1,
@@ -233,7 +234,9 @@ Control :: enum u32 {
 	// of the old one (UDP or TCP, client or listen, the same listen port):
 	// else Bad_Command, because the local ports come from Endpoint_Add.
 	// A grant word with a bit outside GRANT_KNOWN_BITS: Bad_Command,
-	// Bad_Value of the argument 2.
+	// Bad_Value of the argument 2, value: the unknown bits shifted down by
+	// GRANT_KNOWN_BIT_COUNT, limit 0. A grant of another form: Bad_Value
+	// of the argument 2, value: the word.
 	Endpoint_Grant  = 2,
 	// values[0]: the datagram ring. The network service ends the endpoint,
 	// and closes the ring and the region.
@@ -300,7 +303,8 @@ GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP
 // The bits that a grant word can hold: the port, the address and the three
 // flags. A bit above them names no right, so grant_unpack refuses the word:
 // a grant with fewer rights than its word says is a wrong grant.
-GRANT_KNOWN_BITS :: (u64(1) << 51) - 1
+GRANT_KNOWN_BIT_COUNT :: 51
+GRANT_KNOWN_BITS :: (u64(1) << GRANT_KNOWN_BIT_COUNT) - 1
 
 // The grant of an endpoint.
 Grant :: struct {
