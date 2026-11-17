@@ -365,6 +365,92 @@ a_leaf_out_of_order :: proc(t: ^testing.T) {
 	testing.expect(t, wrong_block(state, leaf.block))
 }
 
+// The checks of a root with no block that a damaged disk can hold: the
+// smallest, a value that a conversion to int makes negative, the largest.
+DAMAGED_ROOT_CHECKS :: [?]u64{1, 1 << 63, max(u64)}
+
+// A root of the tree or of the removal queue of a store, with no block and
+// a check that is not 0, names no node: the commits of the service refuse
+// it, so the open marks its store damaged, and names no wrong block. The
+// counts of the store block stay the ones of the disk.
+@(test)
+a_store_root_with_no_block_is_damaged :: proc(t: ^testing.T) {
+	checks := DAMAGED_ROOT_CHECKS
+	for which in 0 ..< 2 {
+		for check in checks {
+			disk := disk_make(16)
+			defer delete(disk.bytes)
+			block: format.Store_Block
+			block.objects = 7
+			if which == 0 {
+				block.tree = {block = 0, check = check}
+			} else {
+				block.removals = {block = 0, check = check}
+			}
+			disk_root(&disk, disk_put(&disk, &block), 1)
+			state := new(State)
+			defer free(state)
+			result := mount(state, &disk, 16)
+			testing.expect(t, !result.failed)
+			testing.expectf(t, state.store_damaged[0], "the root %d with the check %d: the store is not damaged", which, check)
+			testing.expect_value(t, result.damaged_stores, 1)
+			testing.expect_value(t, result.wrong, 0)
+			testing.expect_value(t, state.store_blocks[0].objects, 7)
+		}
+	}
+	// Two empty roots: an empty store, with no damage.
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	block: format.Store_Block
+	disk_root(&disk, disk_put(&disk, &block), 1)
+	state := new(State)
+	defer free(state)
+	result := mount(state, &disk, 16)
+	testing.expect(t, !state.store_damaged[0])
+	testing.expect_value(t, result.damaged_stores, 0)
+	testing.expect_value(t, result.stores_with_wrong_count, 0)
+}
+
+// The entry of an inner tree whose root has no block and a check that is
+// not 0, with a size of 0: no empty tree, but damage of its store.
+@(test)
+a_tree_entry_with_no_block_is_damaged :: proc(t: ^testing.T) {
+	checks := DAMAGED_ROOT_CHECKS
+	for check in checks {
+		disk := disk_make(16)
+		defer delete(disk.bytes)
+		outer := disk_leaf(&disk, {{"inner", {kind = u64(format.Entry_Kind.Tree), pointer = {block = 0, check = check}}}})
+		block: format.Store_Block
+		block.tree = outer
+		block.trees = 1
+		block.node_blocks = 1
+		disk_root(&disk, disk_put(&disk, &block), 2)
+		state := new(State)
+		defer free(state)
+		result := mount(state, &disk, 16)
+		testing.expect(t, !result.failed)
+		testing.expectf(t, state.store_damaged[0], "the check %d: the store is not damaged", check)
+		testing.expect_value(t, result.damaged_stores, 1)
+		testing.expect_value(t, result.wrong, 0)
+	}
+	// An empty inner tree: a root with no block and the check 0.
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	outer := disk_leaf(&disk, {{"inner", {kind = u64(format.Entry_Kind.Tree)}}})
+	block: format.Store_Block
+	block.tree = outer
+	block.trees = 1
+	block.node_blocks = 1
+	disk_root(&disk, disk_put(&disk, &block), 2)
+	state := new(State)
+	defer free(state)
+	result := mount(state, &disk, 16)
+	testing.expect(t, !state.store_damaged[0])
+	testing.expect_value(t, result.damaged_stores, 0)
+	testing.expect_value(t, result.trees, 1)
+	testing.expect_value(t, result.stores_with_wrong_count, 0)
+}
+
 // More than 65535 names of one block: four objects with full version
 // indexes, each version the same root. The count holds them all.
 @(test)

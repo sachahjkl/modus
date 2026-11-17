@@ -743,7 +743,9 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 		}
 	case .Tree:
 		walking.counts.trees += 1
-		if entry.versions.block != 0 || entry.hash != {} || entry.pointer.block == 0 && entry.size != 0 {
+		// A root with no block is an empty tree only with the check 0: the
+		// commits of the service refuse any other check as damage.
+		if entry.versions.block != 0 || entry.hash != {} || entry.pointer.block == 0 && (entry.size != 0 || entry.pointer.check != 0) {
 			walking.broken = true
 			one.failure = .Damaged
 			return
