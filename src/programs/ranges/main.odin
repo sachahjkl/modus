@@ -62,6 +62,13 @@ TWIN_CHUNK :: 8 * BLOCK // Half of the call region: the region holds the other a
 LOOP_COMMITS :: 200
 LOOP_WRITES :: 4
 LOOP_SIZE :: u64(64) << 20
+// The bytes at the start of the object loop, written in the first commit of
+// the loop. The disk of the test of a loss of power starts its count of
+// commits at the block that starts with them, so the cut falls inside the
+// loop whatever the speed of the machine (tools/modustool/power_loss.odin,
+// RANGES_LOOP_MARKER). No later write of the loop reaches the block 0: its
+// multiplier 7919 is odd, so only the first write has its place there.
+LOOP_MARKER :: "ranges: the first commit of the loop of range commits"
 
 client: storage.Client
 wrong_cases: int
@@ -415,6 +422,12 @@ loop :: proc "contextless" () {
 			offset := u64(n * 7919 % int(LOOP_SIZE / BLOCK)) * BLOCK + u64(n * 61 % 4000)
 			_, status := storage.write_range(&client, storage.ROOT, "loop", offset, bytes[:])
 			good &&= status == .Ok
+		}
+		if commit_number == 0 {
+			// After the first write, which starts at the offset 0: the
+			// block 0 then starts with the marker.
+			_, marker_status := storage.write_range(&client, storage.ROOT, "loop", 0, transmute([]u8)string(LOOP_MARKER))
+			good &&= marker_status == .Ok
 		}
 		_, status := storage.commit(&client, storage.ROOT, "loop")
 		good &&= status == .Ok
