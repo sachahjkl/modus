@@ -579,7 +579,7 @@ scroll_bar_short_bar_draws_its_track_and_its_thumb :: proc(t: ^testing.T) {
 	thumb: Draw_Record
 	count, thumb = records_of(&table, .Rectangle, colors.thumb_border)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, int(thumb.height), graphics.SCROLL_BAR_THUMB_LEAST)
+	testing.expect_value(t, record_view(thumb).height, graphics.SCROLL_BAR_THUMB_LEAST)
 }
 
 // The scroll bar of a list with a choice moves the choice, which the view
