@@ -6,7 +6,7 @@
 
 A human or an agent then decides what to factor. A similarity can be deliberate: two programs that show one property each, a kernel copy of a support procedure, a test case beside the next case. The finder gives the facts and the measures. It never decides, and it never edits a source.
 
-The study of prior art: [`docs/research/code_similarity_prior_art.md`](../../../docs/research/code_similarity_prior_art.md). The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), group Project: similarity finder, code piece, similarity score, similarity family, factoring template and blank.
+The study of prior art: [`docs/research/code_similarity_prior_art.md`](../../../docs/research/code_similarity_prior_art.md). The terms are in [`docs/glossary/project.md`](../../../docs/glossary/project.md): similarity finder, code piece, similarity score, similarity family, factoring template and blank.
 
 ## Constraints
 

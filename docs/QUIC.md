@@ -1,6 +1,6 @@
 # QUIC
 
-This document is the design of QUIC version 1 in this system, its first three layers (packet protection, TLS 1.3, the transport of one connection), and the fourth (a server of several connections over a listen grant of UDP, `quic_echo`). The terms are in `GLOSSARY.md`, section "QUIC".
+This document is the design of QUIC version 1 in this system, its first three layers (packet protection, TLS 1.3, the transport of one connection), and the fourth (a server of several connections over a listen grant of UDP, `quic_echo`). The terms are in `glossary/quic.md`.
 
 **For whom.** A reader who uses `src/library/support/quic` in a program, a reader who calls the machine from the host (`modustool call`), and a reader who must know what the network can do to a server of the system.
 

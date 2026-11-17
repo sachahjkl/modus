@@ -179,7 +179,7 @@ Site :: struct {
 	firmware_certificate_present: bool, // The repository holds the certificate of the firmware signing key of the publisher (site_download.odin).
 	build_time:   string,
 	documents:    map[string]string, // A Markdown file ("docs/NETWORK.md" and "NETWORK.md") to its page.
-	glossary:     Glossary, // docs/GLOSSARY.md, as glossary_read gives it.
+	glossary:     Glossary, // The folder docs/glossary, as glossary_read gives it.
 	terms:        []Site_Term,
 	not_rendered: [dynamic]string,
 	copies:       map[string]string, // A path in the site to the file of the repository that it copies.
@@ -579,7 +579,6 @@ site_build :: proc(address: string) -> bool {
 
 	properties_text := site_read(SITE_PROPERTIES_FILE) or_return
 	readme_text := site_read(SITE_README_FILE) or_return
-	glossary_text := site_read("docs/GLOSSARY.md") or_return
 	properties_problem, readme_problem: string
 	site.principles, properties_problem = site_properties_parse(properties_text)
 	site.readme, readme_problem = site_readme_parse(readme_text)
@@ -609,7 +608,7 @@ site_build :: proc(address: string) -> bool {
 	site.build_time = fmt.tprintf("%04d-%02d-%02d %02d:%02d UTC", year, int(month), day, hour, minute)
 
 	// The guides: each document of docs/ but the working records. The
-	// glossary is a page of the reference.
+	// glossary, a folder of docs/, is pages of the reference.
 	document_paths := files_with_suffix("docs", ".md") or_return
 	for path in document_paths {
 		name := site_file_name(path)
@@ -621,18 +620,20 @@ site_build :: proc(address: string) -> bool {
 		if working {
 			continue
 		}
-		page := site_page_file(name == "GLOSSARY.md" ? SITE_GLOSSARY_FOLDER : strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
+		page := site_page_file(strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
 		site.documents[path] = page
 		site.documents[name] = page
 	}
 	glossary_problems: []string
-	site.glossary, glossary_problems = glossary_read(glossary_text)
-	if len(glossary_problems) > 0 {
+	glossary_ok: bool
+	site.glossary, glossary_problems, glossary_ok = glossary_read_folder()
+	if !glossary_ok || len(glossary_problems) > 0 {
 		for problem in glossary_problems {
-			fmt.eprintfln("modustool: site: %s, %s", SITE_GLOSSARY_FILE, problem)
+			fmt.eprintfln("modustool: site: %s", problem)
 		}
 		return false
 	}
+	site_glossary_documents_add(&site)
 	site.terms = site_glossary_terms(site.glossary)
 	// The sources of the reference tables are read before any guide is
 	// rendered: a code span of a guide links to their rows.

@@ -126,7 +126,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 ### The colors of values
 
-A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/modustool/site_values.odin`), the program `log` and the drawers of the console read it. The console gives a field of a record the kind that its description states (`CONSOLE.md`, "The drawers"). The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
+A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`glossary/project.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/modustool/site_values.odin`), the program `log` and the drawers of the console read it. The console gives a field of a record the kind that its description states (`CONSOLE.md`, "The drawers"). The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
 
 The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`; a band of a row of the log is the top of a card):
 
@@ -145,7 +145,7 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 
 ### The icons of the kinds
 
-A kind has one icon wherever it is shown: on the site, and in a list of the desktop whose rows are of several kinds. The kind icons (`GLOSSARY.md`) are one table of cells, `src/library/support/kind_icons`, as the heron of the mark is one table of cells (section 11). The site draws the cells as the rectangles of an SVG picture (`docs/SITE.md`, "The kinds of values"); the system draws them as rectangles of whole pixels (`interface.draw_kind_icon`). No second set of icons exists.
+A kind has one icon wherever it is shown: on the site, and in a list of the desktop whose rows are of several kinds. The kind icons (`glossary/desktop.md`) are one table of cells, `src/library/support/kind_icons`, as the heron of the mark is one table of cells (section 11). The site draws the cells as the rectangles of an SVG picture (`docs/SITE.md`, "The kinds of values"); the system draws them as rectangles of whole pixels (`interface.draw_kind_icon`). No second set of icons exists.
 
 - **The grid** is 12 by 12 square cells (`kind_icons.ICON_SIZE`). A cell is one pixel in a row of a list: the icon is 12 pixels, in the middle of the 24 pixels of the row. A larger icon has cells of 2 or 3 pixels: 24 or 36 pixels. No icon is scaled by a filter, so each edge is on a whole pixel.
 - **The form** is cells only: rectangles, and lines at an angle as steps of cells. An icon has no curve, no shade and no second color.
@@ -601,7 +601,7 @@ What the system draws is not a file, and follows the same rule. The program `her
 
 ### The font of the name
 
-The font of the name of the mark (`GLOSSARY.md`) is the letters of `mark.name_letters` as a TrueType file. A page that writes "modus" in it shows the letters of the files of the mark, and the text stays text.
+The font of the name of the mark (`glossary/project.md`) is the letters of `mark.name_letters` as a TrueType file. A page that writes "modus" in it shows the letters of the files of the mark, and the text stays text.
 
 - The file: `resources/logo/modus_mark.ttf`, written by `modustool logo` (`tools/modustool/mark_font.odin`). The tool writes each table itself: `OS/2`, `cmap`, `glyf`, `head`, `hhea`, `hmtx`, `loca`, `maxp`, `name` and `post`. The file holds no date: the same letters and the same license give the same bytes. `modustool check` compares the bytes of the file with the bytes that the data gives.
 - The glyphs, 7: the glyph of a character that the font does not have (no contour), the space, and `m`, `o`, `d`, `u`, `s`. The capitals `M`, `O`, `D`, `U`, `S` have the glyphs of the small letters: the name of the mark has small letters only, so a text "Modus" still shows the mark. No other character has a glyph: a browser takes it from the next font.

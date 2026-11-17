@@ -2,7 +2,7 @@
 
 The system has its own format for the pictures of the pointer, simple to manage and to package. A text manifest describes each theme, and the modus tool packages it into one binary file. The tool imports, converts and adjusts the pointer theme "Posy's Cursor" from its Xcursor files.
 
-The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spot, nominal size, pointer theme, pointer theme file, pointer manifest, resource, caret. The system says "pointer", never "cursor". The caret of a text input is another thing.
+The terms are in `glossary/desktop.md`: pointer, pointer shape, pointer picture, hot spot, nominal size, pointer theme, pointer theme file, pointer manifest, resource, caret. The system says "pointer", never "cursor". The caret of a text input is another thing.
 
 **The idea in plain words.** The pointer is the small picture that follows the mouse. It changes with what is under it: an arrow over the desktop, a hand over a button, a text bar over a text. Each of these is a **pointer shape**. A **pointer theme** gives one **pointer picture** for each shape, at one or more sizes, with a **hot spot**: the pixel of the picture that points. The whole path is short:
 

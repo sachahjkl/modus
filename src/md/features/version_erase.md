@@ -1,6 +1,6 @@
 # The erase of the versions of an object
 
-A version erase ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Version erase") ends each version of one object in one commit, then writes zero bytes over each block that this commit freed. The guide is [`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.8 The erase of versions".
+A version erase ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Version erase") ends each version of one object in one commit, then writes zero bytes over each block that this commit freed. The guide is [`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.8 The erase of versions".
 
 ## Purpose
 

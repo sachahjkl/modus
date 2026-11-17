@@ -12,7 +12,7 @@ Status: built. The kernel runs three strategies (`src/kernel/strategy.odin`), an
 
 ![The scheduling strategies side by side, with the wakes, the delay of a wake, the shares of spinners with weights, and the strategy in use](screenshots/scheduler.png)
 
-This note says what the three Linux designs do, which ideas this system takes, which it refuses, and why. The terms are in `GLOSSARY.md`: strategy, weight, virtual time, lag, eligible, virtual deadline, request, thread schedule, thread placement, machine number, wake preemption.
+This note says what the three Linux designs do, which ideas this system takes, which it refuses, and why. The terms are in `glossary/running_code.md`: strategy, weight, virtual time, lag, eligible, virtual deadline, request, thread schedule, thread placement, machine number, wake preemption.
 
 Sources. The EEVDF and `sched_ext` paragraphs were checked against the kernel documentation (`docs.kernel.org/scheduler/sched-eevdf.html` and `sched-ext.html`, read on 2026-11-11). The constants of CFS and the details of the Linux code (the names of fields, the clamp of the lag) are from memory of the Linux sources: they are not checked against a source.
 

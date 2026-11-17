@@ -2,7 +2,7 @@
 
 The system implements no foreign interface. A foreign system runs whole inside a guest that holds only its grants ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective"). This file records the comparison that led to that rule, and the forms that were refused. The guest support that it asks for is in [guest.md](guest.md).
 
-The rule is in [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Guest".
+The rule is in [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective". The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Guest".
 
 ## The problem
 

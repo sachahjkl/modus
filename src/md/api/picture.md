@@ -14,7 +14,7 @@ The border of the drawing module is in [library_modules.md](library_modules.md).
 
 ## The chosen form: a picture memory, and values in the record
 
-A **picture memory** (`docs/GLOSSARY.md`, "Picture memory") is one run of pixels of the program. A Picture record names its pixels in it with four values:
+A **picture memory** (`docs/glossary/desktop.md`, "Picture memory") is one run of pixels of the program. A Picture record names its pixels in it with four values:
 
 | Field | Value |
 |---|---|

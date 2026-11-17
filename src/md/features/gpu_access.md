@@ -2,7 +2,7 @@
 
 Programs of the system see one graphics interface, and the system writes its implementation from nothing: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One graphics interface: WebGPU with WGSL". This file records how that interface reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
 
-The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Driver domain".
+The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Driver domain".
 
 ## The constraints
 

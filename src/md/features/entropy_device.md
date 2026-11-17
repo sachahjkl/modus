@@ -4,7 +4,7 @@
 
 The seed of the system comes from the processor: `rdseed`, `rdrand` and the jitter of the cycle counter. A processor whose generator is wrong or hostile then fixes every seed of the boot, with no sign. The fixed machine has a second source: the entropy device of virtio (`virtio-rng-pci` in QEMU). This design reads that device and mixes its bytes into the random generator of the root service, so that each seed that the root service gives after the read depends on the processor and on the device together.
 
-The guide is [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed of the system, and what is claimed". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Entropy device", "Entropy service", "Entropy report".
+The guide is [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed of the system, and what is claimed". The terms are in [`docs/glossary/randomness.md`](../../../docs/glossary/randomness.md): "Entropy device", "Entropy service", "Entropy report".
 
 ## Constraints
 

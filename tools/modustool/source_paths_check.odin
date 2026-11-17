@@ -162,12 +162,15 @@ source_path_problems :: proc(file, content: string, folders: []string, exists: p
 }
 
 // source_path_documents_read gives each document that the check reads:
-// the documents of docs/, the documents of the root, and the intent files.
+// the documents of docs/, the files of the glossary, the documents of the
+// root, and the intent files.
 source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: bool) {
 	list := make([dynamic]Source_Path_Document, context.temp_allocator)
 	paths := make([dynamic]string, context.temp_allocator)
 	guides := files_with_suffix(DOCUMENT_FOLDER, ".md") or_return
 	append(&paths, ..guides)
+	glossary_files := files_with_suffix(GLOSSARY_FOLDER, ".md") or_return
+	append(&paths, ..glossary_files)
 	roots := SOURCE_PATH_ROOT_DOCUMENTS
 	for root in roots {
 		append(&paths, root)

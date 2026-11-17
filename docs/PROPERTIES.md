@@ -6,7 +6,7 @@ This document gives the 21 properties on which `modus` is built: the rules that 
 
 **For whom.** A reader who wants to know why the system is the way it is, before they read how a part works. A reader who proposes a change compares it with these properties first.
 
-**Read before.** Nothing. Each term is in `GLOSSARY.md`; on the site, the first use of a term on the page links to it. After this document, `ARCHITECTURE.md` shows the systems that apply these rules.
+**Read before.** Nothing. Each term is in `glossary/README.md`; on the site, the first use of a term on the page links to it. After this document, `ARCHITECTURE.md` shows the systems that apply these rules.
 
 **The map of this document.**
 

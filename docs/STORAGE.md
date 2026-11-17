@@ -2,7 +2,7 @@
 
 This guide gives the model of the stored data of the system: what a program, a package and a principal keep, and how a program reaches only what it was granted. It also gives the format on the disk, the interface of the storage service, the limits, and the order of construction. Each part says if it is **built** or **not built**.
 
-The terms are in `GLOSSARY.md`, section Storage. The versions and the date are in `ARCHITECTURE.md`, "U5. Storage service", and `ARCHITECTURE.md`, "The date".
+The terms are in `glossary/storage.md`. The versions and the date are in `ARCHITECTURE.md`, "U5. Storage service", and `ARCHITECTURE.md`, "The date".
 
 ## About this guide
 
@@ -138,7 +138,7 @@ An entry is 104 bytes (`Entry` of `src/library/contract/store`):
 
 | Field | An object | A tree |
 |---|---|---|
-| Name | 1 to 64 bytes of UTF-8 with no control character (`docs/GLOSSARY.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
+| Name | 1 to 64 bytes of UTF-8 with no control character (`docs/glossary/text.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
 | Kind | object | tree |
 | Size | its bytes | its entries |
 | Generation, time, date | of its last change | of its last change |
@@ -158,9 +158,9 @@ A commit is one change of one store. It plans its work in memory first (the bloc
 
 The open of the disk at the start walks each node of each tree once, checks each block, and counts the names of each block. A block of data is checked by its value at its place; an object node by its check, by the rules of its format, and by the counts and the values of its children. A block that an earlier state named is not read again. A node that breaks a rule (its count, its level, the block of each child, the order of its keys) is damage, as a wrong check. A wrong node damages its store: the service gives nothing of that store and changes nothing in it. A wrong object node or a wrong block of data damages the state of the object that names it only: a read of it gives Damaged, and a write or a remove replaces it.
 
-A dropped write (`docs/GLOSSARY.md`, "Dropped write") is a write that the disk answers with Ok and does not keep. The root before a commit is whole whatever happened to the writes of that commit, because a commit writes only blocks that are free in the state of the last commit, and a block becomes free only after the root that stops naming it is on the disk. The next commit ends that: it can write over the blocks that the root before names, and it writes its root over that root.
+A dropped write (`docs/glossary/storage.md`, "Dropped write") is a write that the disk answers with Ok and does not keep. The root before a commit is whole whatever happened to the writes of that commit, because a commit writes only blocks that are free in the state of the last commit, and a block becomes free only after the root that stops naming it is on the disk. The next commit ends that: it can write over the blocks that the root before names, and it writes its root over that root.
 
-So each commit has a commit read back (`docs/GLOSSARY.md`, "Commit read back"), in two steps. After the `Flush` of its blocks, and before its root, the commit reads back each block that it wrote and compares the bytes with the bytes that it wrote. After the `Flush` of its root, it reads back its root. If one differs, the disk did not keep a write. The service refuses the commit: the call gives `Device` with the unit `Dropped_Writes` and the count of the blocks that differ. The service keeps the state of the root before, which is the state of the disk, and writes one line:
+So each commit has a commit read back (`docs/glossary/storage.md`, "Commit read back"), in two steps. After the `Flush` of its blocks, and before its root, the commit reads back each block that it wrote and compares the bytes with the bytes that it wrote. After the `Flush` of its root, it reads back its root. If one differs, the disk did not keep a write. The service refuses the commit: the call gives `Device` with the unit `Dropped_Writes` and the count of the blocks that differ. The service keeps the state of the root before, which is the state of the disk, and writes one line:
 
 ```
 storage: the read back of the commit of generation 14 found 1 block with other bytes: the disk did not keep it; the commit is refused before its root, and the service goes on from generation 13
@@ -377,7 +377,7 @@ Each step is one tested capability on a system that works.
 1. **Large objects and ranges.** Built (section 4.6), but the disk past 1 GiB: an object can hold 4 TiB, and the disk has 262144 blocks.
 2. **The history of a store.** A version is a tree that a store named; the versions of an object are found in it. The thinning applies to the history of the store. The versions of each object go.
 3. **Objects by their hash.** Built in part: the hash index of section 4.7 finds the current object of a store by its hash, so an object that two entries name is kept one time. Not built: the hash of a tree on its entries (section 1.3).
-4. **The first objects from storage.** Built for one case: a principal starts a program whose module file is in the store `programs`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A program from a disk"). An import of such a program comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`GLOSSARY.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
+4. **The first objects from storage.** Built for one case: a principal starts a program whose module file is in the store `programs`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A program from a disk"). An import of such a program comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`glossary/code.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
 5. **Packages.** A signed tree with its six facts; the store of the data of an application, attached to the identity of the package.
 6. **Encryption for a principal.**
 7. **The network as a channel.** An object comes from a peer; its hash proves it.

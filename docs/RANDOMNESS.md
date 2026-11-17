@@ -2,7 +2,7 @@
 
 This guide says where a program gets random bytes, how the generator works, where the seed of the system comes from, and how strong the system claims it is.
 
-The terms are in `GLOSSARY.md`, section "Randomness": random seed, random generator, entropy report, seed strength.
+The terms are in `glossary/randomness.md`: random seed, random generator, entropy report, seed strength.
 
 **The idea in plain words.** A program asks no service and no kernel for random bytes: its starter gives it a seed of 32 bytes in its context, and it draws from its own generator in its own memory. The root service gathers the seed of the system from the processor at boot, mixes in the bytes of the entropy device when the machine has one, and the system says how strong that seed is, so a program that makes a key can refuse a weak one. While a program runs, the root service writes new bytes in its fresh bytes page every 30 seconds, and the generator of the program mixes them into its key.
 

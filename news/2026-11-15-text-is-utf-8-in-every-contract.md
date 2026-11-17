@@ -3,7 +3,7 @@ date: 2026-11-15
 release: next
 picture: none
 kind: Decided
-guide: docs/GLOSSARY.md
+guide: docs/glossary/text.md
 
 Each text that two programs share is now UTF-8: an entry of the palette, a result, a record of the terminal, a line of the log, the name of an object of a store. Before, each of these contracts took the bytes 32 to 126 only.
 

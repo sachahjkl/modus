@@ -6,7 +6,7 @@ import "core:slice"
 import "core:strings"
 import "modus:contract/blake3"
 
-// The corpus of the fuzz targets (docs/GLOSSARY.md, "Corpus";
+// The corpus of the fuzz targets (docs/glossary/project.md, "Corpus";
 // src/md/infrastructure/fuzzing.md, "Fuzz findings, minimization and the
 // corpus"): one folder for each target, with its regression inputs and its
 // reach inputs, one file for each input, named by the BLAKE3 hash of its

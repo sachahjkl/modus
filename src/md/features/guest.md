@@ -1,6 +1,6 @@
 # A guest
 
-A program runs another system on the processor, with the virtualization support of the processor. The kernel holds the mechanism: the nested page table, the state of the guest processor, the entry and the exit. The program holds the policy: the memory that the guest gets, and the answer to each exit. The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Guest". The guide is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "A guest". Why a foreign system runs whole in a guest is in [foreign_systems.md](foreign_systems.md).
+A program runs another system on the processor, with the virtualization support of the processor. The kernel holds the mechanism: the nested page table, the state of the guest processor, the entry and the exit. The program holds the policy: the memory that the guest gets, and the answer to each exit. The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Guest". The guide is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "A guest". Why a foreign system runs whole in a guest is in [foreign_systems.md](foreign_systems.md).
 
 ## Constraints
 

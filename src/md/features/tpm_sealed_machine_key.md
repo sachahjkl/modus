@@ -4,7 +4,7 @@
 
 A machine with no machine passphrase keeps the disk grant table of principal 0 only until it stops: no key signs the table. This design gives such a machine a machine key that the TPM releases at each start with no typing, but only to the system whose measure the TPM holds. An older system, a changed system, or a copy of the disk on another machine opens nothing. A recovery key, shown one time, opens the machine key when the TPM refuses: after an update of the system, on another machine, or with no TPM.
 
-The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine key sealed by the TPM". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "TPM service", "Sealed by the TPM", "Recovery key".
+The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine key sealed by the TPM". The terms are in [`docs/glossary/trusted_boot.md`](../../../docs/glossary/trusted_boot.md): "TPM service", "Sealed by the TPM", "Recovery key".
 
 ## Constraints
 
