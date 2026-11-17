@@ -488,3 +488,20 @@ a_stale_name_at_the_record_0_of_a_branch :: proc(t: ^testing.T) {
 		testing.expect(t, get(&work, key[:], ([^]u8)(&value)[:size_of(value)]))
 	}
 }
+
+// A reference to a slot comes from a node of the disk, so its check can be
+// any value: one past the pool, or one above 2^63 that a conversion to int
+// makes negative, is a damaged node and names no slot.
+@(test)
+a_reference_out_of_the_pool_is_damaged :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	pool := new(Pool)
+	defer free(pool)
+	for check in ([?]u64{POOL_CAPACITY + 1, 1 << 63, max(u64)}) {
+		pool_reset(pool)
+		work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE}
+		testing.expect_value(t, load(&work, Pointer{block = 0, check = check}, -1), -1)
+		testing.expect_value(t, pool.failure, Failure.Damaged)
+	}
+}

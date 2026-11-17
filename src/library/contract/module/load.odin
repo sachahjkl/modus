@@ -13,7 +13,7 @@ Error :: enum u32 {
 	Unknown_Version = 3, // The version is not `VERSION`.
 	Unknown_Feature = 4, // `must_understand` has a bit outside `UNDERSTOOD_FEATURES`.
 	Unknown_Machine = 5, // The machine is not `X86_64`.
-	Bad_Table       = 6, // A table is not inside the file, or the rebase table has records that are not words of 8 bytes.
+	Bad_Table       = 6, // A table is not inside the file, has records of no byte, or is the rebase table with records that are not words of 8 bytes.
 	// A segment is not on pages, is outside `memory_size`, has more bytes in the file than in memory, is not
 	// inside the file, or is executable and written by the loader.
 	Bad_Segment     = 7,
@@ -107,6 +107,13 @@ validate :: proc "contextless" (file: []u8) -> Error {
 		if entry.offset > u64(len(file)) || size > u64(len(file)) - entry.offset {
 			return .Bad_Table
 		}
+		// Records of no byte would let a file of a few bytes state 2^32 - 1
+		// of them: each loop of a loader over the table would then run
+		// for minutes. With one byte at least, the bytes of the file bound
+		// the count of the records.
+		if entry.count != 0 && entry.record_size == 0 {
+			return .Bad_Table
+		}
 	}
 	if table(file, .Rebases).count != 0 && table(file, .Rebases).record_size != REBASE_WORD_SIZE {
 		return .Bad_Table
@@ -151,11 +158,25 @@ copy_segments :: proc "contextless" (file: []u8, memory: []u8) {
 writable :: proc "contextless" (file: []u8, memory_offset: u64) -> bool {
 	for index in 1 ..< count(file, .Segments) {
 		segment, _ := record(file, .Segments, index, Segment)
-		if memory_offset >= segment.memory_offset && memory_offset - segment.memory_offset + 8 <= segment.memory_size {
+		if range_holds(segment.memory_offset, segment.memory_size, memory_offset, 8) {
 			return .Write in segment.flags && .Execute not_in segment.flags
 		}
 	}
 	return false
+}
+
+// range_holds says if the bytes from offset, count of them, lie inside the
+// range from start, size of them. Each value comes from a file that the
+// loader does not trust, so no sum is formed: a sum near 2^64 wraps, and a
+// location near the top of the address space would pass as one inside a
+// segment that starts near 0.
+@(private)
+range_holds :: proc "contextless" (start, size, offset, count: u64) -> bool {
+	if offset < start {
+		return false
+	}
+	into := offset - start
+	return into <= size && size - into >= count
 }
 
 // rebase adds base to each location of the rebase table. base is the address

@@ -123,7 +123,28 @@ peer_quic_make :: proc() -> ^Peer_Quic {
 	state := new(Peer_Quic)
 	state.clients = make([]quic.Connection, PEER_QUIC_CAPACITY)
 	state.client_streams = make([]quic.Stream, PEER_QUIC_CAPACITY * PEER_QUIC_STREAMS)
-	state.cryptography = {
+	state.cryptography = quic_cryptography_of_the_host()
+	// A client of the test: a fixed seed, so that each run is the same. It
+	// says "processor", the least strength that QUIC asks: the keys of this
+	// client protect nothing but the test.
+	seed: [random.SEED_SIZE]u8
+	for index in 0 ..< random.SEED_SIZE {
+		seed[index] = u8(0x51 + index)
+	}
+	random.generator_seed(&state.generator, &seed, .Processor)
+	state.configuration = {idle_timeout_milliseconds = 30_000}
+	state.configuration.tls = {role = .Client, least_seed_strength = .Processor}
+	state.configuration.tls.application_protocol_length = copy(state.configuration.tls.application_protocol[:], "kernel-remote")
+	state.next_port = PEER_QUIC_PORT_FIRST
+	state.start = time.tick_now()
+	return state
+}
+
+// quic_cryptography_of_the_host gives the procedures of the module
+// cryptography compiled for the host: the peer and the fuzz targets of
+// QUIC use the code of the module, as the system does.
+quic_cryptography_of_the_host :: proc() -> quic.Cryptography {
+	return {
 		seal_with_aes_128_gcm                = cryptography_module.seal_with_aes_128_gcm,
 		open_with_aes_128_gcm                = cryptography_module.open_with_aes_128_gcm,
 		seal_with_chacha20_poly1305          = cryptography_module.seal_with_chacha20_poly1305,
@@ -139,20 +160,6 @@ peer_quic_make :: proc() -> ^Peer_Quic {
 		ed25519_sign                         = cryptography_module.ed25519_sign,
 		ed25519_verify                       = cryptography_module.ed25519_verify,
 	}
-	// A client of the test: a fixed seed, so that each run is the same. It
-	// says "processor", the least strength that QUIC asks: the keys of this
-	// client protect nothing but the test.
-	seed: [random.SEED_SIZE]u8
-	for index in 0 ..< random.SEED_SIZE {
-		seed[index] = u8(0x51 + index)
-	}
-	random.generator_seed(&state.generator, &seed, .Processor)
-	state.configuration = {idle_timeout_milliseconds = 30_000}
-	state.configuration.tls = {role = .Client, least_seed_strength = .Processor}
-	state.configuration.tls.application_protocol_length = copy(state.configuration.tls.application_protocol[:], "kernel-remote")
-	state.next_port = PEER_QUIC_PORT_FIRST
-	state.start = time.tick_now()
-	return state
 }
 
 peer_quic_free :: proc(state: ^Peer_Quic) {

@@ -65,6 +65,7 @@ BUILD_FOLDER :: "build"
 HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_RUNTIME,
 	SOURCE_FOLDER_CONTRACT + "/blake3",
+	SOURCE_FOLDER_CONTRACT + "/module",
 	SOURCE_FOLDER_CONTRACT + "/isolated",
 	SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
 	SOURCE_FOLDER_CONTRACT + "/remote",
@@ -662,7 +663,28 @@ COMMANDS :: [?]Command {
 	// file index of the intent, the source paths in the documents, the
 	// changelog, the news and the roadmap. Then the whole machine test
 	// (`test`) and a second build that must give the same bytes.
-	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test", run = run_check},
+	{name = "check", about = "odin check -vet and odin test of the host code, the fuzz targets (their corpus and a fixed count of new executions), the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test", run = run_check},
+	// Fuzzes the readers of the system on the host: the module file, the
+	// debug object, the storage format, QUIC and TLS, TCP and HTTP
+	// (docs/TOOLS.md, "The fuzzing").
+	//
+	// - `list`: the fuzz targets, with the inputs of their corpus.
+	// - `<target> [executions [processes [seed]]]`, `all [executions]`:
+	//   builds the instrumented child, then runs the target until it is
+	//   stopped, or for a count of executions; a fuzz finding is minimized
+	//   into `build/fuzzing/<target>/findings`.
+	// - `show <target> <file>`: runs one input, and prints its outcome and
+	//   its bytes as an Odin array, for a host test.
+	// - `minimize <target> <file>`: the smallest input with the same
+	//   fuzz finding.
+	// - `regression <target> <file>`: after a fix, adds the input to the
+	//   regression inputs of the corpus.
+	// - `corpus <target>`: writes the reach inputs of the corpus from the
+	//   inputs that the long runs kept.
+	{name = "fuzz", about = "list | <target> [executions [processes [seed]]] | all [executions] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target>: fuzz the readers of the system on the host, guided by edge counters", run = run_fuzz},
+	// The child process of `fuzz` and of `check`: it runs the engine on one
+	// target. The parent starts it; it is not a command to run by hand.
+	{name = "fuzz-child", about = "the child process of `fuzz` and of `check`, which the parent starts", run = run_fuzz_child},
 	// Makes or shows the key that signs the system description.
 	//
 	// - `new <folder>`: writes a new private key, readable by its owner only,
@@ -1126,6 +1148,11 @@ run_check :: proc(args: []string) -> int {
 		if !run({"odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
 		}
+	}
+	// The fuzz targets: their corpus, then a fixed count of new executions
+	// with the seed of the sources (src/md/infrastructure/fuzzing.md).
+	if !fuzz_check() {
+		return EXIT_FAILURE
 	}
 	if !cryptography_origin_check() {
 		return EXIT_FAILURE

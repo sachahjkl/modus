@@ -878,7 +878,8 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "modustool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests, the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `fuzz list`, `fuzz <target> [executions [processes [seed]]]`, `fuzz all [executions]`, `fuzz show <target> <file>`, `fuzz minimize <target> <file>`, `fuzz regression <target> <file>`, `fuzz corpus <target>` | Fuzzes the readers of the system on the host: the module file, the debug object, the storage format, QUIC and TLS, TCP and HTTP. It builds the instrumented child, runs a fuzz target, and minimizes each fuzz finding ("The fuzzing") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
@@ -896,6 +897,39 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, and that no family of integer constants is a closed set of choices ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
+
+### The fuzzing
+
+A fuzz target gives the real code of the system millions of fuzz inputs, and checks its oracles after each one: no fault, an end before the hang bound, the contract of the reader, a round trip through its writer, a model, and a second reader of the system that agrees. The design is in `src/md/infrastructure/fuzzing.md`.
+
+`modustool fuzz list` prints the targets:
+
+| Target | Kind | What it checks |
+|---|---|---|
+| `module_file`, `module_generated` | raw, generated | A module file that `validate` accepts gives no read out of bounds through any reader of `src/library/contract/module`; a module built by the rules passes `validate` |
+| `debug_object`, `debug_object_generated` | raw, generated | A debug object that `check` accepts gives each reader with no fault, and `encode` of its tables gives its bytes back |
+| `storage_tree` | generated | The B-tree against a sorted model, its walk after each commit, then damaged nodes |
+| `storage_mount` | generated | The open of a disk gives back each object of the writer of the tool; the open of a damaged disk never gives a wrong object as whole |
+| `quic_datagram` | raw | One datagram to a server that waits for its client |
+| `quic_connection` | generated | A client and a server in memory, with datagrams changed or resealed with new frames; with no change, the handshake completes |
+| `tls_messages` | raw | The messages of TLS 1.3 to a client or a server, level by level |
+| `quic_transport_parameters` | raw | The transport parameters that the reader accepts write and read again to the same record |
+| `tcp_segment`, `tcp_connection` | raw, generated | The header reader and its writer agree; two tables in memory with injected segments, and the bytes arrive in order |
+| `http_request` | raw | The reader of a request head: its fields stay in their limits, and the head reads the same from its own bytes |
+
+A raw target reads its input as the bytes that the system reads. A generated target reads its input as choices, and builds a whole value from them.
+
+**The child.** The tool runs a target in a child process, `modustool fuzz-child`, which a fault ends. The child and the tool share the mailbox, a file in `build/fuzzing/<target>/`: before each execution the child copies the input there and adds one to its count of executions. When the count stays still for the hang bound, the tool ends the child, and the input is an input that never returns. The child places each input against a page with no access, after it or before it, so that a read past the input faults even through a raw pointer.
+
+**The instrumented child.** `modustool fuzz` and `modustool check` build `build/fuzzing/instrumented/modustool_instrumented`: the compiler writes the LLVM IR of each package, `opt -passes=sancov-module` adds an 8-bit edge counter to each edge of the packages under test and traces their comparisons, `llc` makes the objects, and `clang` links them with the flags that the compiler prints. The engine keeps an input that gives an edge a count in a class that no kept input gave.
+
+**The corpus.** The corpus of each target is in `tools/modustool/fuzzing_corpus/<target>/`: the regression inputs in `regression/` and the reach inputs in `reach/`, one file for each input, named by the BLAKE3 hash of its bytes. A target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a name that is not the hash of its bytes, and a folder that names no target.
+
+**In `modustool check`.** For each target, the child runs each input of its corpus, then a fixed count of new executions (20 000, fewer for a target whose execution does much). The seed is the BLAKE3 hash of the sources of the tool and of the source library: the same sources run the same inputs. The check fails on any fuzz finding. The line of each target prints the edges that it reached.
+
+**A long run.** `modustool fuzz <target>` runs until it is stopped, or for a count of executions, with one child for each process; the children share the inputs that they keep through `build/fuzzing/<target>/kept/`. It prints the executions in one second as a measure, never as a condition.
+
+**A fuzz finding.** The tool minimizes the input while its signature stays (the oracle and the place of the fault), and writes it with a text to `build/fuzzing/<target>/findings/`. `modustool fuzz show <target> <file>` prints its outcome and its bytes as an Odin array, for a named host test of the reader. After the fix, `modustool fuzz regression <target> <file>` adds it to the regression inputs, which each check runs again; the command refuses an input that still breaks an oracle. `modustool fuzz corpus <target>` replaces the reach inputs with the smallest set of the kept inputs that gives each edge class.
 
 ### The parts of the machine test
 
