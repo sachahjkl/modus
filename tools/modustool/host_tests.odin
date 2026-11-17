@@ -14,8 +14,8 @@ import "core:time"
 // the sandbox). After a failure it starts no new process; the processes
 // that run end.
 //
-// Each folder has its own files under HOST_TEST_OUTPUT_FOLDER: its log, and the
-// temporary folder of its compiler. The compiler names the object of an
+// Each folder has its own log under HOST_TEST_OUTPUT_FOLDER, and its own
+// private temporary folder for its compiler and its tests. The compiler names the object of an
 // assembly file in its temporary folder by the name of the file and an
 // address of its own memory, and the two folders of the runtime assemble
 // two files of one name, `memory_for_host_tests.asm`: with one temporary
@@ -41,12 +41,6 @@ host_test_name :: proc(folder: string) -> string {
 // tests of a folder.
 host_test_log_file :: proc(folder: string) -> string {
 	return join(HOST_TEST_OUTPUT_FOLDER, "/", host_test_name(folder), ".txt")
-}
-
-// host_test_temporary_folder gives the temporary folder of the compiler
-// of the host tests of a folder, from the root of the repository.
-host_test_temporary_folder :: proc(folder: string) -> string {
-	return join(HOST_TEST_OUTPUT_FOLDER, "/", host_test_name(folder))
 }
 
 // host_test_command gives the command of the host tests of a folder, with
@@ -116,17 +110,26 @@ host_tests_run :: proc(folders: []string) -> bool {
 		fmt.eprintfln("modustool: the host tests: %s, so two processes at once would write one file", repeat)
 		return false
 	}
-	root, root_error := os.get_working_directory(context.temp_allocator)
-	if root_error != nil {
-		fmt.eprintfln("modustool: cannot read the folder of the repository: %v", root_error)
-		return false
-	}
 	// The logs of an earlier check are not the logs of this one.
 	reset_folder(HOST_TEST_OUTPUT_FOLDER) or_return
+	// Each temporary folder is a new private folder in the temporary folder
+	// of the check, with a short name: a test makes a Unix socket in it,
+	// whose path takes 107 bytes at most, and the key folder of a test
+	// must be in a folder that only its owner opens.
 	commands := make([][]string, len(folders), context.temp_allocator)
+	temporary_folders := make([]string, len(folders), context.temp_allocator)
+	defer for temporary_folder in temporary_folders {
+		if temporary_folder != "" {
+			_ = os.remove_all(temporary_folder)
+		}
+	}
 	for folder, place in folders {
-		temporary_folder := join(root, "/", host_test_temporary_folder(folder))
-		make_folder(temporary_folder) or_return
+		temporary_folder, temporary_error := os.make_directory_temp("", "host_*", context.temp_allocator)
+		if temporary_error != nil {
+			fmt.eprintfln("modustool: cannot make a temporary folder for the host tests of %s: %v", folder, temporary_error)
+			return false
+		}
+		temporary_folders[place] = temporary_folder
 		commands[place] = host_test_command(folder, temporary_folder)
 	}
 	processors := test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
