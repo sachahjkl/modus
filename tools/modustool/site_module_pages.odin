@@ -255,7 +255,14 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			// The grants and the fields of the budget are lists of values: a
 			// grant leads to its row on the page of the grants.
 			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .List}, {"As the root service says", .Prose}})
-			fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), site_slug(build.name))
+			// Only a program with a row of the table of the roles has a row on
+			// the page of the grants: the root service and a disk program
+			// have none, so their cell names the grants with no link.
+			if has_role {
+				fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), site_slug(build.name))
+			} else {
+				strings.write_string(&b, "<tr><td>Grants</td><td>")
+			}
 			site_grant_set_write(site, &b, item.page, role.grants, true)
 			strings.write_string(&b, "</td>")
 			site_comment_cell(site, &b, item.page, has_role ? role.comment : "No row: the kernel starts the root service, and a disk program has the role of its row in the disk grant table of its principal.")
