@@ -7,12 +7,18 @@ import "core:testing"
 
 // A small tree with a kernel, two contract packages, one support package and
 // the manifest of the cryptography of Odin, at the folders of the tool: the
-// check reads them there. Each file is one import that the rule allows.
+// check reads them there. Each file is one import that the rule allows. The
+// tree holds each folder of src/ that the check walks: a folder that it names
+// and the tree lacks stops the read of the whole tree.
 @(private = "file")
 library_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "library_imports_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	for name in ([]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_CONTRACT + "/record/inner", SOURCE_FOLDER_SUPPORT + "/sentence", SOURCE_FOLDER_SUPPORT + "/cryptography"}) {
+	folders := SOURCE_FOLDERS
+	for name in folders {
+		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
+	}
+	for name in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_CONTRACT + "/record/inner", SOURCE_FOLDER_SUPPORT + "/sentence", SOURCE_FOLDER_SUPPORT + "/cryptography"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
 	library_tree_file_write(folder, SOURCE_FOLDER_KERNEL + "/enter.odin", "package kernel\n\nimport \"base:intrinsics\"\nimport ring \"" + CONTRACT_IMPORT_START + "ring\"\nimport \"" + CONTRACT_IMPORT_START + "record/inner\"\n")
@@ -113,13 +119,14 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 		testing.expectf(t, library_import_is_allowed(path, copied_source), "%q is an import of the copy of the cryptography of Odin", path)
 	}
 
-	// A test: a package of the core library too.
-	for path in ([]string{"base:intrinsics", "core:testing", "core:math/rand", SOURCE_LIBRARY_IMPORT_START + "support/sentence", CONTRACT_IMPORT_START + "ring"}) {
+	// A test runs on the host: the whole core library is open to it, with its
+	// build line.
+	for path in ([]string{"base:intrinsics", "core:testing", "core:math/rand", "core:os", SOURCE_LIBRARY_IMPORT_START + "support/sentence", CONTRACT_IMPORT_START + "ring"}) {
 		testing.expectf(t, library_import_is_allowed(path, system_test), "%q is an import of a test", path)
 	}
 
-	// The kernel and a contract package: the contract packages only, and a
-	// package of the core library in a test.
+	// The kernel and a contract package import the contract packages only,
+	// and a test of them adds the core library.
 	for form in ([]Library_Source_Form{kernel_source, contract_source}) {
 		for path in ([]string{"base:intrinsics", CONTRACT_IMPORT_START + "ring", CONTRACT_IMPORT_START + "record/inner"}) {
 			testing.expectf(t, library_import_is_allowed(path, form), "%q is an import of %v", path, form)
@@ -129,10 +136,10 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 		}
 	}
 	for form in ([]Library_Source_Form{kernel_test, contract_test}) {
-		for path in ([]string{"base:intrinsics", "core:testing", CONTRACT_IMPORT_START + "ring"}) {
+		for path in ([]string{"base:intrinsics", "core:testing", "core:os", CONTRACT_IMPORT_START + "ring"}) {
 			testing.expectf(t, library_import_is_allowed(path, form), "%q is an import of %v", path, form)
 		}
-		for path in ([]string{SUPPORT_IMPORT_START + "sentence", SOURCE_LIBRARY_IMPORT_START + "contract", "core:os"}) {
+		for path in ([]string{SUPPORT_IMPORT_START + "sentence", SOURCE_LIBRARY_IMPORT_START + "contract"}) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is not an import of %v", path, form)
 		}
 	}
@@ -158,7 +165,7 @@ library_imports_of_an_allowed_tree :: proc(t: ^testing.T) {
 	defer os.remove_all(root)
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	testing.expectf(t, len(reading.breaches) == 0, "%v", reading.breaches)
+	testing.expectf(t, len(reading.breaches[:]) == 0, "%v", reading.breaches[:])
 	testing.expect_value(t, reading.source_count, 4)
 	testing.expect_value(t, reading.test_count, 1)
 	testing.expect_value(t, reading.copy_count, 0)
@@ -177,17 +184,17 @@ library_import_of_a_support_package_is_refused :: proc(t: ^testing.T) {
 	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/write.odin", "package ring\n\nimport \"../../support/sentence\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	if !testing.expect_value(t, len(reading.breaches), 2) {
+	if !testing.expect_value(t, len(reading.breaches[:]), 2) {
 		return
 	}
-	in_kernel, kernel_found := breach_of_file(reading.breaches, SOURCE_FOLDER_KERNEL + "/report.odin")
+	in_kernel, kernel_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_KERNEL + "/report.odin")
 	testing.expect(t, kernel_found, "the file of the kernel is not named")
 	testing.expect_value(t, in_kernel.line, 5)
 	testing.expect_value(t, in_kernel.text, "\"" + SUPPORT_IMPORT_START + "sentence\"")
 	sentence := library_import_breach_sentence(in_kernel)
 	testing.expect(t, strings.contains(sentence, SOURCE_FOLDER_KERNEL + "/report.odin:5: the import \"" + SUPPORT_IMPORT_START + "sentence\" is refused"), sentence)
 	testing.expect(t, strings.contains(sentence, "the kernel imports no support package"), sentence)
-	in_contract, contract_found := breach_of_file(reading.breaches, SOURCE_FOLDER_CONTRACT + "/ring/write.odin")
+	in_contract, contract_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_CONTRACT + "/ring/write.odin")
 	testing.expect(t, contract_found, "the file of the contract package is not named")
 	testing.expect_value(t, in_contract.line, 3)
 	testing.expect_value(t, in_contract.text, "\"../../support/sentence\"")
@@ -204,7 +211,7 @@ library_import_that_the_compiler_leaves_out_is_read :: proc(t: ^testing.T) {
 	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/write_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\nimport \"" + SUPPORT_IMPORT_START + "sentence\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	testing.expect_value(t, len(reading.breaches), 4)
+	testing.expect_value(t, len(reading.breaches[:]), 4)
 	inside_when := 0
 	for breach in reading.breaches {
 		if strings.has_suffix(breach.file, "/inside_when.odin") {
@@ -213,10 +220,10 @@ library_import_that_the_compiler_leaves_out_is_read :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, inside_when, 2)
-	other_system, other_found := breach_of_file(reading.breaches, "/other_system.odin")
+	other_system, other_found := breach_of_file(reading.breaches[:], "/other_system.odin")
 	testing.expect(t, other_found, "a file that a build tag leaves out is read")
 	testing.expect_value(t, other_system.line, 4)
-	in_test, test_found := breach_of_file(reading.breaches, "/write_test.odin")
+	in_test, test_found := breach_of_file(reading.breaches[:], "/write_test.odin")
 	testing.expect(t, test_found, "a test is read")
 	testing.expect_value(t, in_test.line, 5)
 }
@@ -229,22 +236,21 @@ library_source_that_imports_core_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
 	library_tree_folder_make(root, SOURCE_FOLDER_PROGRAMS + "/console")
-	library_tree_folder_make(root, SOURCE_FOLDER_BOOT)
 	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/console/main.odin", "package console\n\nimport \"core:os\"\n")
 	library_tree_file_write(root, SOURCE_FOLDER_BOOT + "/inside_when.odin", "package boot\n\nwhen false {\n\timport \"core:fmt\"\n}\n")
 	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/console/on_the_host.odin", LIBRARY_HOST_BUILD_LINE + "\npackage console\n\nimport \"core:fmt\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	if !testing.expect_value(t, len(reading.breaches), 3) {
+	if !testing.expect_value(t, len(reading.breaches[:]), 3) {
 		return
 	}
-	main_source, main_found := breach_of_file(reading.breaches, "/console/main.odin")
+	main_source, main_found := breach_of_file(reading.breaches[:], "/console/main.odin")
 	testing.expect(t, main_found, "a source that is not a test imports no core:os")
 	testing.expect_value(t, main_source.line, 3)
-	inside_when, when_found := breach_of_file(reading.breaches, "/boot/inside_when.odin")
+	inside_when, when_found := breach_of_file(reading.breaches[:], "/boot/inside_when.odin")
 	testing.expect(t, when_found, "an import inside a `when` is read")
 	testing.expect_value(t, inside_when.line, 4)
-	on_the_host, host_found := breach_of_file(reading.breaches, "/console/on_the_host.odin")
+	on_the_host, host_found := breach_of_file(reading.breaches[:], "/console/on_the_host.odin")
 	testing.expect(t, host_found, "the build line of the host does not allow a source that is not a test to import core:")
 	testing.expect_value(t, on_the_host.line, 4)
 	for breach in reading.breaches {
@@ -270,10 +276,10 @@ library_test_without_build_line_is_refused :: proc(t: ^testing.T) {
 	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/fast_test_amd64.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	if !testing.expect_value(t, len(reading.breaches), 3) {
+	if !testing.expect_value(t, len(reading.breaches[:]), 3) {
 		return
 	}
-	no_line, no_line_found := breach_of_file(reading.breaches, "/sentence/sentence_test.odin")
+	no_line, no_line_found := breach_of_file(reading.breaches[:], "/sentence/sentence_test.odin")
 	testing.expect(t, no_line_found, "the test without the line is not named")
 	testing.expect_value(t, no_line.reason, Library_Import_Breach_Reason.Test_Without_Build_Line)
 	testing.expect_value(t, no_line.line, 3)
@@ -281,15 +287,15 @@ library_test_without_build_line_is_refused :: proc(t: ^testing.T) {
 	sentence := library_import_breach_sentence(no_line)
 	testing.expect(t, strings.contains(sentence, "/sentence/sentence_test.odin:3: the test imports \"core:testing\" and has no build line"), sentence)
 	testing.expect(t, strings.contains(sentence, LIBRARY_HOST_BUILD_LINE), sentence)
-	other, other_found := breach_of_file(reading.breaches, "/sentence/other_test.odin")
+	other, other_found := breach_of_file(reading.breaches[:], "/sentence/other_test.odin")
 	testing.expect(t, other_found, "the first build line is the one of the host, whatever comes after it")
 	testing.expect_value(t, other.reason, Library_Import_Breach_Reason.Test_Without_Build_Line)
 	testing.expect_value(t, other.line, 4)
-	comma, comma_found := breach_of_file(reading.breaches, "/sentence/comma_test.odin")
+	comma, comma_found := breach_of_file(reading.breaches[:], "/sentence/comma_test.odin")
 	testing.expect(t, comma_found, "a tag after a comma would allow a build that is freestanding")
 	testing.expect_value(t, comma.reason, Library_Import_Breach_Reason.Test_Without_Build_Line)
-	testing.expect_value(t, breach_count_of_file(reading.breaches, "/sentence/small_test.odin"), 0)
-	testing.expect_value(t, breach_count_of_file(reading.breaches, "/ring/fast_test_amd64.odin"), 0)
+	testing.expect_value(t, breach_count_of_file(reading.breaches[:], "/sentence/small_test.odin"), 0)
+	testing.expect_value(t, breach_count_of_file(reading.breaches[:], "/ring/fast_test_amd64.odin"), 0)
 	// The test of one architecture is read as a test, and not as a source.
 	testing.expect_value(t, reading.test_count, 6)
 }
@@ -308,11 +314,11 @@ library_copy_of_the_cryptography_is_exempt :: proc(t: ^testing.T) {
 	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/reflect.odin", "package sentence\n\nimport \"core:reflect\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	if !testing.expect_value(t, len(reading.breaches), 1) {
+	if !testing.expect_value(t, len(reading.breaches[:]), 1) {
 		return
 	}
-	testing.expect_value(t, breach_count_of_file(reading.breaches, "/cryptography/aes/aes_impl.odin"), 0)
-	testing.expect_value(t, breach_count_of_file(reading.breaches, "/sentence/reflect.odin"), 1)
+	testing.expect_value(t, breach_count_of_file(reading.breaches[:], "/cryptography/aes/aes_impl.odin"), 0)
+	testing.expect_value(t, breach_count_of_file(reading.breaches[:], "/sentence/reflect.odin"), 1)
 	testing.expect_value(t, reading.copy_count, 1)
 	testing.expect_value(t, reading.source_count, 5)
 }
