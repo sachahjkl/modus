@@ -34,7 +34,7 @@ fuzz_firmware_tables_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return FUZZ_PASSED
 	}
 	table := input[1:]
-	switch Fuzz_Firmware_Table(input[0] % len(Fuzz_Firmware_Table)) {
+	switch enum_member_at(Fuzz_Firmware_Table, int(input[0]) % len(Fuzz_Firmware_Table)) {
 	case .Dmar:
 		return fuzz_dmar_check(table)
 	case .Ivrs:

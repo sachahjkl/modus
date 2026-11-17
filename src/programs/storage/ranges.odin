@@ -199,7 +199,7 @@ ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_
 		// A name that is a tree is refused: the lookup of the name as an
 		// object gives Absent for it too, so look at its entry.
 		if store_index := store_find(ranged.named.path.store.name); store_index >= 0 {
-			if entry, outcome := entry_of(store_index, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != .Object {
+			if entry, outcome := entry_of(store_index, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != u64(format.Entry_Kind.Object) {
 				return ranged, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
 			} else if outcome == .Wrong || outcome == .Device {
 				return ranged, lookup_refusal(outcome, error, 2)

@@ -330,7 +330,8 @@ record_description_of_file :: proc(file: []u8, number: u32) -> (description: Rec
 	fields := make([]Field_Description, int(record.field_count), context.temp_allocator)
 	for &item, index in fields {
 		stored := module.field(file, record, u32(index)) or_return
-		item = {name = module.string_at(file, stored.name_offset, stored.name_count), offset = stored.offset, type = stored.type, detail = stored.detail, unsigned = stored.unsigned, integer_unit = stored.integer_unit}
+		type := module.field_type(stored) or_return
+		item = {name = module.string_at(file, stored.name_offset, stored.name_count), offset = stored.offset, type = type, detail = stored.detail, unsigned = stored.unsigned, integer_unit = stored.integer_unit}
 	}
 	return {name = module.string_at(file, record.name_offset, record.name_count), size = record.size, fields = fields}, true
 }
@@ -345,7 +346,10 @@ call_form_of_export :: proc(file: []u8, export_index: u32) -> (form: Call_Form, 
 	}
 	parameters := make([]Call_Parameter, int(function.parameter_count), context.temp_allocator)
 	for &parameter, index in parameters {
-		parameter = {kind = function.parameters[index], direction = function.parameter_directions[index]}
+		// A byte that names no type is no call form that a declaration can
+		// agree with.
+		kind := module.function_parameter_type(function, index) or_return
+		parameter = {kind = kind, direction = function.parameter_directions[index]}
 		#partial switch parameter.kind {
 		case .Integer:
 			// A file is read as it is: a detail out of the contract is no
@@ -358,8 +362,8 @@ call_form_of_export :: proc(file: []u8, export_index: u32) -> (form: Call_Form, 
 		}
 	}
 	form.parameters = parameters
-	form.result = function.result
-	if function.result == .Record || function.result == .Table {
+	form.result = module.function_result_type(function) or_return
+	if form.result == .Record || form.result == .Table {
 		form.result_record = record_description_of_file(file, function.result_detail) or_return
 	}
 	if function.error_record != 0 {

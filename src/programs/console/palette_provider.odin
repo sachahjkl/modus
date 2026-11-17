@@ -131,7 +131,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	}
 	entry.parameter_count = u8(item.parameter_count)
 	for kind, index in item.parameters[:entry.parameter_count] {
-		entry.parameters[index] = palette_table.Value_Kind(u8(kind))
+		entry.parameters[index] = u8(kind)
 		// What the number counts, where the command or the description of
 		// the export states it: the panel shows the unit after the number
 		// of the field.
@@ -146,7 +146,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 			entry.parameter_name_lengths[index] = u8(copy(entry.parameter_names[index][:], name))
 		}
 	}
-	entry.result = palette_table.Value_Kind(u8(item.result))
+	entry.result = u8(item.result)
 	entry.name_length = u8(copy(entry.name[:], item.name))
 	// The signature, whole; one that does not fit shows no parameter.
 	buffer: [512]u8
@@ -255,7 +255,7 @@ palette_table_write :: proc "contextless" () {
 			if count == palette_table.ENTRY_CAPACITY {
 				break
 			}
-			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(value), result = .Integer}
+			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(value), result = u8(palette_table.Value_Kind.Integer)}
 			name := system.Writer{buffer = entry.name[:]}
 			system.write_part(&name, "set ")
 			system.write_part(&name, description.title)
@@ -297,7 +297,7 @@ palette_table_write :: proc "contextless" () {
 		}
 		value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
 		value := palette_strategy_value(&value_buffer, strategy)
-		entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = .Integer}
+		entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = u8(palette_table.Value_Kind.Integer)}
 		if strategy == strategy_in_use {
 			entry.flags += {.In_Use}
 		}
@@ -850,6 +850,36 @@ palette_commands_add :: proc "contextless" () {
 	}
 }
 
+// run_part_of gives the run part of the palette of a part of a result: the
+// two enums have one member for each part, and a switch names each.
+run_part_of :: proc "contextless" (part: console_results.Part) -> (run_part: palette_table.Run_Part) {
+	switch part {
+	case .Plain:
+		run_part = .Plain
+	case .Label:
+		run_part = .Label
+	case .Note:
+		run_part = .Note
+	case .Failure:
+		run_part = .Failure
+	case .Number:
+		run_part = .Number
+	case .Handle:
+		run_part = .Handle
+	case .Type:
+		run_part = .Type
+	case .Status:
+		run_part = .Status
+	case .Operation:
+		run_part = .Operation
+	case .Size:
+		run_part = .Size
+	case .Time:
+		run_part = .Time
+	}
+	return run_part
+}
+
 // palette_line_ended answers the choice of the palette that the line was,
 // after the console drew its result in its own window. The thread that
 // runs the lines calls it after each line. A short result goes to the
@@ -867,7 +897,7 @@ palette_line_ended :: proc "contextless" () {
 	sink := console_results.Sink {
 		data = &writer,
 		write = proc "contextless" (sink: ^console_results.Sink, text: string, part: console_results.Part) {
-			palette_table.result_run((^palette_table.Result_Writer)(sink.data), palette_table.Run_Part(u8(part)), text)
+			palette_table.result_run((^palette_table.Result_Writer)(sink.data), run_part_of(part), text)
 		},
 		end_line = proc "contextless" (sink: ^console_results.Sink) {
 			palette_table.result_line_end((^palette_table.Result_Writer)(sink.data))

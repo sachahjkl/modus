@@ -17,6 +17,8 @@
 // [pointer picture](term:pointer-picture) and [hot spot](term:hot-spot).
 package pointer_pictures
 
+import "modus:contract/enum_word"
+
 MAGIC :: u64(0x535245544E494F50) // The bytes "POINTERS".
 VERSION :: 2 // The version of the format. A reader refuses another.
 HEADER_SIZE :: 512 // The bytes of `Header`.
@@ -104,10 +106,8 @@ shape_of_name :: proc "contextless" (name: string) -> (shape: Pointer_Shape, fou
 // shape_name gives the name of a shape number, or "" for a number out of
 // the enum.
 shape_name :: proc "contextless" (number: u32) -> string {
-	if number > u32(max(Pointer_Shape)) {
-		return ""
-	}
-	return SHAPE_NAMES[Pointer_Shape(number)]
+	shape, known := enum_word.member_of_word(Pointer_Shape, u64(number))
+	return known ? SHAPE_NAMES[shape] : ""
 }
 
 // The first 512 bytes of a pointer theme file.

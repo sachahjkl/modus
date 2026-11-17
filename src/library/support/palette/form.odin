@@ -1,5 +1,6 @@
 package palette
 
+import "modus:contract/enum_word"
 import "modus:contract/palette_table"
 import "modus:contract/value_kinds"
 import "modus:support/line_editor"
@@ -47,12 +48,21 @@ form_can_open :: proc "contextless" (given: ^palette_table.Entry) -> bool {
 	if given == nil || given.parameter_count == 0 {
 		return false
 	}
-	for kind in given.parameters[:min(int(given.parameter_count), FIELD_CAPACITY)] {
-		if kind != .Integer && kind != .Text {
+	for index in 0 ..< min(int(given.parameter_count), FIELD_CAPACITY) {
+		kind, kind_ok := palette_table.parameter_kind_of(given, index)
+		if !kind_ok || kind != .Integer && kind != .Text {
 			return false
 		}
 	}
 	return true
+}
+
+// field_is_integer says if the parameter of a field is an Integer, read
+// through the border of the kind: a byte that names no kind is no Integer.
+@(private)
+field_is_integer :: proc "contextless" (form: ^Form, field: int) -> bool {
+	kind, kind_ok := palette_table.parameter_kind_of(&form.given, field)
+	return kind_ok && kind == .Integer
 }
 
 // form_open makes the form of an entry of the list, with empty fields and
@@ -131,7 +141,7 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 		return false, false
 	}
 	field := &form.fields[form.current]
-	kind := form.given.parameters[form.current]
+	integer := field_is_integer(form, form.current)
 	edit_key := line_editor.Edit_Key.None
 	switch key {
 	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter:
@@ -153,7 +163,7 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 		edit_key = .Delete
 	case .Character:
 		edit_key = .Character
-		if kind == .Integer {
+		if integer {
 			digit := character >= '0' && character <= '9'
 			sign := character == '-' && field.caret == 0 && (field.count == 0 || field.bytes[0] != '-')
 			if !digit && !sign {
@@ -228,7 +238,7 @@ Field_Control :: enum u8 {
 // The copy of the entry passed the checks of the contract, so the unit is
 // one of the contract.
 field_unit :: proc "contextless" (form: ^Form, field: int) -> value_kinds.Integer_Unit {
-	if field < 0 || field >= form.field_count || form.given.parameters[field] != .Integer {
+	if field < 0 || field >= form.field_count || !field_is_integer(form, field) {
 		return {}
 	}
 	return form.given.parameter_units[field]
@@ -253,7 +263,7 @@ field_control :: proc "contextless" (form: ^Form, field: int) -> Field_Control {
 		}
 		return .Candidate_List
 	}
-	if form.given.parameters[field] != .Integer {
+	if !field_is_integer(form, field) {
 		return .Text
 	}
 	return field_unit(form, field).kind != .None ? Field_Control.Number_With_Unit : Field_Control.Integer
@@ -321,7 +331,8 @@ form_caret_put :: proc "contextless" (panel: ^Panel, field: int, caret: int) -> 
 // not know, give no candidate.
 form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64, kind: u64, facts: u64 = 0) {
 	form_candidates_clear(form)
-	if kind == 0 || kind > u64(max(palette_table.Candidate_Kind)) || facts &~ palette_table.CANDIDATES_CLOSED != 0 {
+	candidate_kind, kind_ok := enum_word.member_of_word(palette_table.Candidate_Kind, kind)
+	if !kind_ok || candidate_kind == .None || facts &~ palette_table.CANDIDATES_CLOSED != 0 {
 		return
 	}
 	copied, ok := palette_table.candidates_copy(memory, count, &form.candidates)
@@ -329,7 +340,7 @@ form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64
 		return
 	}
 	form.candidate_count = copied
-	form.candidate_kind = palette_table.Candidate_Kind(kind)
+	form.candidate_kind = candidate_kind
 	form.candidates_closed = facts & palette_table.CANDIDATES_CLOSED != 0
 	form_candidates_filter(form)
 }
@@ -452,7 +463,7 @@ form_check :: proc "contextless" (panel: ^Panel) -> bool {
 		sentence := ""
 		if len(text) == 0 {
 			sentence = "empty"
-		} else if form.given.parameters[field] == .Integer {
+		} else if field_is_integer(form, field) {
 			if _, ok := integer_of(text); !ok {
 				sentence = "not an Integer of 64 bits"
 			}
@@ -474,7 +485,7 @@ form_check :: proc "contextless" (panel: ^Panel) -> bool {
 // typed value, an Integer as a number and a Text as its bytes.
 form_argument :: proc "contextless" (form: ^Form, field: int) -> [7]u64 {
 	text := field_text(form, field)
-	if form.given.parameters[field] == .Integer {
+	if field_is_integer(form, field) {
 		value, _ := integer_of(text)
 		return palette_table.argument_pack(field, .Integer, value, "")
 	}

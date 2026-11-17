@@ -164,8 +164,8 @@ offset  size  field                  type
     12     4  about_count            u32
     16    48  parameter_names        [PARAMETER_CAPACITY]u32
     64     1  parameter_count        u8
-    65     1  result                 Type
-    66    12  parameters             [PARAMETER_CAPACITY]Type
+    65     1  result                 u8
+    66    12  parameters             [PARAMETER_CAPACITY]u8
     78    12  parameter_name_counts  [PARAMETER_CAPACITY]u8
     90    12  parameter_directions   [PARAMETER_CAPACITY]Direction
    102     2  reserved               [2]u8
@@ -189,7 +189,7 @@ offset  size  field         type
      0     4  name_offset   u32
      4     4  name_count    u32
      8     4  offset        u32
-    12     1  type          Type
+    12     1  type          u8
     13     1  unsigned      bool
     14     2  integer_unit  value_kinds.Integer_Unit
     16     4  detail        u32
@@ -203,7 +203,7 @@ offset  size  field         type
     12     4  text_count    u32
 ```
 
-A type is one byte (`module.Type`): Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
+A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
 
 The documentation is part of the file, so it has the hash of the module: a text cannot describe another version of the code. A record of the Functions table also names the documentation text of its export. A documentation text is UTF-8 bytes, in a small part of Markdown. Lines that follow each other are one paragraph: the reader breaks it at the width that it has. A line that starts with a space, outside a list, stays as it is. An empty line separates two blocks. No loader reads these records.
 

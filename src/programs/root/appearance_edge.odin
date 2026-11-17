@@ -55,7 +55,7 @@ appearance_step :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	for _ in 0 ..< settings.READ_TRIES {
-		choice := settings.read(settings_page)
+		choice, ok := settings.read(settings_page)
 		if choice.change_count & 1 != 0 {
 			return // A writer stopped in a change: the page has the defaults until its next write.
 		}
@@ -66,9 +66,12 @@ appearance_step :: proc "contextless" (wait: ^system.Wait) {
 		if intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) != choice.change_count {
 			continue
 		}
+		if !ok {
+			return // A page with a word that names no value: no rule is computed from a value that the page does not hold.
+		}
 		now := system.time()
 		moment := appearance.moment_of(appearance_date_page, now)
-		setting := settings.appearance_of(choice)
+		setting := choice.appearance
 		in_force := appearance.in_force_of(setting, moment)
 		appearance_deadline = system.WAIT_FOREVER
 		if setting == .Auto && moment.known {

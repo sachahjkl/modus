@@ -599,10 +599,10 @@ record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := fals
 	}
 	// The breakpoint of a step over a call, alone: the export waits for it,
 	// and its stop is the result of the export.
-	if awaited_break >= 0 && record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == u64(1) << u64(awaited_break) {
+	if awaited_break >= 0 && record.kind == u64(op.Fault_Kind.Debug) && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == u64(1) << u64(awaited_break) {
 		return
 	}
-	if awaited_step && record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == 0 {
+	if awaited_step && record.kind == u64(op.Fault_Kind.Debug) && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == 0 {
 		return
 	}
 	if session.event_count == EVENT_CAPACITY {
@@ -614,7 +614,7 @@ record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := fals
 	event^ = {thread = record.thread, instruction = record.instruction}
 	writer := system.Writer{buffer = event.kind[:]}
 	switch {
-	case record.kind == .Breakpoint:
+	case record.kind == u64(op.Fault_Kind.Breakpoint):
 		system.write_part(&writer, "int3")
 	case record.error_code & op.DEBUG_STATUS_STEP != 0:
 		system.write_part(&writer, "step")

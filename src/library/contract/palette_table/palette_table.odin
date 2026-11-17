@@ -99,12 +99,24 @@ Value_Kind :: enum u8 {
 // value_kind_of_word is the border of the kind of a value in a word of a
 // record: the member, or false for a word that names none.
 value_kind_of_word :: proc "contextless" (word: u64) -> (kind: Value_Kind, ok: bool) {
-	for member in Value_Kind {
-		if u64(member) == word {
-			return member, true
-		}
+	return enum_word.member_of_word(Value_Kind, word)
+}
+
+// result_kind_of is the border of the kind of the result of an entry
+// (Entry.result). snapshot_take refuses a table with a byte that names no
+// kind; a reader of a copy takes the byte through this border again.
+result_kind_of :: proc "contextless" (entry: ^Entry) -> (kind: Value_Kind, ok: bool) {
+	return value_kind_of_word(u64(entry.result))
+}
+
+// parameter_kind_of is the border of the kind of the parameter index of an
+// entry (Entry.parameters): false for an index past PARAMETER_CAPACITY and
+// for a byte that names no kind.
+parameter_kind_of :: proc "contextless" (entry: ^Entry, index: int) -> (kind: Value_Kind, ok: bool) {
+	if index < 0 || index >= PARAMETER_CAPACITY {
+		return {}, false
 	}
-	return {}, false
+	return value_kind_of_word(u64(entry.parameters[index]))
 }
 
 // One entry: 536 bytes.
@@ -126,12 +138,12 @@ Entry :: struct {
 	kind:             u8, // What the entry is: the word of an Entry_Kind, read through entry_kind_of_word.
 	flags:            Entry_Flags, // Its facts.
 	parameter_count:  u8, // Its parameters: 0 to PARAMETER_CAPACITY. 0: the panel runs it with no argument.
-	result:           Value_Kind, // The kind of its result.
+	result:           u8, // The kind of its result: the word of a Value_Kind, read through result_kind_of.
 	name_length:      u8, // The bytes of `name` in use: 1 to NAME_CAPACITY.
 	signature_length: u8, // The bytes of `signature` in use. It starts with the name.
 	about_length:     u8, // The bytes of `about` in use.
 	setting:          u8, // A Setting entry: the number of the setting (settings.Setting). Else 0.
-	parameters:       [PARAMETER_CAPACITY]Value_Kind, // The kind of each parameter.
+	parameters:       [PARAMETER_CAPACITY]u8, // The kind of each parameter: the word of a Value_Kind, read through parameter_kind_of.
 	setting_value:    u8, // A Setting entry: the number of the value. Else 0.
 	reserved:         u8, // 0.
 	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
@@ -335,7 +347,8 @@ ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys)) | u8(1 << u8(Entry_Flag.In
 // entry_problem checks one entry of a copy.
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	entry_kind, entry_kind_ok := entry_kind_of_word(u64(entry.kind))
-	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} || entry.reserved_end != 0 {
+	_, result_ok := result_kind_of(entry)
+	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || !result_ok || entry.reserved != 0 || entry.reserved_more != {} || entry.reserved_end != 0 {
 		return .Bad_Kind
 	}
 	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
@@ -356,7 +369,8 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 		return .Bad_Setting
 	}
 	if entry_kind == .Setting {
-		if entry.parameter_count != 0 || entry.setting > u8(max(settings.Setting)) || u32(entry.setting_value) >= settings.descriptions[settings.Setting(entry.setting)].value_count {
+		setting, setting_ok := enum_word.member_of_word(settings.Setting, u64(entry.setting))
+		if entry.parameter_count != 0 || !setting_ok || !settings.value_valid(setting, u32(entry.setting_value)) {
 			return .Bad_Setting
 		}
 	} else if entry.setting != 0 || entry.setting_value != 0 {
@@ -368,8 +382,9 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	if entry.name_length == 0 || int(entry.name_length) > NAME_CAPACITY || int(entry.signature_length) > SIGNATURE_CAPACITY || int(entry.about_length) > ABOUT_CAPACITY || int(entry.parameter_count) > PARAMETER_CAPACITY {
 		return .Bad_Length
 	}
-	for kind, index in entry.parameters {
-		if kind > max(Value_Kind) {
+	for _, index in entry.parameters {
+		kind, kind_ok := parameter_kind_of(entry, index)
+		if !kind_ok {
 			return .Bad_Kind
 		}
 		// A unit only on an Integer that the entry has: the panel shows

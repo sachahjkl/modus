@@ -80,7 +80,7 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 	}
 	alignment := u32(1)
 	for &column in columns {
-		width := module.field_size(column.type, column.detail)
+		width := module.field_size(column_field(column))
 		if width == 0 {
 			return nil, 0, false
 		}
@@ -129,7 +129,7 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 	for column, index in columns {
 		item := module.Field {
 			offset       = column.offset,
-			type         = column.type,
+			type         = u8(column.type),
 			detail       = column.detail,
 			unsigned     = column.unsigned,
 			integer_unit = column.integer_unit,
@@ -153,7 +153,7 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 // column_field gives the field of a column, as a reader of the description
 // finds it.
 column_field :: proc "contextless" (column: Column) -> module.Field {
-	return {offset = column.offset, type = column.type, detail = column.detail, unsigned = column.unsigned, integer_unit = column.integer_unit}
+	return {offset = column.offset, type = u8(column.type), detail = column.detail, unsigned = column.unsigned, integer_unit = column.integer_unit}
 }
 
 // row_text_set writes a text in a Text column of a row. A text longer than

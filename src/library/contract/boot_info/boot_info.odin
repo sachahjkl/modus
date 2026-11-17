@@ -101,7 +101,7 @@ Boot_Info :: struct {
 	cycles_loaded:      u64, // The kernel and the boot image are in memory.
 	firmware_vendor:    [32]u8, // Zero bytes after the name.
 	firmware_revision:  u64, // The revision of the firmware, as the firmware gives it.
-	self_test:          Self_Test, // None for a normal boot. Another value: the kernel does that test on itself and stops.
+	self_test:          u64, // The word of a Self_Test (self_test_of_word). None for a normal boot. Another value: the kernel does that test on itself and stops.
 	trust:              Boot_Trust, // What the boot program verified and measured.
 	// The debug image: the debug objects of the modules, a file of the boot
 	// volume beside the boot program (docs/MODULE_CONTRACT.md, "Debug
@@ -135,9 +135,9 @@ Boot_Trust :: struct {
 	security_version:    u64, // The security version of the system description.
 	key_number:          u64, // The key number that the boot program holds beside the public key.
 	version_floor:       u64, // The lowest security version that the TPM lets start with this key number. 0: none.
-	version_floor_state: Floor_State, // What the read of the version floor of this key number found.
+	version_floor_state: u64, // What the read of the version floor of this key number found: the word of a Floor_State (floor_state_of_word).
 	key_floor:           u64, // The lowest key number that the TPM lets start. 0: none.
-	key_floor_state:     Floor_State, // What the read of the key floor found.
+	key_floor_state:     u64, // What the read of the key floor found: the word of a Floor_State (floor_state_of_word).
 	floor_status:        u64, // The status of the firmware, or the response code of the TPM, of the first read that failed.
 }
 
@@ -153,6 +153,19 @@ Floor_State :: enum u64 {
 	Not_Read      = 4, // The firmware or the TPM refused a read for another reason: floor_status has the code.
 	Never_Written = 5, // The area of a floor that was never written. This system writes each floor that it defines at once, so another system planted it: it can hold an authorization value that refuses each later read.
 	Read_Refused  = 6, // The area of a floor whose read the TPM refuses for its authorization: another system planted it with an authorization value.
+}
+
+// floor_state_of_word is the border of a floor state of the trust record
+// (Boot_Trust.key_floor_state, version_floor_state): the member, or false
+// for a word that names no state. The record reaches a program through the
+// boot report of the kernel, so its reader never casts the word.
+floor_state_of_word :: proc "contextless" (word: u64) -> (state: Floor_State, ok: bool) {
+	for member in Floor_State {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
 }
 
 // The TPM floors: indices of the TPM in the range of the owner of the
@@ -227,6 +240,19 @@ Self_Test :: enum u64 {
 	Read_Program     = 5, // Read the memory of a program, outside a copy.
 	Execute_Program  = 6, // Execute the code of a program.
 	Register_Refused = 7, // Write an address that is not canonical to a register in a register trial.
+}
+
+// self_test_of_word is the border of the self test of the boot record
+// (Boot_Info.self_test): the member, or false for a word that names no
+// test. The kernel stops on such a word: it never runs a test, nor a normal
+// boot, that the boot program did not name.
+self_test_of_word :: proc "contextless" (word: u64) -> (test: Self_Test, ok: bool) {
+	for member in Self_Test {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
 }
 
 // physical gives a pointer to physical memory, through the direct map. Only

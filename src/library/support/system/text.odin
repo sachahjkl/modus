@@ -27,7 +27,9 @@ format :: sentence.format
 write_number :: sentence.write_number
 write_rights :: sentence.write_rights
 write_type :: sentence.write_type
+write_type_word :: sentence.write_type_word
 write_parameter_type :: sentence.write_parameter_type
+write_parameter_type_word :: sentence.write_parameter_type_word
 write_field_type :: sentence.write_field_type
 direction_name :: sentence.direction_name
 error_text :: sentence.error_text

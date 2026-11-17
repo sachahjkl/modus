@@ -534,7 +534,7 @@ COMMANDS :: [?]Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a program or a module gives a negative number with no error record, and that no family of integer constants is used as a closed set of choices", run = run_rule_checks},
+	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a program or a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a

@@ -164,7 +164,7 @@ run_add :: proc "contextless" (runs: []terminal.Code_Run, count: int, start, end
 	place := start
 	for place < end && written < len(runs) && place <= 255 {
 		length := min(end - place, 255)
-		runs[written] = {start = u8(place), length = u8(length), kind = kind}
+		runs[written] = {start = u8(place), length = u8(length), kind = u8(kind)}
 		written += 1
 		place += length
 	}

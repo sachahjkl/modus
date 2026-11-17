@@ -177,7 +177,7 @@ fuzz_module_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {
 	for index in 0 ..< entries {
 		entry: module.Table_Entry
 		intrinsics.mem_copy_non_overlapping(&entry, &input[directory + index * size_of(module.Table_Entry)], size_of(module.Table_Entry))
-		type, size := fuzz_module_record_type(module.Table_Kind(index))
+		type, size := fuzz_module_record_type(enum_member_at(module.Table_Kind, index))
 		if type == nil || int(entry.record_size) != size || entry.offset >= u64(len(input)) {
 			continue
 		}
@@ -261,9 +261,9 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 		function: module.Function
 		function.name_offset, function.name_count = fuzz_module_name_add(&strings_bytes, &choices, 'e')
 		function.parameter_count = u8(fuzz_choice_below(&choices, 4))
-		function.result = .Integer
+		function.result = u8(module.Type.Integer)
 		for parameter in 0 ..< int(function.parameter_count) {
-			function.parameters[parameter] = .Integer
+			function.parameters[parameter] = u8(module.Type.Integer)
 			name_offset, name_count := fuzz_module_name_add(&strings_bytes, &choices, 'p')
 			function.parameter_names[parameter] = name_offset
 			function.parameter_name_counts[parameter] = u8(name_count)
@@ -280,7 +280,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	record := module.Record{first_field = 1, field_count = u32(field_count), size = u32(8 * field_count)}
 	record.name_offset, record.name_count = fuzz_module_name_add(&strings_bytes, &choices, 'R')
 	for number in 0 ..< field_count {
-		item := module.Field{offset = u32(8 * number), type = .Integer, unsigned = fuzz_choice_flag(&choices)}
+		item := module.Field{offset = u32(8 * number), type = u8(module.Type.Integer), unsigned = fuzz_choice_flag(&choices)}
 		item.name_offset, item.name_count = fuzz_module_name_add(&strings_bytes, &choices, 'f')
 		append(&fields, item)
 	}
@@ -317,7 +317,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	broken_value: u64
 	broken_field := 0
 	if allow_break && fuzz_choice_rare(&choices, 4) {
-		broken_kind = module.Table_Kind(1 + fuzz_choice_below(&choices, module.TABLE_COUNT - 1))
+		broken_kind = enum_member_at(module.Table_Kind, 1 + fuzz_choice_below(&choices, module.TABLE_COUNT - 1))
 		broken_field = fuzz_choice_below(&choices, 8)
 		broken_value = fuzz_choice_word(&choices, 8)
 		broke = true

@@ -365,17 +365,17 @@ table_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (kind: modul
 				continue
 			}
 			if len(call.args) != 1 {
-				return .Table, 0, module.Direction(value), true, false
+				return .Table, 0, enum_member_at(module.Direction, value), true, false
 			}
 			record, is_record, record_ok := struct_record(state, call.args[0], true)
-			return .Table, record, module.Direction(value), true, is_record && record_ok
+			return .Table, record, enum_member_at(module.Direction, value), true, is_record && record_ok
 		}
 		return
 	}
 	name := name_of(pointer.elem)
 	for form, value in forms {
 		if name == strings.concatenate({"Bytes_To_", form}, context.temp_allocator) {
-			return .Bytes, 0, module.Direction(value), true, true
+			return .Bytes, 0, enum_member_at(module.Direction, value), true, true
 		}
 	}
 	return

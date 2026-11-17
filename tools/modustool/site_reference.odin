@@ -9,6 +9,7 @@ package modustool
 import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
+import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -773,8 +774,15 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		for fixed_range in reference.fixed_ranges {
 			fmt.sbprintf(&b, "<tr id=\"range-%s\" data-outline=\"%s\"><td class=\"code\">%d</td>", site_slug(fixed_range.name), fixed_range.name, fixed_range.number)
 			site_name_cell(site, &b, fixed_range.name, SITE_FIXED_ADDRESSES_FILE, fixed_range.line)
-			// The address comes from the contract itself, not from a copy of its constants.
-			fmt.sbprintf(&b, "<td class=\"code name\">0x%016X</td>", fixed_addresses.range_of(fixed_addresses.Fixed_Range(fixed_range.number)).address)
+			// The address comes from the contract itself, not from a copy of
+			// its constants. The number comes from the source, which the
+			// compiler of the tool also read: a number of no range is a
+			// fault of the reader of the source, and stops the tool.
+			range_member, range_known := enum_word.member_of_word(fixed_addresses.Fixed_Range, u64(fixed_range.number))
+			if !range_known {
+				fmt.panicf("modustool: the source names the fixed range %s with the number %d, which names no range", fixed_range.name, fixed_range.number)
+			}
+			fmt.sbprintf(&b, "<td class=\"code name\">0x%016X</td>", fixed_addresses.range_of(range_member).address)
 			site_comment_cell(site, &b, site_page_file(SITE_FIXED_RANGES_FOLDER), fixed_range.comment)
 			strings.write_string(&b, "</tr>\n")
 		}

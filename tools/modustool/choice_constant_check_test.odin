@@ -330,6 +330,161 @@ quantities_limits_and_enums_keep_the_rule :: proc(t: ^testing.T) {
 	}
 }
 
+// A package with an enum, its alias, and each refused form of a cast of a
+// word to an enum: kept in a declaration, in an assignment and in a return,
+// passed to a procedure, switched on, kept in the init of an if, compared
+// with a variable and not with a member, used as an index, and made with
+// `cast` and `transmute`.
+@(private = "file")
+CASTS_DECLARED :: `package casts
+
+Mode :: enum u32 {
+	First  = 1,
+	Second = 2,
+}
+
+Alias :: Mode
+
+use :: proc "contextless" (mode: Mode) {}
+
+kept :: proc "contextless" (word: u32) -> Mode {
+	declared := Mode(word)
+	assigned: Mode
+	assigned = Alias(word)
+	_, _ = declared, assigned
+	return Mode(word)
+}
+
+passed :: proc "contextless" (word: u32) {
+	use(Mode(word))
+}
+
+switched :: proc "contextless" (word: u32) {
+	switch Mode(word) {
+	case .First, .Second:
+	}
+}
+
+in_an_if :: proc "contextless" (word: u32) {
+	if mode := Mode(word); mode == .First {
+	}
+}
+
+with_a_variable :: proc "contextless" (word: u32, wanted: Mode) -> bool {
+	return Mode(word) == wanted
+}
+
+as_an_index :: proc "contextless" (word: u32, names: [Mode]string) -> string {
+	return names[Mode(word)]
+}
+
+with_cast :: proc "contextless" (word: u32) -> (Mode, Mode) {
+	return cast(Mode)word, transmute(Mode)word
+}
+`
+
+// A package that imports the enum and casts a word through the import.
+@(private = "file")
+CASTS_IMPORTED :: `package importer
+
+import other "modus:support/casts"
+
+through_an_import :: proc "contextless" (word: u32) {
+	other.use(other.Mode(word))
+}
+`
+
+// Each refused form is refused, with its file, its line and its form; no
+// cast is accepted that the rule refuses.
+@(test)
+a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
+	sources := []Export_Source {
+		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
+		{path = "src/programs/importer/main.odin", text = CASTS_IMPORTED},
+	}
+	casts, ok := enum_casts_of_sources(sources)
+	testing.expect(t, ok)
+	Expected :: struct {
+		file:      string,
+		line:      int,
+		type_name: string,
+		form:      Enum_Cast_Form,
+	}
+	DECLARED :: "src/library/support/casts/casts.odin"
+	expected := [?]Expected {
+		{DECLARED, 13, "Mode", .Kept}, // A declaration.
+		{DECLARED, 15, "Alias", .Kept}, // An assignment, through an alias.
+		{DECLARED, 17, "Mode", .Kept}, // A return.
+		{DECLARED, 21, "Mode", .Passed},
+		{DECLARED, 25, "Mode", .Switched},
+		{DECLARED, 31, "Mode", .Kept}, // The init of an if.
+		{DECLARED, 36, "Mode", .Kept}, // Compared with a variable, not with a member.
+		{DECLARED, 40, "Mode", .Kept}, // An index.
+		{DECLARED, 44, "Mode", .Kept}, // cast.
+		{DECLARED, 44, "Mode", .Kept}, // transmute.
+		{"src/programs/importer/main.odin", 6, "other.Mode", .Passed},
+	}
+	testing.expect_value(t, len(casts), len(expected))
+	for item, index in expected[:min(len(expected), len(casts))] {
+		found := casts[index]
+		testing.expectf(t, found.file == item.file && found.line == item.line && found.type_name == item.type_name && found.form == item.form, "the cast %d is %s:%d %s %v, not %s:%d %s %v", index, found.file, found.line, found.type_name, found.form, item.file, item.line, item.type_name, item.form)
+		testing.expect(t, enum_cast_exception_of(found) == nil)
+	}
+}
+
+// A source that the parser refuses is no source with no cast.
+@(test)
+a_broken_source_is_no_source_with_no_cast :: proc(t: ^testing.T) {
+	sources := []Export_Source{{path = "src/programs/broken/main.odin", text = "package broken\n\nrun :: proc( {\n"}}
+	_, ok := enum_casts_of_sources(sources)
+	testing.expect(t, !ok)
+}
+
+// The one form that the check accepts: a cast that is one operand of == or
+// != with a member, written `.First`, `Mode.First` or through an import,
+// on either side and in parentheses. The comparison is read once and never
+// kept. The other uses of an enum type are no casts: its members, its
+// count, its largest member, a loop over it and an enumerated array.
+@(private = "file")
+CASTS_ACCEPTED :: `package accepted
+
+import other "modus:support/casts"
+
+Mode :: enum u32 {
+	First  = 1,
+	Second = 2,
+}
+
+compared :: proc "contextless" (word: u32) -> bool {
+	a := Mode(word) == .First
+	b := Mode(word) != Mode.Second
+	c := .First == Mode(word)
+	d := (Mode(word)) == .Second
+	e := other.Mode(word) == other.Mode.First
+	if Mode(word) == .First && other.Mode(word) != .Second {
+	}
+	names: [Mode]string
+	count := len(Mode) + int(max(Mode))
+	for member in Mode {
+		_ = names[member]
+	}
+	return a && b && c && d && e && count > 0
+}
+`
+
+@(test)
+a_cast_compared_with_a_member_is_accepted :: proc(t: ^testing.T) {
+	sources := []Export_Source {
+		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
+		{path = "src/programs/accepted/main.odin", text = CASTS_ACCEPTED},
+	}
+	casts, ok := enum_casts_of_sources(sources)
+	testing.expect(t, ok)
+	for found in casts {
+		testing.expectf(t, found.file != "src/programs/accepted/main.odin", "the accepted form at line %d is refused as %v", found.line, found.form)
+	}
+}
+
 // A name holds a choice when one of its words, whole, is a word of a
 // choice. The names that must not match come first.
 @(test)
@@ -352,9 +507,21 @@ the_words_of_a_choice :: proc(t: ^testing.T) {
 // exception still names a family.
 @(test)
 choice_constants_of_the_repository :: proc(t: ^testing.T) {
-	families, file_count, ok := choice_families_of_tree("")
+	families, casts, file_count, ok := choice_families_of_tree("")
 	testing.expect(t, ok)
 	testing.expect(t, file_count > 100)
+	for cast_of_word in casts {
+		if enum_cast_exception_of(cast_of_word) == nil {
+			testing.expectf(t, false, "%s:%d: a cast of a word to the enum %s is %s", cast_of_word.file, cast_of_word.line, cast_of_word.type_name, enum_cast_form_words[cast_of_word.form])
+		}
+	}
+	for exception in ENUM_CAST_EXCEPTIONS {
+		matched := false
+		for cast_of_word in casts {
+			matched ||= enum_cast_exception_matches(exception, cast_of_word)
+		}
+		testing.expectf(t, matched, "the exception %s of %s names no cast", exception.type_name, exception.folder)
+	}
 	for family in families {
 		if choice_exception_of(family) == nil {
 			testing.expectf(t, false, "%s:%d: the constants %s of %s are a closed set of choices", family.use_file, family.use_line, choice_family_text(family.word, family.word_place), family.folder)

@@ -136,8 +136,12 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	intrinsics.atomic_store(&root_started, true)
 	stage_end(.Kernel_Root)
 	paging_audit()
+	// Each stage lasts from the end of the stage before it; the firmware,
+	// the first one, from 0.
+	stage_before_end := u64(0)
 	for stage in Stage {
-		log_in("boot", .Info, "kernel: boot: ", STAGE_NAMES[stage], ": ", Duration{microseconds(stage_cycles[stage] - (stage == .Firmware ? 0 : stage_cycles[Stage(int(stage) - 1)])), .Microseconds})
+		log_in("boot", .Info, "kernel: boot: ", STAGE_NAMES[stage], ": ", Duration{microseconds(stage_cycles[stage] - stage_before_end), .Microseconds})
+		stage_before_end = stage_cycles[stage]
 	}
 	// The stack of the boot program has no guard pages: the processor
 	// continues on its own kernel stack.
@@ -145,7 +149,15 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 }
 
 first_run :: proc "c" () -> ! {
-	self_test(boot_record.self_test, &boot_record)
+	// The boot program writes the word of the test: a word that names no
+	// test stops the machine, so the kernel runs no test and no normal boot
+	// that the boot program did not name.
+	test, test_known := info.self_test_of_word(boot_record.self_test)
+	if !test_known {
+		log("kernel: the boot record names the self test ", boot_record.self_test, ", which names no test")
+		machine_stop(.Start_Failed)
+	}
+	self_test(test, &boot_record)
 	schedule()
 }
 

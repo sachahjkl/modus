@@ -71,7 +71,7 @@ echo_write :: proc "contextless" (text: string) {
 			parts[part_count] = {text[written:start], {tone = u8(terminal.Tone.Strong)}}
 			part_count += 1
 		}
-		parts[part_count] = {text[start:end], {tone = u8(terminal.Tone.Strong), code = u8(run.kind)}}
+		parts[part_count] = {text[start:end], {tone = u8(terminal.Tone.Strong), code = run.kind}}
 		part_count += 1
 		written = end
 	}

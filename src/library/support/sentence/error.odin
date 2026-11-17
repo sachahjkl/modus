@@ -1,5 +1,6 @@
 package sentence
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -27,7 +28,8 @@ rights_text :: proc "contextless" (writer: ^Writer, value: i64) {
 // unknown kind of object" for a number out of `op.Object_Kind`.
 @(private = "file")
 object_name :: proc "contextless" (value: i64) -> string {
-	return value >= 0 && value <= i64(max(op.Object_Kind)) ? op.OBJECT_KIND_NAMES[op.Object_Kind(value)] : "an unknown kind of object"
+	kind, known := enum_word.member_of_word(op.Object_Kind, u64(value))
+	return known ? op.OBJECT_KIND_NAMES[kind] : "an unknown kind of object"
 }
 
 // error_text writes the sentence of an error record.
@@ -206,7 +208,8 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 	case .State:
 		handle(writer, record, argument)
-		state := record.found >= 0 && record.found <= i64(max(op.Program_State)) ? op.STATE_NAMES[op.Program_State(record.found)] : "in an unknown state"
+		program_state, state_known := enum_word.member_of_word(op.Program_State, u64(record.found))
+		state := state_known ? op.STATE_NAMES[program_state] : "in an unknown state"
 		write_part(writer, " names a program that is ")
 		write_part(writer, state)
 		if record.limit != 0 {
@@ -505,17 +508,17 @@ wrapper_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error
 kernel_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record) {
 	name := "an unknown operation"
 	argument := ""
-	if record.operation > 0 && record.operation <= i64(max(op.Operation)) {
-		form := &op.OPERATIONS[op.Operation(record.operation)]
+	if operation, known := enum_word.member_of_word(op.Operation, u64(record.operation)); known && record.operation > 0 {
+		form := &op.OPERATIONS[operation]
 		name = form.name
 		if record.argument >= 1 && record.argument <= len(form.parameters) {
 			argument = form.parameters[record.argument - 1].name
 		}
 	}
-	if record.kind == i64(errors.Kind.Refused) && record.found >= 0 && record.found <= i64(max(op.Status)) {
+	if status, status_known := enum_word.member_of_word(op.Status, u64(record.found)); record.kind == i64(errors.Kind.Refused) && status_known {
 		write_part(writer, name)
 		write_part(writer, ": refused with the status ")
-		write_part(writer, op.STATUS_NAMES[op.Status(record.found)])
+		write_part(writer, op.STATUS_NAMES[status])
 		write_part(writer, ", and no more detail")
 		return
 	}

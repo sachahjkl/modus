@@ -351,7 +351,7 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 	if !came {
 		system.stop(14)
 	}
-	if record.kind != .Debug || record.error_code & 1 == 0 {
+	if record.kind != u64(op.Fault_Kind.Debug) || record.error_code & 1 == 0 {
 		system.stop(15)
 	}
 	switch mode {
@@ -372,7 +372,7 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 			system.stop(18)
 		}
 		step, step_came := system.fault_record_next(hang_bound())
-		if !step_came || step.kind != .Debug || step.error_code & op.DEBUG_STATUS_STEP == 0 {
+		if !step_came || step.kind != u64(op.Fault_Kind.Debug) || step.error_code & op.DEBUG_STATUS_STEP == 0 {
 			system.stop(19)
 		}
 	case .Closes_Its_Handle:
@@ -510,7 +510,7 @@ cases_of_one_child :: proc "contextless" () {
 
 	// 5. The thread reaches the procedure.
 	record, came := system.fault_record_next(hang_bound())
-	reached := came && record.kind == .Debug && record.error_code == 1 && record.instruction == target && record.thread == 0
+	reached := came && record.kind == u64(op.Fault_Kind.Debug) && record.error_code == 1 && record.instruction == target && record.thread == 0
 	system.log("debugged: detail: the record of the execute breakpoint: kind ", u64(record.kind), ", status ", system.Hex(record.error_code), ", instruction ", system.Hex(record.instruction), ", the procedure ", system.Hex(target))
 	if !came {
 		system.log("debugged: an execute breakpoint at a procedure of the child: no record came: WRONG")
@@ -573,7 +573,7 @@ cases_of_one_child :: proc "contextless" () {
 		moved = after.rip == registers.rip + 1 && after.rsp == registers.rsp - 8
 	}
 	system.log("debugged: detail: the step: status ", system.Hex(step.error_code), ", the instruction address from ", system.Hex(registers.rip), " to ", system.Hex(after.rip), ", the first byte ", system.Hex(u64(first[0])))
-	system.log("debugged: a single step: one instruction ran, and the record names the step", verdict(step_written == .Ok && step_answered == .Ok && step_came && step.kind == .Debug && step.error_code & op.DEBUG_STATUS_STEP != 0 && moved))
+	system.log("debugged: a single step: one instruction ran, and the record names the step", verdict(step_written == .Ok && step_answered == .Ok && step_came && step.kind == u64(op.Fault_Kind.Debug) && step.error_code & op.DEBUG_STATUS_STEP != 0 && moved))
 	if !step_came {
 		return
 	}
@@ -589,7 +589,7 @@ cases_of_one_child :: proc "contextless" () {
 	write, write_came := system.fault_record_next(hang_bound())
 	system.thread_memory_read(child, 0, watched, bytes)
 	system.log("debugged: detail: the record of the data breakpoint: kind ", u64(write.kind), ", status ", system.Hex(write.error_code), ", the word of the child ", value)
-	system.log("debugged: a data breakpoint on a word that the child writes: the fault record names breakpoint 1", verdict(data_written == .Ok && write_came && write.kind == .Debug && write.error_code == 2 && value == 1))
+	system.log("debugged: a data breakpoint on a word that the child writes: the fault record names breakpoint 1", verdict(data_written == .Ok && write_came && write.kind == u64(op.Fault_Kind.Debug) && write.error_code == 2 && value == 1))
 	if !write_came {
 		return
 	}
@@ -770,7 +770,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	entered := false
 	for deadline := hang_bound(); system.time() < deadline; {
 		if record, came := system.fault_record_next(system.time() + 1); came {
-			came_to_the_debugger = record.kind == .Debug && record.error_code & 2 != 0
+			came_to_the_debugger = record.kind == u64(op.Fault_Kind.Debug) && record.error_code & 2 != 0
 			system.debug_fault_answer(child, record)
 		}
 		if intrinsics.atomic_load(&shared.stage) >= 2 {
@@ -788,7 +788,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	}
 	code, stopped := wait_for_stop(child)
 	system.log("debugged: detail: Log gave the status ", u64(logged), "; the record of the read of the child: status ", system.Hex(read.error_code), "; the child stopped with the code ", u64(code))
-	system.log("debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came", verdict(copied && logged == u32(system.Status.Ok) && no_record && read_came && read.kind == .Debug && read.error_code & 1 != 0 && stopped && code == CHILD_RESULT))
+	system.log("debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came", verdict(copied && logged == u32(system.Status.Ok) && no_record && read_came && read.kind == u64(op.Fault_Kind.Debug) && read.error_code & 1 != 0 && stopped && code == CHILD_RESULT))
 	system.log("debugged: detail: the trap of the load of the stack selector ", came_to_the_debugger ? string("came to the debugger before the syscall") : string("was held until the kernel entry, and the kernel dropped it"))
 	system.log("debugged: a data breakpoint that a load of the stack selector holds before a syscall: the kernel entry returned", verdict(entered && stopped && code == CHILD_RESULT))
 }
@@ -820,7 +820,7 @@ case_of_the_full_ring :: proc "contextless" () {
 		}
 		// The record is read in place, and fault_read stays 0.
 		record := own.fault_records[index]
-		filled = record.kind == .Debug && system.debug_fault_answer(child, record) == .Ok
+		filled = record.kind == u64(op.Fault_Kind.Debug) && system.debug_fault_answer(child, record) == .Ok
 	}
 	// The ring is full: the child counts its rounds, and no record comes.
 	before := intrinsics.atomic_load(&shared.rounds)

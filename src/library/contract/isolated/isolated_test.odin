@@ -8,7 +8,9 @@ import "core:testing"
 @(private = "file")
 description :: proc(types: ..module.Type) -> (function: module.Function) {
 	function.parameter_count = u8(len(types))
-	copy(function.parameters[:], types)
+	for type, index in types {
+		function.parameters[index] = u8(type)
+	}
 	return function
 }
 
@@ -49,8 +51,20 @@ encode_refuses :: proc(t: ^testing.T) {
 	testing.expect(t, !ok, "the text does not fit in the call region")
 	_, _, _, _, ok = encode(nil, description(.Text), {{text = long[:48]}}, region[:])
 	testing.expect(t, ok, "the text fills the call region exactly")
-	_, _, _, _, ok = encode(nil, description(module.Type(200)), {{}}, region[:])
-	testing.expect(t, !ok, "the description has an unknown type")
+	// A byte of no type: one past the last type, 200 and the largest byte.
+	refused_types := [?]u8{u8(max(module.Type)) + 1, 200, max(u8)}
+	for word in refused_types {
+		with_word := description(.Integer)
+		with_word.parameters[0] = word
+		_, _, _, _, ok = encode(nil, with_word, {{}}, region[:])
+		testing.expectf(t, !ok, "the description has the unknown type %d", word)
+		with_word = description(.Integer)
+		with_word.result = word
+		_, _, _, _, ok = encode(nil, with_word, {{}}, region[:])
+		testing.expectf(t, !ok, "the description has the unknown result type %d", word)
+		_, described := record_size(with_word)
+		testing.expectf(t, !described, "the record size of the unknown result type %d", word)
+	}
 	unknown := description(.Integer)
 	unknown.parameter_count = module.PARAMETER_CAPACITY + 1
 	_, _, _, _, ok = encode(nil, unknown, {{}}, region[:])
@@ -104,9 +118,9 @@ decode_random :: proc(t: ^testing.T) {
 	for _ in 0 ..< 200_000 {
 		function: module.Function
 		function.parameter_count = u8(rand.int_max(module.PARAMETER_CAPACITY + 2))
-		function.result = module.Type(rand.int_max(4))
-		for &type in function.parameters {
-			type = module.Type(rand.int_max(4))
+		function.result = u8(rand.int_max(4))
+		for &word in function.parameters {
+			word = u8(rand.int_max(4))
 		}
 		for &b in region[:64] {
 			b = u8(rand.uint32())
@@ -129,14 +143,14 @@ decode_random :: proc(t: ^testing.T) {
 		accepted += 1
 		types := function.parameters
 		count := int(function.parameter_count)
-		if function.result == .Text {
+		if function.result == u8(module.Type.Text) {
 			// The buffer of the result is one more slice.
 			testing.expect(t, count < module.PARAMETER_CAPACITY)
-			types[count] = .Text
+			types[count] = u8(module.Type.Text)
 			count += 1
 		}
-		for type, index in types[:count] {
-			if type != .Text {
+		for word, index in types[:count] {
+			if word != u8(module.Type.Text) {
 				continue
 			}
 			slice := call.slices[index]
@@ -157,7 +171,7 @@ decode_random :: proc(t: ^testing.T) {
 text_result :: proc(t: ^testing.T) {
 	region: [128]u8
 	function := description(.Text, .Integer)
-	function.result = .Text
+	function.result = u8(module.Type.Text)
 	argument := "abc"
 	offset, size, result, _, encoded := encode(nil, function, {{text = transmute([]u8)argument}, {integer = 5}}, region[:])
 	testing.expect(t, encoded)
@@ -183,7 +197,7 @@ text_result :: proc(t: ^testing.T) {
 	testing.expect(t, !complete, "a buffer that is not in the call region")
 
 	full := integer_description(module.PARAMETER_CAPACITY)
-	full.result = .Text
+	full.result = u8(module.Type.Text)
 	none: [module.PARAMETER_CAPACITY]Argument
 	_, _, _, _, ok := encode(nil, full, none[:], region[:])
 	testing.expect(t, !ok, "as many parameters as an export has leave no argument for the buffer")
@@ -195,7 +209,7 @@ text_result :: proc(t: ^testing.T) {
 integer_description :: proc(count: int) -> (function: module.Function) {
 	function.parameter_count = u8(count)
 	for index in 0 ..< count {
-		function.parameters[index] = .Integer
+		function.parameters[index] = u8(module.Type.Integer)
 	}
 	return function
 }
@@ -211,7 +225,7 @@ nine_parameters_round_trip :: proc(t: ^testing.T) {
 	region: [512]u8
 	function := description(.Integer, .Text, .Integer, .Integer, .Integer, .Integer, .Integer, .Text, .Record)
 	function.parameter_details[8] = 1
-	function.result = .Text
+	function.result = u8(module.Type.Text)
 	function.error_record = 1
 	testing.expect_value(t, module.call_argument_count(int(function.parameter_count), function.result, true), 11)
 	seventh, eighth := "the second text", "past the registers"
@@ -238,7 +252,7 @@ nine_parameters_round_trip :: proc(t: ^testing.T) {
 	// The bound: twelve arguments fit, thirteen do not.
 	_, described := record_size(function)
 	testing.expect(t, described)
-	function.parameters[9], function.parameters[10] = .Integer, .Integer
+	function.parameters[9], function.parameters[10] = u8(module.Type.Integer), .Integer
 	function.parameter_count = 11
 	_, described = record_size(function)
 	testing.expect(t, !described, "eleven parameters, a Text result and an error record are thirteen arguments")
@@ -254,7 +268,7 @@ record_file :: proc(file: ^[512]u8) -> []u8 {
 	directory: Directory
 	offset := u64(size_of(module.Header) + size_of(Directory))
 	records := [2]module.Record{1 = {size = 16, first_field = 1, field_count = 2}}
-	fields := [3]module.Field{1 = {offset = 0, type = .Handle, detail = 6}, 2 = {offset = 8, type = .Integer}}
+	fields := [3]module.Field{1 = {offset = 0, type = u8(module.Type.Handle), detail = 6}, 2 = {offset = 8, type = u8(module.Type.Integer)}}
 	directory[module.Table_Kind.Records] = {offset = offset, count = 2, record_size = size_of(module.Record)}
 	(^[2]module.Record)(&file[offset])^ = records
 	offset += size_of(records)
@@ -273,7 +287,7 @@ table_file :: proc(file: ^[512]u8) -> []u8 {
 	directory: Directory
 	offset := u64(size_of(module.Header) + size_of(Directory))
 	records := [2]module.Record{1 = {size = 24, first_field = 1, field_count = 2}}
-	fields := [3]module.Field{1 = {offset = 0, type = .Text, detail = 16}, 2 = {offset = 16, type = .Integer}}
+	fields := [3]module.Field{1 = {offset = 0, type = u8(module.Type.Text), detail = 16}, 2 = {offset = 16, type = u8(module.Type.Integer)}}
 	directory[module.Table_Kind.Records] = {offset = offset, count = 2, record_size = size_of(module.Record)}
 	(^[2]module.Record)(&file[offset])^ = records
 	offset += size_of(records)
@@ -297,7 +311,7 @@ table_result :: proc(t: ^testing.T) {
 	testing.expect_value(t, described.size, 24)
 	region: [128]u8
 	function := description(.Text)
-	function.result, function.result_detail = .Table, 1
+	function.result, function.result_detail = u8(module.Type.Table), 1
 	argument := "abc"
 	offset, size, result, _, encoded := encode(file, function, {{text = transmute([]u8)argument}}, region[:])
 	testing.expect(t, encoded)
@@ -346,7 +360,7 @@ records_and_handles_round_trip :: proc(t: ^testing.T) {
 	region: [256]u8
 	function := description(.Record, .Handle, .Integer)
 	function.parameter_details = {0 = 1, 1 = 3}
-	function.result, function.result_detail = .Record, 1
+	function.result, function.result_detail = u8(module.Type.Record), 1
 	sent := [2]u64{0x1_0007, 99}
 	arguments := [?]Argument{{record = ([^]u8)(&sent)[:16]}, {integer = 0x2_0009}, {integer = 5}}
 	offset, size, place, _, encoded := encode(file, function, arguments[:], region[:])
@@ -401,7 +415,7 @@ error_record_place :: proc(t: ^testing.T) {
 		b = 0xEE
 	}
 	function := description(.Text)
-	function.result = .Text
+	function.result = u8(module.Type.Text)
 	function.error_record = 1
 	argument := "name"
 	offset, size, result, error, encoded := encode(nil, function, {{text = transmute([]u8)argument}}, region[:])

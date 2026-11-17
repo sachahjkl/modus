@@ -19,6 +19,7 @@ package disk_program
 // See [disk grant table](term:disk-grant-table) and [nickname](term:nickname).
 
 import "modus:contract/byte_order"
+import "modus:contract/enum_word"
 import "modus:contract/remote"
 import "modus:contract/start_grant"
 import blake2 "modus:support/cryptography/_blake2"
@@ -590,7 +591,8 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 		}
 		grants := place[ROW_OFFSET_GRANTS]
 		known_grants := transmute(u8)Disk_Grants{.Store}
-		if grants & ~known_grants != 0 || place[ROW_OFFSET_PERSISTENCE] > u8(max(Persistence)) {
+		persistence, persistence_known := enum_word.member_of_word(Persistence, u64(place[ROW_OFFSET_PERSISTENCE]))
+		if grants & ~known_grants != 0 || !persistence_known {
 			return {}, .Bad_Row
 		}
 		row := &table.rows[index]
@@ -603,7 +605,7 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 		}
 		row.nickname_length = copy(row.nickname[:], nickname)
 		row.grants = transmute(Disk_Grants)grants
-		row.persistence = Persistence(place[ROW_OFFSET_PERSISTENCE])
+		row.persistence = persistence
 		table.count = index + 1
 	}
 	for after in kept[TABLE_HEADER_SIZE + count * ROW_SIZE:TABLE_OFFSET_CLIENT_KEYS] {

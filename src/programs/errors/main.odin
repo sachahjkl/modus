@@ -185,7 +185,7 @@ kernel_good, kernel_failed, direct_good, direct_failed: u64
 // with the expected kind.
 kernel_text :: proc "contextless" (writer: ^system.Writer, record: ^errors.Error_Record, status: system.Status, expected: errors.Kind) -> bool {
 	system.kernel_error_text(writer, record)
-	return status != .Ok && errors.Kind(record.kind) == expected
+	return status != .Ok && record.kind == i64(expected)
 }
 
 // The pages of another program: Inspect_Kind.Pages answers for the program
@@ -638,7 +638,7 @@ storage_case :: proc "contextless" (writer: ^system.Writer, export: string, expe
 	error: errors.Error_Record
 	result, _, status := storage.call(&client, export, arguments[:export == "write" ? 3 : 2], &error)
 	storage.error_text(writer, &client, &error)
-	return status == .Failed && result < 0 && errors.Kind(error.kind) == expected
+	return status == .Failed && result < 0 && error.kind == i64(expected)
 }
 
 case_empty :: proc "contextless" (writer: ^system.Writer) -> bool {

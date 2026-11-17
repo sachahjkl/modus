@@ -227,7 +227,7 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 		address     = address,
 		access      = access,
 		instruction = thread.frame.rip,
-		kind        = fault_kind,
+		kind        = u64(fault_kind),
 		error_code  = thread.frame.error,
 	}
 	written^ += 1

@@ -33,7 +33,6 @@ display_data: bootscreen.Data
 // kernel never reads a test that names nothing.
 BOOT_SELF_TEST_WORD :: u64(#config(SELF_TEST, 0))
 #assert(BOOT_SELF_TEST_WORD <= u64(max(info.Self_Test)))
-BOOT_SELF_TEST :: info.Self_Test(BOOT_SELF_TEST_WORD)
 
 foreign _ {
 	boot_jump :: proc "win64" (page_table: u64, entry: u64, boot: u64, stack: u64) -> ! ---
@@ -67,7 +66,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot := (^info.Boot_Info)(allocate(1))
 	boot.magic = info.MAGIC
 	boot.cycles_start = cycles_start
-	boot.self_test = BOOT_SELF_TEST
+	boot.self_test = BOOT_SELF_TEST_WORD
 	boot.framebuffer = framebuffer()
 	for &character, index in boot.firmware_vendor[:len(boot.firmware_vendor) - 1] {
 		unit := system.firmware_vendor[index]

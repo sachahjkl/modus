@@ -426,26 +426,31 @@ floors_check :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	// index whose policy names another PCR 7 is foreign.
 	pcr_7, pcr_status, pcr_read := register_read(tpm, FLOOR_POLICY_REGISTER)
 	policy: [32]u8
+	// The boot program keeps each state as its member, and writes its word
+	// in the trust record, which the kernel and the root service read.
+	key_floor_state, version_floor_state: info.Floor_State
 	if !pcr_read {
-		trust.version_floor_state = .Not_Read
-		trust.key_floor_state = .Not_Read
+		version_floor_state = .Not_Read
+		key_floor_state = .Not_Read
 		trust.floor_status = pcr_status
 	} else {
 		policy = tpm2.floor_policy_digest(&pcr_7)
-		trust.key_floor, trust.key_floor_state = floor_read(tpm, info.KEY_FLOOR_INDEX, &policy, &trust.floor_status)
-		trust.version_floor, trust.version_floor_state = floor_read(tpm, version_index, &policy, &trust.floor_status)
+		trust.key_floor, key_floor_state = floor_read(tpm, info.KEY_FLOOR_INDEX, &policy, &trust.floor_status)
+		trust.version_floor, version_floor_state = floor_read(tpm, version_index, &policy, &trust.floor_status)
 	}
+	trust.key_floor_state = u64(key_floor_state)
+	trust.version_floor_state = u64(version_floor_state)
 
 	// The line is longer than one text of the boot display: it goes out in
 	// parts.
 	print("boot program: the TPM floors: the key floor ")
 	print_number(trust.key_floor)
-	print(floor_state_words(trust.key_floor_state))
+	print(floor_state_words(key_floor_state))
 	print(", the version floor of the key number ")
 	print_number(trust.key_number)
 	print(" ")
 	print_number(trust.version_floor)
-	print(floor_state_words(trust.version_floor_state))
+	print(floor_state_words(version_floor_state))
 	print("\r\n")
 	text: bootscreen.Text
 	if trust.floor_status != 0 {
@@ -492,11 +497,11 @@ floors_check :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	}
 	key_name: bootscreen.Text
 	bootscreen.put(&key_name, "the key floor")
-	floor_raise(tpm, info.KEY_FLOOR_INDEX, string(key_name.bytes[:key_name.count]), trust.key_floor_state, trust.key_floor, trust.key_number, &policy)
+	floor_raise(tpm, info.KEY_FLOOR_INDEX, string(key_name.bytes[:key_name.count]), key_floor_state, trust.key_floor, trust.key_number, &policy)
 	version_name: bootscreen.Text
 	bootscreen.put(&version_name, "the version floor of the key number ")
 	bootscreen.put_number(&version_name, trust.key_number)
-	floor_raise(tpm, version_index, string(version_name.bytes[:version_name.count]), trust.version_floor_state, trust.version_floor, trust.security_version, &policy)
+	floor_raise(tpm, version_index, string(version_name.bytes[:version_name.count]), version_floor_state, trust.version_floor, trust.security_version, &policy)
 }
 
 // floor_raise raises one floor to number, which the checks put at or above

@@ -1192,7 +1192,7 @@ entries_handler :: proc "c" (_: rawptr) -> ! {
 			entry_records[count] = record
 		}
 		intrinsics.atomic_store(&entry_record_count, count + 1)
-		if record.kind == .General_Protection {
+		if record.kind == u64(op.Fault_Kind.General_Protection) {
 			registers: op.Thread_Registers
 			_, read := control(0, record.thread, .Read_Registers, &registers, size_of(registers))
 			registers.rip += 2
@@ -1227,7 +1227,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	start := intrinsics.atomic_load(&entry_record_count)
 	two_byte_breakpoint()
 	records := entry_records_since(start)
-	right := len(records) == 1 && records[0].kind == .Breakpoint && records[0].instruction == address_of(&two_byte_breakpoint_instruction) + 2
+	right := len(records) == 1 && records[0].kind == u64(op.Fault_Kind.Breakpoint) && records[0].instruction == address_of(&two_byte_breakpoint_instruction) + 2
 	if right {
 		bits |= 0x01
 	}
@@ -1237,7 +1237,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	start = intrinsics.atomic_load(&entry_record_count)
 	interrupt_fourteen()
 	records = entry_records_since(start)
-	right = len(records) == 1 && records[0].kind == .General_Protection && records[0].error_code == INT_FOURTEEN_ERROR_CODE && records[0].instruction == address_of(&interrupt_fourteen_instruction) && intrinsics.atomic_load(&entry_handler_failures) == 0
+	right = len(records) == 1 && records[0].kind == u64(op.Fault_Kind.General_Protection) && records[0].error_code == INT_FOURTEEN_ERROR_CODE && records[0].instruction == address_of(&interrupt_fourteen_instruction) && intrinsics.atomic_load(&entry_handler_failures) == 0
 	if right {
 		bits |= 0x02
 	}
@@ -1247,7 +1247,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	start = intrinsics.atomic_load(&entry_record_count)
 	icebp()
 	records = entry_records_since(start)
-	right = len(records) == 1 && records[0].kind == .Debug && records[0].instruction == address_of(&icebp_instruction) + 1
+	right = len(records) == 1 && records[0].kind == u64(op.Fault_Kind.Debug) && records[0].instruction == address_of(&icebp_instruction) + 1
 	if right {
 		bits |= 0x04
 	}
@@ -1259,7 +1259,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	records = entry_records_since(start)
 	right = len(records) == SINGLE_STEP_RECORDS && records[0].instruction == address_of(&single_step_first) + 1 && records[len(records) - 1].instruction == address_of(&single_step_end)
 	for record, index in records {
-		if record.kind != .Debug || index > 0 && record.instruction <= records[index - 1].instruction {
+		if record.kind != u64(op.Fault_Kind.Debug) || index > 0 && record.instruction <= records[index - 1].instruction {
 			right = false
 		}
 	}
@@ -1274,7 +1274,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	records = entry_records_since(start)
 	right = len(records) >= 1 && intrinsics.atomic_load(&entry_handler_failures) == 0
 	for record in records {
-		if record.kind != .Debug || record.instruction <= u64(uintptr(rawptr(mov_ss_then_syscall))) || record.instruction > address_of(&mov_ss_then_syscall_end) {
+		if record.kind != u64(op.Fault_Kind.Debug) || record.instruction <= u64(uintptr(rawptr(mov_ss_then_syscall))) || record.instruction > address_of(&mov_ss_then_syscall_end) {
 			right = false
 		}
 	}
@@ -1292,9 +1292,9 @@ child_debug_entries :: proc "contextless" () -> ! {
 	for record in records {
 		in_code := record.instruction > u64(uintptr(rawptr(mov_ss_then_int3))) && record.instruction <= address_of(&mov_ss_then_int3_end)
 		switch {
-		case record.kind == .Breakpoint && record.instruction == address_of(&mov_ss_then_int3_instruction) + 1:
+		case record.kind == u64(op.Fault_Kind.Breakpoint) && record.instruction == address_of(&mov_ss_then_int3_instruction) + 1:
 			breakpoints += 1
-		case record.kind != .Debug || !in_code:
+		case record.kind != u64(op.Fault_Kind.Debug) || !in_code:
 			right = false
 		}
 	}
@@ -1311,7 +1311,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	records = entry_records_since(start)
 	right = len(records) == 2 && intrinsics.atomic_load(&entry_handler_failures) == 0
 	for record, index in records {
-		if record.kind != .Debug || record.error_code != 0 || record.instruction != address_of(&two_int1_first) + u64(index) + 1 {
+		if record.kind != u64(op.Fault_Kind.Debug) || record.error_code != 0 || record.instruction != address_of(&two_int1_first) + u64(index) + 1 {
 			right = false
 		}
 	}
@@ -1331,7 +1331,7 @@ child_debug_frame_lost :: proc "contextless" () -> ! {
 	records := entry_records_since(0)
 	right := len(records) >= 1 && intrinsics.atomic_load(&entry_handler_failures) == 0
 	for record in records {
-		if record.kind != .Debug || record.instruction <= u64(uintptr(rawptr(mov_ss_then_int1))) || record.instruction > address_of(&mov_ss_then_int1_end) {
+		if record.kind != u64(op.Fault_Kind.Debug) || record.instruction <= u64(uintptr(rawptr(mov_ss_then_int1))) || record.instruction > address_of(&mov_ss_then_int1_end) {
 			right = false
 		}
 	}

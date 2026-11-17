@@ -20,13 +20,13 @@ nine_parameter_module :: proc() -> []u8 {
 		name_offset     = u32(len(string_bytes)),
 		name_count      = u32(len(export_name)),
 		parameter_count = 9,
-		result          = .Text,
+		result          = u8(module.Type.Text),
 		error_record    = 1,
 	}
 	append(&string_bytes, export_name)
 	types := [9]module.Type{.Integer, .Text, .Integer, .Integer, .Integer, .Integer, .Integer, .Integer, .Text}
 	for type, index in types {
-		function.parameters[index] = type
+		function.parameters[index] = u8(type)
 		parameter_name := fmt.tprintf("value_%d", index + 1)
 		function.parameter_names[index] = u32(len(string_bytes))
 		function.parameter_name_counts[index] = u8(len(parameter_name))

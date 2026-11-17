@@ -89,7 +89,7 @@ Cell :: struct {
 // of the contract is a plain number: a description of another party can
 // hold anything, and a guess would show a wrong unit.
 integer_part :: proc "contextless" (item: module.Field) -> (part: Part, unit: string) {
-	if item.type != .Integer || !value_kinds.integer_unit_valid(item.integer_unit) {
+	if item.type != u8(module.Type.Integer) || !value_kinds.integer_unit_valid(item.integer_unit) {
 		return .Number, ""
 	}
 	switch item.integer_unit.kind {
@@ -106,13 +106,19 @@ integer_part :: proc "contextless" (item: module.Field) -> (part: Part, unit: st
 // cell_of gives the text of one field of a record. The text of a number is
 // in buffer; the text of a Text field is in the record.
 cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> Cell {
-	switch item.type {
+	// A byte that names no type: the check of the description refused it,
+	// and the cell is empty.
+	type, type_ok := module.field_type(item)
+	if !type_ok {
+		return {}
+	}
+	switch type {
 	case .None, .Record, .Table, .Bytes:
 		// A record holds no such field (module.field_size): an empty cell.
 	case .Integer:
 		value := module.field_integer(row, item)
 		part, unit := integer_part(item)
-		if item.unsigned && module.field_size(item.type, item.detail) == 8 {
+		if item.unsigned && module.field_size(item) == 8 {
 			return {text = sentence.format(buffer, u64(value)), number = true, part = part, unit = unit}
 		}
 		return {text = sentence.format(buffer, value), number = true, part = part, unit = unit}
@@ -300,7 +306,7 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	sink.continuation = last_start <= CONTINUATION_MOST ? last_start : COLUMN_GAP
 	for number in 0 ..< field_count {
 		name := module.string_at(file, items[number].name_offset, items[number].name_count)
-		head_write(sink, name, units[number], widths[number], items[number].type != .Text, number == field_count - 1)
+		head_write(sink, name, units[number], widths[number], items[number].type != u8(module.Type.Text), number == field_count - 1)
 	}
 	sink.end_line(sink)
 	for index in 0 ..< shown {

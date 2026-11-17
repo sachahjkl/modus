@@ -262,8 +262,12 @@ ERROR_RECORD_SIZE :: 56 // src/library/contract/errors: Error_Record.
 // field_size gives the bytes of the field of one parameter type in the
 // argument record: 8 for an Integer, a Record and a Handle, 16 for a Text
 // (a `Slice`), 32 for a Table and Bytes (a `Table_Field`). 0: a type that has
-// no field, which `record_size` refuses.
-field_size :: proc "contextless" (type: module.Type) -> u64 {
+// no field, and a byte that names no type, which `record_size` refuses.
+field_size :: proc "contextless" (word: u8) -> u64 {
+	type, type_ok := module.type_of_word(word)
+	if !type_ok {
+		return 0
+	}
 	switch type {
 	case .Integer, .Record, .Handle:
 		return 8
@@ -278,10 +282,10 @@ field_size :: proc "contextless" (type: module.Type) -> u64 {
 
 // result_field_size gives the bytes of the field of a result in the
 // argument record. ok is false for a type that is no result (Handle,
-// Bytes), and for a byte of the description that names no type: no case
-// takes it.
+// Bytes), and for a byte of the description that names no type.
 @(private)
-result_field_size :: proc "contextless" (type: module.Type) -> (size: u64, ok: bool) {
+result_field_size :: proc "contextless" (word: u8) -> (size: u64, ok: bool) {
+	type := module.type_of_word(word) or_return
 	switch type {
 	case .None, .Integer:
 		return 0, true
@@ -304,8 +308,8 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	if function.parameter_count > module.PARAMETER_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > module.PARAMETER_CAPACITY || !directions_valid(function) {
 		return 0, false
 	}
-	for type in function.parameters[:function.parameter_count] {
-		field := field_size(type)
+	for word in function.parameters[:function.parameter_count] {
+		field := field_size(word)
 		if field == 0 {
 			return 0, false
 		}
@@ -315,7 +319,7 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	size += result_field
 	if function.error_record != 0 {
 		// A Record result gives no integer result, so a failure has no sign.
-		if function.result == .Record {
+		if function.result == u8(module.Type.Record) {
 			return 0, false
 		}
 		size += 8
@@ -361,7 +365,13 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 	}
 	field := u64(0)
 	next := size // Where the bytes of the next Text go.
-	for type, index in function.parameters[:function.parameter_count] {
+	for word, index in function.parameters[:function.parameter_count] {
+		// record_size refused each byte that names no type; the border
+		// reads the byte again.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			return 0, 0, {}, {}, false
+		}
 		switch type {
 		case .None:
 			// record_size refused a parameter of no type.
@@ -391,9 +401,9 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 			}
 			store(region, field, arguments[index].integer)
 		case .Table, .Bytes:
-			next = table_encode(file, type, function.parameter_details[index], function.parameter_directions[index], &arguments[index].table, region, field, next) or_return
+			next = table_encode(file, word, function.parameter_details[index], function.parameter_directions[index], &arguments[index].table, region, field, next) or_return
 		}
-		field += field_size(type)
+		field += field_size(word)
 	}
 	// The place of the error record: after the bytes of the arguments, and
 	// before the buffer of a result, which is the rest of the region.
@@ -406,7 +416,11 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		intrinsics.mem_zero(raw_data(region[next:]), ERROR_RECORD_SIZE)
 		next += ERROR_RECORD_SIZE
 	}
-	switch function.result {
+	result_type, result_type_ok := module.function_result_type(function)
+	if !result_type_ok {
+		return 0, 0, {}, {}, false
+	}
+	switch result_type {
 	case .None, .Integer:
 		// No buffer: the result is in the completion.
 	case .Handle, .Bytes:
@@ -518,8 +532,14 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	record: [ARGUMENT_RECORD_LIMIT]u8
 	intrinsics.mem_copy_non_overlapping(&record, raw_data(region[offset:]), int(size))
 	field := u64(0)
-	for type, index in function.parameters[:function.parameter_count] {
+	for word, index in function.parameters[:function.parameter_count] {
 		argument := i64(index + 1)
+		// record_size refused each byte that names no type; the border
+		// reads the byte again.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			return refuse(refusal, .Bad_Value, .None, argument, u64(word), 0)
+		}
 		switch type {
 		case .None:
 			// record_size refused a parameter of no type.
@@ -549,7 +569,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 			intrinsics.mem_copy_non_overlapping(&call.records[index], raw_data(region[start:]), int(described_record.size))
 			for number in 0 ..< described_record.field_count {
 				item, has_field := module.field(file, described_record, number)
-				if has_field && item.type == .Handle {
+				if has_field && item.type == u8(module.Type.Handle) {
 					handle := (^u32)(uintptr(&call.records[index]) + uintptr(item.offset))^
 					if !lent_handle_add(call, u64(handle), item.detail) {
 						return refuse(refusal, .Full, .Handles, argument, 0, len(call.lent))
@@ -563,12 +583,16 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[index], len(call.lent))
 			}
 		case .Table, .Bytes:
-			table_decode(file, type, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
+			table_decode(file, word, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
 		}
-		field += field_size(type)
+		field += field_size(word)
 	}
 	index := function.parameter_count
-	switch function.result {
+	result_type, result_type_ok := module.function_result_type(function)
+	if !result_type_ok {
+		return refuse(refusal, .Bad_Value, .None, 0, u64(function.result), 0)
+	}
+	switch result_type {
 	case .None, .Integer:
 		// No buffer: the result is in the completion.
 	case .Handle, .Bytes:
@@ -618,14 +642,14 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	// read it.
 	call.error = {}
 	if function.error_record != 0 {
-		field += function.result == .Text || function.result == .Table ? size_of(Slice) : 0
+		field += result_type == .Text || result_type == .Table ? size_of(Slice) : 0
 		start := load(record[:], field, u64)
 		if start > limit || ERROR_RECORD_SIZE > limit - start || start % 8 != 0 {
 			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(ERROR_RECORD_SIZE), limit), limit)
 		}
 		region_range_add(&ranges, {start, start + ERROR_RECORD_SIZE, true, 0}, refusal) or_return
 		call.error = {start = start, count = ERROR_RECORD_SIZE}
-		error_argument := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table)
+		error_argument := u64(function.parameter_count) + u64(result_type == .Text || result_type == .Table)
 		call.arguments[error_argument] = u64(uintptr(raw_data(region))) + start
 	}
 	return true
@@ -649,7 +673,7 @@ lent_handle_add :: proc "contextless" (call: ^Call, handle: u64, rights: u32) ->
 // result_store copies the Record result of a call to its place in the call
 // region. Call it after the export returned.
 result_store :: proc "contextless" (function: module.Function, call: ^Call, region: []u8) {
-	if function.result == .Record {
+	if function.result == u8(module.Type.Record) {
 		intrinsics.mem_copy_non_overlapping(raw_data(region[call.result.start:]), &call.records[function.parameter_count], int(call.result.count))
 	}
 }

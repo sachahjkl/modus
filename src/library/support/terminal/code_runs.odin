@@ -37,11 +37,13 @@ Code_Kind :: enum u8 {
 
 // One run: start and length in bytes of the text of its row. A row has at
 // most RUN_LIMIT bytes: a byte holds its start. A part of one kind that is
-// longer than 255 bytes is two runs.
+// longer than 255 bytes is two runs. The kind is the byte of a Code_Kind,
+// not the enum: the runs come from another program, and a reader takes the
+// byte through code_kind_of, which refuses a byte that names no kind.
 Code_Run :: struct {
 	start:    u8, // The first byte of the run in the text of its row.
 	length:   u8, // The bytes of the run.
-	kind:     Code_Kind, // What the run is.
+	kind:     u8, // What the run is: a Code_Kind.
 	reserved: u8, // 0.
 }
 #assert(size_of(Code_Run) == 4)
@@ -126,7 +128,8 @@ code_runs_check :: proc "contextless" (runs: ^Code_Runs, length: int) -> bool {
 	end := 0
 	for run in runs.runs[:count] {
 		start := int(run.start)
-		if run.length == 0 || start < end || start + int(run.length) > length || u8(run.kind) > u8(max(Code_Kind)) || run.kind == .None {
+		kind, kind_ok := code_kind_of(run.kind)
+		if run.length == 0 || start < end || start + int(run.length) > length || !kind_ok || kind == .None {
 			runs.count = 0
 			return false
 		}
@@ -138,14 +141,18 @@ code_runs_check :: proc "contextless" (runs: ^Code_Runs, length: int) -> bool {
 
 // code_runs_kind_at gives the kind of the byte place of a row, from the
 // place of the run that covered the byte before (a cursor that a loop over
-// the bytes in order keeps): each byte costs one step at most.
+// the bytes in order keeps): each byte costs one step at most. The check of
+// the runs refused each byte of no kind already; the border reads the byte
+// again, and a byte that names no kind gives no color of its own.
 code_runs_kind_at :: proc "contextless" (runs: ^Code_Runs, place: int, cursor: ^int) -> Code_Kind {
 	count := clamp(runs.count, 0, CODE_RUN_LIMIT)
 	for cursor^ < count && int(runs.runs[cursor^].start) + int(runs.runs[cursor^].length) <= place {
 		cursor^ += 1
 	}
 	if cursor^ < count && int(runs.runs[cursor^].start) <= place {
-		return runs.runs[cursor^].kind
+		if kind, ok := code_kind_of(runs.runs[cursor^].kind); ok {
+			return kind
+		}
 	}
 	return .None
 }

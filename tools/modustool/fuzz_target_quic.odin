@@ -366,7 +366,7 @@ fuzz_tls_messages_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	}
 	at := 1
 	for at + 3 <= len(input) {
-		level := quic.Encryption_Level(input[at] % 3)
+		level := enum_member_at(quic.Encryption_Level, int(input[at] % 3))
 		length := int(input[at + 1]) | int(input[at + 2]) << 8
 		at += 3
 		bytes := input[at:min(at + length, len(input))]

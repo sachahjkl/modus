@@ -363,11 +363,11 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 	}
 	for number in 0 ..< value.field_count {
 		item := field(file, value, number) or_return
-		size := field_size(item.type, item.detail)
+		size := field_size(item)
 		if size == 0 || item.offset > value.size || size > value.size - item.offset {
 			return {}, false
 		}
-		if item.type == .Integer && item.offset % size != 0 {
+		if item.type == u8(Type.Integer) && item.offset % size != 0 {
 			return {}, false
 		}
 		if !field_integer_unit_valid(item) {
@@ -386,7 +386,7 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 // table, and a record of a result, has none.
 record_has_handle :: proc "contextless" (file: []u8, of: Record) -> bool {
 	for number in 0 ..< of.field_count {
-		if item, ok := field(file, of, number); ok && item.type == .Handle {
+		if item, ok := field(file, of, number); ok && item.type == u8(Type.Handle) {
 			return true
 		}
 	}
@@ -398,8 +398,8 @@ record_has_handle :: proc "contextless" (file: []u8, of: Record) -> bool {
 record_alignment :: proc "contextless" (file: []u8, of: Record) -> (alignment: u32) {
 	alignment = 1
 	for number in 0 ..< of.field_count {
-		if item, ok := field(file, of, number); ok && item.type != .Text {
-			alignment = max(alignment, field_size(item.type, item.detail))
+		if item, ok := field(file, of, number); ok && item.type != u8(Type.Text) {
+			alignment = max(alignment, field_size(item))
 		}
 	}
 	return alignment
@@ -438,15 +438,21 @@ field :: proc "contextless" (file: []u8, of: Record, number: u32) -> (value: Fie
 // and no unit on a Handle or a Text. A reader shows the unit, so a unit out
 // of the contract is a fault of the description.
 field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
-	if item.type != .Integer {
+	if item.type != u8(Type.Integer) {
 		return item.integer_unit == {}
 	}
 	return value_kinds.integer_unit_valid(item.integer_unit)
 }
 
 // field_size gives the bytes of a field of a record, from its type and its
-// detail. 0: a record cannot have such a field.
-field_size :: proc "contextless" (type: Type, detail: u32) -> u32 {
+// detail. 0: a record cannot have such a field, and a byte of the type that
+// names no type.
+field_size :: proc "contextless" (item: Field) -> u32 {
+	type, type_ok := field_type(item)
+	if !type_ok {
+		return 0
+	}
+	detail := item.detail
 	switch type {
 	case .Integer:
 		switch detail {
@@ -470,8 +476,8 @@ field_size :: proc "contextless" (type: Type, detail: u32) -> u32 {
 // i64: an unsigned field of 8 bytes is its bits. record has the size of
 // the description. 0 for another field.
 field_integer :: proc "contextless" (record: []u8, item: Field) -> i64 {
-	size := field_size(item.type, item.detail)
-	if item.type != .Integer || u64(item.offset) > u64(len(record)) || u64(size) > u64(len(record)) - u64(item.offset) {
+	size := field_size(item)
+	if item.type != u8(Type.Integer) || u64(item.offset) > u64(len(record)) || u64(size) > u64(len(record)) - u64(item.offset) {
 		return 0
 	}
 	bits: u64
@@ -489,9 +495,9 @@ field_integer :: proc "contextless" (record: []u8, item: Field) -> i64 {
 // unsigned field of 8 bytes holds each value as its bits. A caller that
 // writes a value from the input refuses one that does not fit.
 field_integer_fits :: proc "contextless" (item: Field, value: i64) -> bool {
-	size := field_size(item.type, item.detail)
-	if item.type != .Integer || size == 0 || size == 8 {
-		return item.type == .Integer && size == 8
+	size := field_size(item)
+	if item.type != u8(Type.Integer) || size == 0 || size == 8 {
+		return item.type == u8(Type.Integer) && size == 8
 	}
 	bits := 8 * u64(size)
 	if item.unsigned {
@@ -503,8 +509,8 @@ field_integer_fits :: proc "contextless" (item: Field, value: i64) -> bool {
 // field_integer_set writes the low bytes of a value in an Integer field
 // of a record.
 field_integer_set :: proc "contextless" (record: []u8, item: Field, value: i64) {
-	size := field_size(item.type, item.detail)
-	if item.type != .Integer || u64(item.offset) > u64(len(record)) || u64(size) > u64(len(record)) - u64(item.offset) {
+	size := field_size(item)
+	if item.type != u8(Type.Integer) || u64(item.offset) > u64(len(record)) || u64(size) > u64(len(record)) - u64(item.offset) {
 		return
 	}
 	for index in 0 ..< size {
@@ -515,7 +521,7 @@ field_integer_set :: proc "contextless" (record: []u8, item: Field, value: i64) 
 // field_text gives the text of a Text field of a record: the bytes before
 // the first zero byte. record has the size of the description.
 field_text :: proc "contextless" (record: []u8, item: Field) -> string {
-	if item.type != .Text || u64(item.offset) > u64(len(record)) || u64(item.detail) > u64(len(record)) - u64(item.offset) {
+	if item.type != u8(Type.Text) || u64(item.offset) > u64(len(record)) || u64(item.detail) > u64(len(record)) - u64(item.offset) {
 		return ""
 	}
 	bytes := record[item.offset:][:item.detail]

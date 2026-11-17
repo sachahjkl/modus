@@ -12,7 +12,7 @@ error_details_parameter :: proc "contextless" (file: []u8, function: Function) -
 		return 0, false
 	}
 	index = int(function.parameter_count) - 1
-	if function.parameters[index] != .Table || function.parameter_directions[index] != .Append {
+	if function.parameters[index] != u8(Type.Table) || function.parameter_directions[index] != .Append {
 		return 0, false
 	}
 	if !records_equal(file, function.parameter_details[index], file, function.error_record) {

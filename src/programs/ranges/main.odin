@@ -88,7 +88,7 @@ outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
 }
 
 refused_with :: proc "contextless" (status: storage.Status, error: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit) -> bool {
-	return status == .Failed && errors.Kind(error.kind) == kind && errors.Unit(error.unit) == unit
+	return status == .Failed && error.kind == i64(kind) && error.unit == i64(unit)
 }
 
 // The bytes of the block `number` (1, 2 or 3) of the sparse object.

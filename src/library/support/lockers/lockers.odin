@@ -45,7 +45,7 @@ LARGE_PAGES :: 600 // Three list pages: the kernel takes the frames of the list 
 // `command`; the locker writes the result, then adds 1 to `done`.
 Slot :: struct #align (64) {
 	command:       u32, // The locker waits on this word.
-	mode:          Mode, // The work of the command.
+	mode:          u32, // The work of the command: the word of a Mode, which the locker reads through enum_word.member_of_word.
 	start:         u64, // Milliseconds since boot (the time page).
 	end:           u64, // The time when the locker stops the work.
 	done:          u32, // `locks` waits on this word. The locker adds 1 when it is ready, then for each command.
