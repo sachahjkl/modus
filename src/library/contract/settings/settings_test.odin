@@ -121,6 +121,17 @@ the_kept_record :: proc(t: ^testing.T) {
 	testing.expect(t, zone_ok)
 	testing.expect_value(t, zone, 0)
 	kept.zone_offset_minutes = -210
+	// A record written before the last settings existed: a word past its
+	// count is no value of the record, so it is not read, and the setting
+	// has its default. Here the word past the count names nothing.
+	kept.count = u32(Setting.Appearance)
+	kept.values[Setting.Appearance] = max(u32)
+	older, _, older_ok := kept_read(bytes)
+	testing.expect(t, older_ok)
+	testing.expect_value(t, older.appearance, Appearance.Auto)
+	testing.expect_value(t, older.font, Font.Spleen)
+	kept.count = len(Setting)
+	kept.values[Setting.Appearance] = u32(Appearance.Light)
 	read_choice, read_zone, read_ok := kept_read(bytes)
 	testing.expect(t, read_ok)
 	testing.expect_value(t, values_of(read_choice), values_of(written))

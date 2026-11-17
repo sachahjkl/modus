@@ -404,6 +404,8 @@ argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 	if !known || argument < 1 || argument > 7 {
 		return ""
 	}
+	// An open choice: the commands whose values have names are named here,
+	// and each other command gives no name, as a value past the names does.
 	#partial switch member {
 	case .Send:
 		names := [?]string{"place", "count", "address", "port"}
@@ -450,7 +452,9 @@ control_argument_name :: proc "contextless" (command: i64, argument: i64) -> str
 	if !known {
 		return ""
 	}
-	#partial switch member {
+	switch member {
+	case .None:
+		// No control: its values have no names.
 	case .Endpoint_Add:
 		names := [?]string{"ring", "region", "grant"}
 		return argument >= 1 && argument <= len(names) ? names[argument - 1] : ""

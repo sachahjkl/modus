@@ -27,6 +27,13 @@ a_word_of_the_boot_record_that_names_no_member :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		testing.expect_value(t, test, member)
 	}
+	// The values of Self_Test have no hole from 0 to the largest member:
+	// the assert of the boot program against the largest member then
+	// refuses each word of the build that names no test.
+	for word in 0 ..= u64(max(Self_Test)) {
+		_, ok := self_test_of_word(word)
+		testing.expectf(t, ok, "the self test word %d is a hole: the boot program must assert each member", word)
+	}
 	for member in Floor_State {
 		state, ok := floor_state_of_word(u64(member))
 		testing.expect(t, ok)

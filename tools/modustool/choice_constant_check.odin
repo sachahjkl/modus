@@ -504,7 +504,9 @@ imports_of :: proc(file: ^ast.File, folder: string) -> map[string]string {
 		case strings.contains(path, ":"):
 			continue
 		case:
-			target = join(folder, "/", strings.trim_prefix(path, "./"))
+			// "../x" names a folder beside the one of the file: the key of
+			// a package is its folder with no "." and no "..".
+			target = path_without_dots(join(folder, "/", path))
 		}
 		name := declaration.name.text
 		if name == "" {
@@ -711,7 +713,9 @@ enum_cast_form_words := [Enum_Cast_Form]string {
 }
 
 // One cast of a word to an enum that the check refuses: its place, the enum
-// as the source names it (`Status`, `op.Operation`), and its form.
+// as the source names it (`Status`, `op.Operation`, `^Mode`, `[4]Mode`), and
+// its form. An `auto_cast` names no type in the syntax tree: its type name
+// is AUTO_CAST_TYPE_NAME, and the check refuses each one.
 Enum_Cast :: struct {
 	folder:    string, // The folder of the package of the file.
 	file:      string,
@@ -720,20 +724,64 @@ Enum_Cast :: struct {
 	form:      Enum_Cast_Form,
 }
 
-// A cast that stays, with its reason: the folder of the package and the
-// enum as the source names it.
+// The type name of an `auto_cast`, whose target only the type checker of
+// the compiler knows.
+AUTO_CAST_TYPE_NAME :: "auto_cast"
+
+// A cast that stays, with its reason: its file, the enum as the source
+// names it, and the count of such casts in the file that the design holds.
+// One more cast of that enum in the file, or one less, refuses the row.
 Enum_Cast_Exception :: struct {
-	folder:    string,
+	file:      string,
 	type_name: string,
+	count:     int,
 	reason:    string,
 }
 
 // The justified casts. Each row names one place of a design.
 @(rodata)
 ENUM_CAST_EXCEPTIONS := [?]Enum_Cast_Exception {
-	{SOURCE_FOLDER_KERNEL, "op.Operation", "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
-	{SOURCE_FOLDER_PROGRAMS + "/errors", "op.Operation", "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
-	{TOOL_SOURCE_FOLDER, "remote.Request_Kind", "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
+	{SOURCE_FOLDER_KERNEL + "/enter.odin", "op.Operation", 1, "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
+	{SOURCE_FOLDER_PROGRAMS + "/errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
+	{TOOL_SOURCE_FOLDER + "/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
+}
+
+// An exception whose count of casts is not the count that it holds: none
+// (a stale row) or a count other than its own.
+Enum_Cast_Exception_Fault :: struct {
+	exception: Enum_Cast_Exception,
+	found:     int,
+}
+
+// enum_casts_judged splits the casts that the check found: each cast that
+// no exception holds, and each exception whose count of casts differs from
+// its count. The casts of such an exception are refused too: an exception
+// holds its places only while it names exactly them.
+enum_casts_judged :: proc(casts: []Enum_Cast, exceptions: []Enum_Cast_Exception) -> (refused: []Enum_Cast, faults: []Enum_Cast_Exception_Fault) {
+	refused_list := make([dynamic]Enum_Cast, context.temp_allocator)
+	fault_list := make([dynamic]Enum_Cast_Exception_Fault, context.temp_allocator)
+	counts := make([]int, len(exceptions), context.temp_allocator)
+	for cast_of_word in casts {
+		for exception, index in exceptions {
+			if enum_cast_exception_matches(exception, cast_of_word) {
+				counts[index] += 1
+			}
+		}
+	}
+	for exception, index in exceptions {
+		if counts[index] != exception.count {
+			append(&fault_list, Enum_Cast_Exception_Fault{exception, counts[index]})
+		}
+	}
+	each: for cast_of_word in casts {
+		for exception, index in exceptions {
+			if enum_cast_exception_matches(exception, cast_of_word) && counts[index] == exception.count {
+				continue each
+			}
+		}
+		append(&refused_list, cast_of_word)
+	}
+	return refused_list[:], fault_list[:]
 }
 
 // The state of the walk of one file for the casts.
@@ -772,30 +820,56 @@ enum_casts_of_parsed :: proc(parsed: []Choice_Parsed) -> []Enum_Cast {
 		imports: map[string]string,
 	}
 	aliases := make([dynamic]Alias)
-	for item in parsed {
-		imports := imports_of(item.file, item.folder)
-		for statement in item.file.decls {
-			declaration, is_value := statement.derived.(^ast.Value_Decl)
-			if !is_value || declaration.is_mutable || len(declaration.names) != len(declaration.values) {
+	// The declarations of a file, those inside a `when` block of the file
+	// included: a block of a target declares its enums there.
+	collect :: proc(statements: []^ast.Stmt, folder: string, imports: map[string]string, enums: ^map[string]bool, aliases: ^[dynamic]Alias) {
+		for statement in statements {
+			if statement == nil {
 				continue
 			}
-			for name, index in declaration.names {
-				identifier, has_name := name.derived.(^ast.Ident)
-				if !has_name {
+			#partial switch item in statement.derived {
+			case ^ast.When_Stmt:
+				body, is_block := item.body.derived.(^ast.Block_Stmt)
+				if is_block {
+					collect(body.stmts, folder, imports, enums, aliases)
+				}
+				if item.else_stmt != nil {
+					else_statements := []^ast.Stmt{item.else_stmt}
+					if else_block, is_else_block := item.else_stmt.derived.(^ast.Block_Stmt); is_else_block {
+						else_statements = else_block.stmts
+					}
+					collect(else_statements, folder, imports, enums, aliases)
+				}
+			case ^ast.Value_Decl:
+				if item.is_mutable || len(item.names) != len(item.values) {
 					continue
 				}
-				key := choice_key(item.folder, identifier.name)
-				value := declaration.values[index]
-				_, is_enum_type := value.derived.(^ast.Enum_Type)
-				_, is_name := value.derived.(^ast.Ident)
-				_, is_selector := value.derived.(^ast.Selector_Expr)
-				if is_enum_type {
-					enums[key] = true
-				} else if is_name || is_selector {
-					append(&aliases, Alias{key, value, item.folder, imports})
+				for name, index in item.names {
+					identifier, has_name := name.derived.(^ast.Ident)
+					if !has_name {
+						continue
+					}
+					key := choice_key(folder, identifier.name)
+					value := item.values[index]
+					// A distinct type is an enum when the type that it
+					// makes distinct is one: an enum or an alias of one.
+					if distinct_type, is_distinct := value.derived.(^ast.Distinct_Type); is_distinct {
+						value = distinct_type.type
+					}
+					_, is_enum_type := value.derived.(^ast.Enum_Type)
+					_, is_name := value.derived.(^ast.Ident)
+					_, is_selector := value.derived.(^ast.Selector_Expr)
+					if is_enum_type {
+						enums^[key] = true
+					} else if is_name || is_selector {
+						append(aliases, Alias{key, value, folder, imports})
+					}
 				}
 			}
 		}
+	}
+	for item in parsed {
+		collect(item.file.decls[:], item.folder, imports_of(item.file, item.folder), &enums, &aliases)
 	}
 	for _ in 0 ..< CHOICE_VALUE_DEPTH_LIMIT {
 		added := false
@@ -879,6 +953,10 @@ enum_cast_visit :: proc(visitor: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor 
 		if type_name, is_enum := enum_type_name_of(walk, item.type); is_enum {
 			enum_cast_note(walk, node, type_name, item.pos.line)
 		}
+	case ^ast.Auto_Cast:
+		// The target of an auto_cast is the type that the compiler infers:
+		// the syntax tree does not hold it, so each one is refused.
+		enum_cast_note(walk, node, AUTO_CAST_TYPE_NAME, item.pos.line)
 	}
 	return visitor
 }
@@ -921,11 +999,32 @@ enum_cast_type_of :: proc(walk: ^Enum_Cast_Walk, call: ^ast.Call_Expr) -> (type_
 }
 
 // enum_type_name_of says if an expression names an enum type of the
-// package or of an import, and gives the name as the source writes it.
+// package or of an import, or a pointer, an array or a slice of one, and
+// gives the name as the source writes it: `Mode`, `other.Mode`, `^Mode`,
+// `[]Mode`. A cast to a pointer or to an array of an enum makes members of
+// words as a cast to the enum does.
 @(private = "file")
 enum_type_name_of :: proc(walk: ^Enum_Cast_Walk, expression: ^ast.Expr) -> (type_name: string, is_enum: bool) {
 	if expression == nil {
 		return "", false
+	}
+	// The prefix of a type that holds the enum, and the type that it holds.
+	element_of :: proc(expression: ^ast.Expr) -> (prefix: string, element: ^ast.Expr) {
+		#partial switch item in expression.derived {
+		case ^ast.Pointer_Type:
+			return "^", item.elem
+		case ^ast.Multi_Pointer_Type:
+			return "[^]", item.elem
+		case ^ast.Array_Type:
+			return "[]", item.elem
+		case ^ast.Dynamic_Array_Type:
+			return "[dynamic]", item.elem
+		}
+		return "", nil
+	}
+	if prefix, element := element_of(expression); element != nil {
+		inner := enum_type_name_of(walk, element) or_return
+		return strings.concatenate({prefix, inner}, context.temp_allocator), true
 	}
 	#partial switch item in expression.derived {
 	case ^ast.Ident:
@@ -979,19 +1078,11 @@ enum_member_at :: proc($Enum: typeid, place: int) -> Enum where intrinsics.type_
 	fmt.panicf("modustool: the place %d is past the %d members of %v", place, count, typeid_of(Enum))
 }
 
-// enum_cast_exception_matches says if an exception names a cast.
+// enum_cast_exception_matches says if an exception names a cast: the same
+// file and the same enum. A tree under another root ends with the path.
 enum_cast_exception_matches :: proc(exception: Enum_Cast_Exception, cast_of_word: Enum_Cast) -> bool {
-	return exception.folder == cast_of_word.folder && exception.type_name == cast_of_word.type_name
-}
-
-// enum_cast_exception_of finds the exception of a cast; nil with none.
-enum_cast_exception_of :: proc(cast_of_word: Enum_Cast) -> ^Enum_Cast_Exception {
-	for &exception in ENUM_CAST_EXCEPTIONS {
-		if enum_cast_exception_matches(exception, cast_of_word) {
-			return &exception
-		}
-	}
-	return nil
+	same_file := cast_of_word.file == exception.file || strings.has_suffix(cast_of_word.file, strings.concatenate({"/", exception.file}, context.temp_allocator))
+	return same_file && exception.type_name == cast_of_word.type_name
 }
 
 // choice_families_of_tree reads each source of the system that is not a
@@ -1033,29 +1124,20 @@ choice_constant_check :: proc() -> bool {
 	}
 	// A cast skips the border: the word becomes a member that the writer
 	// may not have named, and each switch after it runs no case for it.
-	casts_refused := 0
-	for cast_of_word in casts {
-		if enum_cast_exception_of(cast_of_word) != nil {
+	refused_casts, exception_faults := enum_casts_judged(casts, ENUM_CAST_EXCEPTIONS[:])
+	for cast_of_word in refused_casts {
+		if cast_of_word.type_name == AUTO_CAST_TYPE_NAME {
+			fmt.eprintfln("modustool: %s:%d: an auto_cast is %s: its target is no type that the check can read, so it can skip the border of an enum; write the conversion with its type (src/md/infrastructure/choice_constants.md)", cast_of_word.file, cast_of_word.line, enum_cast_form_words[cast_of_word.form])
 			continue
 		}
-		casts_refused += 1
 		fmt.eprintfln("modustool: %s:%d: a cast of a word to the enum %s is %s: read the word through its border, which refuses a word that names no member, and pass the member; a cast is allowed only as one operand of == or != with a member (src/md/infrastructure/choice_constants.md)", cast_of_word.file, cast_of_word.line, cast_of_word.type_name, enum_cast_form_words[cast_of_word.form])
 	}
-	// An exception that matches no cast is no longer true.
-	casts_stale := 0
-	for exception in ENUM_CAST_EXCEPTIONS {
-		matched := false
-		for cast_of_word in casts {
-			if enum_cast_exception_matches(exception, cast_of_word) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			casts_stale += 1
-			fmt.eprintfln("modustool: %s: the exception %s of the check of the casts of a word to an enum names no cast: remove it from ENUM_CAST_EXCEPTIONS", exception.folder, exception.type_name)
-		}
+	// An exception that matches no cast, or another count of casts, is no
+	// longer true: its casts are refused above.
+	for fault in exception_faults {
+		fmt.eprintfln("modustool: %s: the exception %s of the check of the casts of a word to an enum holds %d casts, and the file has %d: change the row of ENUM_CAST_EXCEPTIONS, or the code", fault.exception.file, fault.exception.type_name, fault.exception.count, fault.found)
 	}
+	casts_refused, casts_stale := len(refused_casts), len(exception_faults)
 	refused := 0
 	for family in families {
 		if choice_exception_of(family) != nil {
@@ -1082,7 +1164,7 @@ choice_constant_check :: proc() -> bool {
 		}
 	}
 	if refused > 0 || stale > 0 || casts_refused > 0 || casts_stale > 0 {
-		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, and %d exceptions name no cast", refused, stale, casts_refused, casts_stale)
+		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, and %d exceptions of casts do not hold their count", refused, stale, casts_refused, casts_stale)
 		return false
 	}
 	test_passed_print("no family of integer constants is a closed set of choices, and no cast of a word to an enum is kept, passed or switched on, in the %d source files of the system and of the tool that are not tests (%d exceptions of outside standards, %d casts of a design)", file_count, len(CHOICE_CONSTANT_EXCEPTIONS), len(ENUM_CAST_EXCEPTIONS))

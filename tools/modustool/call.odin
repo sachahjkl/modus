@@ -273,7 +273,7 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 			if !type_ok {
 				return nil, fmt.tprintf("row %d: the field %s has the byte %d of a type, which names no type", number + 1, module.string_at(file, item.name_offset, item.name_count), item.type)
 			}
-			#partial switch type {
+			switch type {
 			case .Integer:
 				if value.is_text || value.is_table {
 					return nil, fmt.tprintf("row %d: the field %s is an Integer", number + 1, module.string_at(file, item.name_offset, item.name_count))
@@ -290,7 +290,9 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 					return nil, fmt.tprintf("row %d: the field %s is a Text of %d bytes at most", number + 1, module.string_at(file, item.name_offset, item.name_count), item.detail)
 				}
 				copy(record[item.offset:], value.text)
-			case:
+			case .None, .Record, .Handle, .Table, .Bytes:
+				// A handle of the host has no meaning in the machine, and
+				// record_type refuses the other types in a record.
 				return nil, fmt.tprintf("row %d: the field %s has no text form", number + 1, module.string_at(file, item.name_offset, item.name_count))
 			}
 		}
@@ -346,7 +348,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		if !type_ok {
 			return {}, fmt.tprintf("the parameter %s of %s.%s has the byte %d of a type, which names no type", name, service, export, function.parameters[number])
 		}
-		#partial switch type {
+		switch type {
 		case .Integer:
 			if argument.is_text {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is an Integer, the argument is a Text", name, service, export)
@@ -378,9 +380,10 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 				return {}, fmt.tprintf("the parameter %s of %s.%s: %s", name, service, export, table_problem)
 			}
 			encoded[number].table = {records = bytes, count = u64(len(argument.rows))}
-		case:
-			// A handle of the host has no meaning in the machine, and a
-			// Record argument has no text form yet.
+		case .None, .Record, .Handle:
+			// A handle of the host has no meaning in the machine, a Record
+			// argument has no text form yet, and isolated.record_size
+			// refuses a parameter of the type None.
 			return {}, fmt.tprintf("the parameter %s of %s.%s is a %s: a call from the host gives Integers, Texts and tables to read only", name, service, export, type_name(file, type, function.parameter_details[number]))
 		}
 		if (type == .Integer || type == .Text) && argument.is_table {
@@ -407,7 +410,10 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		if !type_ok {
 			return {}, fmt.tprintf("the parameter %d of %s.%s has the byte %d of a type, which names no type", number + 1, service, export, word)
 		}
-		#partial switch type {
+		switch type {
+		case .None, .Integer, .Handle:
+			// The field of the argument record holds the whole value: it
+			// names no bytes of the region.
 		case .Text:
 			slice_record := (^isolated.Slice)(&client.region[field])^
 			end = max(end, slice_record.start + slice_record.count)
@@ -430,7 +436,11 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	if !result_type_ok {
 		return {}, fmt.tprintf("the result of %s.%s has the byte %d of a type, which names no type", service, export, function.result)
 	}
-	#partial switch result_type {
+	switch result_type {
+	case .None, .Integer:
+		// No buffer: the result is in the answer.
+	case .Handle, .Bytes:
+		// isolated.record_size refuses these results, and encode before.
 	case .Record:
 		end = max(end, result.start + result.count)
 	case .Text:
@@ -655,7 +665,10 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		append(&outcome.lines, fmt.tprintf("the result has the byte %d of a type, which names no type", call.function.result))
 		return outcome
 	}
-	#partial switch result_type {
+	switch result_type {
+	case .Handle, .Bytes:
+		// call_prepare refused the call before, as isolated.record_size does.
+		append(&outcome.lines, fmt.tprintf("the result has the type %v, which no call gives", result_type))
 	case .None:
 		append(&outcome.lines, "done")
 	case .Integer:
@@ -818,7 +831,9 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 	if !type_ok {
 		return "?"
 	}
-	#partial switch type {
+	switch type {
+	case .None, .Record, .Table, .Bytes:
+		// record_type refuses a field of these types: it has no value.
 	case .Integer:
 		if u64(item.offset) + u64(module.field_size(item)) <= u64(len(record)) {
 			return fmt.tprintf("%d", module.field_integer(record, item))

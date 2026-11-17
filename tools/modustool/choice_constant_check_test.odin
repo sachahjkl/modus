@@ -381,9 +381,30 @@ as_an_index :: proc "contextless" (word: u32, names: [Mode]string) -> string {
 with_cast :: proc "contextless" (word: u32) -> (Mode, Mode) {
 	return cast(Mode)word, transmute(Mode)word
 }
+
+Chained :: Alias
+
+Distinct_Mode :: distinct Mode
+
+when ODIN_OS == .Linux {
+	In_A_When :: enum u8 {
+		One = 1,
+	}
+}
+
+more_forms :: proc "contextless" (word: u32, bytes: [4]u32) -> (Chained, Distinct_Mode, In_A_When, Mode, [4]Mode, Mode) {
+	chained := Chained(word)
+	distinct_mode := Distinct_Mode(word)
+	in_a_when := In_A_When(word)
+	pointer := (^Mode)(&word)^
+	array := transmute([4]Mode)bytes
+	automatic: Mode = auto_cast word
+	return chained, distinct_mode, in_a_when, pointer, array, automatic
+}
 `
 
-// A package that imports the enum and casts a word through the import.
+// A package that imports the enum, casts a word through the import, and
+// declares an alias of the enum through the import.
 @(private = "file")
 CASTS_IMPORTED :: `package importer
 
@@ -391,6 +412,34 @@ import other "modus:support/casts"
 
 through_an_import :: proc "contextless" (word: u32) {
 	other.use(other.Mode(word))
+}
+
+Imported_Alias :: other.Mode
+
+through_an_imported_alias :: proc "contextless" (word: u32) -> Imported_Alias {
+	return Imported_Alias(word)
+}
+`
+
+// A third package that casts through the alias of the importer, and a
+// package that imports the enum by a relative path.
+@(private = "file")
+CASTS_THROUGH_TWO_IMPORTS :: `package third
+
+import "modus:support/importer"
+
+through_two_imports :: proc "contextless" (word: u32) -> importer.Imported_Alias {
+	return importer.Imported_Alias(word)
+}
+`
+
+@(private = "file")
+CASTS_RELATIVE :: `package relative
+
+import neighbour "../../library/support/casts"
+
+through_a_relative_import :: proc "contextless" (word: u32) -> neighbour.Mode {
+	return neighbour.Mode(word)
 }
 `
 
@@ -400,7 +449,9 @@ through_an_import :: proc "contextless" (word: u32) {
 a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
 		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
-		{path = "src/programs/importer/main.odin", text = CASTS_IMPORTED},
+		{path = "src/library/support/importer/importer.odin", text = CASTS_IMPORTED},
+		{path = "src/programs/third/main.odin", text = CASTS_THROUGH_TWO_IMPORTS},
+		{path = "src/programs/relative/main.odin", text = CASTS_RELATIVE},
 	}
 	casts, ok := enum_casts_of_sources(sources)
 	testing.expect(t, ok)
@@ -422,14 +473,53 @@ a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 		{DECLARED, 40, "Mode", .Kept}, // An index.
 		{DECLARED, 44, "Mode", .Kept}, // cast.
 		{DECLARED, 44, "Mode", .Kept}, // transmute.
-		{"src/programs/importer/main.odin", 6, "other.Mode", .Passed},
+		{DECLARED, 58, "Chained", .Kept}, // A chain of two aliases.
+		{DECLARED, 59, "Distinct_Mode", .Kept}, // A distinct enum.
+		{DECLARED, 60, "In_A_When", .Kept}, // An enum of a when block.
+		{DECLARED, 61, "^Mode", .Kept}, // A pointer.
+		{DECLARED, 62, "[]Mode", .Kept}, // An array.
+		{DECLARED, 63, AUTO_CAST_TYPE_NAME, .Kept}, // An auto_cast, whose target is no type of the tree.
+		{"src/library/support/importer/importer.odin", 6, "other.Mode", .Passed},
+		{"src/library/support/importer/importer.odin", 12, "Imported_Alias", .Kept}, // An alias through an import.
+		{"src/programs/relative/main.odin", 6, "neighbour.Mode", .Kept}, // A relative import.
+		{"src/programs/third/main.odin", 6, "importer.Imported_Alias", .Kept}, // The alias of an import, from a third package.
 	}
 	testing.expect_value(t, len(casts), len(expected))
 	for item, index in expected[:min(len(expected), len(casts))] {
 		found := casts[index]
 		testing.expectf(t, found.file == item.file && found.line == item.line && found.type_name == item.type_name && found.form == item.form, "the cast %d is %s:%d %s %v, not %s:%d %s %v", index, found.file, found.line, found.type_name, found.form, item.file, item.line, item.type_name, item.form)
-		testing.expect(t, enum_cast_exception_of(found) == nil)
 	}
+	// No exception of the repository holds a cast of these sources.
+	refused, _ := enum_casts_judged(casts, ENUM_CAST_EXCEPTIONS[:])
+	testing.expect_value(t, len(refused), len(casts))
+}
+
+// An exception holds the casts of its file and its enum, and only as many
+// as its count: a second cast in the file refuses both and the row, a cast
+// of another file or of another enum is refused, and a row with no cast is
+// refused. The good case last: one cast, one row of count 1.
+@(test)
+an_exception_holds_its_count_of_casts_in_its_file :: proc(t: ^testing.T) {
+	exceptions := []Enum_Cast_Exception{{file = "src/a/a.odin", type_name = "Mode", count = 1, reason = "a test"}}
+	two := []Enum_Cast{{file = "src/a/a.odin", line = 3, type_name = "Mode"}, {file = "src/a/a.odin", line = 9, type_name = "Mode"}}
+	refused, faults := enum_casts_judged(two, exceptions)
+	testing.expect_value(t, len(refused), 2)
+	testing.expect_value(t, len(faults), 1)
+	if len(faults) == 1 {
+		testing.expect_value(t, faults[0].found, 2)
+	}
+	others := []Enum_Cast{{file = "src/b/b.odin", line = 3, type_name = "Mode"}, {file = "src/a/a.odin", line = 4, type_name = "Other"}}
+	refused, faults = enum_casts_judged(others, exceptions)
+	testing.expect_value(t, len(refused), 2)
+	testing.expect_value(t, len(faults), 1)
+	if len(faults) == 1 {
+		testing.expect_value(t, faults[0].found, 0)
+	}
+	// A tree under another root holds the same file at the end of its path.
+	one := []Enum_Cast{{file = "/tmp/root/src/a/a.odin", line = 3, type_name = "Mode"}}
+	refused, faults = enum_casts_judged(one, exceptions)
+	testing.expect_value(t, len(refused), 0)
+	testing.expect_value(t, len(faults), 0)
 }
 
 // A source that the parser refuses is no source with no cast.
@@ -510,17 +600,12 @@ choice_constants_of_the_repository :: proc(t: ^testing.T) {
 	families, casts, file_count, ok := choice_families_of_tree("")
 	testing.expect(t, ok)
 	testing.expect(t, file_count > 100)
-	for cast_of_word in casts {
-		if enum_cast_exception_of(cast_of_word) == nil {
-			testing.expectf(t, false, "%s:%d: a cast of a word to the enum %s is %s", cast_of_word.file, cast_of_word.line, cast_of_word.type_name, enum_cast_form_words[cast_of_word.form])
-		}
+	refused_casts, exception_faults := enum_casts_judged(casts, ENUM_CAST_EXCEPTIONS[:])
+	for cast_of_word in refused_casts {
+		testing.expectf(t, false, "%s:%d: a cast of a word to the enum %s is %s", cast_of_word.file, cast_of_word.line, cast_of_word.type_name, enum_cast_form_words[cast_of_word.form])
 	}
-	for exception in ENUM_CAST_EXCEPTIONS {
-		matched := false
-		for cast_of_word in casts {
-			matched ||= enum_cast_exception_matches(exception, cast_of_word)
-		}
-		testing.expectf(t, matched, "the exception %s of %s names no cast", exception.type_name, exception.folder)
+	for fault in exception_faults {
+		testing.expectf(t, false, "the exception %s of %s holds %d casts, and the file has %d", fault.exception.type_name, fault.exception.file, fault.exception.count, fault.found)
 	}
 	for family in families {
 		if choice_exception_of(family) == nil {
