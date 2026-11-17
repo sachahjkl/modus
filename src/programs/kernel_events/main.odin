@@ -64,7 +64,7 @@ import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
-import rounds "modus:support/kernel_events_rounds"
+import rounds "modus:private/kernel_events/kernel_events_rounds"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -140,7 +140,7 @@ STOP_BY_PARENT :: 9
 LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256 + LOADERS_MOST * (16 + 3), programs = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
 WAITER_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 0}
 
-// The rounds of the load child: modus:support/kernel_events_rounds.
+// The rounds of the load child: modus:private/kernel_events/kernel_events_rounds.
 Round :: rounds.Round
 
 // The page that the parent shares with each child, at SHARED_ADDRESS in the

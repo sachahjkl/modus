@@ -107,7 +107,7 @@ CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
 	{SOURCE_FOLDER_KERNEL + "/iommu", "SCOPE", .First, "the device scope types of the ACPI table DMAR (Intel VT-d, section 8.3.1): a scope of another type is legal and is skipped"},
 	{SOURCE_FOLDER_KERNEL + "/acpi_processors", "ENTRY", .First, "the entry types of the ACPI table APIC (ACPI 6.5, section 5.2.12): an entry of another type is legal and is skipped by its length"},
 	{SOURCE_FOLDER_SUPPORT + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
-	{SOURCE_FOLDER_SUPPORT + "/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
+	{SOURCE_FOLDER_PRIVATE + "/input/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
 	{SOURCE_FOLDER_PROGRAMS + "/input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
 	{SOURCE_FOLDER_SUPPORT + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
 	{SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},

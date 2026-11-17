@@ -4,8 +4,8 @@ import "base:runtime"
 import "core:slice"
 import "modus:support/disk_program"
 import format "modus:contract/store"
-import "modus:support/storage_mount"
-import tree "modus:support/storage_tree"
+import "modus:private/storage/storage_mount"
+import tree "modus:private/storage/storage_tree"
 
 // The fuzz targets of the storage format on the disk
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): a

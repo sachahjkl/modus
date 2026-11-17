@@ -47,14 +47,14 @@
 // root service names these slots INPUT_GRANT_ too.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
-// emulates, with two keyboard layouts (src/library/support/keyboard_layout);
+// emulates, with two keyboard layouts (src/library/private/input/keyboard_layout);
 // AltGr, the right Alt key, gives the third level of the layout of France.
 // It has no USB.
 package input
 
 import "modus:support/display"
 import "modus:support/key_path"
-import "modus:support/keyboard_layout"
+import "modus:private/input/keyboard_layout"
 import "modus:contract/fixed_addresses"
 import "modus:contract/ring"
 import "modus:contract/settings"

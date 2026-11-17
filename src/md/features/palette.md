@@ -98,7 +98,7 @@ Refused: a view that leaves its choice behind (above); a scroll bar that the pan
 
 The panel shows each entry in the form that its act asks for, and offers to go where the act lives. Nothing is written for one command: three rules derive the form. What an element or an entry acts on is its act name (`docs/glossary/desktop.md`): the word "action" is already what a key asks of the panel (`palette.Action`), and "place" is a term of the storage service.
 
-**Rule 1: the control comes from the field.** One table of the support package of the palette gives a control for a field, from what the field is:
+**Rule 1: the control comes from the field.** One table of the private part `palette` of the compositor gives a control for a field, from what the field is:
 
 | The field | The control |
 |---|---|

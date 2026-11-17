@@ -90,33 +90,33 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/bridge_requester",
 	SOURCE_FOLDER_KERNEL + "/debug_exception",
 	SOURCE_FOLDER_KERNEL + "/processor_counters",
-	SOURCE_FOLDER_SUPPORT + "/storage_mount",
-	SOURCE_FOLDER_SUPPORT + "/storage_object",
-	SOURCE_FOLDER_SUPPORT + "/storage_tree",
-	SOURCE_FOLDER_SUPPORT + "/storage_retention",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
 	SOURCE_FOLDER_SUPPORT + "/principals",
 	SOURCE_FOLDER_SUPPORT + "/tpm2",
 	SOURCE_FOLDER_SUPPORT + "/disk_program",
 	SOURCE_FOLDER_SUPPORT + "/calendar",
 	SOURCE_FOLDER_SUPPORT + "/line_editor",
-	SOURCE_FOLDER_SUPPORT + "/console_language",
-	SOURCE_FOLDER_SUPPORT + "/debugging",
+	SOURCE_FOLDER_PRIVATE + "/console/console_language",
+	SOURCE_FOLDER_PRIVATE + "/debugger/debugging",
 	SOURCE_FOLDER_MODULES + "/interface_module",
 	SOURCE_FOLDER_MODULES + "/drawing",
 	SOURCE_FOLDER_MODULES + "/sample",
 	SOURCE_FOLDER_SUPPORT + "/system",
 	SOURCE_FOLDER_SUPPORT + "/twins",
-	SOURCE_FOLDER_SUPPORT + "/kernel_events_rounds",
+	SOURCE_FOLDER_PRIVATE + "/kernel_events/kernel_events_rounds",
 	SOURCE_FOLDER_CONTRACT + "/tpm_service",
 	SOURCE_FOLDER_SUPPORT + "/storage",
-	SOURCE_FOLDER_SUPPORT + "/bar",
-	SOURCE_FOLDER_SUPPORT + "/palette",
+	SOURCE_FOLDER_PRIVATE + "/compositor/bar",
+	SOURCE_FOLDER_PRIVATE + "/compositor/palette",
 	SOURCE_FOLDER_CONTRACT + "/palette_table",
 	SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
 	SOURCE_FOLDER_SUPPORT + "/graphics",
 	SOURCE_FOLDER_SUPPORT + "/interface",
-	SOURCE_FOLDER_SUPPORT + "/addresses",
-	SOURCE_FOLDER_SUPPORT + "/information",
+	SOURCE_FOLDER_PRIVATE + "/inspect/addresses",
+	SOURCE_FOLDER_PRIVATE + "/manual/information",
 	SOURCE_FOLDER_SUPPORT + "/vector_font",
 	SOURCE_FOLDER_SUPPORT + "/network",
 	SOURCE_FOLDER_SUPPORT + "/tcp",
@@ -138,17 +138,17 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
 	SOURCE_FOLDER_CONTRACT + "/system_description",
 	SOURCE_FOLDER_CONTRACT + "/replacement_list",
-	SOURCE_FOLDER_SUPPORT + "/replacement_signature",
+	SOURCE_FOLDER_PRIVATE + "/root/replacement_signature",
 	SOURCE_FOLDER_CONTRACT + "/operation",
 	SOURCE_FOLDER_CONTRACT + "/operation_sequence",
 	SOURCE_FOLDER_CONTRACT + "/debug_object",
 	SOURCE_FOLDER_CONTRACT + "/value_kinds",
-	SOURCE_FOLDER_SUPPORT + "/source_comment_markdown",
-	SOURCE_FOLDER_SUPPORT + "/console_results",
+	SOURCE_FOLDER_PRIVATE + "/manual/source_comment_markdown",
+	SOURCE_FOLDER_PRIVATE + "/console/console_results",
 	SOURCE_FOLDER_SUPPORT + "/key_path",
 	SOURCE_FOLDER_SUPPORT + "/kind_icons",
 	SOURCE_FOLDER_CONTRACT + "/manual_pages",
-	SOURCE_FOLDER_SUPPORT + "/manual_navigation",
+	SOURCE_FOLDER_PRIVATE + "/manual/manual_navigation",
 	SOURCE_FOLDER_CONTRACT + "/ring",
 	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
 	SOURCE_FOLDER_CONTRACT + "/datagram",
@@ -1233,6 +1233,23 @@ Machine_Iommu :: enum {
 	Amd,
 }
 
+// firmware_files names the files of a firmware: the variable of the
+// environment that gives its code, the one that gives its variable store,
+// the copy of that store outside a test, and the end of the name of the
+// copy of a test machine. The start of a machine and the names of the
+// addresses at a failure both read them, so the two name the same files.
+firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_variable, variables_copy, variables_suffix: string) {
+	switch firmware {
+	case .Usual:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES, FIRMWARE_VARIABLES_SUFFIX
+	case .With_Tpm_Driver:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES, FIRMWARE_TPM_VARIABLES_SUFFIX
+	case .With_Secure_Boot:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES, FIRMWARE_FULL_VARIABLES_SUFFIX
+	}
+	return
+}
+
 machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
@@ -1252,17 +1269,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	if !disk_prepare(scratch_disk, SCRATCH_DISK_SIZE, true) {
 		return nil, false
 	}
-	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
-	variables_suffix := FIRMWARE_VARIABLES_SUFFIX
-	switch firmware {
-	case .Usual:
-	case .With_Tpm_Driver:
-		code_variable, variables_variable, variables_copy = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES
-		variables_suffix = FIRMWARE_TPM_VARIABLES_SUFFIX
-	case .With_Secure_Boot:
-		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
-		variables_suffix = FIRMWARE_FULL_VARIABLES_SUFFIX
-	}
+	code_variable, variables_variable, variables_copy, variables_suffix := firmware_files(firmware)
 	if test_output != "" {
 		variables_copy = machine_file(test_output, variables_suffix)
 	}

@@ -5,14 +5,14 @@ import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import format "modus:contract/store"
-import "modus:support/storage_mount"
-import block_tree "modus:support/storage_object"
-import tree "modus:support/storage_tree"
+import "modus:private/storage/storage_mount"
+import block_tree "modus:private/storage/storage_object"
+import tree "modus:private/storage/storage_tree"
 import "modus:contract/enum_word"
 import "modus:support/system"
 
 // The trees of a store (docs/STORAGE.md): each tree is its own B+ tree
-// (src/library/support/storage_tree), and an entry of kind Tree holds the root node of
+// (src/library/private/storage/storage_tree), and an entry of kind Tree holds the root node of
 // the tree inside it. A commit opens the trees on the paths that it
 // changes, changes their entries, then writes them from the deepest up:
 // the new root of a tree goes into its entry in the tree above it, up to
@@ -582,7 +582,7 @@ tree_state :: proc "contextless" (state: State_Of_Object) -> block_tree.State {
 	return {root = state.root, size = state.size}
 }
 
-// The work of a commit on one object (src/library/support/storage_object): the copies
+// The work of a commit on one object (src/library/private/storage/storage_object): the copies
 // of its object nodes.
 object_work: block_tree.Work
 object_node: Object_Node // The room of a read of one block tree.

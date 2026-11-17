@@ -3,10 +3,10 @@ package manual
 import "modus:contract/blake3"
 import "modus:contract/manual_pages"
 import "modus:support/display"
-import "modus:support/manual_navigation"
+import "modus:private/manual/manual_navigation"
 import "modus:support/graphics"
 import "modus:support/interface"
-import markdown "modus:support/source_comment_markdown"
+import markdown "modus:private/manual/source_comment_markdown"
 import module "modus:contract/module"
 import "modus:support/system"
 

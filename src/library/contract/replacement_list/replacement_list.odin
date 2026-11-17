@@ -24,7 +24,7 @@
 // - `signed_message`, `SIGNATURE_LABEL`: what a key signs for one row.
 // - `row_find`: the row of one pair and one scope.
 //
-// The signature itself is `src/library/support/replacement_signature`: a
+// The signature itself is `src/library/private/root/replacement_signature`: a
 // contract package holds no cryptography.
 //
 // See [replacement row](term:replacement-row).

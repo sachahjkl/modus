@@ -124,7 +124,7 @@ Do not use: header, caption, decoration.
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
 
-The bar is the fixed place of the desktop where the input starts a program or finds a window. A press on a button opens its menu under it. `src/library/support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a program.
+The bar is the fixed place of the desktop where the input starts a program or finds a window. A press on a button opens its menu under it. `src/library/private/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a program.
 
 The design: `docs/DESIGN.md`, "Background and bar".
 

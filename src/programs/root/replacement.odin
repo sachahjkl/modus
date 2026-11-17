@@ -17,7 +17,7 @@ package root
 
 import "modus:contract/errors"
 import "modus:contract/replacement_list"
-import "modus:support/replacement_signature"
+import "modus:private/root/replacement_signature"
 import "modus:contract/root_ring"
 import "modus:support/system"
 

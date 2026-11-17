@@ -368,7 +368,7 @@ Field :: struct {
 // two blocks. A line that starts with "- " or with a number and a period is
 // a list item. A line that starts with a space, outside a list, and a line
 // between two fences of three backticks, are kept as they are. A reader in
-// the system reads it with `src/library/support/source_comment_markdown`.
+// the system reads it with `src/library/private/manual/source_comment_markdown`.
 Documentation :: struct {
 	about_offset: u32, // One line, in the string table: what the module is.
 	about_count:  u32, // The bytes of the line.

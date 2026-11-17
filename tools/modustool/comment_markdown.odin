@@ -3,7 +3,7 @@
 // Markdown: paragraphs, bold, italics, code, lists, examples and links. The
 // site renders it with the renderer of the guides. A module carries the
 // same text with its marks, and `manual` reads them in the system
-// (src/library/support/source_comment_markdown). The line of help of a module and of an
+// (src/library/private/manual/source_comment_markdown). The line of help of a module and of an
 // export has no mark: the console prints it as one plain line. This file
 // makes that plain text, and the plain text of a summary.
 package modustool

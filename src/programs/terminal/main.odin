@@ -690,7 +690,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 
 // list_icon_form gives the form and the color of the kind icon of a row of
 // the completion list, the same as a row of the palette has for the same
-// kind (src/library/support/palette, entry_icon). nil: no icon.
+// kind (src/library/private/compositor/palette, entry_icon). nil: no icon.
 //
 // - A service, a module and a program are modules: the form of a module.
 // - An export is a part of a module: its own form, in the color of a module.

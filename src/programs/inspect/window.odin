@@ -1,7 +1,7 @@
 package inspect
 
 import op "modus:contract/operation"
-import "modus:support/addresses"
+import "modus:private/inspect/addresses"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"

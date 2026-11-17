@@ -3,14 +3,14 @@ package manual
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:support/graphics"
-import "modus:support/information"
+import "modus:private/manual/information"
 import "modus:support/sentence"
 import "modus:support/system"
 
 // The manual is also the service of the information of the modules,
 // through functions and with no query language: each export below gives a
 // table of records, from the flat
-// tables of the modules of the boot image (src/library/support/information). The
+// tables of the modules of the boot image (src/library/private/manual/information). The
 // console combines the tables with where, sort, join and columns.
 //
 // What runs comes from the kernel: the module records of each program,
@@ -285,7 +285,7 @@ overview_build :: proc "contextless" () -> int {
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
 	put_built(0, graphics.colors.text, "ALL MODULES (", u64(count), ")")
-	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.colors.dim)
+	put("The flat tables of each module of the boot image, as the manual reads them.", 0, graphics.colors.dim)
 	put("Sizes in bytes of memory. o: this table; up, down: the page of a module.", 0, graphics.colors.dim)
 	put("", 0, 0)
 	// The column of the names has the width of the longest name of the

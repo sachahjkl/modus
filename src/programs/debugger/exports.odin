@@ -5,7 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/debugging"
+import "modus:private/debugger/debugging"
 import "modus:support/system"
 
 // The exports of the debugger service: each one gives a table of records.

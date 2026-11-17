@@ -8,8 +8,8 @@ package storage_mount
 
 import "base:intrinsics"
 import format "modus:contract/store"
-import block_tree "modus:support/storage_object"
-import tree "modus:support/storage_tree"
+import block_tree "modus:private/storage/storage_object"
+import tree "modus:private/storage/storage_tree"
 
 BLOCK_SIZE :: format.BLOCK_SIZE // The bytes of one block of the disk.
 SCRATCH_BLOCKS :: format.OBJECT_FANOUT + 2 // The blocks of data of one object node, read in one request.
@@ -44,7 +44,7 @@ value_of_block :: proc "contextless" (reader: ^Block_Reader, number: u64, index:
 }
 
 // Reader_Source reads the nodes of the trees through a Block_Reader, for
-// src/library/support/storage_tree.
+// src/library/private/storage/storage_tree.
 Reader_Source :: struct {
 	using source: tree.Source,
 	reader:       ^Block_Reader, // Where the blocks come from.
@@ -72,7 +72,7 @@ reader_source_read :: proc "contextless" (source: ^tree.Source, pointer: format.
 }
 
 // Object_Source reads the block trees of objects through a Block_Reader,
-// for src/library/support/storage_object: the modus tool reads the objects of an image
+// for src/library/private/storage/storage_object: the modus tool reads the objects of an image
 // with it.
 Object_Source :: struct {
 	using source: block_tree.Source,

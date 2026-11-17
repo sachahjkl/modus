@@ -62,7 +62,7 @@
 // store.
 //
 // Who uses it: the storage service (`src/programs/storage`, with
-// `src/library/support/storage_tree` and `src/library/support/storage_object`), and the tools that
+// `src/library/private/storage/storage_tree` and `src/library/private/storage/storage_object`), and the tools that
 // check or damage a disk in the tests. A program never reads the disk: it
 // calls the storage service. The parts:
 //
