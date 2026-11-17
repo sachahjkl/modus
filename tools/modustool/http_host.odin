@@ -11,6 +11,11 @@ import "modus:support/web"
 // tool checks each answer with its own reading of HTTP (src/library/support/web).
 
 HTTP_HOST_WAIT_LIMIT :: HANG_BOUND // It only ends a wait that hangs.
+// The pause between two sends of the case "split": the TCP of the host then
+// sends them in two segments, so the server reads a head and a body in
+// parts. It shapes the input; it waits for no state, and the case checks
+// the same answer whatever the segments are.
+HTTP_SPLIT_SEND_PAUSE :: 20 * time.Millisecond
 
 // An HTTP connection of the host: the bytes that came and were not used
 // yet, so that answers in one segment, or split, are read right.
@@ -209,13 +214,13 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 		SIZE :: 200_000
 		head := fmt.tprintf("POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: %d\r\n\r\n", SIZE)
 		http_host_send(&connection, head[:7])
-		time.sleep(20 * time.Millisecond)
+		time.sleep(HTTP_SPLIT_SEND_PAUSE)
 		http_host_send(&connection, head[7:])
 		body := make([]u8, SIZE, context.temp_allocator)
 		web.pattern_fill(body, 0)
 		for offset := 0; offset < SIZE; offset += SIZE / 10 {
 			send_all(connection.socket, body[offset:][:SIZE / 10])
-			time.sleep(20 * time.Millisecond)
+			time.sleep(HTTP_SPLIT_SEND_PAUSE)
 		}
 		answer := http_host_answer(&connection)
 		wanted := fmt.tprintf("received %d bytes, fnv1a64 %016x", SIZE, web.pattern_hash(SIZE))

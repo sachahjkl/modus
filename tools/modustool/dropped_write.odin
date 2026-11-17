@@ -144,7 +144,7 @@ dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected,
 	return contents.mount.generation, true
 }
 
-dropped_write_run :: proc() -> bool {
+dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
 	fresh := make([]u8, DATA_DISK_SIZE)
 	defer delete(fresh)
 	server: Network_Block_Device
@@ -160,7 +160,7 @@ dropped_write_run :: proc() -> bool {
 	server.root_drop_marker = DROPPED_WRITE_ROOT_MARKER
 	sync.mutex_unlock(&server.lock)
 	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
-	ran := machine_test(scenario_dropped_write_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DROPPED_WRITE, 1), 0, address, disk_server = &server)
+	ran := machine_test(part, scenario_dropped_write_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 1), exit_status = 0, data_disk = address, disk_server = &server})
 	disk_server_stop(&server)
 	if !ran {
 		return false
@@ -202,5 +202,5 @@ dropped_write_run :: proc() -> bool {
 	append(&second, Step{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"})
 	append(&second, Step{kind = .Wait, text = "[console] " + DROPPED_WRITE_FIRST_VERSION, fails_on = "[console] " + DROPPED_WRITE_MARKER})
 	append(&second, Step{kind = .Quit})
-	return machine_test(second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DROPPED_WRITE, 2), 0, TEST_DROPPED_WRITE_DISK)
+	return machine_test(part, second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 2), exit_status = 0, data_disk = TEST_DROPPED_WRITE_DISK})
 }

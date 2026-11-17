@@ -104,11 +104,11 @@ times_file_keeps_the_order_of_the_run :: proc(t: ^testing.T) {
 	defer delete(times.steps)
 	defer delete(times.machines)
 	append(&times.steps, ..records[:])
-	append(&times.machines, Machine_Time{output = "build/first.txt", passed = true, whole = 14 * time.Second, first_line_seen = true, first_line = 1500 * time.Millisecond}, Machine_Time{output = "build/second.txt", passed = false, whole = 11 * time.Second})
+	append(&times.machines, Machine_Time{part = "main", output = "build/first.txt", passed = true, whole = 14 * time.Second, first_line_seen = true, first_line = 1500 * time.Millisecond}, Machine_Time{part = "tcp", output = "build/second.txt", passed = false, whole = 11 * time.Second})
 	times.build = 60 * time.Second
 	text := test_times_file_text(&times, 90 * time.Second)
-	first_machine := strings.index(text, "machine build/first.txt: passed, whole 14.000, from the start of QEMU to the first line of the log 1.500,")
-	second_machine := strings.index(text, "machine build/second.txt: failed, whole 11.000, from the start of QEMU to the first line of the log none,")
+	first_machine := strings.index(text, "machine build/first.txt of the part main: passed, whole 14.000, from the start of QEMU to the first line of the log 1.500,")
+	second_machine := strings.index(text, "machine build/second.txt of the part tcp: failed, whole 11.000, from the start of QEMU to the first line of the log none,")
 	slow_wait := strings.index(text, "     3 Wait             5.000     5.000     0     0.000        0  clock: ok, 4 cases\n")
 	typed := strings.index(text, "     2 Type             2.000     0.000    15     1.900        0  start(\"clock\")\n")
 	launch := strings.index(text, "     2 Launch           5.000     0.000     0     0.000        0  clock\n")
@@ -118,4 +118,39 @@ times_file_keeps_the_order_of_the_run :: proc(t: ^testing.T) {
 	testing.expect(t, slow_wait > typed, "the steps keep the order of the run")
 	testing.expect(t, second_machine > slow_wait, "the second machine comes after the steps of the first")
 	testing.expect(t, launch > second_machine, "the launch is under the second machine")
+}
+
+// The parts of a run that ran at the same time join in the order of the
+// table: each step stays under the machine of its own part, and no part
+// gives its steps to the machine of another.
+@(test)
+times_of_parts_keep_each_step_under_its_machine :: proc(t: ^testing.T) {
+	runs := make([]Test_Part_Run, 3, context.temp_allocator)
+	runs[0].name, runs[1].name, runs[2].name = "main", "empty", "tcp"
+	defer {
+		for &run in runs {
+			delete(run.times.steps)
+			delete(run.times.machines)
+		}
+	}
+	append(&runs[0].times.machines, Machine_Time{part = "main", output = "build/a.txt"}, Machine_Time{part = "main", output = "build/b.txt"})
+	append(&runs[0].times.steps, Step_Time{machine = 0, number = 1}, Step_Time{machine = 1, number = 1}, Step_Time{machine = 1, number = 2})
+	// The part "empty" has no machine: it moves no place of the next part.
+	append(&runs[2].times.machines, Machine_Time{part = "tcp", output = "build/c.txt"})
+	append(&runs[2].times.steps, Step_Time{machine = 0, number = 1}, Step_Time{machine = 0, number = 2})
+	joined := test_times_of_parts(runs, 7 * time.Second)
+	testing.expect_value(t, joined.build, 7 * time.Second)
+	testing.expect_value(t, len(joined.machines), 3)
+	testing.expect_value(t, len(joined.steps), 5)
+	if len(joined.machines) == 3 && len(joined.steps) == 5 {
+		testing.expect_value(t, joined.machines[2].output, "build/c.txt")
+		machines_of_steps := [5]int{0, 1, 1, 2, 2}
+		for record, place in joined.steps {
+			testing.expectf(t, record.machine == machines_of_steps[place], "the step %d is under the machine %d, not %d", place, machines_of_steps[place], record.machine)
+		}
+	}
+	// The join does not change the times of a part.
+	testing.expect_value(t, runs[2].times.steps[0].machine, 0)
+	// No part, no machine: the report writes nothing.
+	testing.expect_value(t, len(test_times_of_parts(nil, 0).machines), 0)
 }

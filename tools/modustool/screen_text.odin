@@ -28,26 +28,22 @@ SCREEN_TEXT_MARK :: "{screen text}"
 // that it opens nothing new.
 SCREEN_TEXT_BEFORE_MARK :: "{screen text before}"
 
-// The text that the last step Screen_Text read, in one test part: a later
-// machine of the part types it.
-screen_text_kept: string
-// The text that the step Screen_Text before the last one read.
-screen_text_before: string
-
 // screen_text_keep keeps a text that a step Screen_Text read, and the text
-// before it.
-screen_text_keep :: proc(read: string) {
-	delete(screen_text_before)
-	screen_text_before = screen_text_kept
-	screen_text_kept = strings.clone(read)
+// before it, in the run of the part: a later machine of the part types it.
+screen_text_keep :: proc(part: ^Test_Part_Run, read: string) {
+	delete(part.screen_text_before)
+	part.screen_text_before = part.screen_text_kept
+	part.screen_text_kept = strings.clone(read)
 }
 
-// screen_text_forget forgets the kept texts at the start of a test part.
-screen_text_forget :: proc() {
-	delete(screen_text_kept)
-	delete(screen_text_before)
-	screen_text_kept = ""
-	screen_text_before = ""
+// screen_text_forget forgets the kept texts of a part: at its end, and at
+// the start of a group of its machines that must not type a text of the
+// group before.
+screen_text_forget :: proc(part: ^Test_Part_Run) {
+	delete(part.screen_text_kept)
+	delete(part.screen_text_before)
+	part.screen_text_kept = ""
+	part.screen_text_before = ""
 }
 
 // screen_text_expand writes the kept text in place of each mark, and the

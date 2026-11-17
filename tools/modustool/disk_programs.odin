@@ -430,7 +430,7 @@ program_debug_object_file :: proc(module_name: string, module_file: []u8, object
 // table that gives the grant store to the nickname visitor, with a tag
 // under a key of zero bytes: what a reader of the disk with no passphrase
 // can write. No machine passphrase gives that key.
-disk_programs_tests_run :: proc() -> bool {
+disk_programs_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	module_file := read_file(module_path(DISK_PROGRAM_MODULE)) or_return
 	changed_file := slice.clone(module_file, context.temp_allocator)
 	changed_file[len(changed_file) - 1] ~= 0x01
@@ -557,7 +557,7 @@ disk_programs_tests_run :: proc() -> bool {
 	served_bytes := slice.clone(module_file)
 	defer delete(served_bytes)
 	served := [?]Listener_File{{path = "/" + DISK_PROGRAM_MODULE, bytes = served_bytes}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}}
-	machine_test(steps[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK, user_network = true, served_files = served[:]) or_return
+	machine_test(part, steps[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), exit_status = MACHINE_STOP_OK, data_disk = TEST_DISK_PROGRAMS_DISK, user_network = true, served_files = served[:]}) or_return
 
 	// The second machine, on the same disk.
 	again := make([dynamic]Step)
@@ -597,7 +597,7 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&again, Step{kind = .Front, text = "console"})
 	append(&again, Step{kind = .Type, text = "shutdown()"})
 	append(&again, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	machine_test(again[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 2), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+	machine_test(part, again[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 2), exit_status = MACHINE_STOP_OK, data_disk = TEST_DISK_PROGRAMS_DISK}) or_return
 
 	// The third machine, on the same disk, with the machine passphrase.
 	third := make([dynamic]Step)
@@ -641,7 +641,7 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&third, Step{kind = .Wait, text = "[console] "})
 	append(&third, Step{kind = .Type, text = "shutdown()"})
 	append(&third, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	machine_test(third[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 3), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+	machine_test(part, third[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 3), exit_status = MACHINE_STOP_OK, data_disk = TEST_DISK_PROGRAMS_DISK}) or_return
 
 	// The fourth machine: the machine passphrase opens the record, and the
 	// table on the disk does not verify under its key. It is refused and
@@ -666,8 +666,8 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&fourth, Step{kind = .Wait, text = "root: refused a machine passphrase: the machine has one, and a change is not built", fails_on = "root: the disk grant table of principal 0 is written in the store programs"})
 	append(&fourth, Step{kind = .Type, text = "shutdown()"})
 	append(&fourth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
-	return disk_programs_named_principal_tests_run(hash)
+	machine_test(part, fourth[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), exit_status = MACHINE_STOP_OK, data_disk = TEST_DISK_PROGRAMS_DISK}) or_return
+	return disk_programs_named_principal_tests_run(part, hash)
 }
 
 // The grants of a disk program of a named principal, on the same disk
@@ -688,7 +688,7 @@ disk_programs_tests_run :: proc() -> bool {
 // visitor starts by its nickname with the grant store and finds its first
 // visit. A call of the peer acts for alice with no new allow; her
 // revocation writes the table with no key.
-disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
+disk_programs_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: string) -> bool {
 	fifth := make([dynamic]Step)
 	defer delete(fifth)
 	append(&fifth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
@@ -736,7 +736,7 @@ disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
 	disk_programs_principal_store_steps(&fifth, hash, 1)
 	append(&fifth, Step{kind = .Type, text = "shutdown()"})
 	append(&fifth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	machine_test(fifth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 5), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+	machine_test(part, fifth[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 5), exit_status = MACHINE_STOP_OK, data_disk = TEST_DISK_PROGRAMS_DISK}) or_return
 
 	// The sixth machine: the grant of alice is back after her unlock.
 	sixth := make([dynamic]Step)
@@ -761,7 +761,7 @@ disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
 	disk_programs_client_key_steps(&sixth)
 	append(&sixth, Step{kind = .Type, text = "shutdown()"})
 	append(&sixth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	return machine_test(sixth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 6), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+	return machine_test(part, sixth[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 6), exit_status = MACHINE_STOP_OK, data_disk = TEST_DISK_PROGRAMS_DISK})
 }
 
 // disk_programs_session_console_steps adds the steps that start a console

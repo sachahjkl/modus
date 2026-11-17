@@ -232,7 +232,7 @@ peer_case_result :: proc(peer: ^Peer, serial: int) -> (passed: bool, result: str
 		if time.tick_since(start) > CASE_TIME_LIMIT + 5 * time.Second {
 			return false, "the peer did not end the case"
 		}
-		time.sleep(20 * time.Millisecond)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	return state.passed, state.result
 }

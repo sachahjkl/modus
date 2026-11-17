@@ -105,6 +105,6 @@ scenario_non_maskable_interrupt := [?]Step {
 	{kind = .Wait, text = "non-maskable interrupt vector 2 ", fails_on = "a fault inside the report of a fault of the kernel"},
 }
 
-return_fault_tests_run :: proc() -> bool {
-	return machine_test(scenario_return_fault[:], BOOT_VOLUME, TEST_OUTPUT_RETURN_FAULT, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_return_fault_without_check[:], BOOT_VOLUME_WITHOUT_RETURN_CHECK, TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_non_maskable_interrupt[:], BOOT_VOLUME, TEST_OUTPUT_NON_MASKABLE_INTERRUPT, MACHINE_STOP_FAULT, TEST_DATA_DISK)
+return_fault_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_return_fault[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RETURN_FAULT, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_return_fault_without_check[:], {volume = BOOT_VOLUME_WITHOUT_RETURN_CHECK, output = TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_non_maskable_interrupt[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_NON_MASKABLE_INTERRUPT, exit_status = MACHINE_STOP_FAULT})
 }

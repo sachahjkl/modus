@@ -8,6 +8,7 @@ import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 
 // The debug object of each module (docs/MODULE_CONTRACT.md, "Debug
 // information"). The tool reads the linked ELF file of the module: the
@@ -754,10 +755,15 @@ directory_join :: proc(directory, compilation_directory: string) -> string {
 }
 
 // The folder of the Odin installation (`odin root`), read once in a process.
+// The parts of the machine test run on several threads: the lock holds the
+// first read, so that no thread sees the flag before the folder.
 odin_root_folder: string
 odin_root_read: bool
+odin_root_lock: sync.Mutex
 
 odin_root :: proc() -> string {
+	sync.mutex_lock(&odin_root_lock)
+	defer sync.mutex_unlock(&odin_root_lock)
 	if !odin_root_read {
 		odin_root_read = true
 		command := [?]string{"odin", "root"}

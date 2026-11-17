@@ -132,7 +132,7 @@ scenario_extended_state_without_xsave := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-extended_state_tests_run :: proc() -> bool {
+extended_state_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	host := host_avx_512()
 	if host == .None {
 		fmt.println("modustool: the host gives the machine no AVX-512 (no avx512f, or no KVM): the AVX-512 path of the kernel is not tested here")
@@ -143,5 +143,5 @@ extended_state_tests_run :: proc() -> bool {
 	with_each_feature[0].text = kernel_lines_with_each_feature[host]
 	with_each_feature[4].text = saved_lines_with_each_feature[host]
 	with_each_feature[7].text = kept_lines_with_each_feature[host]
-	return machine_test(with_each_feature[:], BOOT_VOLUME, TEST_OUTPUT_EXTENDED_STATE, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_extended_state_without_avx[:], BOOT_VOLUME, TEST_OUTPUT_EXTENDED_STATE, MACHINE_STOP_OK, TEST_DATA_DISK, processor = .Without_Avx) && machine_test(scenario_extended_state_without_xsave[:], BOOT_VOLUME, TEST_OUTPUT_EXTENDED_STATE, MACHINE_STOP_OK, TEST_DATA_DISK, processor = .Without_Xsave)
+	return machine_test(part, with_each_feature[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_extended_state_without_avx[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = MACHINE_STOP_OK, processor = .Without_Avx}) && machine_test(part, scenario_extended_state_without_xsave[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = MACHINE_STOP_OK, processor = .Without_Xsave})
 }

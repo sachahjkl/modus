@@ -6623,13 +6623,23 @@ The design: `docs/TOOLS.md`, "The commands of the tool".
 
 Do not use: CI pipeline, build job.
 
+### Test part
+
+A test part is one row of the table of the machine test: one or more machines that share a data disk, a TPM state or a value from one machine to the next, and nothing with another test part.
+
+`modustool test <part>` runs one test part alone and builds only its boot volumes; `modustool test` runs every test part, several at once, at most one for each four processors of the host. Each test part starts from a new data disk of its own, so it does the same work alone and in the whole test. Example: the test part `random` runs three machines, and its last step checks that the values that the three machines drew differ.
+
+The design: `src/md/infrastructure/machine_test_parts.md`; `docs/TOOLS.md`, "The parts of the machine test".
+
+Do not use: test suite, test group, shard.
+
 ### Full check
 
-A full check is `modustool screenshots` and `nix flake check`, both passed.
+A full check is `nix flake check` and `modustool screenshots`, both passed.
 
-`modustool screenshots` runs the machine tests, the second build and the pictures on the host, and writes the measure record. `nix flake check` runs the host tests and `modustool check` in the sandbox of Nix; it sees only the folders that `flake.nix` names. A full check runs once at the end of a batch of features, before the release and the publication of the site; each merge before it needs only its build and the test of its own part.
+`nix flake check` runs the hooks and `modustool check` in the sandbox of Nix: the host tests, the checks of the sources, the whole machine test and the second build. It sees only the tracked files of the folders that `flake.nix` names. `modustool screenshots` takes the pictures and the logs of that check from the store, with no second run of the machine test, runs the measure runs on the host, and writes the measure record. A full check runs once at the end of a batch of features, before the release and the publication of the site; each merge before it needs only its build and the test of its own test part.
 
-The design: `docs/TOOLS.md`, "What each tool reads".
+The design: `src/md/infrastructure/full_check.md`; `docs/TOOLS.md`, "What each tool reads".
 
 Do not use: CI run, test suite, full test.
 
@@ -6693,7 +6703,7 @@ Do not use: relink, repackage, packaging step.
 
 A whole build is a build that ignores every build record: it builds each module and each boot volume, and writes new records.
 
-`modustool build whole` asks for one. The commands that prove the build are always whole builds: `check`, `screenshots` and `repeat` compare the results of two runs of the compiler, and a kept output would be compared with itself. `nix flake check` builds in an empty folder, so its build has no record to read.
+`modustool build whole` asks for one. The commands that prove the build are always whole builds: `check` and `repeat` compare the results of two runs of the compiler, and a kept output would be compared with itself. `nix flake check` builds in an empty folder, so its build has no record to read.
 
 The design: `docs/TOOLS.md`, "The incremental build".
 
@@ -6703,7 +6713,7 @@ Do not use: clean build, fresh build, full build.
 
 The measure record is the file `docs/measures/measures.txt`: the measured numbers of the last full check, each as the whole line of its log, with the facts of its run.
 
-The site workflow runs no machine test, so the pass that commits the pictures also commits the numbers. `modustool screenshots` writes the record: one line `key value` for each fact (its time, its release, its commit, the state of its tree, its host, the count of checks that passed), then each number with its log, its line and its machine, and the stages of the start. The site reads it when the logs of `build/` are not newer.
+The site workflow runs no machine test, so the pass that commits the pictures also commits the numbers. `modustool screenshots` writes the record: one line `key value` for each fact (its time, its release, its commit, the state of its tree, its host, the count of checks that passed in the check of the flake and in the measure runs), then each number with its log, its line and its machine, and the stages of the start. The site reads it when the logs of `build/` are not newer. A number of speed is a measure: it is printed and recorded, and never makes a test fail.
 
 The design: `docs/SITE.md`, "The measure record".
 

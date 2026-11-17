@@ -18,7 +18,9 @@ import "core:time"
 // it reads the log of the kernel, and it saves pictures of the screen.
 
 SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
-SCREEN_DUMP :: BUILD_FOLDER + "/screen.ppm"
+// The picture of the screen that QEMU writes for the tool, beside the log of
+// its machine: two machines that run at the same time write two files.
+SCREEN_DUMP_SUFFIX :: "_screen.ppm"
 // The one role of a time in a test of the tool: it ends a test that hangs.
 // A test checks a condition (a line, a value, a state), never a speed, so
 // this bound is generous and the same for each wait of the tool that has no
@@ -915,22 +917,22 @@ first_root_cut :: proc(path: string) -> bool {
 	return true
 }
 
-persistence_run :: proc() -> bool {
+persistence_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_PERSIST_DISK, DATA_DISK_SIZE, true) or_return
-	machine_test(scenario_persist_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 1), MACHINE_STOP_OK, TEST_PERSIST_DISK) or_return
-	machine_test(scenario_persist_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 2), 0, TEST_PERSIST_DISK) or_return
-	machine_test(scenario_persist_crash[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 3), 0, TEST_PERSIST_DISK) or_return
+	machine_test(part, scenario_persist_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 1), exit_status = MACHINE_STOP_OK, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 2), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_crash[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 3), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	root_cut(TEST_PERSIST_DISK) or_return
-	machine_test(scenario_persist_cut[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 4), 0, TEST_PERSIST_DISK) or_return
+	machine_test(part, scenario_persist_cut[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 4), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
-	machine_test(scenario_persist_damaged[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 5), 0, TEST_PERSIST_DISK) or_return
-	machine_test(scenario_persist_replaced[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 6), 0, TEST_PERSIST_DISK) or_return
+	machine_test(part, scenario_persist_damaged[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 5), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_replaced[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 6), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	// The last commit wrote the last letter of the note: only the newest
 	// root names the block of data that the tool changes now.
 	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
-	machine_test(scenario_persist_older[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 7), 0, TEST_PERSIST_DISK) or_return
+	machine_test(part, scenario_persist_older[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 7), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	first_root_cut(TEST_PERSIST_DISK) or_return
-	return machine_test(scenario_persist_first_cut[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 8), 0, TEST_PERSIST_DISK)
+	return machine_test(part, scenario_persist_first_cut[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 8), exit_status = 0, data_disk = TEST_PERSIST_DISK})
 }
 
 // A test of the kernel on itself (boot_info.Self_Test): the kernel does one
@@ -965,7 +967,7 @@ self_test_file :: proc(pattern: string, number: int) -> string {
 	return fmt.aprintf(pattern, number)
 }
 
-self_tests_run :: proc() -> bool {
+self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	for test in self_tests {
 		steps := make([dynamic]Step)
 		append(&steps, Step{kind = .Wait, text = "kernel: ok"})
@@ -973,7 +975,7 @@ self_tests_run :: proc() -> bool {
 		for report in test.reports {
 			append(&steps, Step{kind = .Wait, text = report, any_order = true})
 		}
-		if !machine_test(steps[:], self_test_file(BOOT_VOLUME_SELF_TEST, test.number), self_test_file(TEST_OUTPUT_SELF_TEST, test.number), test.stop, TEST_DATA_DISK) {
+		if !machine_test(part, steps[:], {volume = self_test_file(BOOT_VOLUME_SELF_TEST, test.number), output = self_test_file(TEST_OUTPUT_SELF_TEST, test.number), exit_status = test.stop}) {
 			return false
 		}
 	}
@@ -3524,6 +3526,7 @@ scenario_film := [?]Step {
 }
 
 Machine :: struct {
+	part:      ^Test_Part_Run, // What the machines of its part share: the remembered values, the screen texts, the times.
 	process:   os.Process,
 	monitor:   ^os.File,
 	seen:      int, // The bytes of the log that the Wait steps used.
@@ -3714,9 +3717,11 @@ window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: 
 // the log one byte at a time: the last line can be a part of a line, and a
 // part of "at 168,142" reads as another place.
 // The regular cache of the interface font, read once from the build: the
-// bytes of the resource interface_glyph_cache of the boot image.
+// bytes of the resource interface_glyph_cache of the boot image. The
+// machines of several parts read it at once: the lock holds its first read.
 machine_interface_cache: glyph_cache.Cache
 machine_interface_cache_words: []u64
+machine_interface_cache_lock: sync.Mutex
 
 // machine_bar_layout gives the places of the bar of the compositor of the
 // machine. The last line of the log that names the font of the bar says
@@ -3738,6 +3743,8 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 	if interface_at < cells_at {
 		return bar.layout_of(nil), true
 	}
+	sync.mutex_lock(&machine_interface_cache_lock)
+	defer sync.mutex_unlock(&machine_interface_cache_lock)
 	if machine_interface_cache_words == nil {
 		bytes, read_error := os.read_entire_file(INTERFACE_GLYPH_CACHE_OUTPUT, context.allocator)
 		if read_error != nil {
@@ -3925,18 +3932,60 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 	return strings.trim_right(end < 0 ? rest : rest[:end], "\r")
 }
 
-// machine_test runs a scenario on a boot volume. It passes when each step
-// passes and QEMU ends with the status exit_status. With user_network, the
-// listener of the tool also serves served_files (web_host.odin). With
-// tpm_device, the machine has a software TPM, on any firmware; tpm_state is
-// the state that the machines of a part share, or "" for a new one.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, served_files: []Listener_File = nil, tpm_state: string = "", entropy_device := false, tpm_device := false) -> bool {
+// The starts of a QEMU with hostfwd that ends at its start, each with a new
+// port: another socket of the host can take the port of hostfwd before QEMU
+// binds it (Given_Loopback_Ports). A bound: a QEMU that ends at each try
+// ends for another reason.
+MACHINE_START_TRIES :: 3
+
+// qmp_socket_wait waits until QEMU made the socket of its machine protocol,
+// or ended (then the process is reaped). A QEMU that ends before it makes
+// the socket fails its start at once, not at the bound of a hang.
+qmp_socket_wait :: proc(process: os.Process, path: string) -> (made: bool, ended: bool) {
+	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+		if os.exists(path) {
+			return true, false
+		}
+		if state, wait_error := os.process_wait(process, 0); wait_error == nil && state.exited {
+			return false, true
+		}
+		time.sleep(CONDITION_POLL_PERIOD)
+	}
+	return false, false
+}
+
+// The machine of one machine test. The zero value of each field but the
+// first three is the usual machine.
+Machine_Options :: struct {
+	volume:         string, // The path of its boot volume.
+	output:         string, // The file of its log: it names the machine, and its other files are beside it (machine_file).
+	exit_status:    int, // The status of QEMU at the end: MACHINE_STOP_OK when the kernel stops the machine, 0 when the tool ends QEMU.
+	data_disk:      string, // "": the data disk of its part.
+	user_network:   bool, // QEMU user networking in place of the peer: the listener of the tool also serves served_files (web_host.odin).
+	served_files:   []Listener_File,
+	disk_server:    ^Network_Block_Device, // The data disk that the tool serves, when the tool serves it (power_loss.odin).
+	processor:      Processor_Model,
+	firmware:       Machine_Firmware,
+	iommu:          Machine_Iommu,
+	vnc:            bool, // A display for a film (film.odin).
+	paused:         bool, // The machine waits for the step Monitor "cont".
+	entropy_device: bool,
+	tpm_device:     bool, // A software TPM, on any firmware.
+	tpm_state:      string, // The state of the TPM that the machines of a part share, or "" for a new one.
+}
+
+// machine_test runs a scenario on a machine of a part. It passes when each
+// step passes and QEMU ends with the status of its options.
+machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Options) -> bool {
+	volume, output, exit_status := options.volume, options.output, options.exit_status
+	data_disk := options.data_disk != "" ? options.data_disk : part.data_disk
+	firmware, tpm_device := options.firmware, options.tpm_device
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine, and a state of its own unless the machines
 	// of a part share one (tpm_start).
 	tpm: Tpm_Process
-	if tpm_device && !tpm_start(&tpm, output, tpm_state) {
+	if tpm_device && !tpm_start(&tpm, output, options.tpm_state) {
 		return false
 	}
 	defer tpm_stop(&tpm)
@@ -3947,35 +3996,98 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	defer peer_stop(&peer)
 	listener: Listener
 	forward: Forward
-	if user_network {
+	// The port of hostfwd goes back to the free ports after QEMU ended: the
+	// defers run in the reverse order.
+	defer loopback_port_take_back(forward.host_port)
+	if options.user_network {
 		port, free := free_port()
-		if !free || !listener_start(&listener, served_files) {
+		if free {
+			forward.host_port = port
+		}
+		if !free || !listener_start(&listener, options.served_files) {
 			fmt.eprintln("modustool: no port of the loopback for the TCP of QEMU")
 			return false
 		}
-		forward = {host_port = port, listener = &listener}
+		forward.listener = &listener
 	}
 	defer listener_stop(&listener)
 	clock := machine_clock_of(time.time_to_unix(time.now()))
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused, iommu, entropy_device, tpm_device, clock.argument)
-	if !ok {
-		return false
+	// The disk of the measures holds no data that a program keeps, the last
+	// picture of the screen is in its PNG file, and the copy of the variable
+	// store is of this machine only: they would fill the build folder, one
+	// of each for each machine.
+	defer {
+		_ = os.remove(machine_file(output, SCRATCH_DISK_SUFFIX))
+		_ = os.remove(machine_file(output, SCREEN_DUMP_SUFFIX))
+		for suffix in ([]string{FIRMWARE_VARIABLES_SUFFIX, FIRMWARE_TPM_VARIABLES_SUFFIX, FIRMWARE_FULL_VARIABLES_SUFFIX}) {
+			_ = os.remove(machine_file(output, suffix))
+		}
 	}
-	_ = os.remove(output)
-	_ = os.remove(qmp_socket_of(output))
-	_ = os.remove(film_qmp_socket_of(output))
-	_ = os.remove(film_vnc_socket_of(output))
-	monitor_read, monitor_write, pipe_err := os.pipe()
-	if pipe_err != nil {
-		fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_err)
-		return false
-	}
-	process, start_err := os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
-	if start_err != nil {
-		fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_err)
-		return false
+	process: os.Process
+	monitor_read, monitor_write: ^os.File
+	qmp: Qmp
+	qmp_opened := false
+	for try := 1; ; try += 1 {
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument)
+		if !ok {
+			return false
+		}
+		_ = os.remove(output)
+		_ = os.remove(qmp_socket_of(output))
+		_ = os.remove(film_qmp_socket_of(output))
+		_ = os.remove(film_vnc_socket_of(output))
+		pipe_err: os.Error
+		monitor_read, monitor_write, pipe_err = os.pipe()
+		if pipe_err != nil {
+			fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_err)
+			return false
+		}
+		start_err: os.Error
+		process, start_err = os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
+		// QEMU has its copy of the socket of the peer now.
+		peer_machine_socket_lent_close(&peer)
+		if start_err != nil {
+			fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_err)
+			os.close(monitor_write)
+			os.close(monitor_read)
+			return false
+		}
+		// The keys, the moves of the pointer and the pictures go through the
+		// machine protocol of QEMU: QEMU listens when it started.
+		socket_made, ended := qmp_socket_wait(process, qmp_socket_of(output))
+		qmp_opened = socket_made && qmp_open(&qmp, qmp_socket_of(output))
+		if qmp_opened || !options.user_network || try == MACHINE_START_TRIES {
+			break
+		}
+		// QEMU closed the protocol before its greeting: it ends.
+		if !ended && qmp.ended {
+			state, wait_error := os.process_wait(process, HANG_BOUND)
+			ended = wait_error == nil && state.exited
+		}
+		// A QEMU that runs and gave no greeting is a failure of the machine,
+		// not of its port: it is not started again.
+		if !ended {
+			break
+		}
+		// QEMU ended at its start: the bind of the port of hostfwd is the
+		// one step of its start that another socket of the host can make
+		// fail (Given_Loopback_Ports).
+		qmp_close(&qmp)
+		qmp = {}
+		os.close(monitor_write)
+		os.close(monitor_read)
+		loopback_port_take_back(forward.host_port)
+		port, free := free_port()
+		forward.host_port = free ? port : 0
+		if !free {
+			fmt.eprintln("modustool: no port of the loopback for the TCP of QEMU")
+			return false
+		}
+		fmt.printfln("modustool: QEMU of %s ended at its start, which a port of hostfwd that another socket took gives: start %d of %d, with the port %d", output, try + 1, MACHINE_START_TRIES, port)
 	}
 	machine := Machine {
+		qmp = qmp,
+		part = part,
 		started_at = time.tick_now(),
 		started_unix = time.time_to_unix(time.now()),
 		clock_offset_seconds = clock.offset_seconds,
@@ -3985,11 +4097,9 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		call_socket = peer.call_socket,
 		peer      = &peer,
 		forward   = forward,
-		disk_server = disk_server,
+		disk_server = options.disk_server,
 	}
-	// The keys, the moves of the pointer and the pictures go through the
-	// machine protocol of QEMU: QEMU listens when it started.
-	passed := qmp_open(&machine.qmp, qmp_socket_of(output)) && scenario_run(&machine, steps)
+	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
 	// A scenario that failed between Film_Start and Film_Stop: its worker
 	// ends before the connections to QEMU close.
@@ -4064,18 +4174,18 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	if !passed {
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		lines := strings.split_lines(string(log), context.temp_allocator)
-		fmt.eprintln("modustool: the end of the log of the kernel:")
+		// One write: the lines of a machine of another part that runs at the
+		// same time do not come between them.
+		end := strings.builder_make(context.temp_allocator)
+		fmt.sbprintf(&end, "modustool: the end of the log of the kernel of %s:\n", output)
 		for line in lines[max(len(lines) - 25, 0):] {
-			fmt.eprintln("   ", line)
+			fmt.sbprintf(&end, "    %s\n", line)
 		}
+		fmt.eprint(strings.to_string(end))
 	}
 	test_times_machine_end(&machine, passed, machine_test_started, machine.started_at, scenario_ended)
 	return passed
 }
-
-// The values that the steps Remember kept, in one test part (several
-// machines): the step Distinct compares them.
-remembered_values: [dynamic]string
 
 // remote_starts_or_ends says if a step starts `remote` or closes it: the
 // next start makes a new key, so the key of the log is read again.
@@ -4156,16 +4266,16 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		}
 		has_kept_mark := strings.contains(step.text, SCREEN_TEXT_MARK)
 		has_before_mark := strings.contains(step.text, SCREEN_TEXT_BEFORE_MARK)
-		if has_kept_mark && screen_text_kept == "" {
+		if has_kept_mark && machine.part.screen_text_kept == "" {
 			fmt.eprintfln("modustool: test failed: step %d names %s before a step Screen_Text", index + 1, SCREEN_TEXT_MARK)
 			return false
 		}
-		if has_before_mark && screen_text_before == "" {
+		if has_before_mark && machine.part.screen_text_before == "" {
 			fmt.eprintfln("modustool: test failed: step %d names %s before two steps Screen_Text", index + 1, SCREEN_TEXT_BEFORE_MARK)
 			return false
 		}
 		if has_kept_mark || has_before_mark {
-			step.text = screen_text_expand(step.text, screen_text_kept, screen_text_before)
+			step.text = screen_text_expand(step.text, machine.part.screen_text_kept, machine.part.screen_text_before)
 		}
 		if strings.contains(step.text, CLIENT_KEY_MARK) {
 			if machine.peer == nil || machine.peer.remote == nil {
@@ -4345,7 +4455,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
 			if !step.shown_only {
-				screen_text_keep(read)
+				screen_text_keep(machine.part, read)
 			}
 		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
@@ -4658,18 +4768,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			log := log_read(machine)
 			rest := log[machine.seen:]
 			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
-			append(&remembered_values, strings.clone(line))
+			append(&machine.part.remembered_values, strings.clone(line))
 			fmt.printfln("modustool: the machine drew \"%s\" after \"%s\"", line, step.text)
 		case .Distinct:
-			for value, first in remembered_values {
-				for other in remembered_values[first + 1:] {
+			remembered := machine.part.remembered_values[:]
+			for value, first in remembered {
+				for other in remembered[first + 1:] {
 					if value == other {
 						fmt.eprintfln("modustool: test failed: step %d: %s: the value \"%s\" came two times", index + 1, step.text, value)
 						return false
 					}
 				}
 			}
-			test_passed_print("%s: %d values, each different", step.text, len(remembered_values))
+			test_passed_print("%s: %d values, each different", step.text, len(remembered))
 		case .Quic_Key:
 			if !log_wait(machine, step.text, false) {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
@@ -4805,7 +4916,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					last_writes = writes
 					last_progress = time.now()
 				}
-				time.sleep(time.Millisecond)
+				time.sleep(CONDITION_POLL_PERIOD)
 			}
 			// A kill: QEMU writes nothing more. The tool knows what was
 			// durable when the disk lost its power.
@@ -4891,7 +5002,7 @@ TEST_OUTPUT_MEASURE_WINDOWS :: BUILD_FOLDER + "/test_output_measure_windows.txt"
 // measure_windows starts each window of measured_windows alone, waits for
 // the time of its pictures, closes it, then prints one table. A measure is
 // valid when the load of the host is under 8: the table says the load.
-measure_windows :: proc() -> bool {
+measure_windows :: proc(part: ^Test_Part_Run) -> bool {
 	// Not in the temporary allocator: the scenario frees it after each step.
 	steps := make([dynamic]Step)
 	defer delete(steps)
@@ -4919,7 +5030,7 @@ measure_windows :: proc() -> bool {
 	// A copy outside the temporary allocator: the scenario frees it.
 	load_before := strings.clone(load_of_the_host())
 	defer delete(load_before)
-	if !machine_test(steps[:], BOOT_VOLUME_MEASURE, TEST_OUTPUT_MEASURE_WINDOWS, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if !machine_test(part, steps[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_WINDOWS, exit_status = MACHINE_STOP_OK}) {
 		return false
 	}
 	load_after := load_of_the_host()

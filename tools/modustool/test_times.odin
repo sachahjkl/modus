@@ -43,6 +43,7 @@ Step_Time :: struct {
 
 // The time of one machine of a test.
 Machine_Time :: struct {
+	part:            string, // The name of its part.
 	output:          string, // The file of its log: it names the machine.
 	passed:          bool,
 	whole:           time.Duration, // From the call of machine_test to its end.
@@ -59,14 +60,26 @@ Machine_Step_Times :: struct {
 	first_line:      time.Duration,
 }
 
+// The times of the machines of one part (Test_Part_Run), or of a whole
+// test run: the report joins the times of its parts.
 Test_Times :: struct {
 	build:    time.Duration,
 	steps:    [dynamic]Step_Time,
 	machines: [dynamic]Machine_Time,
 }
 
-// The times of this process: one test run.
-test_times: Test_Times
+// test_times_free frees the times of one part.
+test_times_free :: proc(times: ^Test_Times) {
+	for record in times.steps {
+		delete(record.text)
+	}
+	for machine in times.machines {
+		delete(machine.output)
+	}
+	delete(times.steps)
+	delete(times.machines)
+	times^ = {}
+}
 
 Kind_Time :: struct {
 	count:    int,
@@ -198,13 +211,13 @@ test_times_step_start :: proc(machine: ^Machine) {
 // when the step ends, with a pass or with a failure.
 test_times_step_end :: proc(machine: ^Machine, index: int, step: Step, started: time.Tick) {
 	record := machine.times.current
-	record.machine = len(test_times.machines)
+	record.machine = len(machine.part.times.machines)
 	record.number = index + 1
 	record.kind = step.kind
 	// A copy: the text of a step can be of the temporary allocator.
 	record.text = strings.clone(text_first_bytes(step.text, TEST_TIMES_TEXT_BYTES))
 	record.duration = time.tick_since(started)
-	append(&test_times.steps, record)
+	append(&machine.part.times.steps, record)
 }
 
 // test_times_wait_note adds a wait for a line of the log to the step that
@@ -233,12 +246,13 @@ test_times_picture_note :: proc(machine: ^Machine, picture: Picture_Time) {
 
 // test_times_picture_worker_note adds the time of the conversion and of
 // the write of one picture, which a worker thread did while the scenario
-// went on, to the record of the step of the picture. A picture outside a
-// step has no record.
-test_times_picture_worker_note :: proc(step_place: int, conversion, write: time.Duration) {
-	if step_place < len(test_times.steps) {
-		test_times.steps[step_place].picture.conversion += conversion
-		test_times.steps[step_place].picture.write += write
+// went on, to the record of the step of the picture, in the times of its
+// part. A picture outside a step has no record. The thread of the scenario
+// calls it, when it joined the worker.
+test_times_picture_worker_note :: proc(times: ^Test_Times, step_place: int, conversion, write: time.Duration) {
+	if step_place < len(times.steps) {
+		times.steps[step_place].picture.conversion += conversion
+		times.steps[step_place].picture.write += write
 	}
 }
 
@@ -255,8 +269,9 @@ test_times_first_line_note :: proc(machine: ^Machine, log_bytes: int) {
 // test_times_machine_end records the time of a machine that ended.
 test_times_machine_end :: proc(machine: ^Machine, passed: bool, started, scenario_started, scenario_ended: time.Tick) {
 	append(
-		&test_times.machines,
+		&machine.part.times.machines,
 		Machine_Time {
+			part = machine.part.name,
 			output = strings.clone(machine.output),
 			passed = passed,
 			whole = time.tick_since(started),
@@ -283,7 +298,7 @@ test_times_file_text :: proc(times: ^Test_Times, whole: time.Duration) -> string
 	next := 0
 	for machine, place in times.machines {
 		first_line := machine.first_line_seen ? fmt.tprintf("%.3f", seconds_of(machine.first_line)) : "none"
-		fmt.sbprintf(&b, "\nmachine %s: %s, whole %.3f, from the start of QEMU to the first line of the log %s, the steps %.3f, the stop %.3f\n", machine.output, machine.passed ? "passed" : "failed", seconds_of(machine.whole), first_line, seconds_of(machine.steps), seconds_of(machine.stop))
+		fmt.sbprintf(&b, "\nmachine %s of the part %s: %s, whole %.3f, from the start of QEMU to the first line of the log %s, the steps %.3f, the stop %.3f\n", machine.output, machine.part, machine.passed ? "passed" : "failed", seconds_of(machine.whole), first_line, seconds_of(machine.steps), seconds_of(machine.stop))
 		fmt.sbprintf(&b, "%6s %-12s %9s %9s %5s %9s %8s  %s\n", "step", "kind", "duration", "waited", "keys", "key_time", "pictures", "text")
 		for next < len(times.steps) && times.steps[next].machine == place {
 			record := times.steps[next]
@@ -294,21 +309,74 @@ test_times_file_text :: proc(times: ^Test_Times, whole: time.Duration) -> string
 	return strings.to_string(b)
 }
 
-// test_times_build_end records the time of the build of a test.
-test_times_build_end :: proc(started: time.Tick) {
-	test_times.build = time.tick_since(started)
+// test_times_of_parts joins the times of the parts of a run, in the order
+// of the parts: the machines of a part follow the machines of the part
+// before it. The texts stay those of the parts; the lists are of the
+// temporary memory.
+test_times_of_parts :: proc(runs: []Test_Part_Run, build: time.Duration) -> Test_Times {
+	times := Test_Times {
+		build    = build,
+		steps    = make([dynamic]Step_Time, context.temp_allocator),
+		machines = make([dynamic]Machine_Time, context.temp_allocator),
+	}
+	for part_run in runs {
+		first_machine := len(times.machines)
+		append(&times.machines, ..part_run.times.machines[:])
+		for record in part_run.times.steps {
+			joined := record
+			joined.machine += first_machine
+			append(&times.steps, joined)
+		}
+	}
+	return times
+}
+
+// test_part_run_outcome_note gives what the summary writes after a part:
+// nothing when it passed, else whether it failed or never started. One
+// failure stops the start of the others: they did not fail.
+test_part_run_outcome_note :: proc(part_run: Test_Part_Run) -> string {
+	switch {
+	case part_run.passed:
+		return ""
+	case !part_run.started:
+		return " (not started)"
+	}
+	return " (failed)"
+}
+
+// test_part_runs_by_duration gives a copy of the runs, the longest first;
+// two equal durations keep the order of the table. The copy is of the
+// temporary memory and shares the texts of the runs.
+test_part_runs_by_duration :: proc(runs: []Test_Part_Run) -> []Test_Part_Run {
+	sorted := slice.clone(runs, context.temp_allocator)
+	slice.stable_sort_by(sorted, proc(first, second: Test_Part_Run) -> bool {
+		return first.duration > second.duration
+	})
+	return sorted
 }
 
 // test_times_report writes the file of the times and prints the summary,
 // at the end of a test that ran a machine, passed or failed. It never
 // fails the test: each number is a measure.
-test_times_report :: proc(started: time.Tick) {
+test_times_report :: proc(runs: []Test_Part_Run, build: time.Duration, started: time.Tick) {
+	test_times := test_times_of_parts(runs, build)
 	if len(test_times.machines) == 0 {
 		return
 	}
 	whole := time.tick_since(started)
 	if write_error := os.write_entire_file(TEST_TIMES_FILE, test_times_file_text(&test_times, whole)); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", TEST_TIMES_FILE, write_error)
+	}
+	// The parts ran at the same time: their sum is longer than the test.
+	parts_whole: time.Duration
+	for part_run in runs {
+		parts_whole += part_run.duration
+	}
+	if len(runs) > 1 {
+		fmt.printfln("modustool: measure: %d parts, %.1f s in all, in %.1f s of the test; each part, the longest first:", len(runs), seconds_of(parts_whole), seconds_of(whole))
+		for part_run in test_part_runs_by_duration(runs) {
+			fmt.printfln("modustool: measure:     %8.1f s, %3d machines: %s%s", seconds_of(part_run.duration), len(part_run.times.machines), part_run.name, test_part_run_outcome_note(part_run))
+		}
 	}
 	machines_whole, first_lines, stops: time.Duration
 	for machine in test_times.machines {

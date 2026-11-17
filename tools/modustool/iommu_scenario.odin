@@ -70,8 +70,8 @@ scenario_iommu := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-iommu_tests_run :: proc() -> bool {
-	return machine_test(scenario_iommu[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = .Intel, entropy_device = true)
+iommu_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_iommu[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_IOMMU, exit_status = MACHINE_STOP_OK, iommu = .Intel, entropy_device = true})
 }
 
 // The IOMMU of AMD (src/md/infrastructure/iommu.md, "Two vendors behind
@@ -166,6 +166,6 @@ scenario_iommu_amd := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-iommu_amd_tests_run :: proc() -> bool {
-	return machine_test(scenario_iommu_amd[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU_AMD, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = .Amd)
+iommu_amd_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return machine_test(part, scenario_iommu_amd[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_IOMMU_AMD, exit_status = MACHINE_STOP_OK, iommu = .Amd})
 }

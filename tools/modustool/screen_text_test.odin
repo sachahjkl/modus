@@ -53,16 +53,19 @@ cells_of_spleen_are_read_back :: proc(t: ^testing.T) {
 // a part forgets both.
 @(test)
 the_text_before_is_the_text_of_the_read_before :: proc(t: ^testing.T) {
-	screen_text_forget()
-	screen_text_keep("FIRST")
-	testing.expect_value(t, screen_text_kept, "FIRST")
-	testing.expect_value(t, screen_text_before, "")
-	screen_text_keep("SECOND")
-	testing.expect_value(t, screen_text_kept, "SECOND")
-	testing.expect_value(t, screen_text_before, "FIRST")
-	screen_text_forget()
-	testing.expect_value(t, screen_text_kept, "")
-	testing.expect_value(t, screen_text_before, "")
+	part, other: Test_Part_Run
+	screen_text_keep(&part, "FIRST")
+	testing.expect_value(t, part.screen_text_kept, "FIRST")
+	testing.expect_value(t, part.screen_text_before, "")
+	screen_text_keep(&part, "SECOND")
+	testing.expect_value(t, part.screen_text_kept, "SECOND")
+	testing.expect_value(t, part.screen_text_before, "FIRST")
+	// Another part that runs at the same time keeps nothing of this one.
+	testing.expect_value(t, other.screen_text_kept, "")
+	testing.expect_value(t, other.screen_text_before, "")
+	screen_text_forget(&part)
+	testing.expect_value(t, part.screen_text_kept, "")
+	testing.expect_value(t, part.screen_text_before, "")
 }
 
 // A read with a blank cell at its start or its end is what the window
