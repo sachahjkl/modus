@@ -167,15 +167,71 @@ pointer_known_make :: proc(machine: ^Machine, index: int) -> bool {
 	return true
 }
 
+// The start of the line that the compositor writes for each press of the
+// left button, before its place "x,y".
+PRESS_LINE :: "compositor: a press of the left button at "
+
+// press_place_read waits for the line of the first press after the byte
+// `from` of the log, and gives the place where the compositor took it.
+press_place_read :: proc(machine: ^Machine, from: int, index: int) -> (x, y: int, ok: bool) {
+	for start := time.now(); time.since(start) < HANG_BOUND; {
+		text := log_read(machine)
+		at := len(text) > from ? strings.index(text[from:], PRESS_LINE) : -1
+		end := at < 0 ? -1 : strings.index_byte(text[from + at:], '\n')
+		if end < 0 {
+			log_change_wait(machine)
+			continue
+		}
+		place := strings.trim_right(text[from + at + len(PRESS_LINE):from + at + end], "\r")
+		comma := strings.index_byte(place, ',')
+		x_read, x_ok := strconv.parse_int(place[:max(comma, 0)])
+		y_read, y_ok := strconv.parse_int(place[comma + 1:])
+		if comma < 0 || !x_ok || !y_ok {
+			fmt.eprintfln("modustool: test failed: step %d: the line of the press gives the place \"%s\", not x,y", index + 1, place)
+			return 0, 0, false
+		}
+		return x_read, y_read, true
+	}
+	fmt.eprintfln("modustool: test failed: step %d: the compositor wrote no line of the press within %v: the machine did not receive the press", index + 1, HANG_BOUND)
+	return 0, 0, false
+}
+
+// pointer_press_at moves the pointer to a point of the screen and presses
+// the left button there. With no confirmation of the pointer, the place
+// that the tool believes is a sum of its moves: the input service joins
+// the moves that find its ring full, and the edge of the screen cuts a
+// joined move where it would not cut each move alone, so that sum can be
+// wrong. The compositor writes the place of each press: a press at another
+// place is released, the tool takes the place that the compositor wrote,
+// and moves again, at most POINTER_TRIES times.
+pointer_press_at :: proc(machine: ^Machine, x, y: int, index: int) -> bool {
+	pointer_known_make(machine, index) or_return
+	for _ in 0 ..< POINTER_TRIES {
+		if !pointer_move(machine, x, y) {
+			fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
+			return false
+		}
+		before := len(log_read(machine))
+		pointer_button(machine, true) or_return
+		if machine.confirm {
+			return true
+		}
+		pressed_x, pressed_y := press_place_read(machine, before, index) or_return
+		if pressed_x == x && pressed_y == y {
+			return true
+		}
+		fmt.printfln("modustool: step %d: the press landed at %d,%d, not at %d,%d: the tool moves again from the place that the compositor wrote", index + 1, pressed_x, pressed_y, x, y)
+		pointer_button(machine, false) or_return
+		machine.x, machine.y = pressed_x, pressed_y
+	}
+	fmt.eprintfln("modustool: test failed: step %d: %d presses did not land at %d,%d", index + 1, POINTER_TRIES, x, y)
+	return false
+}
+
 // pointer_click moves the pointer to a point of the screen, then presses
 // and releases the left button there.
 pointer_click :: proc(machine: ^Machine, x, y: int, index: int) -> bool {
-	pointer_known_make(machine, index) or_return
-	if !pointer_move(machine, x, y) {
-		fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
-		return false
-	}
-	pointer_button(machine, true) or_return
+	pointer_press_at(machine, x, y, index) or_return
 	pointer_button(machine, false) or_return
 	return true
 }
@@ -185,6 +241,16 @@ pointer_click :: proc(machine: ^Machine, x, y: int, index: int) -> bool {
 // compositor writes the lines of the menu, then that the window is in
 // front.
 window_front_bring :: proc(machine: ^Machine, title: string, index: int) -> bool {
+	// The menu of the windows lists a window from its first picture on; the
+	// line of its surface comes before that picture.
+	shown := fmt.tprintf("compositor: window %s is shown", title)
+	for start := time.now(); !strings.contains(log_read(machine), shown); {
+		if time.since(start) >= HANG_BOUND {
+			fmt.eprintfln("modustool: test failed: step %d: the compositor did not show the window %s within %v", index + 1, title, HANG_BOUND)
+			return false
+		}
+		log_change_wait(machine)
+	}
 	before := len(log_read(machine))
 	layout, known := machine_bar_layout(machine)
 	if !known {

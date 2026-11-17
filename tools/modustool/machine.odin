@@ -4563,12 +4563,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			pointer_known_make(machine, index) or_return
 			if step.kind == .Launch {
 				menu_x, menu_y := bar.button_center(layout)
-				if !pointer_move(machine, menu_x, menu_y) {
-					fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
-					return false
-				}
-				pointer_button(machine, true) or_return
-				pointer_button(machine, false) or_return
+				pointer_click(machine, menu_x, menu_y, index) or_return
 				// The compositor writes that the menu is open: a press that
 				// the machine did not receive is a failure of this step, with
 				// its cause, and not of a later one.
@@ -4584,11 +4579,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 			}
-			if !pointer_move(machine, step.x, step.y) {
-				fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
-				return false
-			}
-			pointer_button(machine, true) or_return
+			pointer_press_at(machine, step.x, step.y, index) or_return
 			if step.kind == .Drag {
 				if !pointer_move(machine, step.to_x, step.to_y) {
 					fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)

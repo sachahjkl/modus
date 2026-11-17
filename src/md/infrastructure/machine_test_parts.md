@@ -58,6 +58,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 - The lines of two parts that run at once are mixed on the terminal. Each line is whole. The end of the log of a machine that failed is one write, with the name of its log. The line of the end of each part names the part.
 - The data disk of a part that failed stays in `build/`; the disks of the parts that passed are removed.
 - `nix flake check` gives the sandbox the processors of the host, so the parts run at once there too, bounded by `NIX_BUILD_CORES`.
+- Parts at once load the host, so a compositor that starts takes its input later. Two faults of the tool that a part alone never showed then came out. The input service joined the moves of the pointer that found its ring full, so the push to the corner and the move to a button became one move, and the edge of the screen cut it to the corner: the place that the tool summed was wrong, and its press missed the menu. A step `Front` also opened the menu of the windows after the line of the surface and before the first picture, when the menu does not list the window yet. Both now wait for a fact of the compositor: the place of each press, and the line of the first picture of a window ([../../../docs/TOOLS.md](../../../docs/TOOLS.md), the rule of the pointer of a machine test).
 - A panic of the tool on one worker ends the process; the QEMU of the other parts that run then stay as orphans until a kill.
 
 ## State
