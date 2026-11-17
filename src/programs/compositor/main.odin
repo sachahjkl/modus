@@ -720,8 +720,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						left, top := int(min(record.values[1], u64(client.surface.width))), int(min(record.values[2], u64(client.surface.height)))
 						// The first picture of the window: the screen shows
 						// none of it yet, so each pixel of it changed.
+						// From this picture on, the window is on the screen
+						// and in the menu of the windows: a step that opens
+						// that menu waits for this line, not for the line of
+						// the surface, which comes before any picture.
 						if client.presents == 0 {
 							left, top = 0, 0
+							system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " is shown")
 						}
 						// Width 0: from (left, top) to the end of the surface.
 						changed_width, changed_height := client.surface.width - left, client.surface.height - top
@@ -971,6 +976,14 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	released := new_buttons & display.BUTTON_LEFT == 0 && buttons & display.BUTTON_LEFT != 0
 	held := buttons != 0 || new_buttons != 0
 	buttons = new_buttons
+	// The place of each press is a fact that only the compositor has: the
+	// input service joins the moves that find its ring full, and the edges
+	// of the screen cut the joined move where they would not cut each move
+	// alone. A test that moves the pointer with no other way to read it
+	// learns from this line where the press landed.
+	if pressed {
+		system.log_in("surfaces", .Info, "compositor: a press of the left button at ", u64(pointer_x), ",", u64(pointer_y))
+	}
 
 	if palette_is_open() {
 		// The panel takes the pointer: no menu and no window receives it.
