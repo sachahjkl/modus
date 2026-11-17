@@ -12,6 +12,7 @@ test_site :: proc() -> Site {
 	site.copies = make(map[string]string, context.temp_allocator)
 	site.files = make(map[string]int, context.temp_allocator)
 	site.pages = make([dynamic]Site_Page, context.temp_allocator)
+	site.diagram_problems = make([dynamic]string, context.temp_allocator)
 	site.documents["docs/NETWORK.md"] = "docs/guides/NETWORK/index.html"
 	site.documents["NETWORK.md"] = "docs/guides/NETWORK/index.html"
 	terms := make([]Site_Term, 2, context.temp_allocator)
@@ -49,14 +50,20 @@ site_render_each_construct :: proc(t: ^testing.T) {
 		"<blockquote>\n<p>quoted &lt;text&gt;</p>",
 		// A block marked odin is colored by the tokenizer of the compiler.
 		"<pre><code>x <span class=\"c-p\">:=</span> <span class=\"c-l\">1</span> <span class=\"c-p\">&lt;</span> <span class=\"c-l\">2</span>\n</code></pre>",
-		// The mermaid block is plain: only a block marked odin is colored.
+		// A mermaid block of a kind that the site does not draw: its text,
+		// and a fault that stops the command.
 		"<pre><code>graph\n</code></pre>",
 	}
 	for part in expect {
 		testing.expectf(t, strings.contains(html, part), "the HTML has no %q:\n%s", part, html)
 	}
 	testing.expect_value(t, len(renderer.items), 2)
-	testing.expect_value(t, len(site.not_rendered), 1) // The mermaid diagram.
+	testing.expect_value(t, len(site.not_rendered), 0)
+	testing.expect_value(t, len(site.diagram_problems), 1)
+	if len(site.diagram_problems) == 1 {
+		// The fence opens on line 26 of the text; its first line, "graph", is 27.
+		testing.expectf(t, strings.has_prefix(site.diagram_problems[0], "docs/TEST.md, line 27: the diagram kind"), "the fault is %q", site.diagram_problems[0])
+	}
 	testing.expect(t, !strings.contains(html, "<title>"))
 }
 
@@ -85,11 +92,14 @@ site_render_the_documents_of_the_repository :: proc(t: ^testing.T) {
 		// "|" or "```" outside <pre> means a construct was not read.
 		testing.expectf(t, !strings.contains(html, "<p>| ") && !strings.contains(html, "<p>```"), "%s has a construct left as text", path)
 	}
-	// What the renderer may leave as text: the mermaid diagrams and the
-	// links to a file that is not in the repository.
+	// What the renderer may leave as text: the links to a file that is not
+	// in the repository. Each diagram of the guides is drawn.
 	for item in site.not_rendered {
-		allowed := strings.contains(item, "mermaid") || strings.contains(item, "which is not a file of the repository")
+		allowed := strings.contains(item, "which is not a file of the repository")
 		testing.expectf(t, allowed, "not rendered: %s", item)
+	}
+	for problem in site.diagram_problems {
+		testing.expectf(t, false, "a diagram is not drawn: %s", problem)
 	}
 }
 

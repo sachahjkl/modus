@@ -6573,6 +6573,16 @@ The design: `docs/SITE.md`, "The byte layouts".
 
 Do not use: packet diagram, struct diagram, byte map.
 
+### Guide diagram
+
+A guide diagram is a picture in SVG that the tool draws, when it builds the site, from a fence `mermaid` of a guide: a flowchart or a sequence diagram.
+
+It shows the parts of the system and their order, or a flow in time, in the page of the guide, with the colors of the site and no script. The tool reads a stated subset of the text form of mermaid, measures each label with the font that the site serves for the diagrams, and lays out the boxes and the lines itself. A diagram that it cannot draw stops the build of the site with its file and its line. The text of the diagram stays under the picture. A guide diagram is not a byte layout: a byte layout draws the bytes of a record from the code.
+
+The design: `docs/SITE.md`, "The diagrams".
+
+Do not use: mermaid chart, rendered mermaid.
+
 ### Identity card
 
 An identity card is what the site states of one module: its name, its kind, its hash, its size, the counts of its exports, its imports and the modules that import it, its license, and the first sentence of its documentation.
