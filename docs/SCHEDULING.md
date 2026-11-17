@@ -390,7 +390,7 @@ The thread table has 256 places, and a queue holds the ready threads of one proc
 
 ### Integer arithmetic and the overflow argument
 
-The kernel counts time in cycles of the cycle counter (about 3e9 in one second here). A virtual time is in weighted cycles: a run of `c` cycles adds `c * 1024 / w`, with `1 <= w <= 1024`. One charge is the time since the last charge: one tick, or the time between two passes of the kernel. The kernel clamps it to 2^32 cycles (about 1 s at 4 GHz), so one charge adds at most 2^42.
+The kernel counts time in cycles of the cycle counter (about 3e9 in one second here). A virtual time is in weighted cycles: a run of `c` cycles adds `c * 1024 / w`, with `1 <= w <= 1024`. One charge is the time since the last charge: one tick, or the time between two passes of the kernel, less the time that the host stole from the processor under KVM (`ARCHITECTURE.md`, "Processor time"). A thread whose processor the host took away is not charged for that time, so its virtual time and its budget count only its own run. The kernel clamps one charge to 2^32 cycles (about 1 s at 4 GHz), so one charge adds at most 2^42.
 
 A virtual time is a `u64` that can wrap. Two virtual times are compared by the sign of their difference as an `i64` (as Linux does): this is right while the two are less than 2^63 apart.
 

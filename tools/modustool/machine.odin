@@ -997,6 +997,10 @@ self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
+	// The kernel says if each processor registered its steal-time record,
+	// or why the machine has none: under KVM the line names the count of
+	// the processors, under TCG the absence (src/md/features/stolen_time.md).
+	{kind = .Wait, text = "kernel: steal time: "},
 	{kind = .Wait, text = "kernel: ok"},
 	// The kernel writes the time of each stage of the boot, on the channel
 	// boot. The serial port keeps each line, so this check reads them here:
