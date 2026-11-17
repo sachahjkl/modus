@@ -481,6 +481,58 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 	return list[:], ""
 }
 
+// site_string_list_read reads a list of texts, with the parser of Odin. The
+// form: a declaration "<list> := <type> {"a", "b"}" at the top of the file,
+// whose elements are string literals. A constant in the list, or another
+// element, stops the command with the line: the tool reads the texts of the
+// source, not the compiled list.
+site_string_list_read :: proc(content, file, list_name: string) -> (texts: []string, problem: string) {
+	list := make([dynamic]string, context.temp_allocator)
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		return nil, fmt.tprintf("%s: no memory for the parser", file)
+	}
+	defer virtual.arena_destroy(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	tree := ast.new_from_positions(ast.File, {}, {})
+	tree.src = content
+	tree.fullpath = file
+	reader := parser.default_parser()
+	reader.err = site_code_quiet_error
+	reader.warn = site_code_quiet_error
+	if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
+		return nil, fmt.tprintf("%s: the parser of Odin refuses the file", file)
+	}
+	literal: ^ast.Comp_Lit
+	for statement in tree.decls {
+		declaration, is_declaration := statement.derived.(^ast.Value_Decl)
+		if !is_declaration || len(declaration.names) != 1 || len(declaration.values) != 1 {
+			continue
+		}
+		identifier, has_name := declaration.names[0].derived.(^ast.Ident)
+		if !has_name || identifier.name != list_name {
+			continue
+		}
+		literal, _ = declaration.values[0].derived.(^ast.Comp_Lit)
+		break
+	}
+	if literal == nil {
+		return nil, fmt.tprintf("%s: no list \"%s := <type> {{...}}\"", file, list_name)
+	}
+	for element in literal.elems {
+		text_literal, is_text := element.derived.(^ast.Basic_Lit)
+		if !is_text || text_literal.tok.kind != .String {
+			return nil, fmt.tprintf("%s, line %d: an element of %s is a string literal", file, element.pos.line, list_name)
+		}
+		text, _, found := site_string_at(text_literal.tok.text, 0)
+		if !found {
+			return nil, fmt.tprintf("%s, line %d: an element of %s is a string literal", file, element.pos.line, list_name)
+		}
+		append(&list, strings.clone(text, context.temp_allocator))
+	}
+	return list[:], ""
+}
+
 // site_row_comment gives the comment of a row, as Markdown: the comment of
 // each line from its first line to its last, numbered from 1. A comment
 // after code is one line; a line that is only a comment keeps its

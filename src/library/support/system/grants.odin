@@ -231,6 +231,26 @@ grant_put :: proc "contextless" (context_grants: ^Context_Grants, slot: int, gra
 	return true
 }
 
+// The part of a context that a refusal names.
+Context_Part :: enum u8 {
+	Handle = 0, // A slot of the handles.
+	Value  = 1, // An index of the values.
+}
+
+// context_refusal_of gives the first refusal of a context that a starter
+// built, the handles before the values: the one decision of each starter
+// before its start. refused false: no write was refused, and the start can
+// run.
+context_refusal_of :: proc "contextless" (grants: ^Context_Grants, values: ^Context_Values) -> (part: Context_Part, place: int, refused: bool) {
+	if grants.refusal.refused {
+		return .Handle, grants.refusal.place, true
+	}
+	if values.refusal.refused {
+		return .Value, values.refusal.place, true
+	}
+	return .Handle, 0, false
+}
+
 // The values that a starter writes into the context of a program, with
 // the indexes that it took. An index takes one value, as a slot takes one
 // handle: two parts of a start that write one index lose no value in

@@ -339,6 +339,28 @@ program_roles := [?]Program_Role_Row {
 	{name = "interface_font"},
 }
 
+// The programs that this service starts itself, each in its own way and
+// with its own handles: a command Start does not start them, and a disk
+// program does not take one of their names. Each one but root has a row of
+// program_roles whose grants are System_Part, and Serve beside it for the
+// compositor, whose exports serve the programs: the tool refuses another
+// set, and the grant System_Part on another row
+// (tools/modustool/program_roles_check.odin), because the debug access to
+// a program reads that grant. The names are strings that the tool reads.
+@(rodata)
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "glyphs"}
+#assert(FONT_SERVICE_NAME == "glyphs")
+
+// name_is_a_system_part says if a name is one of system_part_names.
+name_is_a_system_part :: proc "contextless" (name: string) -> bool {
+	for part in system_part_names {
+		if name == part {
+			return true
+		}
+	}
+	return false
+}
+
 // role_of gives the role of a program of the boot image by its name: the
 // grants and the terms of its row. A name with no row has the zero role:
 // it names no program of the boot image, as the tool checks. Only a start
@@ -354,12 +376,17 @@ role_of :: proc "contextless" (name: string) -> (role: Program_Role) {
 	return role
 }
 
-// role_names_the_program says if the table of this service has a row for
-// the name: a disk program does not take such a nickname.
+// role_names_the_program says if the table of this service gives the name
+// a grant or a term: a disk program does not take such a nickname, as the
+// name would carry an authority that the principal did not give. A row
+// with no grant and no term carries none, so it reserves no nickname: a
+// nickname of a module of the boot image is refused for that module
+// (disk_programs.odin), and a nickname of a program that this image does
+// not hold is free.
 role_names_the_program :: proc "contextless" (name: string) -> bool {
 	for &row in program_roles {
 		if row.name == name {
-			return true
+			return row.grants != {} || row.terms != (Program_Role_Terms{})
 		}
 	}
 	return false

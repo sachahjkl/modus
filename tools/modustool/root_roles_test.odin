@@ -1,11 +1,17 @@
 package modustool
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modus:contract/block"
+import "modus:contract/entropy_service"
+import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/root_ring"
 import "modus:contract/start_grant"
+import "modus:support/pci"
+import "modus:support/system"
 
 // Each role that the root service gives by a name starts: its handles take
 // one context slot each. The roles are the rows of `program_roles`, as the
@@ -95,45 +101,122 @@ each_role_of_program_roles_takes_each_context_slot_once :: proc(t: ^testing.T) {
 	}
 }
 
+// The layout of the context of a device service, which the root service
+// tries before it arms the device. A ring of the contract in a slot of the
+// layout, or outside the handles, is refused first, with that slot; -1,
+// one past the handles, the largest slot, the log, the budget, the machine,
+// the queues, the last BAR and the last device behind a bridge. The rings
+// of the block, frame and entropy contracts pass, last, and the trial takes
+// exactly the slots of the layout.
+@(test)
+the_layout_of_a_device_service_takes_each_slot_once :: proc(t: ^testing.T) {
+	refused := [?]int{-1, op.CONTEXT_HANDLES, max(int), op.CONTEXT_LOG, op.CONTEXT_BUDGET, pci.GRANT_MACHINE, pci.GRANT_QUEUES, pci.GRANT_INTERRUPT, pci.GRANT_CONFIGURATION, pci.GRANT_BAR + pci.BAR_COUNT - 1, pci.GRANT_BRIDGE_DEVICE + pci.BRIDGE_DEVICE_COUNT - 1}
+	for ring_slot in refused {
+		trial := pci.service_context_trial(ring_slot)
+		testing.expectf(t, trial.refusal == (system.Context_Refusal{refused = true, place = ring_slot}), "the ring at the slot %d is taken: %v", ring_slot, trial.refusal)
+	}
+	rings := [?]int{block.SERVICE_RING, frame.SERVICE_RING, entropy_service.SERVICE_RING}
+	for ring_slot in rings {
+		trial := pci.service_context_trial(ring_slot)
+		testing.expectf(t, !trial.refusal.refused, "the ring of a contract at the slot %d is refused at %d", ring_slot, trial.refusal.place)
+		expected: bit_set[0 ..< op.CONTEXT_HANDLES; u16]
+		expected += {ring_slot, op.CONTEXT_LOG, pci.GRANT_MACHINE, pci.GRANT_INTERRUPT, pci.GRANT_CONFIGURATION, pci.GRANT_QUEUES}
+		for index in 0 ..< pci.BAR_COUNT {
+			expected += {pci.GRANT_BAR + index}
+		}
+		for index in 0 ..< pci.BRIDGE_DEVICE_COUNT {
+			expected += {pci.GRANT_BRIDGE_DEVICE + index}
+		}
+		testing.expect_value(t, trial.taken, expected)
+	}
+}
+
 // The table of the roles is whole against the modules of the build. The
 // faults come first, each with its line: a program of the boot image with
 // no row, a row of a module that is no program of the boot image (a disk
 // program, the root service, a name of no module), a program with two
-// rows, a grant that is no start grant. The table of the repository, which
-// the build checks, holds none of them, last.
+// rows, a grant that is no start grant, a part of the system whose row
+// lacks System_Part or holds another grant or a term, a program that is no
+// part of the system with System_Part, a part of the system with no row.
+// The table of the repository, which the build checks, holds none of them,
+// last.
 @(test)
 the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	builds := []Module_Build {
 		{name = "root", source = PROGRAM_SOURCES + "root", image = true},
 		{name = "alpha", source = PROGRAM_SOURCES + "alpha", image = true},
 		{name = "beta", source = PROGRAM_SOURCES + "beta", image = true},
+		{name = "compositor", source = PROGRAM_SOURCES + "compositor", image = true},
+		{name = "block", source = PROGRAM_SOURCES + "block", image = true},
 		{name = "visitor", source = PROGRAM_SOURCES + "visitor", image = true, disk = true},
 		{name = "library", source = MODULE_SOURCES + "library", image = true},
 	}
-	expect_one :: proc(t: ^testing.T, rows: []Site_Role_Row, builds: []Module_Build, part: string) {
-		problems := program_roles_problems(rows, builds, "roles.odin")
+	system_parts := []string{"root", "compositor", "block"}
+	// The whole table, with one row replaced or added.
+	with :: proc(base: []Site_Role_Row, replaced: Site_Role_Row) -> []Site_Role_Row {
+		rows := make([dynamic]Site_Role_Row, context.temp_allocator)
+		found := false
+		for row in base {
+			if row.name == replaced.name {
+				append(&rows, replaced)
+				found = true
+			} else {
+				append(&rows, row)
+			}
+		}
+		if !found {
+			append(&rows, replaced)
+		}
+		return rows[:]
+	}
+	expect_one :: proc(t: ^testing.T, rows: []Site_Role_Row, system_parts: []string, builds: []Module_Build, part: string) {
+		problems := program_roles_problems(rows, system_parts, builds, "roles.odin")
 		testing.expectf(t, len(problems) == 1 && strings.contains(problems[0], part), "the problems are %v, not one with %q", problems, part)
 	}
+	whole := []Site_Role_Row {
+		{name = "alpha", line = 1},
+		{name = "beta", grants = {"Inspect"}, line = 2},
+		{name = "compositor", grants = {"Serve", "System_Part"}, line = 3},
+		{name = "block", grants = {"System_Part"}, line = 4},
+	}
 	// A program of the boot image with no row.
-	expect_one(t, {{name = "alpha", line = 1}}, builds, "the program beta of the boot image has no row")
-	whole := []Site_Role_Row{{name = "alpha", line = 1}, {name = "beta", grants = {"Inspect"}, line = 2}}
+	expect_one(t, {whole[1], whole[2], whole[3]}, system_parts, builds, "the program alpha of the boot image has no row")
 	// A row of a disk program, of the root service, of no module.
 	for name in ([?]string{"visitor", "root", "gamma"}) {
-		rows := make([dynamic]Site_Role_Row, context.temp_allocator)
-		append(&rows, ..whole)
-		append(&rows, Site_Role_Row{name = name, line = 3})
-		expect_one(t, rows[:], builds, fmt.tprintf("line 3: the row %s names no program", name))
+		expect_one(t, with(whole, {name = name, line = 5}), system_parts, builds, fmt.tprintf("line 5: the row %s names no program", name))
 	}
 	// A program with two rows, and a grant that is no start grant.
-	expect_one(t, {{name = "alpha", line = 1}, {name = "beta", line = 2}, {name = "alpha", line = 3}}, builds, "line 3: the program alpha has a second row")
-	expect_one(t, {{name = "alpha", grants = {"Inspect", "Inspect_Everything"}, line = 1}, {name = "beta", line = 2}}, builds, "line 1: the row alpha names the grant Inspect_Everything")
+	two := make([dynamic]Site_Role_Row, context.temp_allocator)
+	append(&two, ..whole)
+	append(&two, Site_Role_Row{name = "alpha", line = 5})
+	expect_one(t, two[:], system_parts, builds, "line 5: the program alpha has a second row")
+	expect_one(t, with(whole, {name = "alpha", grants = {"Inspect", "Inspect_Everything"}, line = 1}), system_parts, builds, "line 1: the row alpha names the grant Inspect_Everything")
+	// A part of the system that lacks System_Part, that holds another grant
+	// or a term, and the compositor without Serve.
+	broken_parts := [?]Site_Role_Row {
+		{name = "block", line = 4},
+		{name = "block", grants = {"Inspect"}, line = 4},
+		{name = "block", grants = {"System_Part", "Acts_For_Principal"}, line = 4},
+		{name = "block", grants = {"System_Part", "Serve"}, line = 4},
+		{name = "block", grants = {"System_Part"}, terms = "on_demand = true", line = 4},
+		{name = "compositor", grants = {"System_Part"}, line = 3},
+	}
+	for broken in broken_parts {
+		expect_one(t, with(whole, broken), system_parts, builds, fmt.tprintf("line %d: the row %s of a part of the system", broken.line, broken.name))
+	}
+	// A program that is no part of the system, with System_Part.
+	expect_one(t, with(whole, {name = "alpha", grants = {"System_Part"}, line = 1}), system_parts, builds, "line 1: the row alpha has the grant System_Part")
+	expect_one(t, with(whole, {name = "beta", grants = {"Inspect", "System_Part"}, line = 2}), system_parts, builds, "line 2: the row beta has the grant System_Part")
+	// A part of the system with no row.
+	expect_one(t, whole, []string{"root", "compositor", "block", "glyphs"}, builds, "system_part_names names glyphs, which has no row")
 	// A module that is no program may have a row: a service that starts as
 	// a program at its first connection.
-	testing.expect_value(t, len(program_roles_problems({{name = "alpha", line = 1}, {name = "beta", line = 2}, {name = "library", line = 3}}, builds, "roles.odin")), 0)
-	testing.expect_value(t, len(program_roles_problems(whole, builds, "roles.odin")), 0)
+	testing.expect_value(t, len(program_roles_problems(with(whole, {name = "library", line = 5}), system_parts, builds, "roles.odin")), 0)
+	testing.expect_value(t, len(program_roles_problems(whole, system_parts, builds, "roles.odin")), 0)
 	roles_text, roles_read := site_read_quiet(SITE_ROOT_ROLES_FILE)
 	testing.expect(t, roles_read)
-	rows, problem := site_role_table_read(roles_text, SITE_ROOT_ROLES_FILE, PROGRAM_ROLES_TABLE)
+	rows, repository_parts, problem := program_roles_read(roles_text)
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, len(program_roles_problems(rows, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
+	testing.expect(t, len(repository_parts) > 1 && slice.contains(repository_parts, "block"))
+	testing.expect_value(t, len(program_roles_problems(rows, repository_parts, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
 }

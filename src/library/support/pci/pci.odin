@@ -11,6 +11,7 @@
 // sets its message interrupt (MSI-X) before the start of the service.
 package pci
 
+import op "modus:contract/operation"
 import "modus:support/system"
 
 // The roles of the context of a device service of a PCI device.
@@ -26,6 +27,31 @@ BAR_COUNT :: 6 // The base address registers of a device of type 0.
 // that holds the registers of each of them. 0: not given.
 GRANT_BRIDGE_DEVICE :: GRANT_BAR + BAR_COUNT
 BRIDGE_DEVICE_COUNT :: 3 // The other devices behind one conventional bridge that a device service can hold.
+
+// service_context_trial writes a stand-in handle into each slot that the
+// context of a device service can take: the log, the machine, each other
+// device behind a bridge, the interrupt, each BAR, the configuration, the
+// queues, and the ring of its contract at ring_slot. The root service reads
+// its refusal before it arms the device, so a layout whose slots meet
+// stops the start while the device still makes no request. Each real start
+// takes a part of these slots, so a trial that passes is a start that
+// passes.
+service_context_trial :: proc "contextless" (ring_slot: int) -> (trial: system.Context_Grants) {
+	stand_in := system.Grant{handle = 1}
+	system.grant_put(&trial, op.CONTEXT_LOG, stand_in)
+	system.grant_put(&trial, GRANT_MACHINE, stand_in)
+	for index in 0 ..< BRIDGE_DEVICE_COUNT {
+		system.grant_put(&trial, GRANT_BRIDGE_DEVICE + index, stand_in)
+	}
+	system.grant_put(&trial, GRANT_INTERRUPT, stand_in)
+	for index in 0 ..< BAR_COUNT {
+		system.grant_put(&trial, GRANT_BAR + index, stand_in)
+	}
+	system.grant_put(&trial, GRANT_CONFIGURATION, stand_in)
+	system.grant_put(&trial, GRANT_QUEUES, stand_in)
+	system.grant_put(&trial, ring_slot, stand_in)
+	return trial
+}
 
 CONFIGURATION_SIZE :: 256 // The bytes of the configuration of a device that the copy holds: the space of PCI before PCI Express.
 QUEUE_PAGES :: 8 // The pages of the memory of the queues that the root service gives a device service.

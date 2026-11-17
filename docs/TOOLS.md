@@ -620,6 +620,7 @@ The root service gives each program of the boot image the role of its row in the
 - a row that names no module of the boot image, a disk program or the root service;
 - a program with two rows;
 - a grant that is no member of `start_grant.Grant`;
+- the grant System_Part on a row that the list `system_part_names` of the same file does not name, a name of that list with no row, and a part of the system whose row is not System_Part alone, with Serve beside it for the compositor, and no term: the debug access refuses a part of the system by that grant;
 - a row in another form than `{name = "<program>", grants = {.A, .B}, terms = {...}}` with no type, or terms that hold a comment.
 
 **When it runs.** Before the first compiler of each build starts, after the check of the imports, and when `modustool site` reads the table for the page of the grants. A fault stops the build with the file and the line:
@@ -628,7 +629,7 @@ The root service gives each program of the boot image the role of its row in the
 modustool: src/programs/root/roles.odin: the program clock of the boot image has no row in program_roles: write its role, with no grant when it needs none
 ```
 
-The host test `the_table_of_the_roles_is_whole` gives each fault to the check, and the test `each_role_of_program_roles_takes_each_context_slot_once` checks that the handles of each row take one context slot each.
+The host test `the_table_of_the_roles_is_whole` gives each fault to the check, the test `each_role_of_program_roles_takes_each_context_slot_once` checks that the handles of each row take one context slot each, and `the_layout_of_a_device_service_takes_each_slot_once` tries the ring of a device contract in each slot of the layout of a device service.
 
 ## The rules that a check holds
 

@@ -125,7 +125,9 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	// A row with no grant is a row of the table, with no grant.
 	plasma, plasma_named := site_role_row_of(rows, "plasma")
 	testing.expect(t, plasma_named && len(plasma.grants) == 0)
-	testing.expect_value(t, len(program_roles_problems(rows, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
+	_, system_parts, parts_problem := program_roles_read(roles_text)
+	testing.expect_value(t, parts_problem, "")
+	testing.expect_value(t, len(program_roles_problems(rows, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
 }
 
 // The reader of the table of the roles reads the tree of the parser: each

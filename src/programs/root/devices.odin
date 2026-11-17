@@ -203,6 +203,14 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 			return nil, 0, .Bad_State // One service for one device, and for all the devices behind one conventional bridge.
 		}
 	}
+	// The layout of the context first, before the device is armed: a
+	// refusal then leaves the device as it was, with no bus master and no
+	// message interrupt.
+	trial := pci.service_context_trial(kind.ring_role)
+	no_values: system.Context_Values
+	if context_refused(kind.name, &trial, &no_values) {
+		return nil, 0, .Bad_State
+	}
 	for &item in started {
 		if place_is_free(&item) {
 			driver = &item

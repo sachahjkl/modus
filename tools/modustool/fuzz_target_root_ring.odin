@@ -84,27 +84,39 @@ fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) 
 	return role
 }
 
-// fuzz_root_ring_sender_model says who sends a command, from the rows of
-// the table of the senders as the guide states them: the model of the
-// oracle, apart from sender_allowed.
+// fuzz_root_ring_sender_model says who sends a command, written by hand
+// from the guides and not from the table of the contract, so a wrong row
+// of ROOT_COMMAND_SENDERS breaks the oracle:
+// - a program receives a root ring only with Root_Ring, Connect,
+//   Principals or Debugger (src/md/api/root_ring.md, "The chosen form");
+// - `unlock`, with Principals, alone sends Principal_Record,
+//   Principal_Unlock, Machine_Key and Principal_Change_End
+//   (docs/PRINCIPALS.md, "7. The commands");
+// - the debugger service, with Debugger, alone sends Debug and Debug_Store
+//   (docs/TOOLS.md, "The debugger");
+// - Connect comes from Root_Ring, or from Connect to a service of the list
+//   of its role; Disconnect from each ring, for a connection that it holds;
+// - each other command from Root_Ring, the console; None from nobody.
+// The switch is whole: a new command does not compile until its sender is
+// written here too.
 @(private = "file")
 fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, role: bit_set[start_grant.Grant], listed: bool) -> bool {
-	if role & root_ring.ROOT_RING_GRANTS == {} {
+	if role & {.Root_Ring, .Connect, .Principals, .Debugger} == {} {
 		return false
 	}
-	switch root_ring.ROOT_COMMAND_SENDERS[command] {
-	case .Nobody:
+	switch command {
+	case .None:
 		return false
-	case .Root_Ring:
-		return .Root_Ring in role
-	case .Root_Ring_Or_Connect:
-		return .Root_Ring in role || .Connect in role && listed
-	case .Each_Ring:
-		return true
-	case .Principals:
+	case .Principal_Record, .Principal_Unlock, .Machine_Key, .Principal_Change_End:
 		return .Principals in role
-	case .Debugger:
+	case .Debug, .Debug_Store:
 		return .Debugger in role
+	case .Connect:
+		return .Root_Ring in role || .Connect in role && listed
+	case .Disconnect:
+		return true
+	case .Start, .Stop, .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client:
+		return .Root_Ring in role
 	}
 	return false
 }

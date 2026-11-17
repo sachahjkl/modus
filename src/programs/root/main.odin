@@ -396,7 +396,7 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 	system.grant_put(&context_grants, system.GRANT_MACHINE, {machine, {.Inspect, .Stop}})
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role_of("shortage")))
 	if context_refused("shortage", &context_grants, &values) {
-		system.call(.Machine_Stop, u64(machine), 1)
+		shortage_failed()
 	}
 	amounts := system.Budget_Amounts {
 		pages       = own.pages - SHORTAGE_KEEP,
@@ -407,9 +407,20 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&program_generator, values.values), amounts, nil, &prepared); status != .Ok {
 		system.log("root: cannot start shortage: status ", status)
-		system.call(.Machine_Stop, u64(machine), 1)
+		shortage_failed()
 	}
 	system.log("root: started shortage with ", system.Size{amounts.pages, .Pages})
+	for {
+		system.sleep(max(u64))
+	}
+}
+
+// shortage_failed ends the machine of the test of a shortage whose program
+// did not start. The machine has nothing else to run: this service waits
+// whatever Machine_Stop gives, so the test ends on the stop code or on its
+// hang bound, and never on a start that went on after a refusal.
+shortage_failed :: proc "contextless" () -> ! {
+	system.call(.Machine_Stop, u64(machine), 1)
 	for {
 		system.sleep(max(u64))
 	}
@@ -844,22 +855,6 @@ control_ring_serve :: proc "contextless" () {
 			}
 		}
 	}
-}
-
-// The programs that this service starts itself, each in its own way and
-// with its own grants: a command Start does not start them, and a disk
-// program does not take one of their names.
-@(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", FONT_SERVICE_NAME}
-
-// name_is_a_system_part says if a name is one of system_part_names.
-name_is_a_system_part :: proc "contextless" (name: string) -> bool {
-	for part in system_part_names {
-		if name == part {
-			return true
-		}
-	}
-	return false
 }
 
 // The pages that the budget of this service can still pay: at the last
@@ -1391,17 +1386,9 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	role := role_of("terminal")
 	context_grants: system.Context_Grants
 	values: system.Context_Values
-	system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
-	system.grant_put(&context_grants, system.GRANT_TERMINAL_RING, {ring_memory, {.Read, .Write}})
-	system.grant_put(&context_grants, system.GRANT_TERMINAL_TEXT, {text_memory, {.Read}})
-	system.grant_put(&context_grants, system.GRANT_TERMINAL_PROGRAM, {writer.program, {.Read}})
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
-	name := system.name_pack(system.name_of(writer.name[:]))
-	system.values_put(&values, terminal.VALUE_NAME, name[:])
 	columns, rows, measure := role_terminal(&writer.role)
-	system.value_put(&values, terminal.VALUE_COLUMNS, columns)
-	system.value_put(&values, terminal.VALUE_ROWS, rows)
-	system.value_put(&values, terminal.VALUE_MEASURE, u64(measure))
+	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.program, log = log_grant(role)}
+	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
 	// The settings page, five glyph caches, the font outlines and the
 	// demand cache.
 	mappings: [8]system.Mapping

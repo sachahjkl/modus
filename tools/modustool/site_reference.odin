@@ -165,13 +165,14 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	note(&problems, problem)
 	reference.root_grant_names, problem = site_names_read(grants_text, SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
 	note(&problems, problem)
-	reference.program_roles, problem = site_role_table_read(roles_text, SITE_ROOT_ROLES_FILE, PROGRAM_ROLES_TABLE)
+	system_parts: []string
+	reference.program_roles, system_parts, problem = program_roles_read(roles_text)
 	note(&problems, problem)
 	// A page shows each grant of a row as a link to its row, and a page of
 	// each program its role: a grant of no member, or a program with no
 	// row, stops the command, as it stops the build.
 	if problem == "" {
-		for item in program_roles_problems(reference.program_roles, module_builds[:], SITE_ROOT_ROLES_FILE) {
+		for item in program_roles_problems(reference.program_roles, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE) {
 			note(&problems, item)
 		}
 	}

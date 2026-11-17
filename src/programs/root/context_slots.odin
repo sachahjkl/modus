@@ -45,13 +45,15 @@ grant_slot_refused :: proc "contextless" (name: string, slot: int) {
 // refused, and writes its line: each starter of this service reads it once,
 // before the start, so no program starts with a handle or a value lost.
 context_refused :: proc "contextless" (name: string, grants: ^system.Context_Grants, values: ^system.Context_Values) -> bool {
-	if grants.refusal.refused {
-		grant_slot_refused(name, grants.refusal.place)
-		return true
+	part, place, refused := system.context_refusal_of(grants, values)
+	if !refused {
+		return false
 	}
-	if values.refusal.refused {
-		system.log_in("programs", .Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(values.refusal.place), " of its context, and a value would be lost")
-		return true
+	switch part {
+	case .Handle:
+		grant_slot_refused(name, place)
+	case .Value:
+		system.log_in("programs", .Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(place), " of its context, and a value would be lost")
 	}
-	return false
+	return true
 }

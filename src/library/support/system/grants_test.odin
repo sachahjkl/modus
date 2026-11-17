@@ -144,6 +144,40 @@ values_put_writes_all_the_words_or_none :: proc(t: ^testing.T) {
 	testing.expect(t, !value_put(&name, GRANT_VALUE_TERMINAL_NAME + 3, 0))
 }
 
+// The decision of a starter before its start: a refused handle comes
+// first, then a refused value, each with its place, the first refusal of
+// its part; a context with no refusal starts, last.
+@(test)
+a_context_with_a_refused_write_does_not_start :: proc(t: ^testing.T) {
+	both_grants: Context_Grants
+	both_values: Context_Values
+	grant_put(&both_grants, GRANT_DISPLAY, {handle = 1})
+	grant_put(&both_grants, GRANT_DISPLAY, {handle = 2})
+	value_put(&both_values, op.CONTEXT_VALUE_SEED, 1)
+	part, place, refused := context_refusal_of(&both_grants, &both_values)
+	testing.expect(t, refused)
+	testing.expect_value(t, part, Context_Part.Handle)
+	testing.expect_value(t, place, GRANT_DISPLAY)
+	no_grants: Context_Grants
+	part, place, refused = context_refusal_of(&no_grants, &both_values)
+	testing.expect(t, refused)
+	testing.expect_value(t, part, Context_Part.Value)
+	testing.expect_value(t, place, op.CONTEXT_VALUE_SEED)
+	edges: Context_Grants
+	grant_put(&edges, max(int), {handle = 1})
+	grant_put(&edges, -1, {handle = 1})
+	no_values: Context_Values
+	part, place, refused = context_refusal_of(&edges, &no_values)
+	testing.expect(t, refused)
+	testing.expect_value(t, place, max(int))
+	good_grants: Context_Grants
+	good_values: Context_Values
+	testing.expect(t, grant_put(&good_grants, op.CONTEXT_LOG, {handle = 1}))
+	testing.expect(t, value_put(&good_values, GRANT_VALUE_IMAGE_SIZE, 4096))
+	_, _, refused = context_refusal_of(&good_grants, &good_values)
+	testing.expect(t, !refused)
+}
+
 // A fixed range is stated once: a second statement is two mappings at one
 // address, and is refused with the index of the fixed ranges and no change.
 // Each range, then all of them, is stated last.
