@@ -6813,7 +6813,7 @@ Do not use: seed corpus, test suite (for this).
 
 An edge counter is a byte that instrumented code adds one to each time it passes one edge of its control flow.
 
-`opt` of the LLVM of the build adds the counters to the IR of the packages under test, and the fuzz target reads them after each execution. An input is kept when it gives an edge a count in a class that no kept input gave. In the planned fuzzing of the kernel operations, the kernel of a test volume gets counters too, which only the tool reads, through the memory file of the machine. It is not the coverage of a glyph.
+`opt` of the LLVM of the build adds the counters to the IR of the packages under test, and the fuzz target reads them after each execution. An input is kept when it gives an edge a count in a class that no kept input gave. In the planned fuzzing of the kernel operations, the counted kernel gets counters too, which only the tool reads, through the memory file of the machine (`src/md/infrastructure/kernel_fuzzing.md`). It is not the coverage of a glyph.
 
 The design: `src/md/infrastructure/fuzzing.md`.
 
@@ -6845,9 +6845,29 @@ An operation sequence is the fuzz input of the kernel operations: a list of comm
 
 The fuzzing of the kernel operations is planned work of `ROADMAP.md`. A handle argument names the result of an earlier command of the sequence by its place, so the sequence does not depend on the values of the handles of one run. An address that an operation reads as a record gets the bytes of that record.
 
-The design: `src/md/infrastructure/fuzzing.md`.
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
 Do not use: syscall program, call trace.
+
+### Counted kernel
+
+The counted kernel is the test kernel `kernel_edge_counters`: the sources of the kernel built with an edge counter at each edge, which counts only for a counted program.
+
+The tool reads its counters through the memory file of the test machine, and no program of the system reads them. The release refuses it by its hash, by its signature and by its bytes. A finding on it is confirmed on the kernel that ships, which has no counter. It is planned work of `ROADMAP.md`. It is not the measure build, and not the test build of the kernel checks, which every kernel of the tests has.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: instrumented kernel, coverage kernel.
+
+### Counted program
+
+A counted program is a program whose commands and exceptions the counted kernel counts: the runner of the operation sequences, by its name, and each program that a counted program creates.
+
+The counters then say which kernel code one operation sequence reached, and not what the tick, the scheduler or another program did. The kernel that ships has no counted program. It is planned work of `ROADMAP.md`.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: traced program, program under test (for this).
 
 ### Tagline
 

@@ -4,7 +4,7 @@
 
 Each border of the system reads bytes that it does not trust: a module file from the network, the blocks of a disk, a datagram, a record of another program, the arguments of a kernel operation. A host test checks the hostile cases that its writer thought of. Fuzzing checks the cases that nobody thought of: the tool gives the real code of the system millions of inputs, made from the inputs that reached new code, and checks after each one that the code did what its contract says.
 
-This file records the form of that machinery: the targets and their order, how a fuzz target calls the code of the system, the edge counters that guide it, the mutators, the oracles, the corpus in the repository, the bounded run of `modustool check`, the long runs, and the fuzzing of the kernel operations in a test machine.
+This file records the form of that machinery: the targets and their order, how a fuzz target calls the code of the system, the edge counters that guide it, the mutators, the oracles, the corpus in the repository, the bounded run of `modustool check` and the long runs. The fuzzing of the kernel operations in a test machine uses this engine; its design is [kernel_fuzzing.md](kernel_fuzzing.md).
 
 ## Constraints
 
@@ -31,7 +31,7 @@ The order weighs three facts: who can write the bytes (the network and the disk 
 8. **The disk grant table** (`disk_program.table_decode`). Its tag is checked first, so a fuzz target gives the key to the decoder: a fault after the tag is a fault of a key holder, and the decoder must still refuse it.
 9. **The system description and the boot image** (`system_description.entries`, `kernel_check`, `image_check`), and the TPM answers (`src/library/support/tpm2`).
 10. **The fonts and the shaping tables** (`vector_font`, `text_shaping`), the pointer theme (`pointer_pictures.validate`), the IOMMU tables of the firmware (`iommu.dmar_read`, `ivrs_read`, `mcfg_read`). A signed image or the firmware writes them today. A fault there still stops a service or the start, and the readers are long.
-11. **The kernel operations**: the 35 operations through command records, with the images that the kernel reads in the memory of a program (`Thread_Registers`, `Thread_Breakpoints`, the extended state, the `Page_Range` tables). This target needs a test machine, so it has its own form below. Its value is the highest; its order here is the order of the work, because it builds on the engine of the host targets.
+11. **The kernel operations**: the 35 operations through command records, with the images that the kernel reads in the memory of a program (`Thread_Registers`, `Thread_Breakpoints`, the extended state, the `Page_Range` tables). This target needs a test machine, so it has its own design: [kernel_fuzzing.md](kernel_fuzzing.md). Its value is the highest; its order here is the order of the work, because it builds on the engine of the host targets.
 
 The search of the processors in the ACPI tables reads the firmware through raw addresses inside the kernel (`src/kernel/apic.odin`). No host code can call it. It becomes a target when its reader moves into a contract package, as the readers of DMAR and IVRS did.
 
@@ -106,13 +106,13 @@ The corpus of one target holds at most 512 inputs and 1 MiB; the whole corpus ho
 
 **`modustool check`** runs, for each host target, each input of its corpus, then a fixed count of new executions (a named constant of the tool; a target whose execution does much, such as a whole handshake, states a smaller count). The seed of the generator is the BLAKE3 hash of the paths and the bytes of the sources of the tool and of the source library, the inputs of the child, so the same sources run the same inputs, and a change of the code under test explores other inputs. The check fails on any fuzz finding and prints it. It prints the executions in one second as a measure.
 
-**`modustool test`** has the part `operation_fuzzing`: the operation sequences of the corpus run again on the test volume of the kernel fuzzing.
+**`modustool test`** has the test part `operation_sequences`: the regression inputs of the kernel operations run again on the kernel that ships ([kernel_fuzzing.md](kernel_fuzzing.md)).
 
 **The long runs** are commands of the tool, never a part of a check:
 
 - `fuzz <target> [executions] [processes]`: runs a target for a count of executions: by default the count of the check, and a count of 0 is refused, so that a forgotten argument never starts a run with no end; with several processes, each process runs a child, and the children share the kept inputs through the folder of the run in `build/fuzzing/`.
 - `fuzz all [executions]`: each host target in turn.
-- `fuzz operations [executions]`: the kernel operations in a test machine.
+- `fuzz operations <executions> [machines]`: the kernel operations in test machines ([kernel_fuzzing.md](kernel_fuzzing.md)).
 - `fuzz list`: the targets and the inputs of their corpus.
 - `fuzz show <target> <file>`, `fuzz minimize <target> <file>`: one input again, with its outcome and its bytes as an Odin array; the smallest input with the same signature.
 - `fuzz regression <target> <file>`: adds a fixed fuzz finding to the regression inputs, and refuses one that still breaks an oracle.
@@ -122,38 +122,7 @@ A run prints each new finding with its signature and its minimized file, the edg
 
 ### The kernel operations
 
-The kernel is fuzzed as syzkaller fuzzes a kernel: by sequences of operations whose arguments follow a description of each operation, run by a program inside a machine, guided by edge counters of the kernel. The description is the one that the system already has: `OPERATIONS` of `src/library/contract/operation/forms.odin`, which gives the form of each parameter (a handle of a kind with rights, an address, a count with its limit, flags with the known bits, a choice with its maximum).
-
-**The operation sequence.** A generated target builds a list of up to 64 command records. For each parameter, the generator chooses mostly a value that fits the form, sometimes a value at its edge, sometimes any value:
-
-- a handle: a handle that an earlier command of the sequence gave back, by its place in the sequence, with the kind and the rights of the form or other ones; 0; a value that names no handle;
-- an address: inside a mapped area of the child, at its first or last byte, across its end, in the half of the kernel, not canonical;
-- a count: 0, 1, the limit, the limit plus one, the maximum;
-- flags: a subset of the known bits, then one unknown bit;
-- a choice: each value up to the maximum, then the maximum plus one.
-
-An address that an operation reads as a record (a `Page_Range` table, a register image, a breakpoint image, an extended state area) gets the bytes of that record, made by the field mutator from its type. The tool keeps one table of these records, one row for each address parameter of `OPERATIONS`, and refuses a parameter with no row: a new operation then stops the generator until its records are described.
-
-The kind of the handle that each operation gives back, and the statuses that each operation can give, are read by the tool from the reference comment of the operation (`-> memory handle`, the list "**Statuses**"), with `core:odin/parser`, as the site reads them. A status that the comment does not list is a fuzz finding: the kernel or its reference is wrong.
-
-**The machine.** A test volume, built as the volumes of the self tests are, holds:
-
-- a kernel whose IR passed `opt` with `-sanitizer-coverage-trace-pc-guard`. The callback of the guard is a procedure of the kernel that adds one to the counter of the edge only while the processor runs the commands of a thread of the program under test, as KCOV counts only the system calls of one task. Interrupts, the scheduler and the commands of the other programs add nothing. This kernel knows the program under test by the name that `operation_fuzzing` gives it in `Program_Create`; the kernel that ships has no such rule. An ignore list that the tool writes keeps the callback and the entry paths out of the pass;
-- the program `operation_fuzzing`, a device service of an `ivshmem-plain` device of QEMU. Its memory is a file of the host that the tool maps too: it is the mailbox of the machine.
-
-For each operation sequence, the tool writes it into the mailbox. `operation_fuzzing` copies it, then checks it, starts a child program with a budget of its own, gives it the sequence, and waits for its end or its fault on the fault ring. The child runs the commands from its ring and writes each status and each result. The service stops the child, writes the statuses into the mailbox, and adds one to the count of executions.
-
-The tool reads the counters of the kernel through the memory of the machine: QEMU runs with its memory in a file of the host (`memory-backend-file` with `share=on`), the instrumented kernel writes the physical address of its counters on the serial port at its start, and the tool maps the file. No program of the system reads them.
-
-**The oracles of the kernel.**
-
-- The kernel stops on its own fault with its report on the serial port.
-- The checks of a test build of the kernel (the order of the locks, the sums of the frames, the placement) stop it.
-- After the stop of each child, its budget holds no frame and no handle: a leak of the kernel.
-- A status outside the list of the reference.
-- The count of executions stays still for the hang bound: a deadlock or a lost wake of the kernel.
-
-**A fault of the kernel stops the machine.** The tool reads the last sequence from the mailbox file, which outlives the machine, and starts the machine again. `fuzz replay operations <file>` runs one sequence on a new machine: first on the test volume, then on the main volume, whose kernel is the kernel that ships. The fuzz finding is real when the plain kernel shows it too. The minimizer runs each smaller sequence on a new machine.
+The kernel is fuzzed as syzkaller fuzzes a kernel: by operation sequences whose arguments follow `OPERATIONS` of `src/library/contract/operation/forms.odin`, run by a program inside a machine, and guided by the edge counters of a test kernel. The generator of the sequences is a generated target of this engine. The sequence format, the grammar, the machine, the test kernel, the oracles of the kernel and the confirmation on the kernel that ships are in [kernel_fuzzing.md](kernel_fuzzing.md). What changed from the first form of this section: the mailbox is a range of the memory file of the machine and no longer an `ivshmem` device, the callback of the counters is in assembly with no ignore list, the test kernel counts a program by its name or by its creator, and a step of a sequence never waits.
 
 ## The refused forms
 
@@ -161,9 +130,7 @@ The tool reads the counters of the kernel through the memory of the machine: QEM
 - **A flag of instrumentation in the fork of the compiler.** The pass `sancov-module` takes its options from the command line options of LLVM, which Odin does not pass. The fork then carries one more change at each release of Odin, for the same pass that `opt` runs on the IR that the build already writes.
 - **Counters written into the source by the tool.** The experience of go-fuzz (golang/go issue 14565): a rewrite of the source breaks with each change of the language, cannot count each edge of an `&&`, and gives slow code.
 - **No counters, generation only.** Cheaper to build, but each input is a new random draw: the engine cannot keep an input that reached a deep check and work from it. Nyx found more faults with counters at a lower rate of executions than a faster blind fuzzer.
-- **Snapshot fuzzing of the machine (Nyx, kAFL).** It restores a whole machine thousands of times a second and gives the counters of any code through Intel PT. It needs a patched KVM, an Intel processor with PT, and its own QEMU. The system runs on one fixed machine: upstream QEMU with KVM, on Intel and on AMD hosts. A new machine after each fault of the kernel costs one boot, and such faults are rare.
-- **The counters of the kernel in a memory object of a program.** A program that reads which code of the kernel ran learns what other programs do. Even in a test volume, a grant that gives it is a grant that the system has.
-- **A plugin of TCG for the counters of the kernel.** It needs QEMU without KVM, and it sees the code of every program and every interrupt, so the counters do not say what the sequence did.
+- **The forms refused for the kernel target** (snapshot fuzzing, the counters in a memory object of a program, a plugin of TCG, and the others) are in [kernel_fuzzing.md](kernel_fuzzing.md), "The refused forms".
 - **A slow input as a fuzz finding.** A rate depends on the host. A long run prints the slowest inputs as a measure; an input that never returns is the one fuzz finding of time.
 - **A random seed in the check.** A check that fails once and passes again is read to its cause first, and a random seed makes the cause hard to find. The seed from the build key gives new inputs for new code and the same inputs for the same code.
 - **OSS-Fuzz and ClusterFuzzLite.** Both build their targets with clang and libFuzzer in their own images, for a fixed list of languages, and Odin is not one of them.
@@ -175,11 +142,8 @@ The tool reads the counters of the kernel through the memory of the machine: QEM
 - **The host compile is not the module.** The target triple, the level of optimization and the allocator differ. A fault that comes from the code of the source shows on both; a fault that comes from the code that LLVM made for the freestanding target shows only in a machine. This is one reason the kernel target runs in a machine.
 - **The page after the input sees what bounds checks miss.** A slice access of Odin is checked; an access through a raw pointer (`^Header` over the bytes of a file, `[^]u8`) is not. Only the page with no access finds such a read past the input. A read past an inner buffer of the reader is not found that way; `-sanitize:address` of Odin finds some of those in a long run, where the runtime of the sanitizer exists on the host.
 - **The tag of an authenticated format.** A fuzz target of the disk grant table gives the key to the decoder. Without the key, every input stops at the tag and the decoder behind it is never reached.
-- **The instrumented kernel is another kernel.** The callback adds instructions to each edge, so a fault of the order of instructions or of the depth of the stack can show only there. The replay on the main volume decides. The measure of the deepest stack runs on each kernel that the build makes ([kernel_stack_depth.md](kernel_stack_depth.md)), the instrumented one too.
-- **A sequence can depend on time in the machine.** A command that waits, a budget of processor time, the order of two processors. The machine of the fuzzing has one processor, and the generator gives a wait a deadline of zero or the hang bound. A sequence that gives other statuses in two runs is printed as unstable, not kept.
 - **TCP has no integrity.** A segment injected with its sequence and its acknowledgment in the windows is data of the remote for the receiver. The oracle of the order of the bytes holds only for a run with no injected segment; a run with one checks the bounds of the records only. The first finding of `tcp_connection` was this fault of the oracle, and its input stays in the corpus.
 - **A count of steps is a choice drawn before each step.** In a generated target, `for _ in 0 ..< fuzz_choice_below(...)` reads its bound again at each turn, so a zero choice ends the steps there. The inputs of the corpus are read this way: a change of this reading changes what each of them means.
-- **The documented statuses are a contract.** A status that the kernel gives and the reference does not list is a fault of one of the two; the fuzz finding does not say which.
 
 ## State
 
@@ -199,4 +163,4 @@ The oracle of `remote_answer` named one fault of a border before its first run: 
 
 The edges of `src/library/support/terminal` are not counted: the instrumented build selects an IR file by the name of the folder of a package, and the package of that folder is `terminal_records`. Its target still runs it; the engine is guided by the other packages of the target.
 
-Left, in this order: the other records between programs (the sentences of the error records, the palette table, the demand cache, the value runs, the text encoding check, the kept stop report, the kept settings) and the TPM answers; the shaping tables of the fonts (`text_shaping`); the search of the processors in the ACPI tables, which reads raw addresses inside the kernel; the kernel operations in a test machine ("The kernel operations"); a scheduled workflow that runs `fuzz all` and keeps its fuzz findings as files of the run; two threads of one operation sequence on two processors.
+Left, in this order: the other records between programs (the sentences of the error records, the palette table, the demand cache, the value runs, the text encoding check, the kept stop report, the kept settings) and the TPM answers; the shaping tables of the fonts (`text_shaping`); the search of the processors in the ACPI tables, which reads raw addresses inside the kernel; the kernel operations in a test machine, in the layers of [kernel_fuzzing.md](kernel_fuzzing.md), "State"; a scheduled workflow that runs `fuzz all` and keeps its fuzz findings as files of the run.
