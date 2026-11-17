@@ -27,7 +27,7 @@ debug_image_take :: proc "contextless" (ctx: ^system.Context) {
 // debug_image_give adds the debug image, read-only, to the mappings of a
 // program, and sets its size and its bit in the values. A machine with no
 // debug image gives nothing: the program shows offsets.
-debug_image_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+debug_image_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if debug_image_memory == 0 {
 		return
 	}
@@ -37,6 +37,6 @@ debug_image_give :: proc "contextless" (mappings: []system.Mapping, count: ^int,
 	}
 	mappings[count^] = {memory = debug_image_memory, address = fixed_addresses.DEBUG_IMAGE_ADDRESS, first = 0, page_count = (debug_image_size + system.PAGE_SIZE - 1) / system.PAGE_SIZE, flags = {}}
 	count^ += 1
-	values[op.CONTEXT_VALUE_DEBUG_IMAGE_SIZE] = debug_image_size
-	fixed_addresses.range_mapped_add(values, .Debug_Image)
+	system.value_put(values, op.CONTEXT_VALUE_DEBUG_IMAGE_SIZE, debug_image_size)
+	system.range_mapped_put(values, .Debug_Image)
 }

@@ -37,10 +37,10 @@ Start_Work :: struct {
 	slot:           ^Started, // The place of the program in the table. nil until start_place_take.
 	driver:         ^Started, // The device service that this start started for the program. nil: none.
 	view:           ^Started, // The place of the terminal of a program with the grant Terminal. nil: none.
+	// The handles and the values of the context. A write that one of them
+	// refused stops the start before the program runs (start_program_load).
 	grants:         system.Context_Grants,
-	slot_refused:   bool, // Two grants of the role took one slot: the program does not start.
-	refused_slot:   int, // The first slot that a second grant took.
-	values:         [op.CONTEXT_VALUES]u64,
+	values:         system.Context_Values,
 	mappings:       [START_MAPPING_LIMIT]system.Mapping,
 	mapping_count:  int,
 	mappings_full:  bool, // A mapping that the program cannot start without did not fit (mapping_needed_log).
@@ -199,11 +199,11 @@ start_handles_close :: proc "contextless" (work: ^Start_Work) {
 // runs (start_program_load).
 start_grant_put :: proc "contextless" (work: ^Start_Work, handle: root_ring.Role_Handle, grant: system.Grant) {
 	slot := system.ROLE_HANDLE_SLOTS[handle]
-	given := handle in root_ring.role_handles(work.role.grants)
-	if (!given || !system.grant_put(&work.grants, slot, grant)) && !work.slot_refused {
-		work.slot_refused = true
-		work.refused_slot = slot
+	if handle not_in root_ring.role_handles(work.role.grants) {
+		system.context_refusal_note(&work.grants.refusal, slot)
+		return
 	}
+	system.grant_put(&work.grants, slot, grant)
 }
 
 // start_mapping_add adds one mapping of the program, or says that it does
@@ -227,7 +227,7 @@ start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	start_values_of_the_name(work)
 	if .Tpm in work.role.grants {
 		tpm_grants_give(work)
-		work.values[system.GRANT_VALUE_SEAL_ALLOWED] = u64(tpm_seal_allowed())
+		system.value_put(&work.values, system.GRANT_VALUE_SEAL_ALLOWED, u64(tpm_seal_allowed()))
 	}
 	start_grant_put(work, .Log, log_grant(work.role))
 	start_store_give(work) or_return
@@ -248,11 +248,13 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	case "programs":
 		// The module file service serves the callers of the principal of
 		// its store only, and learns that principal here.
-		work.values[system.GRANT_VALUE_SERVICE_PRINCIPAL] = work.principal
+		system.value_put(&work.values, system.GRANT_VALUE_SERVICE_PRINCIPAL, work.principal)
 	case "randomness":
 		// The facts of the seed of the system, that only this service has:
 		// the program shows them (docs/RANDOMNESS.md). Facts, not the seed.
-		random.report_values_write(&entropy_report, &work.values)
+		facts: [op.CONTEXT_VALUES]u64
+		random.report_values_write(&entropy_report, &facts)
+		system.values_put(&work.values, system.GRANT_VALUE_SEED_FACTS, facts[system.GRANT_VALUE_SEED_FACTS:][:system.SEED_FACTS_VALUE_COUNT])
 	}
 }
 
@@ -276,7 +278,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	start_grant_put(work, .Storage_Service, {storage_service.program, {.Read}})
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
-			work.values[system.GRANT_VALUE_STORAGE_FILE_SIZE] = item.size
+			system.value_put(&work.values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
 			start_mapping_add(work, "the file of the storage service", {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE})
 		}
 	}
@@ -363,7 +365,7 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 	}
 	if .Image in grants {
 		start_grant_put(work, .Image, {image_memory, {.Read}})
-		work.values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
+		system.value_put(&work.values, system.GRANT_VALUE_IMAGE_SIZE, u64(len(image)))
 	}
 	if .Replacements in grants {
 		start_grant_put(work, .Replacements, {replacement_memory, {.Read}})
@@ -373,7 +375,7 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 	}
 	if .Settings in grants {
 		start_grant_put(work, .Settings_Page, {settings_memory, {.Read, .Write}})
-		work.values[settings.VALUE_BOOT_PASS] = u64(settings_boot_pass)
+		system.value_put(&work.values, settings.VALUE_BOOT_PASS, u64(settings_boot_pass))
 	}
 	if .Clock in grants {
 		start_grant_put(work, .Date_Page, {date_memory, {.Read, .Write}})
@@ -396,7 +398,7 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	// Each program: whether the machine runs for a measure. The boot image
 	// says it, so the modules of a measure run are the modules of a test.
 	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
-		work.values[op.CONTEXT_VALUE_MEASURE_RUN] = 1
+		system.value_put(&work.values, op.CONTEXT_VALUE_MEASURE_RUN, 1)
 	}
 	if .Debug_Image in grants {
 		debug_image_give(work.mappings[:], &work.mapping_count, &work.values)
@@ -426,25 +428,25 @@ start_service_give :: proc "contextless" (work: ^Start_Work) -> (status: system.
 	slot := work.slot
 	slot.service_memory, slot.service = system.ring_create() or_return
 	start_grant_put(work, .Service_Ring, {slot.service_memory, {.Read, .Write}})
-	work.values[system.GRANT_VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
-	work.values[system.GRANT_VALUE_FILE_SIZE] = entry.size
+	system.value_put(&work.values, system.GRANT_VALUE_FILE_ADDRESS, isolated.FILE_ADDRESS)
+	system.value_put(&work.values, system.GRANT_VALUE_FILE_SIZE, entry.size)
 	start_mapping_add(work, "the file of the service", {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE})
 	return .Ok
 }
 
 // start_program_load starts the program with its context, its budget and
-// its mappings. A slot that two grants took refuses the start first, with
-// its line: no program starts with a handle lost.
+// its mappings. A slot that two grants took, or a value that two parts of
+// the start wrote, refuses the start first, with its line: no program
+// starts with a handle or a value lost.
 start_program_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	name := work.name
-	if work.slot_refused {
-		grant_slot_refused(name, work.refused_slot)
+	if context_refused(name, &work.grants, &work.values) {
 		return .Bad_State
 	}
 	load_error: module.Load_Error
 	program_budget := budget_of(work.file, name)
 	status: system.Status
-	work.slot.program, status = system.program_start(work.file, name, work.grants.grants, random.values_with_seed(&program_generator, work.values), program_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
+	work.slot.program, status = system.program_start(work.file, name, work.grants.grants, random.values_with_seed(&program_generator, work.values.values), program_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
 	if status == .Ok {
 		return .Ok
 	}

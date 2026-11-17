@@ -225,6 +225,7 @@ Site :: struct {
 	declaration_spans: Site_Declaration_Span_Counts, // What became of the code spans that have the form of a name.
 	byte_layouts: map[string]Byte_Layout, // Each byte layout that a fence of a guide can name (docs/SITE.md, "The byte layouts").
 	byte_layout_problems: [dynamic]string, // The faults of the fences of byte layouts: each one stops the command.
+	diagram_problems: [dynamic]string, // The diagrams of the guides that the tool cannot draw: each one stops the command.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -644,6 +645,7 @@ site_build :: proc(address: string) -> bool {
 	// names them.
 	site.byte_layouts = byte_layouts_read() or_return
 	site.byte_layout_problems = make([dynamic]string, context.temp_allocator)
+	site.diagram_problems = make([dynamic]string, context.temp_allocator)
 
 	if !reset_folder(SITE_FOLDER) {
 		return false
@@ -681,6 +683,14 @@ site_build :: proc(address: string) -> bool {
 	// of the file of the repository, which `modustool check` compares.
 	mark_font := mark_font_of_the_repository() or_return
 	site_write_file(&site, SITE_MARK_FONT, mark_font) or_return
+	// The font of the text of the diagrams of the guides: the file whose
+	// advances the layout of each diagram measured (site_diagram.odin).
+	diagram_font, diagram_font_error := os.read_entire_file(SITE_DIAGRAM_FONT_SOURCE, context.temp_allocator)
+	if diagram_font_error != nil {
+		fmt.eprintfln("modustool: site: cannot read %s", SITE_DIAGRAM_FONT_SOURCE)
+		return false
+	}
+	site_write_file(&site, SITE_DIAGRAM_FONT, diagram_font) or_return
 	// The public key of the release signing key, for a reader who verifies
 	// the files of a release with no tool, and the certificate that a
 	// principal enrols for Secure Boot.
@@ -756,6 +766,15 @@ site_build :: proc(address: string) -> bool {
 			fmt.eprintfln("modustool: site: %s", problem)
 		}
 		fmt.eprintfln("modustool: site: %d fences of byte layouts are wrong; no page is written", len(site.byte_layout_problems))
+		return false
+	}
+	// A diagram that the tool cannot draw would be a picture with a part
+	// missing, or its text in place of the picture.
+	if len(site.diagram_problems) > 0 {
+		for problem in site.diagram_problems {
+			fmt.eprintfln("modustool: site: %s", problem)
+		}
+		fmt.eprintfln("modustool: site: %d diagrams cannot be drawn; no page is written", len(site.diagram_problems))
 		return false
 	}
 	pointer_problems := site_document_pointer_problems(&site)

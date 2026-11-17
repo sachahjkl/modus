@@ -53,6 +53,15 @@
 // one log line for each; a command with a table that succeeds leaves the
 // table empty; `Log`, whose last value is an argument, refuses a table.
 //
+// **A full completion queue.** The program fills the completion queue of
+// its kernel ring and leaves it unread: the kernel keeps the next command
+// unrun in the command queue and ends the entry with no wait, also on the
+// word of a `Word_Wait` of the same entry; a kernel call of the library is
+// refused with `Busy` and does not run; a wait of the library ends at once
+// and pushes nothing; and after the read each answer has come once, in
+// order, and the kept command runs once. Its child stops on a kernel ring
+// that holds records, and must stop with its own stop code.
+//
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
 // call that succeeds and one that fails; a refused `Log` over the limit of
@@ -346,6 +355,98 @@ kernel_details_check :: proc "contextless" () {
 		system.log("errors: Log refuses a table of error details: as it must")
 	} else {
 		system.log("errors: WRONG: Log with a table of error details gave the status ", status, " and ", details.count, " error details")
+	}
+}
+
+KERNEL_RING_FIRST_TAG :: u32(1)
+
+// kernel_ring_check fills the completion queue of the kernel ring of this
+// thread and checks that no answer is lost
+// (src/md/api/kernel_ring_completion_room.md). The commands are None, which
+// changes nothing, so each answer differs by its tag only; they leave one
+// place. The next entry holds a Word_Wait on a word that keeps its value,
+// which takes the last place, then a close of a handle: the kernel must
+// leave the close unrun, end the entry with no wait on the registered word,
+// and run the close once after the answers are read. While records wait, a
+// kernel call of the library must be refused, and its command, the close
+// of another handle, must not run; a wait of the library must end at once
+// and push nothing. system.log enters the kernel ring too: each line comes
+// after the ring is empty again. These pushes write the kernel ring
+// itself, on purpose: each one is checked.
+kernel_ring_check :: proc "contextless" () {
+	held_memory, held_created := system.memory_create(1)
+	refused_memory, refused_created := system.memory_create(1)
+	defer system.close(refused_memory)
+	if held_created != .Ok || refused_created != .Ok {
+		system.close(held_memory)
+		system.log("errors: WRONG: the case of a full completion queue has no memory: ", held_created, " ", refused_created)
+		return
+	}
+	kernel := system.kernel_ring()
+	capacity := ring.capacity(&kernel.completions)
+	pushes_taken := ring.empty(&kernel.commands) && ring.empty(&kernel.completions)
+	for number in 0 ..< capacity - 1 {
+		pushes_taken &&= ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None), tag = KERNEL_RING_FIRST_TAG + number})
+	}
+	system.enter(0)
+	filled := ring.count(&kernel.completions) == capacity - 1 && ring.empty(&kernel.commands)
+	// The last place goes to the Word_Wait, and the close is held behind it:
+	// with a wait, the entry would sleep on the word, which keeps its value.
+	// The hang bound only ends the wait of a kernel that would wait.
+	unchanged: u32
+	wait_words := [1]op.Word{{address = u64(uintptr(&unchanged)), value = 0}}
+	wait_tag := KERNEL_RING_FIRST_TAG + capacity - 1
+	held_tag := wait_tag + 1
+	pushes_taken &&= ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), tag = wait_tag, values = {0 = u64(uintptr(&wait_words)), 1 = len(wait_words)}})
+	pushes_taken &&= ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Handle_Close), tag = held_tag, values = {0 = u64(held_memory)}})
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	entered := system.enter(deadline)
+	held := entered < deadline && ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
+	refusal: errors.Error_Record
+	_, refused_status := system.call_with_error(&refusal, .Handle_Close, u64(refused_memory))
+	refused := refused_status == .Bad_Operation && errors.Kind(refusal.kind) == .Busy && refusal.value == i64(capacity) + 1
+	refused &&= ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
+	waited := system.word_wait(&unchanged, 0, deadline)
+	wait_ended := waited < deadline && ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
+	// Each answer once, in the order of the commands: the None commands,
+	// then the Word_Wait.
+	answers_in_order := true
+	for number in 0 ..< capacity {
+		answer, popped := ring.pop(&kernel.completions)
+		answers_in_order &&= popped && answer.tag == KERNEL_RING_FIRST_TAG + number && answer.kind == u32(system.Status.Ok)
+	}
+	answers_in_order &&= ring.empty(&kernel.completions)
+	// The held command runs at the next entry, once.
+	system.enter(0)
+	held_answer, held_popped := ring.pop(&kernel.completions)
+	held_ran := held_popped && held_answer.tag == held_tag && held_answer.kind == u32(system.Status.Ok)
+	held_ran &&= ring.empty(&kernel.commands) && ring.empty(&kernel.completions)
+	_, held_after := system.memory_size(held_memory)
+	_, refused_after := system.memory_size(refused_memory)
+	held_ran &&= held_after == .Bad_Handle
+	refused &&= refused_after == .Ok
+	if !pushes_taken {
+		system.log("errors: WRONG: the kernel ring refused a push of the case of a full completion queue")
+	}
+	if filled && held {
+		system.log("errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must")
+	} else {
+		system.log("errors: WRONG: a command past a full completion queue: the queue filled: ", filled ? "yes" : "no", "; the command held with no wait: ", held ? "yes" : "no")
+	}
+	if refused {
+		system.log("errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must")
+	} else {
+		system.log("errors: WRONG: a kernel call on a kernel ring that holds records gave ", refused_status, " and the kind ", refusal.kind)
+	}
+	if wait_ended {
+		system.log("errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must")
+	} else {
+		system.log("errors: WRONG: a wait of the library on a kernel ring that holds records waited or pushed its command")
+	}
+	if answers_in_order && held_ran {
+		system.log("errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must")
+	} else {
+		system.log("errors: WRONG: the answers of a full completion queue: each once in order: ", answers_in_order ? "yes" : "no", "; the held command ran once: ", held_ran ? "yes" : "no")
 	}
 }
 
@@ -855,7 +956,15 @@ lock_takes :: proc "contextless" (machine: system.Handle) -> (control, frame: u6
 	return report.locks[op.Lock_Kind.Control].takes, report.locks[op.Lock_Kind.Frame].takes
 }
 
-// child runs REFUSALS refused Log operations, writes their time, and stops.
+// The stop code of the child: not 0 and not a code of a fault, so that the
+// starter sees that the child stopped with its own stop, not by a fault.
+CHILD_STOP_CODE :: 7
+
+// child runs REFUSALS refused Log operations, writes their time, and stops
+// on a kernel ring that holds records: a full completion queue, unread, and
+// one command held behind it. A stop must end the program whatever its ring
+// holds (src/md/api/kernel_ring_completion_room.md, "The stop of a
+// program").
 child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	page := (^Child_Page)(uintptr(MEASURE_ADDRESS))
 	log := u64(ctx.handles[op.CONTEXT_LOG])
@@ -866,7 +975,15 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	page.log_ns = (system.time() - start) * 1_000_000 / REFUSALS
 	intrinsics.atomic_store(&page.done, 1)
-	system.stop(0)
+	// The pushes write the kernel ring itself, on purpose. A refused push
+	// leaves a ring that holds less, which the stop must end too.
+	kernel := system.kernel_ring()
+	for _ in 0 ..< ring.capacity(&kernel.completions) {
+		_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
+	}
+	system.enter(0)
+	_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
+	system.stop(CHILD_STOP_CODE)
 }
 
 // refusals measures the two refusals; the machine handle reads the counts of
@@ -884,7 +1001,10 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	mappings := [1]system.Mapping{{memory = memory, address = MEASURE_ADDRESS, flags = {.Write}}}
 	control, frame := lock_takes(machine)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
+	// The child is this module: its start pays for the private pages of the
+	// module, which grow with its cases, so the budget keeps room past them.
+	// A start that the budget cannot pay is a WRONG line below, not silence.
+	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
 	if status == .Ok {
 		for intrinsics.atomic_load(&page.done) == 0 {
 			if state, _ := system.program_state(program); state == .Stopped {
@@ -892,7 +1012,30 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 			}
 			system.sleep(system.time() + 10)
 		}
+		// The child then stops on a kernel ring that holds records. The
+		// event word of this thread changes when a program that it holds
+		// stops; the hang bound only ends a stop that never comes.
+		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+		child_state: op.Program_State
+		child_code: u32
+		for {
+			wait := system.wait_begin()
+			child_state, child_code = system.program_state(program)
+			if child_state == .Stopped || system.time() >= deadline {
+				break
+			}
+			system.wait_end(&wait, deadline)
+		}
+		if child_state == .Stopped && child_code == CHILD_STOP_CODE {
+			system.log("errors: a stop on a kernel ring that holds records ends the program with its own stop code: as it must")
+		} else {
+			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
+		}
 		system.close(program)
+	} else {
+		// A child that does not start measures nothing: the case says so,
+		// and does not pass in silence.
+		system.log("errors: WRONG: the child of the refusals did not start: ", u64(status), ", the stage ", u64(error.stage), ", the status of the kernel ", u64(error.status), ", the error of the file ", u64(error.file_error))
 	}
 	control_after, frame_after := lock_takes(machine)
 	refused_log_ns, refused_log_control, refused_log_frame = page.log_ns, control_after - control, frame_after - frame
@@ -1131,6 +1274,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	log_filter_check()
 	kernel_details_check()
+	kernel_ring_check()
 	if !contend() {
 		system.log("errors: WRONG: the case under contention failed")
 	}

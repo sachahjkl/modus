@@ -10,22 +10,23 @@
 // it at its start, or it asks this service on its *root ring*, and this
 // service answers by the tables of this file:
 //
-// - `grants_of`: the grants of each program, by its name, with the reason
-//   of each beside its case. The site shows them in the table "The grants
-//   of each program".
-// - `program_role_rows` (roles.odin): the other terms of a role: the
-//   services that a program with the grant `Connect` can reach, the blocks
-//   of a private store, the log with Give, the size of a terminal.
+// - `program_roles` (roles.odin): the role of each program of the boot
+//   image, by its name, in one row: its start grants and the other terms
+//   of its role (the services that a program with the grant `Connect` can
+//   reach, the blocks of a private store, the log with Give, the size of a
+//   terminal), with the reason of each. The site shows them in the table
+//   "The grants of each program", and the build stops when a program of
+//   the boot image has no row.
 // - `budget_of` (budgets.odin): the budget that the module of a program
 //   asks for, accepted up to the largest budget of a program, and the table
 //   of the exceptions, each with its reason.
 //
 // A start reads the role of a program one time (`role_of`), and the
 // program keeps it in `Started.role`: each rule after the start reads it
-// there, never by the name. A program that no case names receives the log
-// and a window, and no grant. A disk program is never a case of these
-// tables: this service refuses a file of a disk whose name one of them
-// names, or whose name a module of the boot image has (disk_programs.odin).
+// there, never by the name. A program whose row has no grant receives the
+// log and a window. A disk program is never a row of these tables: this
+// service refuses a file of a disk whose name one of them names, or whose
+// name a module of the boot image has (disk_programs.odin).
 //
 // **The commands of the root ring** (`Root_Command` in the package
 // root_ring, root_ring.odin). The table `root_ring.ROOT_COMMAND_SENDERS`
@@ -121,205 +122,30 @@ ROOT_MARK :: "root: ok"
 // start grant that refused a debug access (src/library/contract/start_grant).
 Grant :: start_grant.Grant
 
-grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
-	switch name {
-	case "console":
-		// The console is the shell of the machine, and its commands need
-		// each grant:
-		// - **Root_Ring**: `start`, `stop`, `grants`, `revoke`, `connect`
-		//   and the commands of the principals ask this service.
-		// - **Inspect**: `memory`, `locks` and `program_modules` read the
-		//   reports of the machine.
-		// - **Stop**: `shutdown` stops the machine.
-		// - **Image**: `load` and `isolate` map the modules of the boot image.
-		// - **Debug_Image**: a stop report names the procedures and the
-		//   source lines.
-		// - **Replacements** and **Replace**: `replacements` reads the
-		//   replacement table, `replace` changes it.
-		// - **Terminal**: the console has no surface of its own.
-		// - **Store**: `connect storage` opens its private store, with a
-		//   small limit of blocks that a test reaches.
-		// - **History_Store**: the line history, apart from that store.
-		// - **Acts_For_Principal**: a service that it connects to shows what
-		//   it holds for all callers.
-		// - **Palette**: its commands show in the palette of the desktop,
-		//   and the palette names the one that the input chose.
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette}
-	case "flood":
-		// It writes its lines to a terminal and reads the key Space from
-		// it: it has no surface and needs nothing else.
-		return {.Terminal}
-	case "hostile_terminal":
-		// The test of the records of a terminal ring whose kind names no
-		// record: it writes them to its terminal, as flood writes lines.
-		return {.Terminal}
-	case "inspect":
-		// A developer tool: it reads the reports of the machine and the names
-		// of the modules, and serves the same facts (docs/TOOLS.md).
-		return {.Inspect, .Image, .Serve, .Debug_Image}
-	case "monitor":
-		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the principal.
-	case "debugger":
-		// The debugger service (docs/TOOLS.md, "The debugger"):
-		// - **Serve**: its exports are the commands of the debugger.
-		// - **Debugger**: it asks this service for the handle of a program
-		//   with the right Debug, on behalf of one of its callers, and, for
-		//   a disk program that it debugs, for a connection that reads only
-		//   to the store of its debug object (Debug_Store).
-		// - **Inspect**: the threads and the module records of the program
-		//   that it debugs.
-		// - **Debug_Image**: the debug objects, which name the procedures,
-		//   the lines, the types and the variables.
-		// - **Image**: the name of each module, from its hash.
-		return {.Serve, .Debugger, .Inspect, .Debug_Image, .Image}
-	case "processors", "pages", "flow", "crowd", "clock":
-		// Each reads reports of the machine: processors what each processor
-		// runs, pages the page tables, flow, crowd and clock the kernel
-		// entries of the program for their measures.
-		return {.Inspect}
-	case "rights":
-		return {.Inspect, .Image} // It shows what the kernel refuses.
-	case "pointers":
-		return {.Image} // It reads the pointer themes in the resource table of the boot image.
-	case "log":
-		return {.Log_Records, .Serve} // It serves records(): the whole log to a caller that acts for the principal, its own records to each other caller.
-	case "log_reader":
-		// The test of the own records and of the records of its children: a
-		// connection to the log service and to no other service
-		// (its row in program_role_rows), with no grant to act for the principal, and the
-		// boot image for the description of the exports of that service and
-		// for the module of its children. It starts them on its own budget,
-		// and the handle of each child is its grant to read the records of
-		// that child (src/md/features/log_reader_scope.md). One child writes
-		// more records than the whole log keeps
-		// (src/md/features/own_log_ring.md).
-		return {.Connect, .Image}
-	case "boot":
-		return {.Inspect, .Image} // It shows the modules of the boot image.
-	case "rings":
-		return {.Image} // It starts its nodes from the boot image.
-	case "frames":
-		return {.Inspect, .Image} // It reads its own page table, and starts its twins from the boot image.
-	case "locks":
-		return {.Inspect, .Image} // It reads the counts of the locks, and starts its lockers from the boot image.
-	case "address_space":
-		return {.Inspect, .Image} // It reads its own mappings, and starts its child from the boot image.
-	case "return_fault":
-		return {.Image} // It starts its children from the boot image.
-	case "fault_ring":
-		return {.Image} // It starts its children from the boot image.
-	case "debugged":
-		return {.Image} // It starts its children from the boot image, and is the debugger of each one: no grant of this service gives it that.
-	case "kernel_events":
-		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
-	case "counters":
-		return {.Counters} // It counts the events of the processor for its own loop (docs/ARCHITECTURE.md, "The counters of a thread").
-	case "scheduler":
-		// It reads the counts of the scheduler, changes the strategy and
-		// writes the weight of each thread (the share policy). It starts
-		// the four programs of its case of the shares from the boot image,
-		// and serves strategy_set(), share() and policy() to the console.
-		return {.Inspect, .Schedule, .Image, .Serve}
-	case "paint", "life", "tally", "sample", "heron":
-		// Each is a service: the console calls its exports through a
-		// connection.
-		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
-	case "settings":
-		return {.Settings, .Serve, .Store} // It writes the settings, keeps them in its private store, and serves set() and get().
-	case "date":
-		return {.Clock, .Serve} // It reads the real-time clock, writes the date page, and serves now().
-	case "manual":
-		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
-	case "disk":
-		// It measures the block service on the disk of the measures, which
-		// holds no data of a program: its writes destroy nothing.
-		return {.Scratch_Disk}
-	case "iommu":
-		// The client of the test of the IOMMU: its device service on the
-		// disk of the measures is the test device service iommu_device.
-		return {.Scratch_Disk}
-	case "storage":
-		// It is the one client of the block service of the data disk, and it
-		// serves a private store to each caller with the grant Store.
-		return {.Serve, .Data_Disk}
-	case "notes":
-		// Its note, its count and their versions live in its private store.
-		return {.Store}
-	case "unlock":
-		// The records of the named principals in its private store, the
-		// passphrase in its window, the commands of the principals, and the
-		// ring of the TPM service, which seals the machine key to the
-		// measure of the system (docs/PRINCIPALS.md). It erases the
-		// versions of the file of a principal after a change of a secret,
-		// so an old secret opens no version (docs/STORAGE.md, "4.8 The
-		// erase of versions").
-		return {.Store, .Principals, .Tpm, .Versions_Erase}
-	case "hierarchy":
-		return {.Store} // The test of the trees of a store.
-	case "ranges":
-		return {.Store} // The test of the large objects of a store, written by ranges.
-	case "errors":
-		return {.Store, .Image, .Inspect, .Connect, .Debug_Image} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (its role names no service).
-	case "imports":
-		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
-	case "cryptography_vectors":
-		return {.Image} // It reads the hash of the module cryptography in the boot image.
-	case "net":
-		return {.Inspect, .Network} // It measures with the cycle counter.
-	case "server":
-		return {.Network, .Serve, .Store} // A listen grant, its exports for the console, and its pages in its private store.
-	case "fetch":
-		// A client grant of TCP to one web server, 10.0.2.100 port 80.
-		return {.Network}
-	case "programs":
-		// The module file service: its private store is the store
-		// `programs` of its principal, as a private store has the name of
-		// its program; a client grant of TCP to one web server, 10.0.2.100
-		// port 80; and its exports for the console. It starts nothing: this
-		// service checks the hash of each file that a principal starts
-		// (docs/MODULE_CONTRACT.md, "A program from a disk").
-		return {.Store, .Network, .Serve}
-	case "quic_echo":
-		return {.Network} // A listen grant of UDP: QUIC in the program, the module cryptography through its imports.
-	case "network":
-		// It is the one client of the frame service of the network device,
-		// and it receives from this service the endpoint of each program
-		// with the grant Network.
-		return {.Network_Device}
-	case "remote":
-		// The calls of another machine: a listen grant of UDP that admits
-		// the address of the host only (QUIC in the program, the module
-		// cryptography through its imports), the client table, which names
-		// the key of each client that a principal allowed, connections to
-		// the services of its row in program_role_rows, each for one row of that table, and
-		// the grant to act for the principal of that row
-		// (docs/MODULE_CONTRACT.md, "A call from the host";
-		// docs/PRINCIPALS.md, "The client keys of remote").
-		return {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}
-	case "interface_through_module":
-		return {.Image} // It reads the size of the code of interface_module.
-	case "debugger_window":
-		// The window of the debugger: a connection to the service debugger
-		// and to no other service (its row in program_role_rows), the boot image for the
-		// description of the exports of that service, and the grant to act
-		// for the principal, which the service asks of each caller. It holds
-		// no right over a program (docs/TOOLS.md, "The window of the debugger").
-		return {.Connect, .Image, .Acts_For_Principal}
-	case "tables":
-		// It loads sample, starts a call host of it from the boot image,
-		// and connects to the service sample (docs/MODULE_CONTRACT.md,
-		// "Tables and bytes as parameters").
-		return {.Image, .Connect}
-	}
-	return {} // The log and a window, as each program receives, and no grant of this list.
-}
-
+// The context of the input service: the slots that src/programs/input
+// names GRANT_RING, GRANT_PORTS, GRANT_KEYBOARD_INTERRUPT and
+// GRANT_MOUSE_INTERRUPT. A program is no package that this service
+// imports, so the numbers are written on both sides.
+INPUT_GRANT_RING :: 0 // The input ring, which the compositor reads.
+INPUT_GRANT_PORTS :: 1 // The ports of the PS/2 controller.
+INPUT_GRANT_KEYBOARD_INTERRUPT :: 2
+INPUT_GRANT_MOUSE_INTERRUPT :: 3
+// The context of the compositor, as src/programs/compositor names it. The
+// handle 0: the framebuffer of the firmware, or the memory of two screen
+// pages.
+COMPOSITOR_GRANT_FRAMEBUFFER :: 0
+COMPOSITOR_GRANT_INPUT :: 1 // The input ring of the input service.
+COMPOSITOR_GRANT_CONTROL :: 2 // The control ring from this service.
 // The handle 3 of the context of the compositor: the memory of the
 // registers of the standard VGA, when its handle 0 is the memory of two
 // screen pages (devices.odin, display_open). 0: no page flip.
 COMPOSITOR_GRANT_DISPLAY_REGISTERS :: 3
-// The values of the context of the compositor that name its own file: 0 to
-// 3 are the screen.
+// The values 0 to 3 of the context of the compositor: the screen.
+COMPOSITOR_VALUE_WIDTH :: 0
+COMPOSITOR_VALUE_HEIGHT :: 1
+COMPOSITOR_VALUE_PIXELS_PER_LINE :: 2
+COMPOSITOR_VALUE_FORMAT :: 3
+// The values of the context of the compositor that name its own file.
 COMPOSITOR_VALUE_FILE_ADDRESS :: 4
 COMPOSITOR_VALUE_FILE_SIZE :: 5
 // The pointer theme file of the compositor (docs/POINTERS.md): a resource
@@ -565,9 +391,13 @@ SHORTAGE_KEEP :: 24
 
 shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 	own, _ := system.budget_read()
-	grants: [op.CONTEXT_HANDLES]system.Grant
-	grants[system.GRANT_MACHINE] = {machine, {.Inspect, .Stop}}
-	grants[op.CONTEXT_LOG] = log_grant(role_of("shortage"))
+	context_grants: system.Context_Grants
+	values: system.Context_Values
+	system.grant_put(&context_grants, system.GRANT_MACHINE, {machine, {.Inspect, .Stop}})
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role_of("shortage")))
+	if context_refused("shortage", &context_grants, &values) {
+		shortage_failed()
+	}
 	amounts := system.Budget_Amounts {
 		pages       = own.pages - SHORTAGE_KEEP,
 		programs    = 1,
@@ -575,11 +405,22 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 		processor   = own.processor,
 		log_records = LOG_RECORDS_OF_A_PROGRAM,
 	}
-	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", grants, random.values_with_seed(&program_generator, {}), amounts, nil, &prepared); status != .Ok {
+	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&program_generator, values.values), amounts, nil, &prepared); status != .Ok {
 		system.log("root: cannot start shortage: status ", status)
-		system.call(.Machine_Stop, u64(machine), 1)
+		shortage_failed()
 	}
 	system.log("root: started shortage with ", system.Size{amounts.pages, .Pages})
+	for {
+		system.sleep(max(u64))
+	}
+}
+
+// shortage_failed ends the machine of the test of a shortage whose program
+// did not start. The machine has nothing else to run: this service waits
+// whatever Machine_Stop gives, so the test ends on the stop code or on its
+// hang bound, and never on a start that went on after a refusal.
+shortage_failed :: proc "contextless" () -> ! {
+	system.call(.Machine_Stop, u64(machine), 1)
 	for {
 		system.sleep(max(u64))
 	}
@@ -775,23 +616,34 @@ input_start :: proc "contextless" () -> (input_memory: system.Handle) {
 		}
 		return system.Handle(results[0])
 	}
-	grants: [op.CONTEXT_HANDLES]system.Grant
-	grants[0] = {input_memory, {.Read, .Write}}
-	grants[1] = {device(.Ports, 0x60, 5), {}}
-	grants[2] = {device(.Interrupt, 1, 0), {.Read}}
-	grants[3] = {device(.Interrupt, 12, 0), {.Read}}
-	grants[op.CONTEXT_LOG] = log_grant(role_of("input"))
+	// The devices: this service closes its handles after the start.
+	devices := [3]system.Handle{device(.Ports, 0x60, 5), device(.Interrupt, 1, 0), device(.Interrupt, 12, 0)}
+	context_grants: system.Context_Grants
+	system.grant_put(&context_grants, INPUT_GRANT_RING, {input_memory, {.Read, .Write}})
+	system.grant_put(&context_grants, INPUT_GRANT_PORTS, {devices[0], {}})
+	system.grant_put(&context_grants, INPUT_GRANT_KEYBOARD_INTERRUPT, {devices[1], {.Read}})
+	system.grant_put(&context_grants, INPUT_GRANT_MOUSE_INTERRUPT, {devices[2], {.Read}})
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role_of("input")))
 	// The settings page, read-only: the input service reads the layout of
 	// the keyboard there at each key.
-	input_values: [op.CONTEXT_VALUES]u64
-	input_mappings := [1]system.Mapping{{memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}}
-	fixed_addresses.range_mapped_add(&input_values, .Settings_Page)
-	_, status = system.program_start(system.image_find(image, "input"), "input", grants, random.values_with_seed(&program_generator, input_values), budget_of(system.image_find(image, "input"), "input"), settings_page != nil ? input_mappings[:] : nil, &prepared)
+	// With no settings page, no mapping and no bit of its range: the input
+	// service reads nothing at the range.
+	input_values: system.Context_Values
+	settings_mapping := [1]system.Mapping{{memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}}
+	input_mappings: []system.Mapping
+	if settings_page != nil {
+		input_mappings = settings_mapping[:]
+		system.range_mapped_put(&input_values, .Settings_Page)
+	}
+	if context_refused("input", &context_grants, &input_values) {
+		fail("cannot start input", .Bad_State)
+	}
+	_, status = system.program_start(system.image_find(image, "input"), "input", context_grants.grants, random.values_with_seed(&program_generator, input_values.values), budget_of(system.image_find(image, "input"), "input"), input_mappings, &prepared)
 	if status != .Ok {
 		fail("cannot start input", status)
 	}
-	for grant in grants[1:4] {
-		system.close(grant.handle)
+	for handle in devices {
+		system.close(handle)
 	}
 	return input_memory
 }
@@ -805,8 +657,7 @@ compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: syst
 	if status != .Ok {
 		fail("cannot create a ring", status)
 	}
-	grants: [op.CONTEXT_HANDLES]system.Grant
-	grants[0] = {ctx.handles[op.ROOT_FRAMEBUFFER], {.Read, .Write}}
+	context_grants: system.Context_Grants
 	// The two screen pages of the standard VGA and its registers, in place
 	// of the framebuffer of the firmware: the compositor then puts each
 	// frame on the screen by a page flip. The address of the framebuffer is
@@ -821,18 +672,20 @@ compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: syst
 		system.close(pages_memory) // The compositor holds its own handle.
 	}
 	if pages_memory != 0 {
-		grants[0] = {pages_memory, {.Read, .Write}}
-		grants[COMPOSITOR_GRANT_DISPLAY_REGISTERS] = {display_registers, {.Read, .Write}}
+		system.grant_put(&context_grants, COMPOSITOR_GRANT_FRAMEBUFFER, {pages_memory, {.Read, .Write}})
+		system.grant_put(&context_grants, COMPOSITOR_GRANT_DISPLAY_REGISTERS, {display_registers, {.Read, .Write}})
+	} else {
+		system.grant_put(&context_grants, COMPOSITOR_GRANT_FRAMEBUFFER, {ctx.handles[op.ROOT_FRAMEBUFFER], {.Read, .Write}})
 	}
-	grants[1] = {input_memory, {.Read, .Write}}
-	grants[2] = {control_memory, {.Read, .Write}}
-	role := Program_Role{grants = {.Serve, .System_Part}}
-	grants[op.CONTEXT_LOG] = log_grant(role)
-	values: [op.CONTEXT_VALUES]u64
-	values[0] = ctx.values[op.ROOT_VALUE_WIDTH]
-	values[1] = ctx.values[op.ROOT_VALUE_HEIGHT]
-	values[2] = ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]
-	values[3] = ctx.values[op.ROOT_VALUE_FORMAT]
+	system.grant_put(&context_grants, COMPOSITOR_GRANT_INPUT, {input_memory, {.Read, .Write}})
+	system.grant_put(&context_grants, COMPOSITOR_GRANT_CONTROL, {control_memory, {.Read, .Write}})
+	role := role_of("compositor")
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	values: system.Context_Values
+	system.value_put(&values, COMPOSITOR_VALUE_WIDTH, ctx.values[op.ROOT_VALUE_WIDTH])
+	system.value_put(&values, COMPOSITOR_VALUE_HEIGHT, ctx.values[op.ROOT_VALUE_HEIGHT])
+	system.value_put(&values, COMPOSITOR_VALUE_PIXELS_PER_LINE, ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE])
+	system.value_put(&values, COMPOSITOR_VALUE_FORMAT, ctx.values[op.ROOT_VALUE_FORMAT])
 	// The compositor is also a service (src/programs/compositor/exports.odin):
 	// a service ring and its own file, as start() gives to a service. Its
 	// values 0 to 3 are the screen, so the file is at values 4 and 5.
@@ -849,9 +702,9 @@ compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: syst
 			if status != .Ok {
 				fail("cannot create a ring", status)
 			}
-			grants[system.GRANT_SERVICE] = {served.service_memory, {.Read, .Write}}
-			values[COMPOSITOR_VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
-			values[COMPOSITOR_VALUE_FILE_SIZE] = item.size
+			system.grant_put(&context_grants, system.GRANT_SERVICE, {served.service_memory, {.Read, .Write}})
+			system.value_put(&values, COMPOSITOR_VALUE_FILE_ADDRESS, isolated.FILE_ADDRESS)
+			system.value_put(&values, COMPOSITOR_VALUE_FILE_SIZE, item.size)
 			mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 			mapping_count = 1
 			served.hash = item.hash
@@ -865,8 +718,8 @@ compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: syst
 		address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING
 		if mapping, size, given := resource_mapping(name, address, "compositor"); given {
 			places := COMPOSITOR_POINTER_THEME_VALUES[index]
-			values[places[0]] = address
-			values[places[1]] = size
+			system.value_put(&values, places[0], address)
+			system.value_put(&values, places[1], size)
 			mappings[mapping_count] = mapping
 			mapping_count += 1
 		}
@@ -874,10 +727,13 @@ compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: syst
 	text_settings_give(mappings[:], &mapping_count, &values)
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
+	if context_refused("compositor", &context_grants, &values) {
+		fail("cannot start the compositor", .Bad_State)
+	}
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	compositor_load_error: module.Load_Error
-	compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
+	compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 	if status != .Ok {
 		if compositor_load_error.stage != .None {
 			buffer: [512]u8
@@ -999,22 +855,6 @@ control_ring_serve :: proc "contextless" () {
 			}
 		}
 	}
-}
-
-// The programs that this service starts itself, each in its own way and
-// with its own grants: a command Start does not start them, and a disk
-// program does not take one of their names.
-@(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", FONT_SERVICE_NAME}
-
-// name_is_a_system_part says if a name is one of system_part_names.
-name_is_a_system_part :: proc "contextless" (name: string) -> bool {
-	for part in system_part_names {
-		if name == part {
-			return true
-		}
-	}
-	return false
 }
 
 // The pages that the budget of this service can still pay: at the last
@@ -1543,28 +1383,25 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client)}})
 
 	// The slots of a terminal are its own: the terminal has no other role.
+	role := role_of("terminal")
 	context_grants: system.Context_Grants
-	values: [op.CONTEXT_VALUES]u64
-	system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
-	system.grant_put(&context_grants, system.GRANT_TERMINAL_RING, {ring_memory, {.Read, .Write}})
-	system.grant_put(&context_grants, system.GRANT_TERMINAL_TEXT, {text_memory, {.Read}})
-	system.grant_put(&context_grants, system.GRANT_TERMINAL_PROGRAM, {writer.program, {.Read}})
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role_of("terminal")))
-	grants := context_grants.grants
-	name := system.name_pack(system.name_of(writer.name[:]))
-	copy(values[terminal.VALUE_NAME:], name[:])
-	measure: bool
-	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = role_terminal(&writer.role)
-	values[terminal.VALUE_MEASURE] = u64(measure)
+	values: system.Context_Values
+	columns, rows, measure := role_terminal(&writer.role)
+	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.program, log = log_grant(role)}
+	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
 	// The settings page, five glyph caches, the font outlines and the
 	// demand cache.
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
+	if context_refused("terminal", &context_grants, &values) {
+		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
+		return .Bad_State
+	}
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
 			buffer: [512]u8
@@ -1576,7 +1413,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 		return status
 	}
 	view.program, view.client, view.writer, view.is_terminal = program, client, writer, true
-	view.role = {grants = {.System_Part}}
+	view.role = role
 	view.principal = writer.principal // The lock stops the terminal of a program of the session with it.
 	copy(view.name[:len(view.name) - 1], "terminal")
 	return .Ok

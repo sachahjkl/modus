@@ -65,7 +65,7 @@ The tool runs in the folder of the system. Each path of a source of the system i
 
 The folder of the system is, in this order: the argument `--system`, the environment variable `MODUS_SYSTEM`, the folder where the command runs.
 
-The command `modustool` of the flake compiles the tool from its sources before it runs it. It reads `MODUS_SYSTEM` to find those sources, because it runs before the tool reads an argument. A developer who uses the command of the flake sets the variable. A caller that runs the file of the tool itself can give `--system`.
+The command `modustool` of the flake runs the binary `build/tool/modustool` of the folder of the system, and compiles it first when it is absent; the binary compiles itself again when its sources changed ([repository_layout.md](repository_layout.md), the tool built once). The command reads `MODUS_SYSTEM` to find that folder, because it runs before the tool reads an argument. A developer who uses the command of the flake sets the variable. A caller that runs the file of the tool itself can give `--system`.
 
 The forms that were refused:
 

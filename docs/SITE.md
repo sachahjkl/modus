@@ -114,7 +114,7 @@ The renderer (`tools/modustool/site_render.odin`) knows the Markdown that the do
 - ordered items with their own label, as the documents write them (`12.`, `34b.`): a top-level item has the id `<id of the heading of level 2 above it>-<label>`, so that a page can link to a numbered item of a guide;
 - tables with a line of dashes, `\|` for a `|` in a cell;
 - block quotes `>`;
-- fenced code, with or without a language; a fence with the language `byte-layout` is the place of byte layouts (see "The byte layouts");
+- fenced code, with or without a language; a fence with the language `byte-layout` is the place of byte layouts (see "The byte layouts"), and a fence `mermaid` of a guide is a diagram (see "The diagrams");
 - code spans, bold, italics (`*words*`: a star with a space after it, or between two letters, is a star), links and pictures.
 
 Links:
@@ -127,7 +127,7 @@ Links:
 - A code span that names a declaration of the sources (`blend_coverage_row_in_order`, `graphics.mix`, `layout_place()`) is a link to it, with a declaration card; a code span that is a fragment of Odin (`square_root[(d * d) >> 12]`) is colored as a block of code. A document, a row and a file come first. See "The declarations of the sources".
 - The first use of each term of the glossary on a page links to the term, with its short definition as the tooltip of the link. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page. The link names the entry on the page of the group of the term, never the index of the glossary. On the page of a group the rule holds inside each entry, and an entry never links its own term. The index of the glossary links no term in its text: each row is the link to its term.
 
-What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
+What it does not render, shown as text and listed by the command: a mermaid diagram in a source comment (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
 
 The same renderer writes the source comments, in its mode for comments (see "The Markdown of a source comment").
 
@@ -1301,7 +1301,7 @@ Each table is read from the text of the file that defines the thing (`tools/modu
 | Kernel operations | `Operation` and `Status` in `src/library/contract/operation/operation.odin` | An enumeration: a line `<Name> :: enum <type> {`, one member a line (`<Name> = <decimal>,` or `<Name>,`, with a comment `// ...` or not), a line `}`. A line that is only a comment continues the comment of the member above it. The comment of an operation is `(<parameters>) -> <result>. <text>` or `(<parameters>): <text>`: the parameters and the result exist only as these words, and the table shows them |
 | The context of a program | The constants `CONTEXT_...` and `ROOT_...` of `src/library/contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `src/library/support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle. Three tables: the roles that the system fixes for each program, the roles of the first program (`ROOT_...`), and the roles of a program that the root service starts. The page starts with the comment above `CONTEXT_HANDLES` (what the context is, and why a program finds each thing at a fixed place); the comment above `CONTEXT_VALUES` (how the values are numbered) heads the first table |
 | Error kinds and units | `Kind`, `Unit` and `UNIT_NAMES` in `src/library/contract/errors/errors.odin` | Enumerations; a table `UNIT_NAMES := [Unit]string {` of lines `.<Name> = "<text>",` |
-| Grants of the root service | `Grant` in `src/library/contract/start_grant/start_grant.odin` (each member has its number: `<Name> = <number>,`); the procedure `grants_of` in `src/programs/root/main.odin`; `Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin` | Enumerations and a table of names. `grants_of` is read by the parser of Odin (`site_name_switch_read`): the body is a switch on the name, then one `return`, the value of each other program; each case names programs by strings, and its body is one `return` of a literal with no type: a set of members (`{.Inspect, .Image}`). The comment of a case is the comment of each of its lines. Any other form (a constant, a typed literal, an expression, a default case, a case with no return) stops the command with its line, and so does a member of a set that `Grant` does not have |
+| Grants of the root service | `Grant` in `src/library/contract/start_grant/start_grant.odin` (each member has its number: `<Name> = <number>,`); the table `program_roles` in `src/programs/root/roles.odin`; `Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin` | Enumerations and a table of names. `program_roles` is read by the parser of Odin (`site_role_table_read`): each row is a record literal with no type, with the fields `name` (a string), `grants` (a set of members with no type: `{.Inspect, .Image}`) and `terms` (a record with no type and no comment inside it), each at most once. The comment of a row is the comment lines above it and the comment of its own lines. The table of the page has one row for each program: its grants, its other terms as the source writes them, and the comment. Any other form (a constant, a typed literal, an expression, another field, a field twice, a row with no name) stops the command with its line, and so does each fault that stops the build (`docs/TOOLS.md`, "The table of the roles of the root service"): a program of the boot image with no row, a row of no program, a program with two rows, a grant that `Grant` does not have |
 | Fixed ranges | `Fixed_Range` in `src/library/contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract. The page starts with the comment of the package (why an address is fixed, and the band), then the start of the band and the size of a slot from the compiled contract |
 | Commands of the console | `src/programs/console/commands.odin`, `src/programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter. The comment lines just above a line `command(` are the documentation of the command: the text of its symbol, and the first sentence of it is the cell "What it does"; the help is a fact of the symbol, "What help() prints". The page starts with the comment above `Command :: struct` (what a command is, and how commands compose), and the section "The commands of tables" with the comment above `tables_start` |
 
@@ -1332,7 +1332,7 @@ What the tables cannot show:
 - its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
 - its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
-- for a program, its grants from `grants_of` of the root service with the comment of its case, and the budget that it asks for from the constant `MODULE_BUDGET` of its source, read by `describe_package`, with the comment of the constant and a link to its line: each grant a link to its row on the page of the grants; the parts of the budget in this order: the working memory pages, the pages of its threads and the pages of the pictures of its window that the tool counts from the source, the pages of the module and its imports named as counted from the files of the build, then the programs and the threads, each with its value, or "the least" for a programs or threads part that the source does not state; both lists of values; a program with no constant shows "the least budget";
+- for a program, its grants and the other terms of its role from its row of `program_roles` of the root service, with the comment of the row (the root service and a disk program have no row, and the page says why), and the budget that it asks for from the constant `MODULE_BUDGET` of its source, read by `describe_package`, with the comment of the constant and a link to its line: each grant a link to its row on the page of the grants; the parts of the budget in this order: the working memory pages, the pages of its threads and the pages of the pictures of its window that the tool counts from the source, the pages of the module and its imports named as counted from the files of the build, then the programs and the threads, each with its value, or "the least" for a programs or threads part that the source does not state; both lists of values; a program with no constant shows "the least budget";
 - its identity card (`glossary/project.md`), after its documentation: the same markup as on the page of the module graph (see "The module graph");
 - its neighbours, after its facts: a figure of the module, the modules that it imports at its left and the modules that import it at its right, drawn by the layout of the module graph on that part of the graph. The module itself is not a link. A module with no edge has one sentence, with a link to its row on the page of the graph.
 
@@ -1642,6 +1642,60 @@ The id of a diagram is `byte-layout-<key>`, as the rule of the ids gives it (`by
 - `byte_layout_guides_hold_the_text_of_the_code`: the fences of the guides hold the text that the code gives.
 - `byte_layout_fence_on_a_page`: a fence becomes a diagram with no style attribute, and a wrong body is a fault.
 
+## The diagrams
+
+A fence `mermaid` of a guide is a diagram. The tool draws it as a picture in SVG inside the page when it builds the site: no script, no library of another host, no fetch. The code is `tools/modustool/site_diagram_source.odin` (the reader), `site_diagram_layout.odin` (the layout) and `site_diagram.odin` (the markup and the rules of the style sheet); its host tests are `site_diagram_test.odin`. The design and the refused forms are in `src/md/features/site_diagrams.md`.
+
+### What the tool reads
+
+The subset of mermaid that the guides use, and no more:
+
+- `flowchart LR` or `flowchart TB`;
+- a node `id["label"]`, alone on its line or at an end of an edge; an id has letters, digits and `_`;
+- an edge `a --> b`, `a -- "label" --> b` (a line) or `a -. "label" .-> b` (a dashed line);
+- `subgraph id["label"]`, its nodes, then `end`; an edge can name a subgraph, and ends at its box;
+- `sequenceDiagram`, with `participant id` or `participant id as name`, then the messages `a->>b: text`, also `a->>a: text`.
+
+Each other line is a fault: another kind or direction, another arrow, another shape, a node with no label, an id declared twice, an edge that names nothing or stays inside one box, a subgraph inside a subgraph, an edge inside a subgraph, a subgraph with no node or no end, a participant that no line above declares, a message with no text, a note, a loop, a style, a comment. A label with `<`, `>`, `#`, `;` or a backtick is a fault too: mermaid reads these as markup or as the end of a statement. A cycle of edges is a fault: a flowchart is drawn in ranks, each target after its sources. An empty diagram, a flowchart with no node and a sequence diagram with no participant are faults.
+
+`modustool site` stops on a fault with the file and the line: "docs/ARCHITECTURE.md, line 47: the edge names hw2, which is no node and no subgraph", then "N diagrams cannot be drawn; no page is written". The line of the fence itself names an empty diagram.
+
+### The text
+
+The text of a diagram is in B612, the interface font of the system, at 14 pixels, with lines of 20 pixels. The site serves the subset of the repository as `fonts/b612.ttf`. The text of the pages is in the font of the system of the reader, whose advances no build can know; the tool reads the advances and the pairs of B612 and measures each line. Each line carries its measured width in the SVG, so it keeps that width in any font. A character that the font lacks is a fault.
+
+A label wraps at its spaces onto more lines: a node at 176 pixels, the label of a subgraph at 160, the label of an edge at 160, a participant at 160, a message at 320 or at the width between its two lifelines when that is less, a message to the same participant at 240. A line is wider than its bound only when it is one word that is wider than the bound by itself: that word is a line of its own, and its box grows to hold it. No text is cut, and a host test checks each line of each picture against its bound.
+
+### The layout of a flowchart
+
+- The subgraphs and the nodes outside each subgraph are the units. A unit that no edge enters has the rank 0; another has two more than the rank of each source.
+- Each edge has a unit in each rank between its ends: its label in the first one, a lane in the others. A label is a box of the layout.
+- Eight passes of the barycenter order each rank, and the order with the fewest crossings is kept. Four passes then move each unit toward its neighbours, 24 pixels apart.
+- In `TB` the ranks are rows, from the top; in `LR` they are columns, from the left. An edge leaves its source and enters its target along that axis, with a straight part of 12 pixels under its arrow head, and is one straight line between two ranks. The ends of the edges on one side of a box are spread along it.
+- A subgraph is a box around its nodes, with its label at the left in `TB` (its nodes in a row) and at the top in `LR` (its nodes in a column), where no edge passes.
+
+### The layout of a sequence diagram
+
+The participants are columns in their order, a box at the top with a lifeline under it. The columns are apart by their boxes, 24 pixels, and the text of each message between them with 8 pixels at each lifeline. The messages are rows in their order: the text, then the arrow. A message to the same participant is a loop at the right of its lifeline, its text at the right of the loop and before the next lifeline.
+
+### The markup
+
+- A `figure` with the class `diagram` and the id `diagram`, `diagram-2`... of the page.
+- An `svg` with its width, its height and its `viewBox`, `role="img"`, and a `title`: the heading above the diagram and what it shows ("Boot: a sequence diagram of 5 participants and 9 messages"). The style sheet holds the picture to the width of the column, with its shape.
+- Under it, a `details` element "The text of the diagram" with the text of the fence: a screen reader and the search read the labels there.
+- The colors are the tokens of the style sheet: a box on the card color with a dim border, a subgraph on the lower card color with the line color, the lines and the arrow heads in the dim color, a label on the background color. A diagram follows the light and the dark form with no rule of its own. A page has no style attribute.
+
+### The host tests
+
+- `site_diagram_refuses_each_syntax_outside_the_subset`: each refused form gives its fault and its line, and no picture.
+- `site_diagram_refuses_a_cycle`: a cycle of three nodes with an edge into it, and a cycle of two subgraphs, give the line of the first edge of the cycle; two edges in one direction are no cycle.
+- `site_diagram_wraps_a_long_label`: labels of 200 characters wrap; a word of 200 characters makes its box grow.
+- `site_diagram_lays_out_thirty_nodes`: 30 nodes in `TB` and in `LR`, alone and in three subgraphs.
+- `site_diagram_draws_the_diagrams_of_the_guide`: the five diagrams of `ARCHITECTURE.md`, and their markup.
+- `site_diagram_draws_a_sequence_in_rows` and `site_diagram_measures_with_the_font`.
+
+For each picture the tests check that no two boxes overlap (a node lies inside its subgraph, away from its label), each text is inside its box and as wide as the font gives, each edge starts at the border of its source and ends at the border of its target, no line passes over a box but its own, each label of an edge is on its edge, and each message joins its two lifelines.
+
 ## The colors of the code
 
 The code on a page is colored by the tool, with no library of another project. The code is `tools/modustool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
@@ -1676,7 +1730,7 @@ Where it applies: only a block that the tool knows to be Odin.
 - The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
 - A code span of a text that is a fragment of Odin by the test of "The declarations of the sources": a span is short, and the test refuses each form of a command, a path and a log, so a span is colored only when it can be nothing but code.
 
-The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block stays plain. A block of Odin is colored.
+The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block is a diagram (see "The diagrams"). A block of Odin is colored.
 
 The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
 
@@ -1837,7 +1891,7 @@ The headers: GitHub Pages sends no header that a site chooses. The proxy of Clou
 
 | Header | Value | Why |
 |---|---|---|
-| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the films of the news (`media-src`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
+| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the films of the news (`media-src`), the font of the name of the mark and the font of the diagrams (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
 | `X-Content-Type-Options` | `nosniff` | A file is read as its type only |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Another host sees the host of the site, not the page |
 | `X-Frame-Options` | `DENY` | `frame-ancestors` for a browser that does not read it |

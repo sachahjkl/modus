@@ -79,7 +79,7 @@
 // isolated call when the input presses Escape. A slow command never
 // freezes the edit line.
 //
-// **Its grants** (the root service, `grants_of`), each for one group of
+// **Its grants** (the root service, `program_roles`), each for one group of
 // commands:
 //
 // - **Root_Ring**: start and stop programs, and connect to every service.

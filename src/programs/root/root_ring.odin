@@ -5,7 +5,9 @@ package root
 // src/md/api/root_ring.md).
 //
 // Each record goes through three steps, in this order, and a step that
-// refuses ends it with its own error record:
+// refuses ends it with its own error record. The first two are the pure
+// decision root_ring.dispatch_decide, which a host test and a fuzz target
+// of the tool call:
 //
 // 1. The border: command_of_word reads the kind. A word that names no
 //    command, and None, get `Unsupported`, and nothing runs.
@@ -15,9 +17,9 @@ package root
 //    any other check, so a program learns nothing of a command that it
 //    cannot send.
 // 3. The command: one case of a whole switch. The table
-//    ROOT_COMMAND_REFUSAL_WRITERS says who writes the error record of its
-//    refusal: this dispatch, from the name and the word of the record, or
-//    the procedure of the command.
+//    root_ring.ROOT_COMMAND_REFUSAL_WRITERS says who writes the error
+//    record of its refusal: this dispatch, from the name and the word of
+//    the record, or the procedure of the command.
 
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -37,51 +39,6 @@ Command_Answer :: struct {
 	held:   bool,
 }
 
-// Who writes the error record of a refused command.
-Refusal_Writer :: enum u8 {
-	// This dispatch, with root_command_refusal: the values of the command
-	// hold a name in values[0..4] and a word in values[4].
-	Dispatch,
-	// The procedure of the command: its values hold a hash, a nickname or
-	// a key where a name would be, or its cause is a fact that only it
-	// knows (the grant that refuses a debug access, a refused signature).
-	Command,
-}
-
-// The writer of the error record of each command. The table is whole: a
-// new command does not compile until its row says who writes the record,
-// so no record of a command is written over.
-@(rodata)
-ROOT_COMMAND_REFUSAL_WRITERS := [root_ring.Root_Command]Refusal_Writer {
-	.None                   = .Dispatch,
-	.Start                  = .Dispatch,
-	.Stop                   = .Dispatch,
-	.Connect                = .Command,
-	.Disconnect             = .Dispatch,
-	.Grants                 = .Dispatch,
-	.Revoke                 = .Dispatch,
-	.Replace                = .Command,
-	.Connect_History        = .Dispatch,
-	.Principal_Create       = .Dispatch,
-	.Principal_Lock         = .Dispatch,
-	.Principals             = .Dispatch,
-	.Principal_Record       = .Dispatch,
-	.Principal_Unlock       = .Command,
-	.Debug                  = .Command,
-	.Palette_Provide        = .Dispatch,
-	.Start_From_Disk        = .Command,
-	.Disk_Grant             = .Command,
-	.Nickname_Move          = .Command,
-	.Machine_Passphrase     = .Dispatch,
-	.Machine_Key            = .Command,
-	.Disk_Grant_Persistence = .Command,
-	.Debug_Store            = .Command,
-	.Machine_Seal           = .Dispatch,
-	.Principal_Change       = .Command,
-	.Principal_Change_End   = .Command,
-	.Remote_Client          = .Command,
-}
-
 // root_ring_serve answers each command that a program wrote on its root
 // ring since the last pass.
 root_ring_serve :: proc "contextless" (item: ^Started) {
@@ -94,37 +51,25 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 	}
 }
 
-// root_command_answer runs the three steps of one record: the border, the
-// sender, the command.
+// root_command_answer runs the three steps of one record: the border and
+// the sender, which root_ring.dispatch_decide decides from the role that
+// the program received at its start and never from its name (a disk
+// program has the nickname that it chose), then the command.
 root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) -> (answer: Command_Answer) {
-	command, known := root_ring.command_of_word(record.kind)
-	if !known {
-		return {status = .Bad_Operation, values = root_ring.command_refusal(record.kind)}
-	}
 	name_bytes := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 	name := system.name_of(name_bytes[:])
-	if !root_command_sender_allowed(item, command, name) {
-		return {status = .No_Right, values = root_ring.sender_refusal(command)}
+	decision := root_ring.dispatch_decide(record.kind, item.role.grants, role_may_connect(&item.role, name))
+	switch decision.step {
+	case .Border, .Sender:
+		return {status = decision.status, values = decision.refusal}
+	case .Command:
 	}
+	command := decision.command
 	answer = root_command_run(item, command, record, name)
-	if answer.status != .Ok && !answer.held && ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
+	if answer.status != .Ok && !answer.held && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
 		answer.values = root_command_refusal(command, name, record.values[4], answer.status)
 	}
 	return answer
-}
-
-// root_command_sender_allowed applies the table of the senders to the role
-// that the program received at its start, never to its name: a disk
-// program has the nickname that it chose. A Connect with the grant Connect
-// and not Root_Ring names a service of the role.
-root_command_sender_allowed :: proc "contextless" (item: ^Started, command: root_ring.Root_Command, service: string) -> bool {
-	if !root_ring.sender_allowed(command, item.role.grants) {
-		return false
-	}
-	if command == .Connect {
-		return role_may_connect(&item.role, service)
-	}
-	return true
 }
 
 // root_command_run runs one command that its sender can send. name is the

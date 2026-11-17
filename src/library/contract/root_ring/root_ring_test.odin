@@ -111,6 +111,65 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, start.operation, i64(Root_Command.Start))
 }
 
+// The decision of the dispatch, in the order of its steps. The border
+// comes first: each word that names no command stops there with the
+// record Unsupported, for each role, the role of the console too. Then the
+// sender: a role with no grant of a ring, each command; a Connect with the
+// grant Connect to a service that its list does not name, with the unit
+// Connection; a command of the principals from the console. A decision
+// with the same inputs is the same decision. The commands that run come
+// last.
+@(test)
+the_dispatch_refuses_at_its_first_step_that_refuses :: proc(t: ^testing.T) {
+	console_role := bit_set[start_grant.Grant]{.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store}
+	words := [?]u32{u32(Root_Command.None), u32(max(Root_Command)) + 1, 1 << 16, max(u32)}
+	roles := [?]bit_set[start_grant.Grant]{{}, console_role, ROOT_RING_GRANTS}
+	for word in words {
+		for role in roles {
+			for listed in ([2]bool{false, true}) {
+				decision := dispatch_decide(word, role, listed)
+				testing.expect_value(t, decision.step, Dispatch_Step.Border)
+				testing.expect_value(t, decision.command, Root_Command.None)
+				testing.expect_value(t, decision.status, op.Status.Bad_Operation)
+				testing.expect_value(t, decision.refusal, command_refusal(word))
+			}
+		}
+	}
+	for command in Root_Command {
+		if command == .None {
+			continue
+		}
+		for role in ([2]bit_set[start_grant.Grant]{{}, {.Store, .Image, .Serve}}) {
+			decision := dispatch_decide(u32(command), role, true)
+			testing.expectf(t, decision.step == .Sender, "a role with no ring sends %v", command)
+			testing.expect_value(t, decision.status, op.Status.No_Right)
+			testing.expect_value(t, decision.refusal, sender_refusal(command))
+			testing.expect_value(t, decision, dispatch_decide(u32(command), role, true))
+		}
+	}
+	unlisted := dispatch_decide(u32(Root_Command.Connect), {.Connect}, false)
+	testing.expect_value(t, unlisted.step, Dispatch_Step.Sender)
+	record := errors.completion_record(unlisted.refusal)
+	testing.expect_value(t, errors.Kind(record.kind), errors.Kind.No_Grant)
+	testing.expect_value(t, errors.Unit(record.unit), errors.Unit.Connection)
+	testing.expect_value(t, dispatch_decide(u32(Root_Command.Principal_Unlock), console_role, true).step, Dispatch_Step.Sender)
+	testing.expect_value(t, dispatch_decide(u32(Root_Command.Debug), console_role, true).step, Dispatch_Step.Sender)
+	// The commands that run: Connect from the console names any service,
+	// and from the grant Connect a listed one; Disconnect from each ring.
+	runs := [?]struct {
+		command: Root_Command,
+		role:    bit_set[start_grant.Grant],
+		listed:  bool,
+	}{{.Connect, console_role, false}, {.Connect, {.Connect}, true}, {.Disconnect, {.Principals}, false}, {.Start, console_role, false}, {.Principal_Unlock, {.Principals}, false}, {.Debug, {.Debugger}, false}}
+	for case_of in runs {
+		decision := dispatch_decide(u32(case_of.command), case_of.role, case_of.listed)
+		testing.expectf(t, decision.step == .Command, "%v from %v does not run", case_of.command, case_of.role)
+		testing.expect_value(t, decision.command, case_of.command)
+		testing.expect_value(t, decision.status, op.Status.Ok)
+		testing.expect_value(t, decision.refusal, [7]u64{})
+	}
+}
+
 // The names of a command that an error record numbers: the number comes
 // from another program. Each number that names no command gives "an
 // unknown command" and no argument name; then each command has a name, and

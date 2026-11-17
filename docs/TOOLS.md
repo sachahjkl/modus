@@ -612,6 +612,25 @@ modustool: src/library/support/sentence/parse_test.odin:4: the test imports "cor
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
+## The table of the roles of the root service
+
+The root service gives each program of the boot image the role of its row in the table `program_roles` (`src/programs/root/roles.odin`): its start grants and the other terms of its role. A name with no row gets the zero role, so the tool keeps the table whole (`tools/modustool/program_roles_check.odin`). It reads the rows with the parser of Odin and refuses:
+
+- a program of the boot image (a source of `src/programs` in the boot image, not a disk program) with no row, the root service apart;
+- a row that names no module of the boot image, a disk program or the root service;
+- a program with two rows;
+- a grant that is no member of `start_grant.Grant`;
+- the grant System_Part on a row that the list `system_part_names` of the same file does not name, a name of that list with no row, and a part of the system whose row is not System_Part alone, with Serve beside it for the compositor, and no term: the debug access refuses a part of the system by that grant;
+- a row in another form than `{name = "<program>", grants = {.A, .B}, terms = {...}}` with no type, or terms that hold a comment.
+
+**When it runs.** Before the first compiler of each build starts, after the check of the imports, and when `modustool site` reads the table for the page of the grants. A fault stops the build with the file and the line:
+
+```
+modustool: src/programs/root/roles.odin: the program clock of the boot image has no row in program_roles: write its role, with no grant when it needs none
+```
+
+The host test `the_table_of_the_roles_is_whole` gives each fault to the check, the test `each_role_of_program_roles_takes_each_context_slot_once` checks that the handles of each row take one context slot each, and `the_layout_of_a_device_service_takes_each_slot_once` tries the ring of a device contract in each slot of the layout of a device service.
+
 ## The rules that a check holds
 
 Four rules of the system are checked when the tool builds, not only read.
@@ -807,8 +826,8 @@ modustool module-build <folder of the module> [--system <folder of the system>] 
 ```
 
 - **The folder of the system** is a checkout of the repository of the system. The tool takes it from `--system`, then from the environment variable `MODUS_SYSTEM`, then from the folder where the command runs. The tool makes the two other folders absolute, then moves to the folder of the system and builds there.
-- **The command `modustool` of the flake** compiles the tool from its sources before it runs it. It finds those sources with `MODUS_SYSTEM`. So a command that is typed in the folder of another project sets the variable.
-- **The folder of the outputs** is `build` in the folder of the module when `--out` is absent. The tool writes `<name>.module`, `<name>.debug`, and a folder `<name>` with the files between the steps. The build writes no file in the folder of the system. The command of the flake writes one there: the compiled tool, in `build`.
+- **The command `modustool` of the flake** runs the binary of the tool in the folder of the system, which compiles itself again when its sources changed ("The tool built once"). It finds that folder with `MODUS_SYSTEM`. So a command that is typed in the folder of another project sets the variable.
+- **The folder of the outputs** is `build` in the folder of the module when `--out` is absent. The tool writes `<name>.module`, `<name>.debug`, and a folder `<name>` with the files between the steps. The build writes no file in the folder of the system. The command of the flake writes there only the binary of the tool and its build record, in `build/tool`.
 - **A module with an import** needs the built modules of the system: the import table holds the hash of the file of each import. Run `modustool build` in the folder of the system first. The tool reads `build/modules/<import>.module` there.
 
 From the folder of a module, with the system in `~/modus`:
@@ -904,7 +923,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `test [part]` | The parts of the machine test (below), several at once; the part `host_modules` holds the tests of the loader, of the system descriptions and of the debug objects on the host. It prints the time of each part, then the times of the test (below), and ends with "modustool: all tests passed" |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | Builds the check `boot-test` of the flake, which Nix takes from the store when `nix flake check` passed on the same tree: the one run of the machine test of the full check (`src/md/infrastructure/full_check.md`). Then the copy of its pictures to `docs/screenshots` and to the development log, the copy of its logs to `build/`, the measure runs on the host whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests, the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests and the periods of each `time.sleep` of the tool, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test`, a second build that must give the same bytes, and the count of its checks in `build/checks_passed.txt`. Each of its builds is a whole build |
+| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests of each folder, several at once ("The host tests of the check"), the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests and the periods of each `time.sleep` of the tool, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test`, a second build that must give the same bytes, and the count of its checks in `build/checks_passed.txt`. Each of its builds is a whole build |
 | `fuzz list`, `fuzz <target> [executions [processes [seed]]]`, `fuzz all [executions]`, `fuzz show <target> <file>`, `fuzz minimize <target> <file>`, `fuzz regression <target> <file>`, `fuzz corpus <target>` | Fuzzes the readers of the system on the host: the module file, the debug object, the storage format, QUIC and TLS, TCP and HTTP, the remote protocol and the call region, the records of a ring, the disk grant table, the system description and the boot image, the fonts, the pointer theme and the tables of the firmware. It builds the instrumented child, runs a fuzz target, and minimizes each fuzz finding ("The fuzzing") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
@@ -923,6 +942,26 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, and that no cast of a word to an enum skips its border ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
+
+### The tool built once
+
+The tool is compiled once for each change of its sources, not at each command. The design is in `src/md/infrastructure/repository_layout.md`.
+
+- **In the development shell**, `modustool` runs `build/tool/modustool`. When the file is absent, the command compiles it first. Before each command, the binary computes the build key of its sources and compares it with its build record, `build/tool/modustool.build_record`, as the incremental build does for a module ("The incremental build"). The key covers the files that its compiler read (the tool, the source library, the kernel parts, `src/modules/cryptography`, the libraries of the compiler, the files of `#load`), every other file of their folders, the command of the compiler and the program `odin`. When the key differs, the binary prints `modustool: the tool is compiled again (<reason>)`, compiles the tool, and runs the new binary with the same arguments. A command after a change of a guide or of a host test starts with no compile.
+- **In the check of the flake and in the release shell**, `modustool` is the binary of the derivation `modustoolBinary`, compiled from the `.odin` files that are not tests of those folders, and from the font that a fuzz target loads. Nix builds it again only when one of those files changes. That binary never compiles itself.
+- **The measure.** Each compile in the development shell prints `modustool: measure: the compile of the tool: <seconds> s`. The derivation compiles with `-show-timings`: its build log (`nix log`) gives the time of each phase of the compiler. Each is a measure, never a condition.
+- **A compile that fails** prints the errors of the compiler and runs no command; the next command compiles again.
+- **The first command of a new work tree** compiles the tool two times: the command of the flake makes the first binary with no record, then that binary compiles again with its record.
+
+### The host tests of the check
+
+`modustool check` runs the `odin test` of each folder of `HOST_TEST_FOLDERS` at the same time as the others, in the pool of processes of the module build. The design is in `src/md/infrastructure/full_check.md`.
+
+- **At once.** At most one process for each processor: the processors of the host, or `NIX_BUILD_CORES` when it is fewer. The tool comes first in the list, because it takes the longest. After a failure no new folder starts; the folders that run end.
+- **The files of a folder.** Its log is `build/host_tests/<name>.txt`, where the name is the path of the folder with `_` for each `/`. Its compiler has its own temporary folder, `build/host_tests/<name>`, so that two compilers never write one object of an assembly file.
+- **What the check prints.** One line for each folder that passed, with its time: `modustool: measure: the host tests of src/library/support/quic: <seconds> s`, then the time of all on the clock. For a folder that failed, the path of its log and its last 40 lines. Each time is a measure, never a condition.
+- **The flag of the kernel parts** goes to the host tests of the folders under `src/kernel` and of the tool only.
+- **One folder alone**: `nix develop -c odin test <folder> -vet -collection:modus=src/library`, with `-collection:kernel=src/kernel` for a kernel part or the tool.
 
 ### The fuzzing
 
@@ -946,6 +985,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `remote_client_table` | raw | The client table reads as it is written, and each decision on a key names the right row |
 | `isolated_call` | raw | `isolated.decode` of a description and a call region gives only slices inside the call region |
 | `ring_records` | raw | Each input event, terminal input, service command and root command is the member that its word names, or a refusal with the zero value |
+| `root_ring` | raw | The dispatch of a record of the root ring, for any role of its sender, stops at the border with `Unsupported` or at the sender with `No_Grant` exactly when the table of the senders refuses it; each word of a command and each refused Replace gives its member or its record; nothing changes |
 | `disk_grant_table` | raw | A table behind its tag holds rows by its rules, and encodes and decodes to its part that persists |
 | `system_description`, `boot_image_generated` | raw, generated | A description that `entries` accepts is the one that its writer gives; a boot image as built passes the checks, and a changed byte of a file or of the description fails them |
 | `vector_font` | raw | A font that `font_open` accepts gives each glyph, outline, pair and substitution, and draws a glyph |

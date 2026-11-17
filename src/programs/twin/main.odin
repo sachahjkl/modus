@@ -8,8 +8,9 @@
 // two programs map is one frame. `frames` reads its own page table and the
 // counts of the kernel while its twins run.
 //
-// **Start**: only `frames` starts it, from the boot image. It is not named
-// in `grants_of`. It has no window and writes nothing on the log.
+// **Start**: only `frames` starts it, from the boot image. Its row of
+// `program_roles` has no grant. It has no window and writes nothing on the
+// log.
 package twin
 
 import "base:intrinsics"

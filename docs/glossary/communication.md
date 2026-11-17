@@ -470,7 +470,7 @@ Do not use: message, payload, marshalled arguments.
 
 A kernel ring is the ring between one thread and the kernel: each kernel operation is a command record in it.
 
-Each thread has its own kernel ring, one page after its thread record, with 32 places. A thread writes several commands, then enters the kernel once with `syscall`; the kernel runs them in order and writes one completion record for each. So a batch of operations costs one entry.
+Each thread has its own kernel ring, one page after its thread record, with 32 places. A thread writes several commands, then enters the kernel once with `syscall`; the kernel runs them in order and writes one completion record for each. So a batch of operations costs one entry. A command that finds the completion queue full stays in the command queue, unrun, until the thread reads its completions and enters again.
 
 The design: `docs/ARCHITECTURE.md`, "K4. Rings and wait".
 

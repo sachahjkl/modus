@@ -1,8 +1,6 @@
 package root
 
-import "modus:contract/fixed_addresses"
 import "modus:contract/date"
-import op "modus:contract/operation"
 import "modus:support/system"
 
 // The date (src/library/contract/date): this service creates the date page, gives it
@@ -37,7 +35,7 @@ mapping_needed_log :: proc "contextless" (what: string, name: string, capacity: 
 
 // date_page_give adds the date page, read-only, to the mappings of a
 // program, and sets its bit in the values.
-date_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+date_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if date_memory == 0 {
 		return
 	}
@@ -47,5 +45,5 @@ date_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, v
 	}
 	mappings[count^] = {memory = date_memory, address = date.PAGE_ADDRESS, first = 0, page_count = 1, flags = {}}
 	count^ += 1
-	fixed_addresses.range_mapped_add(values, .Date_Page)
+	system.range_mapped_put(values, .Date_Page)
 }
