@@ -297,6 +297,15 @@ program_roles := [?]Program_Role_Row {
 	// gives it the machine with Inspect and Stop; a command Start gives it
 	// no grant.
 	{name = "shortage"},
+	// On the machine of the operation sequences, operation_fuzzing_start
+	// gives it the machine with the right Physical only, for the physical
+	// address of its mailbox, the boot image for the module of its runner,
+	// and the log, which it gives to each runner; a command Start gives it
+	// no grant. Only the boot image of the operation sequences holds it,
+	// and a release refuses an image that holds it.
+	{name = "operation_fuzzing", terms = {log_gives = true}},
+	// A runner of operation_fuzzing: its starter gives it its handles.
+	{name = "operation_sequence_runner"},
 	// A load that never ends and never waits for an input.
 	{name = "plasma"},
 	// It writes to an address that it does not have.

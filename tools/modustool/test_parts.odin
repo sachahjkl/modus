@@ -123,6 +123,7 @@ test_parts := [?]Test_Part {
 	},
 	{name = "fails", does = "The machine of a start that fails: a boot image with no compositor", run = fails_tests_run, procedures = {"fails_tests_run"}, volumes = {BOOT_VOLUME_FAILS}},
 	{name = "shortage", does = "The machine of the shortage of frames", run = shortage_tests_run, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
+	{name = "operation_sequences", does = "The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence (\"The operation sequences\")", run = operation_sequences_tests_run, procedures = {"operation_sequences_tests_run"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 }
 
 // test_part_find gives the row of a part by its name.

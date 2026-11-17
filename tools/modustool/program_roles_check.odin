@@ -42,7 +42,7 @@ program_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 		named[row.name] = true
 		in_image := false
 		for build in builds {
-			in_image ||= build.name == row.name && module_in_boot_image(build)
+			in_image ||= build.name == row.name && module_in_a_boot_image(build)
 		}
 		if !in_image || row.name == ROOT_SERVICE_MODULE {
 			append(&problems, fmt.tprintf("%s, line %d: the row %s names no program that the root service starts from the boot image", file, row.line, row.name))
@@ -66,7 +66,7 @@ program_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 		}
 	}
 	for build in builds {
-		if !build.program || !module_in_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
+		if !build.program || !module_in_a_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
 			continue
 		}
 		if !named[build.name] {

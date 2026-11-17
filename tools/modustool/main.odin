@@ -166,6 +166,10 @@ BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
 BOOT_VOLUME_MEASURE :: BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `modustool measure`.
 BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
+// The machine of the operation sequences (operation_sequences.odin), with
+// the kernel that ships.
+BOOT_VOLUME_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_volume_operation_sequences.img"
+TEST_OUTPUT_OPERATION_SEQUENCES :: BUILD_FOLDER + "/test_output_operation_sequences.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 // The volumes of `test trusted_boot` (trusted_boot_scenario.odin): one byte
 // of a module changed after the system description was made; one bit of the
@@ -1250,7 +1254,15 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 	return
 }
 
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc") -> (command: []string, ok: bool) {
+// The memory of a test machine, in MiB. Below the hole of PCI of q35, so an
+// offset in the memory file of a machine is a physical address.
+MACHINE_MEMORY_MIB :: 1024
+
+// memory_file: "", or a file of the host that holds the memory of the
+// machine, which the tool reads and writes (operation_sequences.odin); such
+// a machine has one processor, so that a sequence gives the same answers at
+// each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1315,7 +1327,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the processor: its variables are written only there. QEMU refuses
 		// interrupt remapping when KVM holds the whole interrupt controller:
 		// the machine with the IOMMU splits it. QEMU accepts both together.
-		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : ""}, context.temp_allocator),
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -1325,9 +1337,9 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// The main test keeps about 30 windows open, each with two
 		// pictures, and then starts a program that maps 164 MiB.
 		"-m",
-		"1024",
+		fmt.tprintf("%d", MACHINE_MEMORY_MIB),
 		"-smp",
-		fmt.tprintf("%d", MACHINE_PROCESSOR_COUNT),
+		fmt.tprintf("%d", memory_file != "" ? 1 : MACHINE_PROCESSOR_COUNT),
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
@@ -1356,6 +1368,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	case .Amd:
 		append(&list, "-device", "amd-iommu,dma-remap=on,intremap=on")
 		virtio_iommu = ",iommu_platform=on"
+	}
+	if memory_file != "" {
+		// The memory of the machine in a file that the tool reads and
+		// writes while the machine runs: share=on gives the tool the pages
+		// that the machine sees.
+		append(&list, "-object", fmt.tprintf("memory-backend-file,id=machine_memory,size=%dM,mem-path=%s,share=on", MACHINE_MEMORY_MIB, memory_file))
 	}
 	if paused {
 		// The machine waits for the step Monitor "cont" of the scenario: a

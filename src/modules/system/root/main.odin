@@ -415,6 +415,44 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 }
 
+// The program that runs the operation sequences (src/md/infrastructure/kernel_fuzzing.md).
+OPERATION_FUZZING_NAME :: "operation_fuzzing"
+// Its budget: its mailbox, the shared code of its runners, and the budget
+// of each sequence, which it creates and ends for each one.
+OPERATION_FUZZING_PAGES :: 8192
+
+// operation_fuzzing_start starts operation_fuzzing with the machine with
+// the right Physical only: it reads the physical address of its mailbox,
+// which the tool reaches through the memory file of the machine. It gives
+// no other right of the machine, and this service starts nothing else.
+operation_fuzzing_start :: proc "contextless" () -> ! {
+	own, _ := system.budget_read()
+	context_grants: system.Context_Grants
+	values: system.Context_Values
+	role := role_of(OPERATION_FUZZING_NAME)
+	system.grant_put(&context_grants, system.GRANT_MACHINE, {machine, {.Physical}})
+	system.grant_put(&context_grants, system.GRANT_IMAGE, {image_memory, {.Read}})
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	system.value_put(&values, system.GRANT_VALUE_IMAGE_SIZE, u64(len(image)))
+	if context_refused(OPERATION_FUZZING_NAME, &context_grants, &values) {
+		fail("the context of operation_fuzzing was refused", .Bad_Operation)
+	}
+	amounts := system.Budget_Amounts {
+		pages       = OPERATION_FUZZING_PAGES,
+		programs    = 16,
+		threads     = 32,
+		processor   = own.processor,
+		log_records = LOG_RECORDS_OF_A_PROGRAM,
+	}
+	if _, status := system.program_start(system.image_find(image, OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&program_generator, values.values), amounts, nil, &prepared); status != .Ok {
+		fail("cannot start operation_fuzzing", status)
+	}
+	system.log("root: started operation_fuzzing with ", system.Size{amounts.pages, .Pages})
+	for {
+		system.sleep(max(u64))
+	}
+}
+
 // shortage_failed ends the machine of the test of a shortage whose program
 // did not start. The machine has nothing else to run: this service waits
 // whatever Machine_Stop gives, so the test ends on the stop code or on its
@@ -518,6 +556,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	principals_start()
 	// The random seed of the system: before the first program starts.
 	random_seed_make()
+	// The machine of the operation sequences: only its boot image holds the
+	// program operation_fuzzing, and it starts nothing else.
+	if len(system.image_find(image, OPERATION_FUZZING_NAME)) != 0 {
+		operation_fuzzing_start()
+	}
 	// The machine of the test of the shortage of frames: its boot image has
 	// the program shortage and no input service, so no desktop.
 	if len(system.image_find(image, "input")) == 0 && len(system.image_find(image, "shortage")) != 0 {

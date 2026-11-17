@@ -19,6 +19,11 @@ MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: BUILD_FOLDER + "/modules_withou
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
+// The boot image of the operation sequences: the modules of the boot image,
+// and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
+BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.image"
+OPERATION_FUZZING_MODULE :: "operation_fuzzing"
+OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 // The boot image of a measure run: the usual one, with one resource more,
 // which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
 BOOT_IMAGE_MEASURE :: BUILD_FOLDER + "/boot_measure.image"
@@ -75,11 +80,22 @@ Module_Build :: struct {
 	// A program that a disk holds: it is built as each program, with the
 	// system library, and no boot image gets its file (disk_programs.odin).
 	disk:    bool,
+	// The one boot image of a test that holds the module, and no other
+	// image: the modules of the operation sequences. "": the module is in
+	// each boot image of the build. A release refuses an image that holds
+	// such a module (release_test_module_problem).
+	only_in_image: string,
 }
 
 // module_in_boot_image says if the boot image holds the file of a module.
 module_in_boot_image :: proc(build: Module_Build) -> bool {
-	return build.image && !build.disk
+	return build.image && !build.disk && build.only_in_image == ""
+}
+
+// module_in_a_boot_image says if some boot image of the build holds the
+// file of a module: the boot image, or the one image of a test.
+module_in_a_boot_image :: proc(build: Module_Build) -> bool {
+	return module_in_boot_image(build) || build.image && !build.disk && build.only_in_image != ""
 }
 
 // The drawing module, and the setting of a program that draws its window
@@ -202,6 +218,11 @@ module_builds := [?]Module_Build {
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", program = true, image = true},
 	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", program = true, image = true},
 	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", program = true, image = true},
+	// The program of the operation sequences and its runner: only the boot
+	// image of the operation sequences holds them, and the root service
+	// starts nothing else there.
+	{name = OPERATION_SEQUENCE_RUNNER_MODULE, source = TEST_MODULE_SOURCES + OPERATION_SEQUENCE_RUNNER_MODULE, program = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
+	{name = OPERATION_FUZZING_MODULE, source = TEST_MODULE_SOURCES + OPERATION_FUZZING_MODULE, program = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
 	// It is not in the boot image: the tool writes its file in the store
 	// `programs` of a data disk, and the root service starts it from there
 	// (disk_programs.odin).
@@ -284,7 +305,9 @@ build_modules :: proc() -> bool {
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
-	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
+	// The fifth holds the program of the operation sequences, which no
+	// other image holds.
+	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
 	if images_built {
 		// The fourth is the image of a measure run: the same modules and one
 		// resource more, so a measure runs the code that a test checked.
@@ -296,7 +319,7 @@ build_modules :: proc() -> bool {
 		append(&all_resources, Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
 		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
 	}
-	build_measure_step("the four boot images", step_started)
+	build_measure_step("the five boot images", step_started)
 	return images_built
 }
 
@@ -644,7 +667,8 @@ module_convert :: proc(build: Module_Build) -> bool {
 build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in module_builds {
-		if !module_in_boot_image(build) || build.name == without {
+		in_this_image := module_in_boot_image(build) && build.name != without || module_in_a_boot_image(build) && build.only_in_image == path
+		if !in_this_image {
 			continue
 		}
 		append(&files, Image_File{name = build.name, file = read_file(module_path(build.name)) or_return})

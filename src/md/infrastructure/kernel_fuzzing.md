@@ -19,12 +19,12 @@ The engine, the mutators, the minimizer and the corpus format are the ones of th
 
 ### The machine
 
-The machine of the kernel fuzzing has one processor, no network, no disk and no display. Its boot image holds the root service, the program `operation_fuzzing` and the module `operation_sequence_runner`. Two boot volumes hold that image:
+The machine of the kernel fuzzing has one processor. Its boot image, `boot_operation_sequences.image`, holds each module of the boot image and the two modules that no other image holds: the program `operation_fuzzing` and the module `operation_sequence_runner` (the field `only_in_image` of their rows in the table of the modules). When the boot image holds `operation_fuzzing`, the root service starts it and nothing else, as it starts only `shortage` on the machine of the shortage of frames. The machine keeps the devices of a test machine, which no program of this image drives. Two boot volumes hold that image:
 
 - `operation_fuzzing`, with the counted kernel `kernel_edge_counters`;
 - `operation_sequences`, with the module `kernel`: the bytes of the release kernel, with its checks of the lock order, of the frame sums and of the placement, which the release build keeps.
 
-QEMU runs the machine with its memory in a file of the host: `memory-backend-file` with `share=on`, below the hole of PCI, so that an offset in the file is a physical address. The tool maps the file. This one file carries the counters of the kernel and the mailbox of the machine, so the fuzzing adds no device to the machine.
+QEMU runs the machine with its memory in a file of the host: `memory-backend-file` with `share=on`, below the hole of PCI, so that an offset in the file is a physical address. The tool reads and writes the file at an offset (`pread` and `pwrite`), and writes the count of a new sequence after the sequence itself. This one file carries the counters of the kernel and the mailbox of the machine, so the fuzzing adds no device to the machine.
 
 One processor makes a sequence give the same edges at each run: no second processor changes the order of two commands, and no lock waits. Two threads on two processors are a later layer (see "State").
 
@@ -60,7 +60,7 @@ The flag is a field of the processor record at a fixed offset. The assembly read
 
 ### The programs in the machine
 
-**`operation_fuzzing`** is the program that runs the sequences. Its role in the root service gives it the machine handle with the right Physical only. No other right of the machine is given. The role is a row of the table of the roles, as the roles of the other test programs. A boot image that does not hold the module grants nothing, and a disk program never gets a role. At its start, the program:
+**`operation_fuzzing`** is the program that runs the sequences. Its row of the table of the roles names no start grant, and the log with Give, which it gives to each runner. The root service starts it itself, with the machine handle with the right Physical only, the boot image and the log: no other right of the machine is given, and a command Start gives it nothing. The release refuses each image that holds the module, and refuses a boot image of the build that holds it, so the row grants nothing in a system that ships. A disk program never gets a role. At its start, the program:
 
 1. creates a contiguous memory object, the mailbox;
 2. gets its physical address with `Memory_Physical`;
@@ -81,18 +81,20 @@ For each sequence, `operation_fuzzing`:
 - the budget of the sequence, with Spend, Read and Give;
 - the log, with Write;
 - each area of the sequence, with every right of a memory object;
-- the machine handle with Inspect and Counters.
+- no machine handle: the start handle `Machine` is 0.
 
-The machine handle does not have Stop, Devices, Physical, Schedule or Events. Stop ends the machine with a code that is no fault. Devices and Physical reach a device, which the kernel does not check. Schedule and Events change the whole machine past the end of the sequence. A sequence still names these operations: the kernel then refuses them with `No_Right`, and that refusal is fuzzed.
+The service holds the machine with Physical only, and with no Give, so it gives the runner no machine handle. A step that names the machine is refused with `Bad_Handle`, and that refusal is fuzzed. The runner never holds Stop, Devices, Physical, Schedule or Events: Stop ends the machine with a code that is no fault, Devices and Physical reach a device, which the kernel does not check, and Schedule and Events change the whole machine past the end of the sequence. Inspect and Counters for the runner wait for a second machine handle of the service, which is a later decision.
+
+The budget of a sequence pays for the runner, its areas, its result object and the copy of its sequence. The service closes each of its own handles to these objects once the runner holds them, and unmaps its view of the results before it reads the budget again: no handle of the service keeps an amount out of the budget.
 
 **`operation_sequence_runner`** is a small module with no import past the system library. Its thread runs the steps in order. For each step, it:
 
 1. converts each argument into a word: a value, a start handle, the handle or the value that an earlier step gave back, or an address in an area;
-2. writes the command record in its kernel ring, with the bit `COMMAND_NAMES_ERROR_DETAILS` and a table of error details that it filled with a known pattern;
+2. writes the command record in its kernel ring, with the bit `COMMAND_NAMES_ERROR_DETAILS` and a table of error details that it filled with a known pattern, unless the step has the flag `No_Error_Details` or the operation takes no table (`Log`, `Guest_Run`): the kernel refuses the bit there with `Unsupported`, and such a step would never reach the operation;
 3. enters the kernel with a deadline of 0;
 4. writes into the result area the words of the arguments, the completion record, the count of error details and the records of the table.
 
-The operation word passes as it is, so a word that names no operation reaches the kernel. Before each step, the runner writes the number of the step into the result area, so that a stop or a hang names its step. After the last step, it wakes the word of the end and stops itself with `Program_Stop` of 0. The kernel then frees its objects in a counted command.
+The operation word passes as it is, so a word that names no operation reaches the kernel. Before each kernel entry, the runner writes the number of its first step into the result area, so that a stop or a hang names its step. After the last step, it stops itself with the stop code `RUNNER_END_CODE`, and the stop of the runner ends the wait of the service. The kernel then frees its objects in a counted command. The objects of the runner are at fixed addresses of its own choice, after `OWN_CHOICE_START`, mapped by the service with no handle in the runner.
 
 The runner holds the handles of a sequence in one array of the results by step: a handle argument names a step and a value of its completion, never a handle number. So a sequence does not depend on the handle numbers of one run. The runner does not know the kinds. The tool knows them from the reference comment of each operation (`-> memory handle`), and the generator chooses a step of the right kind for most handle arguments and a step of another kind for some.
 
@@ -185,7 +187,7 @@ The first layer that runs sequences prints the executions in one second as a mea
 
 `modustool fuzz replay operations <file>` runs a finding, or a regression input, on a new machine of the volume `operation_sequences`, through the same mailbox and the same oracles. Only the kernel differs, and it is the module `kernel` that the release packages. If the signature is the same, the finding is confirmed. If not, the tool reports it as "seen only on the counted kernel". The callback changes the code and the depth of the stack, so such a finding can still be a fault of the kernel, and it is read to its cause.
 
-After the fix, `modustool fuzz regression operations <file>` writes the sequence list into the regression inputs. The command refuses a list that still breaks an oracle on `operation_sequences`. The test part `operation_sequences` of the machine test boots that volume, runs a fixed seed sequence for each operation, then each regression input, with every oracle, so each later change of the kernel runs them. When the right answer is more than "no stop" (a refusal with a named error record), `modustool fuzz show operations <file>` prints the steps with the forms and the results, and the developer writes a named case in a test program with the expected status.
+After the fix, `modustool fuzz regression operations <file>` writes the sequence list into the regression inputs. The command refuses a list that still breaks an oracle on `operation_sequences`. The test part `operation_sequences` of the machine test boots that volume, runs a fixed seed sequence for each operation and the seed cases, then each regression input, with every oracle, so each later change of the kernel runs them. The regression inputs come with the corpus of the operations. When the right answer is more than "no stop" (a refusal with a named error record), `modustool fuzz show operations <file>` prints the steps with the forms and the results, and the developer writes a named case in a test program with the expected status.
 
 ## The refused forms
 
@@ -222,7 +224,7 @@ After the fix, `modustool fuzz regression operations <file>` writes the sequence
 - **The counted kernel is another kernel.** The callback adds a call to each edge. A fault that comes from the order of the instructions or from the depth of the stack can show only there, and a fault of the kernel that the callback hides can show only on the kernel that ships. The test part runs the kernel that ships for this reason.
 - **The teardown is counted only in part.** The runner stops itself, so the teardown runs in a counted command. A part of the free of the frames happens when the last thread leaves its processor, in the scheduler, and that part is not counted. The budget oracle sees its faults, and the counters do not guide toward them.
 - **State between sequences.** Two runs of one sequence in one machine can give other edges, because the generations of the slots and the caches of frames moved. The engine runs each new kept input twice and keeps only a stable one. A finding that needs the state of earlier sequences is found by the replay of the life.
-- **A program that holds a handle to itself.** If a sequence gives a child a handle to its own program, the stop of the runner does not end the last handle of the child. Property 14 and row 16 of property 20 say that the budget of a program comes back. The oracle reports such a case as a leak, and the contract of `Handle_Give` and of `Program_Stop` then decides whether the kernel or the oracle is wrong.
+- **A program that holds a handle to itself.** If a sequence gives a child a handle to its own program, the stop of the runner does not end the last handle of the child. Property 14 and row 16 of property 20 say that the budget of a program comes back. Such a program that outlives the stop of its runner is a fault of the kernel, and the budget oracle reports it.
 - **The documented statuses are a contract.** A status that the kernel gives and the reference does not list is a fault of one of the two. The finding does not say which.
 - **The soundness of `argument_value_problem` is the claim under test.** The diagnosis of the kernel calls the same procedure, so an oracle that compares a detail with it checks the diagnosis against the operation, not the procedure against itself. A fault of the procedure shows as an `Ok` that it refuses, or as a refusal that it does not name.
 - **The memory file is a border.** The tool reads counts and records that a broken kernel can write. The tool checks the count of the details against `ERROR_DETAILS_MOST` and each number of a step against the count of the steps before it uses them.
@@ -238,20 +240,21 @@ The design contradicts no property:
 - The machine has no added device (property 7).
 - The tool and the machine talk through shared memory that each side copies, then checks (property 6).
 
-One cost stays in the system that ships: the root service of the release has the role row of `operation_fuzzing`, as it has the rows of the other test programs. That row grants nothing in a boot image that does not hold the module.
+One cost stays in the system that ships: the root service of the release has the role row of `operation_fuzzing` and its start, which gives the machine with Physical, as it has the rows of the other test programs. Both act only in a boot image that holds the module, and the release refuses such an image.
 
 ## State
 
-Built: the host engine, its corpus format, the forms and the error details of the kernel, and the first layer: the sequence format and the generator, on the host. The contract package `operation_sequence` has its check, its writer and its host tests of each refusal. The generator reads `OPERATIONS` and the kind of each result from the reference comments, and its table of the address parameters has a row for each address parameter, each one "plain bytes". The fuzz targets `operation_sequence` (raw: `check` and the round trip through `write`) and `operation_sequence_generated` (each sequence of the generator passes `check`) run in `modustool check`. Nothing of the machine is built.
+Built: the host engine, its corpus format, the forms and the error details of the kernel, and the first layer: the sequence format and the generator, on the host. The contract package `operation_sequence` has its check, its writer and its host tests of each refusal. The generator reads `OPERATIONS` and the kind of each result from the reference comments, and its table of the address parameters has a row for each address parameter, each one "plain bytes". The fuzz targets `operation_sequence` (raw: `check` and the round trip through `write`) and `operation_sequence_generated` (each sequence of the generator passes `check`) run in `modustool check`.
+
+Built after it, the machine with the kernel that ships: `operation_fuzzing` and the runner in the image `boot_operation_sequences.image` only, the start of `operation_fuzzing` by the root service with the machine with Physical only, the volume `operation_sequences`, the memory file and the mailbox (the contract part `mailbox.odin`), the statuses read from the reference comments, the oracles of the outcome, of the budget, of the statuses, of the forms and of the error details, and of the planted steps, the seed sequences, the test part `operation_sequences`, `fuzz replay operations`, and the refusal of an image that holds one of the two modules by the release. The runner holds no machine handle.
 
 Left, in this order. Each layer adds one capability to a fuzzing that works:
 
-1. **The machine with the kernel that ships.** `operation_fuzzing`, the runner, the boot image, the volume `operation_sequences`, the memory file and the mailbox, the statuses read from the reference comments, the oracles of the statuses, of the error details and of the budget, the seed sequences, the test part `operation_sequences` and `fuzz replay operations`. No kernel code.
-2. **The loop with no counters.** `fuzz operations` with generated sequences on `operation_sequences`: the life of a machine, the restart after a stop, the signatures, the minimization by lives and by steps, the rate printed as a measure. No kernel code.
-3. **The counted kernel.** The define, the pass in the build of one module, the callback and the array in assembly, the counted program, the counting flag, the boot line, the refusal of the release, the row of the stack measure, the volume `operation_fuzzing`, and the engine guided by the counters of the kernel. This layer changes kernel code, under the define only, and gets the independent review of kernel code.
-4. **The corpus of the operations.** The reach inputs, the regression inputs as sequence lists, `fuzz regression operations` and `fuzz corpus operations`, and their checks in `modustool check`. No kernel code.
-5. **The records at the addresses.** The rows of the table of the address parameters with their record types, for the field mutator. No kernel code.
-6. **The ring of counter sets**, only if the measure of the second and third layers shows that the waits across the border cost more than the sequences. This layer changes kernel code, under the define only.
-7. **Two processors and several threads of one sequence.** The lock order and the lost wakes between processors, with sequences that give other edges by the order of the processors. The oracles read a state, then, not an order. This layer changes kernel code, under the define only.
+1. **The loop with no counters.** `fuzz operations` with generated sequences on `operation_sequences`: the life of a machine, the restart after a stop, the signatures, the minimization by lives and by steps, the rate printed as a measure. No kernel code.
+2. **The counted kernel.** The define, the pass in the build of one module, the callback and the array in assembly, the counted program, the counting flag, the boot line, the refusal of the release, the row of the stack measure, the volume `operation_fuzzing`, and the engine guided by the counters of the kernel. This layer changes kernel code, under the define only, and gets the independent review of kernel code.
+3. **The corpus of the operations.** The reach inputs, the regression inputs as sequence lists, `fuzz regression operations` and `fuzz corpus operations`, and their checks in `modustool check`. No kernel code.
+4. **The records at the addresses.** The rows of the table of the address parameters with their record types, for the field mutator. No kernel code.
+5. **The ring of counter sets**, only if the measure of the first and second layers shows that the waits across the border cost more than the sequences. This layer changes kernel code, under the define only.
+6. **Two processors and several threads of one sequence.** The lock order and the lost wakes between processors, with sequences that give other edges by the order of the processors. The oracles read a state, then, not an order. This layer changes kernel code, under the define only.
 
 Each fault that a layer finds is a fix of the kernel, with its regression input, and not a layer.
