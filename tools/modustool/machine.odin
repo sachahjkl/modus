@@ -2941,6 +2941,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},
 	{kind = .Wait, text = "errors: an accepted kernel command leaves its table of error details empty: as it must"},
 	{kind = .Wait, text = "errors: Log refuses a table of error details: as it must"},
+	// A full completion queue of the kernel ring loses no answer
+	// (src/md/api/kernel_ring_completion_room.md).
+	{kind = .Wait, text = "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must"},
+	{kind = .Wait, text = "errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must"},
+	{kind = .Wait, text = "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (one log record, 152
 	// bytes): its end is in the next row, and the tool joins the rows.

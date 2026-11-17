@@ -18,6 +18,19 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread.in_enter = true
 	wait_begin(thread)
 	for _ in 0 ..< ring.CAPACITY {
+		if ring.empty(&thread.ring.commands) {
+			break
+		}
+		// A command runs only when its answer has room: else it would do
+		// its work and its completion would be lost. It stays in the
+		// command queue, unrun, with each command after it, and the thread
+		// reads its completions before it enters again. No wait follows:
+		// the thread would sleep with its answers unread
+		// (src/md/api/kernel_ring_completion_room.md).
+		if ring.full(&thread.ring.completions) {
+			thread.word_changed = true
+			break
+		}
 		command, ok := ring.pop(&thread.ring.commands)
 		if !ok {
 			break
@@ -48,7 +61,11 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			// table of error details that the command names (diagnose.odin).
 			completion.values = transmute([7]u64)diagnose_command(thread.program, command, status)
 		}
-		ring.push(&thread.ring.completions, completion)
+		// The room was checked before the run, and only the reader changes
+		// the read counter: the push fails only after a thread of the
+		// program wrote a false count into this ring, and the loss is then
+		// the program's alone.
+		_ = ring.push(&thread.ring.completions, completion)
 	}
 	// A word that changed before the wait: the thread reads it again.
 	wait_end(thread, thread.frame.rdi)

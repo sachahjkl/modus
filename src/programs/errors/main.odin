@@ -53,6 +53,12 @@
 // one log line for each; a command with a table that succeeds leaves the
 // table empty; `Log`, whose last value is an argument, refuses a table.
 //
+// **A full completion queue.** The program fills the completion queue of
+// its kernel ring and leaves it unread: the kernel keeps the next command
+// unrun in the command queue and ends the entry with no wait, a kernel call
+// of the library is refused with `Busy` and does not run, and after the
+// read each answer has come once, in order, and the kept command runs once.
+//
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
 // call that succeeds and one that fails; a refused `Log` over the limit of
@@ -346,6 +352,76 @@ kernel_details_check :: proc "contextless" () {
 		system.log("errors: Log refuses a table of error details: as it must")
 	} else {
 		system.log("errors: WRONG: Log with a table of error details gave the status ", status, " and ", details.count, " error details")
+	}
+}
+
+// kernel_ring_check fills the completion queue of the kernel ring of this
+// thread and checks that no answer is lost
+// (src/md/api/kernel_ring_completion_room.md). The commands are None, which
+// changes nothing, so each answer differs by its tag only. One command more
+// closes a handle: the kernel must leave it unrun while the queue is full,
+// end the entry with no wait, and run it once after the answers are read.
+// A kernel call of the library while records wait must be refused, and its
+// command, the close of another handle, must not run. system.log enters the
+// kernel ring too: each line comes after the ring is empty again.
+KERNEL_RING_FIRST_TAG :: u32(1)
+
+kernel_ring_check :: proc "contextless" () {
+	held_memory, held_created := system.memory_create(1)
+	refused_memory, refused_created := system.memory_create(1)
+	if held_created != .Ok || refused_created != .Ok {
+		system.log("errors: WRONG: the case of a full completion queue has no memory: ", held_created, " ", refused_created)
+		return
+	}
+	kernel := system.kernel_ring()
+	capacity := ring.capacity(&kernel.completions)
+	for number in 0 ..< capacity {
+		ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None), tag = KERNEL_RING_FIRST_TAG + number})
+	}
+	system.enter(0)
+	filled := ring.full(&kernel.completions) && ring.empty(&kernel.commands)
+	// The command past the capacity, and an entry that asks for a wait: the
+	// hang bound only ends the wait of a kernel that would wait.
+	held_tag := KERNEL_RING_FIRST_TAG + capacity
+	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Handle_Close), tag = held_tag, values = {0 = u64(held_memory)}})
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	entered := system.enter(deadline)
+	held := entered < deadline && ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
+	refusal: errors.Error_Record
+	_, refused_status := system.call_with_error(&refusal, .Handle_Close, u64(refused_memory))
+	refused := refused_status == .Bad_Operation && errors.Kind(refusal.kind) == .Busy && refusal.value == i64(capacity) + 1
+	refused &&= ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
+	// Each answer once, in the order of the commands.
+	answers_in_order := true
+	for number in 0 ..< capacity {
+		answer, popped := ring.pop(&kernel.completions)
+		answers_in_order &&= popped && answer.tag == KERNEL_RING_FIRST_TAG + number && answer.kind == u32(system.Status.Ok)
+	}
+	answers_in_order &&= ring.empty(&kernel.completions)
+	// The held command runs at the next entry, once.
+	system.enter(0)
+	held_answer, held_popped := ring.pop(&kernel.completions)
+	held_ran := held_popped && held_answer.tag == held_tag && held_answer.kind == u32(system.Status.Ok)
+	held_ran &&= ring.empty(&kernel.commands) && ring.empty(&kernel.completions)
+	_, held_after := system.memory_size(held_memory)
+	_, refused_after := system.memory_size(refused_memory)
+	held_ran &&= held_after == .Bad_Handle
+	refused &&= refused_after == .Ok
+	system.close(refused_memory)
+	if filled && held {
+		system.log("errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must")
+	} else {
+		system.log("errors: WRONG: a command past a full completion queue: the queue filled: ", filled ? "yes" : "no", "; the command held with no wait: ", held ? "yes" : "no")
+	}
+	if refused {
+		system.log("errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must")
+	} else {
+		system.log("errors: WRONG: a kernel call on a kernel ring that holds records gave ", refused_status, " and the kind ", refusal.kind)
+	}
+	if answers_in_order && held_ran {
+		system.log("errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must")
+	} else {
+		system.log("errors: WRONG: the answers of a full completion queue: each once in order: ", answers_in_order ? "yes" : "no", "; the held command ran once: ", held_ran ? "yes" : "no")
 	}
 }
 
@@ -1131,6 +1207,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	log_filter_check()
 	kernel_details_check()
+	kernel_ring_check()
 	if !contend() {
 		system.log("errors: WRONG: the case under contention failed")
 	}
