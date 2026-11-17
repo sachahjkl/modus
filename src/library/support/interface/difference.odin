@@ -1,6 +1,7 @@
 package interface
 
 import "base:intrinsics"
+import "modus:contract/draw_record"
 import "modus:support/graphics"
 
 DAMAGE_CAPACITY :: 8 // The rectangles that one frame keeps, as the compositor does.
@@ -48,32 +49,47 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 	return bounds
 }
 
-// records_equal says if two records draw the same thing: their 40 bytes are
-// equal, except the places of their texts in the two text tables, and the
-// bytes of their texts are equal. A text record whose range is not inside
-// its text table is equal to no record: its rectangle is damaged, and the
-// execution draws nothing for it. Two Text_Grid records are equal when
-// their bytes are equal except their places: their cells are compared one
-// by one after it (grid_damage). The check is on the records that it
-// receives, the copies that it compares.
+// records_equal says if two records draw the same thing: their 48 bytes are
+// equal, except the places of their texts and grids in the two text tables,
+// and the bytes of their texts are equal. A record that the border refuses
+// is equal to no record: its box is damaged, and the execution draws
+// nothing for it. A text record whose range is not inside its text table
+// is equal to no record too. Two Text_Grid records are equal when their
+// bytes are equal except their places: their cells are compared one by one
+// after it (grid_damage). The check is on the records that it receives,
+// the copies that it compares.
 records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now: ^Draw_Table, new: Draw_Record) -> bool {
-	old_without_place, new_without_place := old, new
-	// A text and a grid have a place in the text table that can change
-	// with no change of what is drawn. For a picture, the same field is
-	// its first pixel.
-	if (is_text_kind(old.kind) || old.kind == .Text_Grid) && old.kind == new.kind {
-		old_without_place.text_start, new_without_place.text_start = 0, 0
-	}
-	if (transmute([size_of(Draw_Record)]u8)old_without_place) != (transmute([size_of(Draw_Record)]u8)new_without_place) {
+	old_primitive, old_problem := draw_record.read(old)
+	new_primitive, new_problem := draw_record.read(new)
+	if old_problem != .None || new_problem != .None {
 		return false
 	}
-	if !is_text_kind(old.kind) {
+	// A text and a grid have a place in the text table that can change
+	// with no change of what is drawn: both records are compared with the
+	// first byte of their range at 0. The record of a primitive that the
+	// border read is its bytes, as the border refuses each other byte.
+	old_first, old_count, old_has_range := draw_record.byte_range_of(old_primitive)
+	new_first, new_count, new_has_range := draw_record.byte_range_of(new_primitive)
+	old_without_place := draw_record.record_of(draw_record.with_byte_place(old_primitive, 0), old.element, old.left, old.top, old.right, old.bottom)
+	new_without_place := draw_record.record_of(draw_record.with_byte_place(new_primitive, 0), new.element, new.left, new.top, new.right, new.bottom)
+	if old_without_place != new_without_place {
+		return false
+	}
+	if _, is_grid := new_primitive.(draw_record.Draw_Text_Grid); is_grid || !old_has_range || !new_has_range {
 		return true
 	}
-	if u64(old.text_start) + u64(old.text_count) > u64(before.text_count) || u64(new.text_start) + u64(new.text_count) > u64(now.text_count) {
+	if u64(old_first) + u64(old_count) > u64(before.text_count) || u64(new_first) + u64(new_count) > u64(now.text_count) {
 		return false
 	}
-	return string(before.text[old.text_start:][:old.text_count]) == string(now.text[new.text_start:][:new.text_count])
+	return string(before.text[old_first:][:old_count]) == string(now.text[new_first:][:new_count])
+}
+
+// is_clip_record says if a record is a Clip: a clip that changes changes
+// what each record after it draws.
+@(private)
+is_clip_record :: proc "contextless" (record: Draw_Record) -> bool {
+	kind, known := draw_record.draw_kind_of_word(record.kind)
+	return known && kind == .Clip
 }
 
 // damage_by_difference finds what changed from the table before to the
@@ -90,13 +106,11 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 		old := intrinsics.volatile_load(&before.records[index])
 		new := intrinsics.volatile_load(&now.records[index])
 		if records_equal(before, old, now, new) {
-			if new.kind == .Text_Grid {
-				grid_damage(before, old, now, new, damage)
-			}
+			grid_damage(before, old, now, new, damage)
 			continue
 		}
 		// A clip that changes changes what the next records draw.
-		if old.kind == .Clip || new.kind == .Clip {
+		if is_clip_record(old) || is_clip_record(new) {
 			damage_rest(before, now, index, damage)
 			return
 		}
@@ -115,12 +129,12 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 @(private)
 damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage: ^Damage) {
 	for record in before.records[first:before.record_count] {
-		if record.kind != .Clip {
+		if !is_clip_record(record) {
 			damage_add(damage, record_rectangle(record))
 		}
 	}
 	for record in now.records[first:now.record_count] {
-		if record.kind != .Clip {
+		if !is_clip_record(record) {
 			damage_add(damage, record_rectangle(record))
 		}
 	}
@@ -128,17 +142,23 @@ damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage:
 
 // grid_damage damages, in each row of a grid that did not move, the span
 // from the first changed cell to the last one. The two records are equal
-// except their places in their text tables. A grid whose cells one of the
-// two tables does not hold (grid_of) is damaged whole.
+// except their places in their text tables; a record that is no grid
+// damages nothing here. A grid whose cells one of the two tables does not
+// hold (grid_of) is damaged whole.
 @(private)
 grid_damage :: proc "contextless" (before: ^Draw_Table, old_record: Draw_Record, now: ^Draw_Table, record: Draw_Record, damage: ^Damage) {
+	primitive, problem := draw_record.read(record)
+	if _, is_grid := primitive.(draw_record.Draw_Text_Grid); problem != .None || !is_grid {
+		return
+	}
 	old, old_ok := grid_of(before, old_record)
 	new, new_ok := grid_of(now, record)
 	if !old_ok || !new_ok || old.columns != new.columns || old.rows != new.rows {
 		damage_add(damage, record_rectangle(record))
 		return
 	}
-	x, y := int(record.x), int(record.y)
+	place := record_rectangle(record)
+	x, y := place.left, place.top
 	for row in 0 ..< new.rows {
 		old_row := old.cells[row * old.stride:][:new.columns]
 		new_row := new.cells[row * new.stride:][:new.columns]

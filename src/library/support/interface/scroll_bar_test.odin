@@ -382,7 +382,8 @@ scroll_bar_takes_the_wheel_over_its_view :: proc(t: ^testing.T) {
 @(private = "file")
 records_of :: proc(table: ^Draw_Table, kind: Draw_Kind, color: graphics.Color) -> (count: int, last: Draw_Record) {
 	for record in table.records[:table.record_count] {
-		if record.kind == kind && record.first_color == u32(color) {
+		view := record_view(record)
+		if view.read && view.kind == kind && view.color == color {
 			count += 1
 			last = record
 		}
@@ -391,8 +392,9 @@ records_of :: proc(table: ^Draw_Table, kind: Draw_Kind, color: graphics.Color) -
 }
 
 @(private = "file")
-expect_record :: proc(t: ^testing.T, record: Draw_Record, kind: Draw_Kind, x, y, width, height: i32, first_color: graphics.Color, second_color: graphics.Color = 0, loc := #caller_location) {
-	testing.expectf(t, record.kind == kind && record.x == x && record.y == y && record.width == width && record.height == height && record.first_color == u32(first_color) && record.second_color == u32(second_color), "the record is %v at %d,%d of %d by %d in %06x and %06x", record.kind, record.x, record.y, record.width, record.height, record.first_color, record.second_color, loc = loc)
+expect_record :: proc(t: ^testing.T, record: Draw_Record, kind: Draw_Kind, x, y, width, height: int, first_color: graphics.Color, second_color: graphics.Color = 0, loc := #caller_location) {
+	view := record_view(record)
+	testing.expectf(t, view.read && view.kind == kind && view.x == x && view.y == y && view.width == width && view.height == height && view.color == first_color && view.second_color == second_color, "the record is %v at %d,%d of %d by %d in %06x and %06x", view.kind, view.x, view.y, view.width, view.height, view.color, view.second_color, loc = loc)
 }
 
 @(test)
@@ -439,12 +441,13 @@ scroll_bar_at_rest_draws_the_table :: proc(t: ^testing.T) {
 	expect_record(t, records[19], .Rectangle, 15, 165, 1, 98, lined[3])
 	// The grip: four lines of 7 pixels in the middle of the thumb.
 	for grip_line in 0 ..< 4 {
-		expect_record(t, records[20 + grip_line], .Rectangle, 5, i32(210 + 2 * grip_line), 7, 1, colors.grip)
+		expect_record(t, records[20 + grip_line], .Rectangle, 5, 210 + 2 * grip_line, 7, 1, colors.grip)
 	}
 	// Each record has the identity of the bar, and stays inside it.
 	for record in records {
 		testing.expect_value(t, record.element, u32(identity("bar")))
-		testing.expect(t, record.x >= 0 && record.y >= 0 && record.x + record.width <= 17 && record.y + record.height <= 428)
+		view := record_view(record)
+		testing.expect(t, view.x >= 0 && view.y >= 0 && view.x + view.width <= 17 && view.y + view.height <= 428)
 	}
 }
 
@@ -556,7 +559,7 @@ scroll_bar_light_form_draws_the_light_colors :: proc(t: ^testing.T) {
 	table := bar_table_of(&memory)
 	colors := graphics.scroll_bar_colors_light
 	scroll_bar_draw(&table, BAR_AREA, .Vertical, scroll_bar_geometry(428, 17, {total = 100, visible = 26, first = 37}), {}, &colors)
-	testing.expect_value(t, table.records[0].first_color, u32(colors.track_border))
+	testing.expect_value(t, record_view(table.records[0]).color, colors.track_border)
 	count, _ := records_of(&table, .Rectangle, colors.thumb_border)
 	testing.expect_value(t, count, 1)
 }
@@ -603,7 +606,7 @@ list_with_choice_scroll_bar_moves_the_choice :: proc(t: ^testing.T) {
 	// The fill of the chosen line stops before the bar.
 	count, fill := records_of(&table, .Rectangle, graphics.colors.chosen)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, int(fill.width), 200 - SCROLL_BAR_THICKNESS)
+	testing.expect_value(t, record_view(fill).width, 200 - SCROLL_BAR_THICKNESS)
 	// A list whose lines fit has no bar: no record of the track.
 	pointer_at(&input, 190, 90, false)
 	frame = frame_begin(&table, &state, &input)

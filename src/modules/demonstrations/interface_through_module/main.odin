@@ -32,6 +32,7 @@
 // `interface_module` in the boot image.
 package interface_through_module
 
+import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -63,18 +64,18 @@ Canvas_Shape :: struct {
 	background:            i64,
 }
 
-Drawn :: system.Table_To_Append(interface.Draw_Record)
+Drawn :: system.Table_To_Append(draw_record.Draw_Record)
 
 foreign _ {
-	draw_background :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> i64 ---
-	draw_card :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> i64 ---
-	draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> i64 ---
-	draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> i64 ---
-	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> i64 ---
-	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> i64 ---
+	draw_background :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> i64 ---
+	draw_card :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> i64 ---
+	draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> i64 ---
+	draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> i64 ---
+	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> i64 ---
+	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> i64 ---
 	// The two exports of the drawing module.
-	damage_of_draw_table_10 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
-	execute_draw_table_in_rectangles_10 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 ---
+	damage_of_draw_table_11 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
+	execute_draw_table_in_rectangles_11 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 ---
 }
 
 WIDTH :: 816
@@ -97,14 +98,14 @@ Shown :: struct {
 shown: Shown
 
 // The two tables of the frame through the module, and of the frame before.
-records_now, records_before: [RECORD_CAPACITY]interface.Draw_Record
+records_now, records_before: [RECORD_CAPACITY]draw_record.Draw_Record
 text_now, text_before: [TEXT_CAPACITY]u8
 drawn: Drawn
 text: system.Bytes_To_Append
 calls: u64
 
 // The tables of the frame with the package compiled in.
-package_records: [RECORD_CAPACITY]interface.Draw_Record
+package_records: [RECORD_CAPACITY]draw_record.Draw_Record
 package_text: [TEXT_CAPACITY]u8
 
 
@@ -295,16 +296,16 @@ present :: proc "contextless" (window: ^display.Window) {
 	}
 	start := system.nanoseconds()
 	kept_records, kept_bytes := kept_counts()
-	now_table := system.Table_To_Read(interface.Draw_Record){records = &records_now[0], count = kept_records, capacity = kept_records}
+	now_table := system.Table_To_Read(draw_record.Draw_Record){records = &records_now[0], count = kept_records, capacity = kept_records}
 	now_text := system.Bytes_To_Read{bytes = &text_now[0], count = kept_bytes, capacity = kept_bytes}
 	changed: interface.Damage
 	changed_known := drawn_before
 	if changed_known {
-		before_table := system.Table_To_Read(interface.Draw_Record){records = &records_before[0], count = before_count, capacity = before_count}
+		before_table := system.Table_To_Read(draw_record.Draw_Record){records = &records_before[0], count = before_count, capacity = before_count}
 		before_bytes := system.Bytes_To_Read{bytes = &text_before[0], count = before_text_count, capacity = before_text_count}
 		found: [interface.DAMAGE_CAPACITY]Damage_Rectangle
 		buffer := found[:]
-		count := min(damage_of_draw_table_10(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
+		count := min(damage_of_draw_table_11(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
 		// The module refused the tables: no picture is known.
 		changed_known = count >= 0
 		for index in 0 ..< max(count, 0) {
@@ -328,7 +329,7 @@ present :: proc "contextless" (window: ^display.Window) {
 	}
 	places := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(to_draw.count), capacity = interface.DAMAGE_CAPACITY}
 	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.colors.background)}
-	execute_draw_table_in_rectangles_10(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
+	execute_draw_table_in_rectangles_11(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
 	shown.draw_time = system.nanoseconds() - start
 	// The canvas is the frame now. With nothing to present, the screen
 	// shows the frame already, and the canvas stays the one to draw.
@@ -369,14 +370,14 @@ canvases_compare :: proc "contextless" (table: ^interface.Draw_Table, refused: ^
 	package_canvas := graphics.Canvas{pixels = raw_data(package_pixels[:]), width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH}
 	graphics.clear(package_canvas, graphics.colors.background)
 	interface.execute(table, package_canvas)
-	records := system.Table_To_Read(interface.Draw_Record){records = raw_data(table.records), count = u64(table.record_count), capacity = u64(len(table.records))}
+	records := system.Table_To_Read(draw_record.Draw_Record){records = raw_data(table.records), count = u64(table.record_count), capacity = u64(len(table.records))}
 	bytes := system.Bytes_To_Read{bytes = raw_data(table.text), count = u64(table.text_count), capacity = u64(len(table.text))}
 	no_pictures: system.Bytes_To_Read
 	pixels := system.Bytes_To_Change{bytes = ([^]u8)(raw_data(module_pixels[:])), count = size_of(module_pixels), capacity = size_of(module_pixels)}
 	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.colors.background)}
 	whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
 	places := system.Table_To_Read(Damage_Rectangle){records = &whole[0], count = 1, capacity = 1}
-	if execute_draw_table_in_rectangles_10(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {
+	if execute_draw_table_in_rectangles_11(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {
 		return 0, false
 	}
 	for index in 0 ..< len(package_pixels) {
@@ -452,7 +453,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// drawn by the package and by the drawing module.
 	text_records: u64
 	for record in package_table.records[:package_table.record_count] {
-		if interface.is_text_kind(record.kind) {
+		if _, _, is_text := interface.text_of_record(&package_table, record); is_text {
 			text_records += 1
 		}
 	}

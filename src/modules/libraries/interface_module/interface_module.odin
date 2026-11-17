@@ -27,6 +27,7 @@
 package interface_module
 
 import "base:intrinsics"
+import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:contract/glyph_cache"
 import "modus:contract/settings"
@@ -64,7 +65,7 @@ Bar_Value :: struct {
 	color:   i64,
 }
 
-Draw_Records_To_Append :: system.Table_To_Append(interface.Draw_Record)
+Draw_Records_To_Append :: system.Table_To_Append(draw_record.Draw_Record)
 
 // The records and the text bytes that one element call can make: the
 // element is built into an element frame of these sizes, then appended to
@@ -83,7 +84,7 @@ ELEMENT_TEXT_CAPACITY :: 4096
 // refuses it.
 @(private)
 Element_Frame :: struct {
-	records: [ELEMENT_RECORD_CAPACITY]interface.Draw_Record,
+	records: [ELEMENT_RECORD_CAPACITY]draw_record.Draw_Record,
 	text:    [ELEMENT_TEXT_CAPACITY]u8,
 	table:   interface.Draw_Table,
 	frame:   interface.Frame,
@@ -191,7 +192,7 @@ value_of_size :: proc "contextless" (size: u64) -> i64 {
 // table, and the readers of a draw table check each range. The result is
 // the count of draw records of the full answer, or -1 with an error record:
 // Full for an element larger than the element frame, Out_Of_Range for a
-// text table past 2^32 bytes (text_start is a u32).
+// text table past 2^32 bytes (the first byte of a range is a u32).
 @(private)
 element_frame_append_to_caller :: proc "contextless" (element: ^Element_Frame, drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> i64 {
 	if element.table.full {
@@ -205,9 +206,14 @@ element_frame_append_to_caller :: proc "contextless" (element: ^Element_Frame, d
 		return errors.fail(error, ERROR, .Out_Of_Range, .Bytes, ARGUMENT_TEXT, value_of_size(text_base + u64(element.table.text_count)), i64(max(u32)))
 	}
 	for record in element.records[:element.table.record_count] {
+		// The element frame wrote each record: the border reads it, and a
+		// record that names a range of the text table names it again after
+		// the text of the caller.
 		placed := record
-		if interface.is_text_kind(placed.kind) {
-			placed.text_start += u32(text_base)
+		if primitive, problem := draw_record.read(record); problem == .None {
+			if first, _, has_range := draw_record.byte_range_of(primitive); has_range {
+				placed = draw_record.record_of(draw_record.with_byte_place(primitive, first + u32(text_base)), record.element, record.left, record.top, record.right, record.bottom)
+			}
 		}
 		system.table_append(drawn, placed)
 	}
@@ -224,7 +230,7 @@ area_of :: proc "contextless" (area: Area) -> interface.Area {
 
 // draw_background appends the background of the rules on an area: one color and the grid of points. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or -1 with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
 @(export, link_name = "draw_background")
-draw_background :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> i64 {
+draw_background :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> i64 {
 	element: Element_Frame
 	if !element_frame_begin(&element, drawn, nil, error) {
 		return ERROR
@@ -235,7 +241,7 @@ draw_background :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Recor
 
 // draw_card appends the frame of one subject: its border, its surface, its title in the accent and its caption. It writes the area of its content in the one row of `area`. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or -1 with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
 @(export, link_name = "draw_card")
-draw_card :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> i64 {
+draw_card :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> i64 {
 	element: Element_Frame
 	if !element_frame_begin(&element, drawn, text, error) {
 		return ERROR
@@ -250,7 +256,7 @@ draw_card :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), te
 
 // draw_cell_text appends a text in a cell of a line, at the left, or at the right when `right` is not 0. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or -1 with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
 @(export, link_name = "draw_cell_text")
-draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> i64 {
+draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> i64 {
 	element: Element_Frame
 	if !element_frame_begin(&element, drawn, text, error) {
 		return ERROR
@@ -261,7 +267,7 @@ draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record
 
 // draw_label_value_line appends a name in the dim color and its value. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or -1 with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
 @(export, link_name = "draw_label_value_line")
-draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> i64 {
+draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> i64 {
 	element: Element_Frame
 	if !element_frame_begin(&element, drawn, text, error) {
 		return ERROR
@@ -272,7 +278,7 @@ draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw
 
 // draw_table_band appends the band under line `index` of a table: every second line has the surface of a card. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or -1 with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
 @(export, link_name = "draw_table_band")
-draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> i64 {
+draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> i64 {
 	element: Element_Frame
 	if !element_frame_begin(&element, drawn, nil, error) {
 		return ERROR
@@ -283,7 +289,7 @@ draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Recor
 
 // draw_bar appends a value against a maximum: the track and the full part. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or -1 with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
 @(export, link_name = "draw_bar")
-draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> i64 {
+draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> i64 {
 	element: Element_Frame
 	if !element_frame_begin(&element, drawn, nil, error) {
 		return ERROR

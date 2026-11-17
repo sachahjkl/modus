@@ -6,7 +6,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The draw record in one tagged form.** A draw record becomes a header and the fields of its kind only, with places in 1/64 pixel, and the one border refuses a byte that its kind does not name. Every window moves to it with the same pixels, and a developer reads what a record draws from its kind. [Design](src/md/api/draw_table.md)
 - **The look of the system out of the draw record.** The grid of points and the folded gap become elements of the interface package, drawn with a repeated rectangle and lines, and leave the format. The format then holds primitives only, and the look changes with no new version of the record. [Design](src/md/api/draw_table.md)
 - **One text kind in the draw record.** A text in the font of the cells and a text in the interface font are one text run, with its font as a field. A writer then has one text record, and a text keeps its pixels. [Design](src/md/api/draw_table.md)
 - **Colors with alpha in the draw record.** A color holds an alpha, and one blending rule in linear light serves every record; a rectangle and a gradient get antialiased edges inside a pixel, a gradient runs along any line, and a picture can hold alpha. A window can then draw a translucent menu or a shadow. [Design](src/md/api/draw_table.md)

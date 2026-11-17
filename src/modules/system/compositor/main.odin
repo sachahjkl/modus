@@ -1503,7 +1503,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_10 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_11 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the

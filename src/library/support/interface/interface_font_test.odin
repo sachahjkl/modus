@@ -1,6 +1,7 @@
 #+build !freestanding
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/glyph_cache"
 import "core:testing"
 import "modus:support/display"
@@ -164,7 +165,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 		build_labels(&before, seed, LABEL_PARTS)
 		build_labels(&now, seed, pair % (LABEL_PARTS + 1))
 		for record in now.records[:now.record_count] {
-			if record.kind == .Interface_Text {
+			if record_view(record).kind == .Interface_Text {
 				interface_records += 1
 			}
 		}
@@ -192,12 +193,26 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 @(private = "file")
 measured_box :: proc(record: Draw_Record) -> Rectangle {
 	box := record_rectangle(record)
-	if record.kind == .Interface_Text {
-		margin := int(record.second_color)
+	if view := record_view(record); view.kind == .Interface_Text {
+		margin := ink_margin_of(view)
 		box.left += margin
 		box.right -= margin
 	}
 	return box
+}
+
+// The ink margin of a text in the interface font: from the left edge of
+// its box to the pixel of its origin.
+@(private = "file")
+ink_margin_of :: proc(view: Record_View) -> int {
+	return draw_record.pixels_floor(view.origin_x) - view.x
+}
+
+// An Interface_Text record with any fields, as a caller can write it by
+// hand: the border has no say in its bytes.
+@(private = "file")
+interface_text_record_of :: proc(fields: draw_record.Interface_Text_Fields, left, top, right, bottom: i32) -> Draw_Record {
+	return {kind = u8(Draw_Kind.Interface_Text), left = left, top = top, right = right, bottom = bottom, fields = transmute([draw_record.FIELDS_SIZE]u8)fields}
 }
 
 // No element lets a text pass its box, in the font of the cells and in
@@ -257,13 +272,13 @@ no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 			item.draw(&frame, item.area)
 			frame_end(&frame)
 			for record in table.records[:table.record_count] {
-				if !is_text_kind(record.kind) {
+				if !is_text_record(record) {
 					continue
 				}
 				box := measured_box(record)
 				inside := box.left >= item.area.x && box.right <= item.area.x + item.area.width && box.top >= item.area.y && box.bottom <= item.area.y + item.area.height
 				testing.expectf(t, inside, "%s (interface font: %v): a text at %v passes the area %v", item.name, interface_font != nil, box, item.area)
-				testing.expectf(t, (record.kind == .Interface_Text) == false || interface_font != nil, "%s: an interface text with no interface font", item.name)
+				testing.expectf(t, (record_view(record).kind == .Interface_Text) == false || interface_font != nil, "%s: an interface text with no interface font", item.name)
 			}
 		}
 	}
@@ -282,26 +297,29 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	table := font_table_of(with_font, &font.font)
 	plain := font_table_of(without_font, nil)
 	after := draw_text(&table, 10, 0, "To LT", graphics.colors.text, FONT_INTERFACE)
-	testing.expect_value(t, table.records[0].kind, Draw_Kind.Interface_Text)
+	first := record_view(table.records[0])
+	testing.expect_value(t, first.kind, Draw_Kind.Interface_Text)
 	testing.expect_value(t, after, 10 + text_measured_width(&table, FONT_INTERFACE, "To LT"))
-	margin := int(table.records[0].second_color)
+	margin := ink_margin_of(first)
 	testing.expect_value(t, margin, graphics.PROPORTIONAL_INK_MARGIN)
-	testing.expect_value(t, int(table.records[0].x), 10 - margin)
+	testing.expect_value(t, first.x, 10 - margin)
+	testing.expect_value(t, first.origin_x, draw_record.units_of_pixels(10))
 	plain_after := draw_text(&plain, 10, 0, "To LT", graphics.colors.text, FONT_INTERFACE)
-	testing.expect_value(t, plain.records[0].kind, Draw_Kind.Text)
+	testing.expect_value(t, record_view(plain.records[0]).kind, Draw_Kind.Text)
 	testing.expect_value(t, plain_after, 10 + 5 * graphics.CELL_WIDTH)
 	long: [INTERFACE_TEXT_LIMIT + 1]u8
 	for &byte in long {
 		byte = 'a'
 	}
 	draw_text(&table, 0, 20, string(long[:]), graphics.colors.text, FONT_INTERFACE)
-	testing.expect_value(t, table.records[1].kind, Draw_Kind.Text)
+	testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Text)
 	// A text that ends at a place: its origin is at a third of a pixel, and
 	// its measured box ends at the place, rounded up.
 	draw_text_right(&table, 100, 40, "Ty", graphics.colors.text, FONT_INTERFACE)
 	record := table.records[2]
-	testing.expect(t, record.text_origin_thirds <= 2)
-	testing.expect(t, int(record.x + record.width) - int(record.second_color) <= 101)
+	view := record_view(record)
+	testing.expect(t, view.read && draw_record.origin_valid(view.origin_x, record.left))
+	testing.expect(t, view.x + view.width - ink_margin_of(view) <= 101)
 	// The measure of many texts in one call gives the measures one by one.
 	texts := [?]string{"To", "LT", "palette", "", "W"}
 	widths: [len(texts)]int
@@ -314,9 +332,11 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 }
 
 // An Interface_Text record that a caller wrote by hand: a range outside
-// the text table, a third of 3, an ink margin that would wrap or pass its
-// limit, a scale of 0 or 4: it draws nothing and makes no fault, and a
-// record with a range outside its table is equal to no record.
+// the text table, an origin inside a pixel and off a third, an origin past
+// the largest ink margin or at the largest value, a scale of 0 or 4, a
+// weight that names no member, a box past the coordinate limit: it draws
+// nothing and makes no fault, and a record with a range outside its table
+// is equal to no record.
 @(test)
 hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 	font := test_interface_font(t)
@@ -326,16 +346,22 @@ hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 	table := font_table_of(memory, &font.font)
 	copy(table.text[:], "To LT")
 	table.text_count = 5
-	good := Draw_Record{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, x = 0, y = 0, width = 60, height = 16, text_start = 0, text_count = 5}
+	Fields :: draw_record.Interface_Text_Fields
+	// The box of 60 by 16 pixels at the corner, and the origin 2 pixels
+	// inside it: the ink margin of the font.
+	right, bottom := draw_record.units_of_pixels(60), draw_record.units_of_pixels(16)
+	origin := draw_record.units_of_pixels(2)
+	good := interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom)
 	hostile := [?]Draw_Record {
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_start = 3, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_start = max(u32), text_count = max(u32)},
-		{kind = .Interface_Text, text_scale = 1, text_origin_thirds = 3, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = max(u32), width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = INK_MARGIN_LIMIT + 1, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 0, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 4, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, x = max(i32), y = max(i32), width = max(i32), height = max(i32), text_count = 5},
+		interface_text_record_of(Fields{first = 3, count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{first = max(u32), count = max(u32), color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin + 1, scale = 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = max(i32), scale = 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = draw_record.units_of_pixels(INK_MARGIN_LIMIT + 1), scale = 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 0}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = draw_record.TEXT_SCALE_LIMIT + 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1, weight = u8(max(Font_Weight)) + 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, max(i32) - 63, max(i32) - 63, max(i32) - 63, max(i32) - 63),
 	}
 	pixels: [64 * 16]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 64, height = 16, stride = 64}
