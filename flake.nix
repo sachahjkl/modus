@@ -224,8 +224,9 @@
     sourcesOfOdin = inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "odin" && builtins.match ".*_test(_[a-z0-9]+)*\\.odin" file.name == null);
     kernelParts = map (name: ./src/kernel + "/${name}") (builtins.attrNames (inputs.nixpkgs.lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./src/kernel)));
     # The cryptography of the library links the memory procedures of the
-    # host in assembly, which nasm assembles at the compile of the tool.
-    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/library) (sourcesOfOdin ./src/modules/cryptography) ./src/runtime/memory_for_host_tests.asm ./resources/fonts/commit_mono.ttf] ++ map sourcesOfOdin kernelParts);
+    # host in assembly, which nasm assembles at the compile of the tool; that
+    # file includes the memory procedures of the system.
+    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/library) (sourcesOfOdin ./src/modules/cryptography) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime) ./resources/fonts/commit_mono.ttf] ++ map sourcesOfOdin kernelParts);
 
     # The tool as a derivation of its own: the check and the release shell
     # run this binary, and Nix builds it again only when a file of
