@@ -82,7 +82,7 @@ Three rules apply to every decision:
 | 15 | Isolation inside a program for untrusted code | Decided |
 | 16 | Removed concepts | Decided |
 | 17 | Trusted boot: UEFI program, Secure Boot, TPM | Decided (detail proposed) |
-| 18 | One graphics interface: WebGPU with WGSL | Decided (detail proposed) |
+| 18 | One 2D interface: the draw table; WebGPU later for the GPU | Decided (record form designed) |
 | 19 | A command is a function: no text between programs | Decided (detail proposed) |
 | 20 | No ambient access: the other holes to close | Decided |
 | 21 | Principals: who acts, without users | Decided (layers 1 and 2); direction for the rest |
@@ -382,32 +382,35 @@ Status: Decided. The detail below is proposed.
 - **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
 - **State**: built: the signed system description, the measure into PCR 11 and Secure Boot (`docs/TRUSTED_BOOT.md`); the seal of the machine key and of the keys of a named principal by the TPM service (`docs/PRINCIPALS.md`, "The machine key sealed by the TPM" and "The keys sealed by the TPM"); the TPM floors, which refuse an older signed system and a revoked key (`docs/TRUSTED_BOOT.md`, "10. The TPM floors"). The work that is left is in `ROADMAP.md`.
 
-## 18. One graphics interface: WebGPU with WGSL
+## 18. One 2D interface: the draw table
 
-Status: Decided. The detail below is proposed.
+Status: Decided. The rationalised form of the record is designed, not built (`src/md/api/draw_table.md`).
 
-**In short.** Programs draw through one standard interface. Today a program draws on the processor into shared memory, and the compositor puts the pictures on the screen; the WebGPU interface is decided and not built.
+**In short.** Programs draw in 2D through one interface: a table of fixed draw records in their own memory, which the drawing module draws into the surface and which the compositor draws into the screen. WebGPU is the later interface of the GPU; when a GPU exists, the draw table is drawn through it.
 
-- **Rule**: Programs draw through one interface: WebGPU. They write shaders in one language: WGSL. The system exposes no other graphics interface.
+- **Rule**: A program draws in 2D through one interface: the draw table. A frame is a table of draw records of one fixed size, in the memory of the program (property 14). The system exposes no other 2D interface.
+- **Rule**: The records are a closed set of primitives: a rectangle, a gradient along a line, a path with a fill and a stroke, a text run, a picture, a clip that is pushed and popped. Each record has a kind and the fields of that kind only. A color has an alpha, and one blending rule serves every kind. The look of the system (the grid of points, the folded gap) is elements of the interface package, drawn with the primitives, never a kind of the format.
+- **Rule**: A record names its bytes and its pixels by values, never by an address. The execution refuses a hostile record within stated bounds. The damage of a frame is the difference of two tables, and a frame drawn in its damage gives the same pixels as the frame drawn whole.
+- **Rule**: The compositor draws its screen with the same records as the programs.
 - **Why it fits**:
-  1. WebGPU is a published standard with more than one implementation. It removes the "which graphics interface" problem that Blow describes for Linux. [Blow §9]
-  2. WebGPU was designed for untrusted code. Every call is validated, and a program cannot reach undefined behaviour of the device. This matches the sandbox of property 2.
-  3. WebGPU is a command buffer interface: a program records commands and submits them to a queue. This is the shape of property 4.
-  4. WGSL is a text format with a full specification, so the shader that a program ships means the same thing on every machine.
-- **Rule**: The compositor of the desktop uses the same interface as programs.
-- **Layers** (grow in this order):
-  1. A software implementation that draws into the UEFI framebuffer. It makes the interface work on the first machine with no device code. Blow starts in the same place. [Blow §10]
-  2. A virtio-gpu back end under QEMU.
-  3. A back end for one real graphics device.
-- **Forbids**: OpenGL, vendor shader languages as a program-facing format, a window system protocol that carries drawing commands. [Blow §10]
-- **Cost**: A WebGPU implementation is large. The existing ones, wgpu and Dawn, sit on Vulkan, Metal or Direct3D, which this system does not have. The project must write a back end for each device, or bring up a Vulkan driver in user space. This is the largest piece of device work in the plan.
-- **Cost**: WebGPU lacks some features of the native interfaces. This is accepted: one mechanism for one concept.
-- **Tension with property 7**: Blow wants a very thin graphics driver. A WebGPU back end for a real device is not thin. The software back end and virtio-gpu delay this problem; they do not remove it.
-- **Reuse**: the WebGPU and WGSL specifications. An existing WGSL compiler front end (Naga, Tint) if its language fits the project. The WebGPU conformance test suite, to test the implementation.
-- **Rule**: The project writes the WebGPU implementation from nothing. It does not port wgpu or Dawn. Graphical code is a program of this system and uses no existing toolkit.
-- **Order**: No GPU at first. First: the boot program passes the UEFI framebuffer; a surface is a shared memory region of pixels with a "present" command that names the changed rectangles; the compositor copies surfaces to the framebuffer; programs draw on the CPU. Second: the first WebGPU subset with a software back end that renders into the same surfaces. Third: virtio-gpu. Fourth: one real GPU. A surface is the way to share pixels, not a second drawing interface. See `research/webgpu_from_nothing_study.md`.
-- **Open**: The role of the kernel: the proposal is none beyond the mapping of device queues (property 5). How the compositor shares surfaces with programs; shared memory of property 6 is the proposal.
-- **State**: the first step of the order is built: a surface is shared memory of pixels, the compositor copies the changed rectangles to the framebuffer, and programs draw on the processor (`src/library/support/graphics`, `src/library/support/interface`, `INTERFACE.md`). On the standard VGA of the test machine, the compositor writes the screen page that the display does not show and flips, with one write and one read of the display registers for each frame: it is device code, and the interface still works with none, on the framebuffer alone (`src/md/infrastructure/whole_frame.md`). No WebGPU subset, no virtio-gpu and no real GPU are built.
+  1. The output of a frame is data: a table can be compared, drawn again in a part, measured, tested, and drawn by another back end. This is the shape of property 4, with no queue to a device.
+  2. A record holds values only and the execution checks each one, so a program cannot reach the memory of another program through it. This matches the sandbox of property 2.
+  3. The drawing is code that runs on the processor in the address space of the program, through one library module (property 10). It needs no device and no driver (property 7).
+  4. Its size is the size of the 2D drawing: a rasterizer in integers that the vector font already has, the blends, the text from the glyph caches.
+- **Rule**: WebGPU, with shaders in WGSL, is the later interface of the GPU. When a GPU exists, the drawing module has a back end that draws the draw table through WebGPU. The draw table is never drawn through a software WebGPU.
+- **Refused**: a software adapter of WebGPU as the 2D interface. It needs a compiler of WGSL for the processor, larger than the whole 2D drawing, and it draws a rectangle through a shader.
+- **Layers of the GPU** (grow in this order, each after the draw table works on the processor):
+  1. A virtio-gpu back end under QEMU (`src/md/features/gpu_access.md`).
+  2. A back end for one real graphics device.
+- **Forbids**: a second 2D interface beside the draw table, OpenGL, vendor shader languages as a program-facing format, a window system protocol that carries drawing commands to another program. [Blow §10]
+- **Cost**: A record is 48 bytes, and alpha, antialiased edges and paths cost more on the processor than the fills of today; each cost is an estimate to measure (`src/md/api/draw_table.md`, "What costs more than version 10").
+- **Cost**: A program that needs 3D or compute has no interface until the GPU layers exist. This is accepted: the first machine has no GPU.
+- **Cost of the GPU layers**: A WebGPU implementation is large. The existing ones, wgpu and Dawn, sit on Vulkan, Metal or Direct3D, which this system does not have. This is the largest piece of device work in the plan.
+- **Tension with property 7**: Blow wants a very thin graphics driver. A WebGPU back end for a real device is not thin. The draw table on the processor delays this problem; it does not remove it.
+- **Reuse**: the exact-area rasterizer of font-rs and stb_truetype 2, as ideas. The WebGPU and WGSL specifications for the GPU layers.
+- **Rule**: The project writes the drawing from nothing. It does not port wgpu, Dawn, Skia or another 2D library. Graphical code is a program of this system and uses no existing toolkit.
+- **Open**: The role of the kernel for a GPU: the proposal is none beyond the mapping of device queues (property 5).
+- **State**: built: a surface is shared memory of pixels, the compositor copies the changed rectangles to the framebuffer, and programs draw on the processor through the draw table, version 10, and the drawing module (`src/library/support/graphics`, `src/library/support/interface`, `INTERFACE.md`). On the standard VGA of the test machine, the compositor writes the screen page that the display does not show and flips (`src/md/infrastructure/whole_frame.md`). Left: the rationalised form of the record, in the steps of `ROADMAP.md`; no virtio-gpu and no real GPU are built.
 
 ## 19. A command is a function: no text between programs
 

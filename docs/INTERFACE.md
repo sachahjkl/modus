@@ -50,6 +50,8 @@ Why, against a retained tree of widgets:
 
 ### 2.1 Draw record (format version 10)
 
+This section is the form that is built. The draw table is the one 2D interface of the system (`PROPERTIES.md`, "18. One 2D interface: the draw table"), and the form that replaces this one, a record of 48 bytes with the fields of its kind only, is designed in `src/md/api/draw_table.md`.
+
 A draw record is 40 bytes. The fields are little-endian, in this order:
 
 | Offset | Field | Type | Meaning |
@@ -336,7 +338,8 @@ The draw table is the whole output of a frame. Execution turns it into pixels in
 
 - `execute(table, canvas)` draws each record into a canvas of the program (its surface), in order: `Rectangle` is a `fill`, `Vertical_Gradient` is the `block` of the rules, `Horizontal_Gradient` is the `gradient` row of the title bar, `Text` is the font of the system.
 - `execute_in_rectangles(table, canvas, rectangles)` draws, for each rectangle, the records that touch it, cut to it.
-- **A later back end** (property 18, WebGPU): the same table is the input of a GPU pass: one instance for each record, the gradients in the vertex colors, the text from an atlas or from outlines (section 9). The format has no pointer and no field that only the processor can read.
+- **The one 2D interface** (`PROPERTIES.md`, "18. One 2D interface: the draw table"): the draw table is the 2D interface of the system, for the windows and the compositor. Its rationalised form (a header and the fields of one kind, 1/64 pixel, colors with alpha and one blending rule, paths, a clip stack) is designed in `src/md/api/draw_table.md`, and its steps are in `ROADMAP.md`.
+- **A later back end** (WebGPU, when a GPU exists): the same table is the input of a GPU pass: one instance for each record, the text from the glyph caches, the clip as a scissor rectangle (`src/md/api/draw_table.md`, "The execution"). The format has no pointer and no field that only the processor can read.
 
 ## 7. Where it lives: the elements in each program, the drawing in a module
 
@@ -438,7 +441,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 
 ### What it means for this system
 
-- This system draws with the processor (the first stage of property 18). Slug is a GPU method: the bands and the root solvers save work for thousands of pixels in parallel. On the processor, the same exact coverage comes cheaper from a scanline rasterizer: each line segment of the outline adds its signed area to an accumulation row, and one prefix sum gives the coverage of each pixel (the method of font-rs and of stb_truetype 2). The quadratic curves are cut into line segments within a tolerance.
+- This system draws with the processor (property 18: the draw table, drawn on the processor). Slug is a GPU method: the bands and the root solvers save work for thousands of pixels in parallel. On the processor, the same exact coverage comes cheaper from a scanline rasterizer: each line segment of the outline adds its signed area to an accumulation row, and one prefix sum gives the coverage of each pixel (the method of font-rs and of stb_truetype 2). The quadratic curves are cut into line segments within a tolerance.
 - **The prototype** (`src/library/support/vector_font`, the program `vector_glyphs`): a parser of a subset of TrueType (`head`, `hhea`, `maxp`, `cmap` format 4, `hmtx`, `loca`, `glyf` with simple glyphs) that checks each offset and each count against the length of the file (a font is hostile input); a rasterizer with exact area coverage, a horizontal position in 1/64 of a pixel, and an option of coverage per color stripe (three samples per pixel, then the 5-tap filter 8, 77, 86, 77, 8 / 256 against color fringes).
 - **The measures**: one glyph of Spleen 8x16, 32 ns; one glyph of 13 pixels from its outline, 2939 ns in grayscale, 2396 ns on a whole pixel, 5502 ns with color stripes: about 90 times more, with no cache of the coverage of a glyph. The program `vector_glyphs` showed the same text in the two fonts, and one glyph enlarged 8 times in grayscale and with color stripes; it draws the candidate fonts now (the picture `font_candidates`).
 - **What the picture shows**: at 13 pixels the outline font has the shapes of its design and even spaces (an advance of 7.8 pixels), and its stems are softer than the stems of Spleen, which sit on whole pixels; the color stripes give sharper sides with faint colors at the edges. Spleen is sharper at its one size.

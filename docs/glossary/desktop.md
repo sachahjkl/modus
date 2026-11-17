@@ -56,7 +56,7 @@ The compositor is the service that owns the display: it combines the surfaces of
 
 The compositor is the one program that writes the screen. It draws the background, the bar, each window with its title bar, the menus, the palette and the pointer, and only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event to the program of the surface under the pointer. Today it is also the desktop shell. The compositor is not a display server with a protocol of drawing: a program gives it pixels, never commands to draw.
 
-The design: `docs/ARCHITECTURE.md`, "U8. Graphics: WebGPU library and compositor".
+The design: `docs/ARCHITECTURE.md`, "U8. Graphics: the draw table and the compositor".
 
 Do not use: window manager, display server.
 
@@ -284,11 +284,21 @@ Do not use: draw command, display list item, primitive.
 
 A draw table is the draw records of one frame of a window, the bytes of their texts and the cells of their text grids, and the picture memories that they name, in the memory of the program.
 
-The draw table is what a frame produces. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a record that names memory outside the table sets `refused`. Example: `interface_elements` draws a window of 68 records. A draw table is not a tree: its order is the order of the drawing, and two tables compare record by record at the same index.
+It is the one 2D interface of the system: each window and the compositor draw through it, and a GPU later draws the same table through WebGPU. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, to find the damage by difference. A full table sets `full`; a record that names memory outside the table sets `refused`. A draw table is not a tree: two tables compare record by record at the same index.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)".
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)"; its rationalised form: `src/md/api/draw_table.md`.
 
 Do not use: display list, command buffer, render tree.
+
+### Byte table
+
+The byte table is the bytes of a draw table that its records name by an offset: the UTF-8 of the texts, the cells of the text grids and, in the rationalised form, the points of the paths.
+
+A record holds no address, so its variable part goes here, and the record keeps a fixed size. The difference ignores the offset of a record and compares the bytes that it names. Today it is the field `text` of `Draw_Table`, the text table; the rationalised form names it `bytes`. A byte table is not a heap: it is filled in the order of the records and emptied at each frame.
+
+The design: `src/md/api/draw_table.md`, "The byte table".
+
+Do not use: text buffer, payload buffer, arena.
 
 ### Window memory
 

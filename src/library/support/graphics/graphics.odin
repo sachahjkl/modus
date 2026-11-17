@@ -1,6 +1,6 @@
 // The graphics library: drawing with the processor into pixel memory
-// (the system has no GPU code yet, and programs draw on the processor
-// first: docs/PROPERTIES.md, "One graphics interface"). It is compiled into
+// (the draw table is the one 2D interface, drawn on the processor:
+// docs/PROPERTIES.md, "One 2D interface"). It is compiled into
 // each program that draws.
 //
 // Who uses it: the boot program (the boot display), the compositor, and
