@@ -447,12 +447,16 @@ run_fuzz :: proc(args: []string) -> int {
 		return 0
 	}
 	// A run: one target, or all of them in turn.
-	executions: u64
+	// A run always has a count: a forgotten argument must not start a run
+	// with no end, so the default is the count of the check, and 0 is
+	// refused. A long run names its count.
+	executions := u64(FUZZ_CHECK_EXECUTIONS)
 	processes := 1
 	seed := fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
 	if len(args) >= 2 {
 		value, ok := strconv.parse_u64(args[1])
-		if !ok {
+		if !ok || value == 0 {
+			fmt.eprintln("modustool: the count of executions is a number of 1 or more; a long run names its count, as 100000000")
 			fmt.eprintln(usage_text)
 			return EXIT_USAGE
 		}

@@ -3,6 +3,42 @@ package datagram
 
 import "core:testing"
 
+// The kind of a record of an endpoint ring and of the control ring comes
+// from another program: None, one past the last member and the largest
+// word are refused, and give None. Then each member but None comes back
+// from its word.
+@(test)
+ring_words_refuse_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	commands_refused := [?]u32{u32(Command.None), u32(max(Command)) + 1, max(u32)}
+	for word in commands_refused {
+		read, ok := command_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no command, and it is taken", word)
+		testing.expect_value(t, read, Command.None)
+	}
+	controls_refused := [?]u32{u32(Control.None), u32(max(Control)) + 1, max(u32)}
+	for word in controls_refused {
+		read, ok := control_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no control, and it is taken", word)
+		testing.expect_value(t, read, Control.None)
+	}
+	for member in Command {
+		if member == .None {
+			continue
+		}
+		read, ok := command_of_ring_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
+	for member in Control {
+		if member == .None {
+			continue
+		}
+		read, ok := control_of_ring_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
+}
+
 // expect_refused checks that grant_unpack refuses a word: known is false and
 // the grant is zero, so that no right of the word reaches the caller.
 @(private = "file")

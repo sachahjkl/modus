@@ -16,6 +16,7 @@
 package boot
 
 import info "modus:contract/boot_info"
+import "modus:contract/enum_word"
 import "modus:support/bootscreen"
 import "modus:support/graphics"
 import op "modus:contract/operation"
@@ -26,6 +27,13 @@ kernel_file := #load(#config(KERNEL_MODULE, "../../build/modules/kernel.module")
 // The tool can give another boot image, for the test of a start that fails.
 boot_image := #load(#config(BOOT_IMAGE, "../../build/boot.image"))
 display_data: bootscreen.Data
+
+// The self test that the tool chose for this build. The word of the build
+// must name a test: the build stops on a word past the last one, so the
+// kernel never reads a test that names nothing.
+BOOT_SELF_TEST_WORD :: u64(#config(SELF_TEST, 0))
+#assert(BOOT_SELF_TEST_WORD <= u64(max(info.Self_Test)))
+BOOT_SELF_TEST :: info.Self_Test(BOOT_SELF_TEST_WORD)
 
 foreign _ {
 	boot_jump :: proc "win64" (page_table: u64, entry: u64, boot: u64, stack: u64) -> ! ---
@@ -59,7 +67,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot := (^info.Boot_Info)(allocate(1))
 	boot.magic = info.MAGIC
 	boot.cycles_start = cycles_start
-	boot.self_test = info.Self_Test(#config(SELF_TEST, 0))
+	boot.self_test = BOOT_SELF_TEST
 	boot.framebuffer = framebuffer()
 	for &character, index in boot.firmware_vendor[:len(boot.firmware_vendor) - 1] {
 		unit := system.firmware_vendor[index]
@@ -246,12 +254,18 @@ framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
 		height          = mode_info.height,
 		pixels_per_line = mode_info.pixels_per_line,
 	}
-	#partial switch mode_info.format {
+	// The firmware writes the format: a word that names no format gives no
+	// display, as a format with no pixels in memory does.
+	format, format_ok := enum_word.member_of_word(Efi_Pixel_Format, u64(mode_info.format))
+	if !format_ok {
+		return {}
+	}
+	switch format {
 	case .Red_Green_Blue:
 		result.format = .Red_Green_Blue_X
 	case .Blue_Green_Red:
 		result.format = .Blue_Green_Red_X
-	case:
+	case .Bit_Mask, .Blt_Only:
 		result = {}
 	}
 	return

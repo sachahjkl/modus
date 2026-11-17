@@ -99,15 +99,17 @@ state_names := [tcp.State]string {
 }
 
 state_color :: proc "contextless" (state: tcp.State) -> graphics.Color {
-	#partial switch state {
+	switch state {
 	case .Syn_Sent, .Syn_Received:
 		return graphics.colors.boot_program
 	case .Established, .Close_Wait:
 		return graphics.colors.program
 	case .Closed:
 		return graphics.colors.not_usable
+	case .Fin_Wait_1, .Fin_Wait_2, .Closing, .Time_Wait, .Last_Ack:
+		// The end of a connection.
 	}
-	return graphics.colors.kernel // FIN states and TIME-WAIT: the end of a connection.
+	return graphics.colors.kernel
 }
 
 // The columns of the table of connections (a card 536 pixels wide).

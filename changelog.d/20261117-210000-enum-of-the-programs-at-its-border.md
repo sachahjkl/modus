@@ -1,0 +1,3 @@
+type: Fixed
+
+**Each enum of the programs and of the kernel read at its border.** A program that writes a word of no member in a ring, a context or a shared page now gets a refusal from the block, frame and network services, the compositor, the console, the terminal and the test programs, with its error record, a line of the log or a stop of the reading program, where it was ignored or read as another member before. Each choice of the programs, of the boot program, of the kernel and of the operation contract now names each member, so a new member stops the build at each place that must choose its case.

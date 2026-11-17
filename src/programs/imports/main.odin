@@ -297,11 +297,17 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 	own_base := space.modules[place].base
 	if own_modules() {
 		for item in module_report.modules[:min(module_report.count, op.PROGRAM_MODULE_CAPACITY)] {
+			// A word that names no writer is not found: the case then fails.
+			writer, writer_ok := op.module_writer_of_word(item.writer)
+			if !writer_ok {
+				system.log("imports: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
+				continue
+			}
 			if item.base == op.PROGRAM_BASE {
-				found.program_writer, found.program_found = item.writer, true
+				found.program_writer, found.program_found = writer, true
 			}
 			if item.base == own_base {
-				found.own_writer, found.own_found = item.writer, true
+				found.own_writer, found.own_found = writer, true
 			}
 		}
 	}
@@ -463,8 +469,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// the program cannot change it. Its own load is a record of its own.
 	starter := starter_records_check()
 	starter_right := starter.refused == STARTER_CHANGES && starter.program_found && starter.program_writer == .Starter && starter.own_found && starter.own_writer == .Program && starter.released
-	note("the module record of the root service", starter_right, starter.refused, " of ", u64(STARTER_CHANGES), " changes refused; calendar loaded here: ", op.module_writer_name(starter.own_writer))
-	system.log("imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", op.module_writer_name(starter.program_writer), "; calendar, loaded by this program: writer ", op.module_writer_name(starter.own_writer))
+	note("the module record of the root service", starter_right, starter.refused, " of ", u64(STARTER_CHANGES), " changes refused; calendar loaded here: ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
+	system.log("imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", (starter.program_found ? op.module_writer_name(starter.program_writer) : "not found"), "; calendar, loaded by this program: writer ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
 
 	wrong: u64
 	for item in cases[:case_count] {

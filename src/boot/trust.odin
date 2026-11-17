@@ -188,9 +188,11 @@ check_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 	print("\r\n")
 	// The card of the boot image names the file whole, also when the head
 	// has no room for its whole sentence.
-	#partial switch result.fault {
+	switch result.fault {
 	case .Name_Differs, .Kind_Differs, .Outside_Image, .Size_Differs, .Hash_Differs, .Stated_Hash_Differs:
 		display_data.failed_name = name
+	case .None, .Not_Valid, .Image_Not_Valid, .Count_Differs:
+		// No one file of the boot image is at fault.
 	}
 	trust_stop(boot, step, string(shown.bytes[:shown.count]))
 }
@@ -528,13 +530,16 @@ floor_raise :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, index: u32, name: st
 		}
 		print("boot program: ")
 		print(name)
-		#partial switch state {
+		switch state {
 		case .Never_Written:
 			print(": removed an index that was never written: another system planted it\r\n")
 		case .Read_Refused:
 			print(": removed an index whose read the TPM refuses: another system planted it with an authorization value\r\n")
-		case:
+		case .Foreign:
 			print(": removed a foreign index: another system defined it, or PCR 7 changed\r\n")
+		case .None, .Absent, .Held, .Not_Read:
+			// floor_step_of removes the index of no such state.
+			print(": removed an index\r\n")
 		}
 	}
 	if step != .Raise {

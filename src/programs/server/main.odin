@@ -372,11 +372,13 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 			}
 			// The limits: also after this server closed, while it has bytes
 			// to send (FIN-WAIT-1, CLOSING, LAST-ACK).
-			#partial switch connection.state {
+			switch connection.state {
 			case .Established, .Close_Wait, .Fin_Wait_1, .Fin_Wait_2, .Closing, .Last_Ack:
 				if round == 0 {
 					http_limits(index, system.time())
 				}
+			case .Closed, .Syn_Sent, .Syn_Received, .Time_Wait:
+				// No bytes of a request or of an answer are in flight.
 			}
 		}
 		more := tcp.Output{memory = region, place_size = PLACE_SIZE, places = free_places[output.count:free_count], segments = segments[output.count:]}

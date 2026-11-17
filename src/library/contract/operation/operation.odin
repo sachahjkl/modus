@@ -1650,12 +1650,16 @@ Guest_Exit_Kind :: enum u64 {
 // the program, which the program cannot change; a record of the writer
 // `Program` is a claim of the program. 88 bytes. See
 // [module record](term:module-record).
+//
+// The writer is a word, not a member: a reader takes it from a report of
+// the kernel through module_writer_of_word, and refuses a word that names
+// no writer.
 Module_Record :: struct {
 	base:     u64, // The address of the first byte of the module in the program.
 	size:     u64, // The bytes of addresses of the module. 0: no module.
 	hash:     [32]u8, // The hash of the module that is loaded: BLAKE3 of its file, the name of the module in the module store.
 	replaces: [32]u8, // Zero, or the hash that an import names and that a replacement changed to `hash`.
-	writer:   Module_Writer, // Who wrote the record. The kernel writes it; `Program_Module` does not read it.
+	writer:   u64, // Who wrote the record: the word of a Module_Writer. The kernel writes it; `Program_Module` does not read it.
 }
 #assert(size_of(Module_Record) == 88)
 
@@ -1688,17 +1692,20 @@ module_writer_of_word :: proc "contextless" (word: u64) -> (writer: Module_Write
 	return {}, false
 }
 
+// The word of each writer in a row of a table. The compiler checks that the
+// array names each writer, so a new writer cannot have no word.
+@(rodata)
+MODULE_WRITER_NAMES := [Module_Writer]string {
+	.Program = "program",
+	.Starter = "starter",
+}
+
 // module_writer_name gives the word of a writer in a row of a table:
 // "program" or "starter". Each word fits MODULE_WRITER_NAME_CAPACITY bytes.
+// It takes a member that module_writer_of_word gave: there is no word for a
+// writer that names nothing.
 module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
-	switch writer {
-	case .Program:
-		return "program"
-	case .Starter:
-		return "starter"
-	}
-	// Only a cast that skipped module_writer_of_word reaches this line.
-	return "unknown"
+	return MODULE_WRITER_NAMES[writer]
 }
 
 // The module records of one program: the program module, the modules that

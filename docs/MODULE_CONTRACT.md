@@ -350,7 +350,7 @@ Status of the loader in user space (`src/library/support/system/load.odin`):
 
 ### The writer of a module record
 
-The kernel marks each module record with its module writer (`op.Module_Writer`): `starter` when another program wrote it through the program handle with Control, `program` when the program wrote it for itself. The kernel knows the writer at each `Program_Module`: it compares the program of the record with the program that calls. The kernel writes the record of the root service with the writer `starter`.
+The kernel marks each module record with its module writer, the word of an `op.Module_Writer` in the field `writer`: `starter` when another program wrote it through the program handle with Control, `program` when the program wrote it for itself. A reader takes the word through `op.module_writer_of_word`, which refuses a word that names no writer. The kernel knows the writer at each `Program_Module`: it compares the program of the record with the program that calls. The kernel writes the record of the root service with the writer `starter`.
 
 A program cannot change a record of the writer `starter`. The kernel refuses, with `No_Right` and the error kind `Starter_Module`:
 

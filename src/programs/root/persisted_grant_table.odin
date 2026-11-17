@@ -140,9 +140,11 @@ key_words :: proc "contextless" (principal: u64) -> string {
 // table of principal 0: `unlock` then does not ask for the machine
 // passphrase (after a lock).
 machine_key_held :: proc "contextless" () -> bool {
-	#partial switch persisted_tables[principals.MACHINE].state {
+	switch persisted_tables[principals.MACHINE].state {
 	case .Reading, .Kept, .Unread, .Refused, .Unwritten:
 		return true
+	case .No_Passphrase, .Awaited, .Record_Unreadable:
+		return false
 	}
 	return false
 }

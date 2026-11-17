@@ -74,6 +74,7 @@
 // host of the run: no test compares it to a bound.
 package heron
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -405,9 +406,14 @@ animation_key_take :: proc "contextless" (wanted: mark.Animation) {
 key_take :: proc "contextless" (character: rune) {
 	switch {
 	case character >= '1' && character <= '9':
-		animation_key_take(mark.Animation(character - '1'))
+		// A key past the last animation names none: it does nothing.
+		if wanted, wanted_ok := enum_word.member_of_word(mark.Animation, u64(character - '1')); wanted_ok {
+			animation_key_take(wanted)
+		}
 	case character >= 'a' && character <= 'f':
-		animation_key_take(mark.Animation(9 + character - 'a'))
+		if wanted, wanted_ok := enum_word.member_of_word(mark.Animation, u64(9 + character - 'a')); wanted_ok {
+			animation_key_take(wanted)
+		}
 	case character == ' ':
 		paused = !paused
 		pause_line_waits = true
@@ -869,7 +875,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		system.service_run(&service)
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Key:
 				if event.pressed {
 					key_take(event.character)
@@ -877,6 +883,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Settings_Changed:
 				// A new font: each text of the band is drawn again.
 				interface.draw_whole_window_next(&window_memory.drawing)
+			case .None, .Pointer, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 		// The compositor did not take the last picture yet: it can still

@@ -138,7 +138,7 @@ cases := [CASE_CAPACITY]Case {
 	{text = "log a text in the kernel half", expected = "Bad_Address"},
 	{text = "a program name of 40 bytes", expected = "Too_Long"},
 	{text = "memory with an unknown flag", expected = "Bad_Flags"},
-	{text = "the kernel operation 99", expected = "Unknown_Operation"},
+	{text = "an operation past the last", expected = "Unknown_Operation"},
 	{text = "load lonely: its import is absent", expected = "load: Find"},
 	{text = "load agenda, calendar_changed", expected = "load: Check"},
 	{text = "direct call: square_root(-4)", expected = "Too_Small"},
@@ -396,7 +396,9 @@ case_flags :: proc "contextless" (writer: ^system.Writer) -> bool {
 
 case_operation :: proc "contextless" (writer: ^system.Writer) -> bool {
 	record: errors.Error_Record
-	_, status := system.call_with_error(&record, op.Operation(99))
+	// The case writes, on purpose, the word one past the last operation: the
+	// kernel must refuse it.
+	_, status := system.call_with_error(&record, op.Operation(int(max(op.Operation)) + 1))
 	return kernel_text(writer, &record, status, .Unknown_Operation)
 }
 
@@ -931,11 +933,18 @@ contention: Contention
 // explains says if the kind of a record can be the cause of a status, as
 // the contract states it.
 explains :: proc "contextless" (record: ^errors.Error_Record, status: system.Status) -> bool {
-	kind := errors.Kind(record.kind)
+	// A kind word that names no kind explains nothing.
+	kind, kind_ok := errors.kind_of_word(record.kind)
+	if !kind_ok {
+		return false
+	}
 	if kind == .Refused {
 		return record.found == i64(status)
 	}
-	#partial switch status {
+	switch status {
+	case .Ok, .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .Bad_State:
+		// The failures of this case give none of these.
+		return false
 	case .Bad_Handle:
 		return kind == .Handle_Absent || kind == .Handle_Ended || kind == .Handle_Kind || kind == .No_Target
 	case .No_Right:
@@ -1137,7 +1146,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.wait(&window)
 		for event in display.next_event(&window) {
 			chosen := -1
-			#partial switch event.kind {
+			switch event.kind {
 			case .Key:
 				if event.pressed && event.code == KEY_TAB {
 					shown_page = (shown_page + 1) % page_count
@@ -1155,6 +1164,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					chosen = case_at(event.y)
 				}
 				pressed = down
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 			if chosen >= 0 {
 				run(chosen)

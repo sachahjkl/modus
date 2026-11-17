@@ -156,6 +156,7 @@ Client :: struct {
 	frames:      u64,
 	pictures_drawn_again: u64,
 	presents_refused: u64, // The Present records whose picture number names no picture of the surface.
+	commands_refused: u64, // The records whose kind names no command, or None: the first one writes a line.
 	x, y:        int,
 	title:       system.Name,
 	// A disk program: the root service gave its nickname and the first
@@ -621,7 +622,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		for record in system.receive(&control.commands) {
-			#partial switch display.Control(record.kind) {
+			kind, kind_ok := display.control_of_ring_word(record.kind)
+			if !kind_ok {
+				system.log("compositor: the root service sent the control word ", u64(record.kind), ", which names no control command")
+				continue
+			}
+			switch kind {
 			case .Client_Add:
 				client_add(record)
 			case .Client_Remove:
@@ -630,15 +636,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				palette_provider_add(system.Handle(record.values[0]), system.Handle(record.values[1])) // palette.odin
 			case .Palette_Provider_Remove:
 				palette_provider_remove()
+			case .None, .Start, .Stop:
+				// The border refused None above. Start and Stop go from the
+				// compositor to the root service, never to the compositor.
+				system.log("compositor: the root service sent the control command ", u64(record.kind), ", which the compositor does not take")
 			}
 		}
 		window_events_pass() // The records that wait go before the new ones.
 		for record in system.receive(&input.commands) {
-			#partial switch display.Input(record.kind) {
+			kind, kind_ok := display.input_of_ring_word(record.kind)
+			if !kind_ok {
+				system.log("compositor: the input service sent the word ", u64(record.kind), ", which names no input")
+				continue
+			}
+			switch kind {
+			case .None:
+				// The border refused None above.
 			case .Key:
 				key_records += 1
 				if !palette_key(u32(record.values[0]), display.key_character_of(record.values[1]), record.values[2] != 0, u32(record.values[3])) && order_count > 0 {
-					send(&clients[order[order_count - 1]], ring.Record{kind = u32(display.Event_Kind.Key), values = record.values})
+					send(&clients[order[order_count - 1]], .Key, record.values)
 				}
 			case .Pointer:
 				// The input service is a program: a count of notches far
@@ -661,7 +678,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for _ in 0 ..< system.records_of_turn(&client.ring.commands) {
 				record := system.receive(&client.ring.commands) or_break
 				taken = true
-				#partial switch display.Command(record.kind) {
+				// A program writes the word: a word of no command, and None,
+				// are counted, and the first one of a window writes a line,
+				// so a window that writes many cannot fill the log of the
+				// compositor.
+				command, command_ok := display.command_of_ring_word(record.kind)
+				if !command_ok {
+					if client.commands_refused == 0 {
+						system.log("compositor: a window sent the word ", u64(record.kind), ", which names no command; the next ones are counted, and the count comes when the window closes")
+					}
+					client.commands_refused += 1
+					continue
+				}
+				switch command {
+				case .None:
+					// Refused above: None is no command.
 				case .Surface_Create:
 					surface_create(index, record)
 				case .Present:
@@ -760,7 +791,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
-			send(&client, ring.Record{kind = u32(display.Event_Kind.Settings_Changed), values = {0 = u64(choice.change_count)}})
+			send(&client, .Settings_Changed, {0 = u64(choice.change_count)})
 			told += 1
 		}
 	}
@@ -784,9 +815,11 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 }
 
 // send gives an event to a window. A full ring loses no key: the event
-// waits for the window in the compositor (window_events.odin).
-send :: proc "contextless" (client: ^Client, record: ring.Record) {
-	window_event_send(client, record)
+// waits for the window in the compositor (window_events.odin). The kind is
+// a member: the compositor writes the word of the record here, and reads
+// no word back to know the class of the event.
+send :: proc "contextless" (client: ^Client, kind: display.Event_Kind, values: [7]u64) {
+	window_event_send(client, kind, values)
 }
 
 // client_add takes the ring of a new program from the root service. For a
@@ -834,6 +867,9 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		damage_focus()
 		if client.surface.pixels != nil {
 			system.memory_unmap(client.pictures)
+		}
+		if client.commands_refused != 0 {
+			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
@@ -1039,7 +1075,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			// while a held button sends the pointer from outside it, and
 			// not in the event that says that the pointer left.
 			notches := on_surface ? wheel : 0
-			send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons), 3 = u64(i64(notches))}})
+			send(client, .Pointer, {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons), 3 = u64(i64(notches))})
 		}
 		client.pointer_over = over
 	}
@@ -1056,7 +1092,7 @@ pointer_leaves_front :: proc "contextless" () {
 	client := &clients[order[order_count - 1]]
 	if client.pointer_over {
 		client.pointer_over = false
-		send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = ~u64(0), 1 = ~u64(0), 2 = 0}})
+		send(client, .Pointer, {0 = ~u64(0), 1 = ~u64(0), 2 = 0})
 	}
 }
 

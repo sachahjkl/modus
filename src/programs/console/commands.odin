@@ -946,7 +946,13 @@ program_modules :: proc "contextless" (arguments: []Value) -> Value {
 				made_text(&table, row, 3, module_name_of(item.replaces))
 			}
 			made_text(&table, row, 4, hash_head_text(&head, item.hash))
-			made_text(&table, row, 5, op.module_writer_name(item.writer))
+			// A word that names no writer leaves the cell empty, with a line:
+			// the table never says who made a claim that no kernel marked.
+			if writer, writer_ok := op.module_writer_of_word(item.writer); writer_ok {
+				made_text(&table, row, 5, op.module_writer_name(writer))
+			} else {
+				system.log("console: program_modules: the module record at ", item.base, " of the program slot ", slot, " has the writer word ", item.writer, ", which names no writer")
+			}
 		}
 	}
 	return made_value(&table, "program_modules")
@@ -1421,9 +1427,14 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	if !answered {
 		return .Bad_State
 	}
-	if status := system.Status(completion.kind); status != .Ok {
+	if status, refusal := system.status_of_word(completion.kind); status != .Ok {
 		if refused != nil {
 			refused^ = completion
+			// A word that names no status: the record says so.
+			if refusal.kind != 0 {
+				refused.kind = u32(status)
+				refused.values = transmute([7]u64)refusal
+			}
 		}
 		return status
 	}
@@ -1489,7 +1500,14 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 	details_index, has_details := module.error_details_parameter(file, function)
 	for type, index in function.parameters[:function.parameter_count] {
 		direction := function.parameter_directions[index]
-		#partial switch type {
+		// The type is a byte of a module file: a byte past the last type
+		// names no type, and the export is not callable.
+		if type > max(module.Type) {
+			return false
+		}
+		switch type {
+		case .None:
+			return false
 		case .Integer, .Text, .Handle:
 		case .Record:
 			if _, ok := module.record_type(file, function.parameter_details[index]); !ok {
@@ -1507,8 +1525,6 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 			if direction != .Read {
 				return false
 			}
-		case:
-			return false
 		}
 	}
 	return isolated.directions_valid(function)
@@ -1572,12 +1588,15 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(uintptr(&places[index]))
 			continue
 		}
-		#partial switch argument.kind {
+		switch argument.kind {
 		case .Text:
 			integers[index] = u64(uintptr(&argument.text))
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
-		case:
+		case .None, .Integer, .Handle, .Table, .Bytes:
+			// The check of the line gave each other kind its integer: a
+			// handle is its number, and a Table or Bytes parameter took its
+			// place above.
 			integers[index] = u64(argument.integer)
 		}
 	}
@@ -1628,7 +1647,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		failure_details_set(details[:], details_place.count)
 		return result
 	}
-	#partial switch item.result {
+	switch item.result {
 	case .Integer:
 		return {kind = .Integer, integer = i64(results[0])}
 	case .Text:
@@ -1641,6 +1660,9 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	case .Table:
 		return table_take(item, &table, results[0])
+	case .None, .Handle, .Bytes:
+		// None gives no value; callable_by_console refuses an export with
+		// a Handle or a Bytes result.
 	}
 	return {}
 }
@@ -1989,14 +2011,16 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	// At the end of the call the console revokes the copies: the kernel ends what the other program kept.
 	lending: system.Lending
 	defer system.lend_end(&lending)
-	#partial switch system.lend(item.file, item.function, encoded[:parameter_total], sandbox.ring_memory, &lending) {
+	switch lend_status := system.lend(item.file, item.function, encoded[:parameter_total], sandbox.ring_memory, &lending); lend_status {
 	case .Ok:
 	case .Bad_Handle:
 		return fail(item.name, ": an argument names no handle of the console")
 	case .No_Right:
 		return fail(item.name, ": a handle of the console lacks a right that the description asks, or the Give right")
-	case:
+	case .No_Slot:
 		return fail(item.name, ": the program ", sandbox.name, " has no room for one more handle")
+	case .Bad_Operation, .Bad_Address, .No_Memory, .Bad_State, .No_Budget:
+		return fail(item.name, ": the lend of its handles to the program ", sandbox.name, " failed with ", lend_status)
 	}
 	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
 	if !ok {
@@ -2031,7 +2055,13 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			if completion.tag != sandbox.calls {
 				continue
 			}
-			switch isolated.Status(completion.kind) {
+			// The call host writes the word: a word that names no status is
+			// refused, never read as a status.
+			call_status, call_status_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
+			if !call_status_ok {
+				return fail("the program ", sandbox.name, " gave the status word ", u64(completion.kind), ", which names no status")
+			}
+			switch call_status {
 			case .Ok:
 				// A failure first: the other program wrote the error record,
 				// values only, in the place that encode chose, and the error
@@ -2056,7 +2086,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
 					return fail("the program ", sandbox.name, " gave a wrong count for the table ", name)
 				}
-				#partial switch item.result {
+				switch item.result {
 				case .Integer:
 					return {kind = .Integer, integer = i64(completion.values[0])}
 				case .Text:
@@ -2093,6 +2123,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					}
 					copy(bytes, rows)
 					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
+				case .None, .Handle, .Bytes:
+					// None gives no value; callable_by_console refuses an
+					// export with a Handle or a Bytes result.
 				}
 				return {}
 			case .Bad_Export:
@@ -2107,8 +2140,6 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				return fail("the program ", sandbox.name, " refused the arguments of ", item.name)
 			case .Load_Failed:
 				return fail("the program ", sandbox.name, " gave the status of a load for a call")
-			case:
-				return fail("the program ", sandbox.name, " gave an unknown status")
 			}
 		}
 		if state, code := system.program_state(sandbox.program); state == .Stopped {
@@ -2826,7 +2857,14 @@ start_from_disk_refusal :: proc "contextless" (name: string, completion: ring.Re
 	error := errors.completion_record(completion.values)
 	already := failed
 	result: Value
-	#partial switch errors.Kind(error.kind) {
+	kind, kind_ok := errors.kind_of_word(error.kind)
+	if !kind_ok {
+		// fail_root says that the word names no kind.
+		return fail_root("start_from_disk: ", completion)
+	}
+	// An open choice: the few kinds of this command get a sentence of their
+	// own, and each other kind of the large set gets the general sentence.
+	#partial switch kind {
 	case .Not_Authentic:
 		head := transmute([8]u8)u64(error.value)
 		result = fail("start_from_disk: the bytes of \"", name, "\" in the store programs do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
@@ -3005,7 +3043,9 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 		value_writer := system.Writer {
 			buffer = value_buffer[:],
 		}
-		#partial switch value.kind {
+		switch value.kind {
+		case .None, .Bytes:
+			// No value, and bytes with no description: the cell stays empty.
 		case .Integer:
 			system.write_part(&value_writer, value.integer)
 		case .Handle:

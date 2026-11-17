@@ -32,10 +32,10 @@ a_record_with_one_run :: proc(t: ^testing.T) {
 	into: [TEST_RECORD_RUNS]Value_Run
 	kept := value_runs_of_record(runs[:count], 0, len(text), into[:])
 	testing.expect_value(t, kept, 1)
-	start, end, ok := value_run_in_text(into[0], len(text))
+	start, end, kind, ok := value_run_in_text(into[0], len(text))
 	testing.expect(t, ok)
 	testing.expect_value(t, text[start:end], "2013 MiB")
-	testing.expect_value(t, into[0].kind, Value_Kind.Size)
+	testing.expect_value(t, kind, Value_Kind.Size)
 }
 
 // A record keeps at most its capacity of runs: the first ones, in order;
@@ -69,50 +69,73 @@ a_record_with_the_most_runs_and_more_parts :: proc(t: ^testing.T) {
 // start of each record.
 @(test)
 a_run_across_two_records :: proc(t: ^testing.T) {
-	runs := [?]Value_Run_In_Call{{start = 140, length = 20, kind = .Version}, {start = 200, length = 4, kind = .Number}}
+	runs := [?]Value_Run_In_Call{{start = 140, length = 20, kind = u8(Value_Kind.Version)}, {start = 200, length = 4, kind = u8(Value_Kind.Number)}}
 	testing.expect(t, value_runs_check(runs[:], 300))
 	first: [TEST_RECORD_RUNS]Value_Run
 	testing.expect_value(t, value_runs_of_record(runs[:], 0, TEST_RECORD_TEXT, first[:]), 1)
-	testing.expect_value(t, first[0], Value_Run{start = 140, length = 12, kind = .Version})
+	testing.expect_value(t, first[0], Value_Run{start = 140, length = 12, kind = u8(Value_Kind.Version)})
 	second: [TEST_RECORD_RUNS]Value_Run
 	testing.expect_value(t, value_runs_of_record(runs[:], TEST_RECORD_TEXT, TEST_RECORD_TEXT, second[:]), 2)
-	testing.expect_value(t, second[0], Value_Run{start = 0, length = 8, kind = .Version})
-	testing.expect_value(t, second[1], Value_Run{start = 48, length = 4, kind = .Number})
+	testing.expect_value(t, second[0], Value_Run{start = 0, length = 8, kind = u8(Value_Kind.Version)})
+	testing.expect_value(t, second[1], Value_Run{start = 48, length = 4, kind = u8(Value_Kind.Number)})
 }
 
 // The cut mark ends a text: no run colors the mark. The rest of a text that
 // a writer sends as a second line keeps its runs, from its own start.
 @(test)
 runs_cut_and_after :: proc(t: ^testing.T) {
-	runs := [?]Value_Run_In_Call{{start = 2, length = 4, kind = .Number}, {start = 10, length = 10, kind = .Size}, {start = 30, length = 2, kind = .Time}}
+	runs := [?]Value_Run_In_Call{{start = 2, length = 4, kind = u8(Value_Kind.Number)}, {start = 10, length = 10, kind = u8(Value_Kind.Size)}, {start = 30, length = 2, kind = u8(Value_Kind.Time)}}
 	cut := runs
 	testing.expect_value(t, value_runs_cut(cut[:], 3, 15), 2)
-	testing.expect_value(t, cut[1], Value_Run_In_Call{start = 10, length = 5, kind = .Size})
+	testing.expect_value(t, cut[1], Value_Run_In_Call{start = 10, length = 5, kind = u8(Value_Kind.Size)})
 	after := runs
 	testing.expect_value(t, value_runs_after(after[:], 3, 15), 2)
-	testing.expect_value(t, after[0], Value_Run_In_Call{start = 0, length = 5, kind = .Size})
-	testing.expect_value(t, after[1], Value_Run_In_Call{start = 15, length = 2, kind = .Time})
+	testing.expect_value(t, after[0], Value_Run_In_Call{start = 0, length = 5, kind = u8(Value_Kind.Size)})
+	testing.expect_value(t, after[1], Value_Run_In_Call{start = 15, length = 2, kind = u8(Value_Kind.Time)})
 }
 
 // The runs come from another program: each wrong table is refused whole.
 @(test)
 hostile_runs_are_refused :: proc(t: ^testing.T) {
-	past_the_text := [?]Value_Run_In_Call{{start = 8, length = 4, kind = .Number}}
+	past_the_text := [?]Value_Run_In_Call{{start = 8, length = 4, kind = u8(Value_Kind.Number)}}
 	testing.expect(t, !value_runs_check(past_the_text[:], 10))
-	empty := [?]Value_Run_In_Call{{start = 0, length = 0, kind = .Number}}
+	empty := [?]Value_Run_In_Call{{start = 0, length = 0, kind = u8(Value_Kind.Number)}}
 	testing.expect(t, !value_runs_check(empty[:], 10))
-	out_of_order := [?]Value_Run_In_Call{{start = 5, length = 2, kind = .Number}, {start = 1, length = 2, kind = .Number}}
+	out_of_order := [?]Value_Run_In_Call{{start = 5, length = 2, kind = u8(Value_Kind.Number)}, {start = 1, length = 2, kind = u8(Value_Kind.Number)}}
 	testing.expect(t, !value_runs_check(out_of_order[:], 10))
-	overlap := [?]Value_Run_In_Call{{start = 1, length = 4, kind = .Number}, {start = 3, length = 2, kind = .Number}}
+	overlap := [?]Value_Run_In_Call{{start = 1, length = 4, kind = u8(Value_Kind.Number)}, {start = 3, length = 2, kind = u8(Value_Kind.Number)}}
 	testing.expect(t, !value_runs_check(overlap[:], 10))
-	no_kind := [?]Value_Run_In_Call{{start = 1, length = 2, kind = .None}}
+	no_kind := [?]Value_Run_In_Call{{start = 1, length = 2, kind = u8(Value_Kind.None)}}
 	testing.expect(t, !value_runs_check(no_kind[:], 10))
-	past_the_kinds := [?]Value_Run_In_Call{{start = 1, length = 2, kind = Value_Kind(200)}}
-	testing.expect(t, !value_runs_check(past_the_kinds[:], 10))
+	kinds_refused := [?]u8{u8(max(Value_Kind)) + 1, max(u8)}
+	for kind in kinds_refused {
+		past_the_kinds := [?]Value_Run_In_Call{{start = 1, length = 2, kind = kind}}
+		testing.expectf(t, !value_runs_check(past_the_kinds[:], 10), "the kind byte %d names no kind, and the runs are taken", kind)
+	}
 	testing.expect(t, value_runs_check(nil, 0))
 	// A reader of a record checks a run before it indexes the text.
-	_, _, ok := value_run_in_text({start = 150, length = 10, kind = .Size}, TEST_RECORD_TEXT)
+	_, _, _, ok := value_run_in_text({start = 150, length = 10, kind = u8(Value_Kind.Size)}, TEST_RECORD_TEXT)
 	testing.expect(t, !ok)
+}
+
+// The kind of a run of a record is a byte that the kernel wrote: a reader
+// takes it through value_run_in_text, which refuses None, a byte past the
+// last kind and the largest byte, and gives no kind for them.
+@(test)
+value_run_in_text_refuses_a_byte_that_names_no_kind :: proc(t: ^testing.T) {
+	refused := [?]u8{u8(Value_Kind.None), u8(max(Value_Kind)) + 1, max(u8)}
+	for kind_byte in refused {
+		start, end, kind, ok := value_run_in_text({start = 1, length = 2, kind = kind_byte}, TEST_RECORD_TEXT)
+		testing.expectf(t, !ok, "the kind byte %d names no kind, and the run is taken", kind_byte)
+		testing.expect_value(t, kind, Value_Kind.None)
+		testing.expect_value(t, start, 0)
+		testing.expect_value(t, end, 0)
+	}
+	start, end, kind, ok := value_run_in_text({start = 1, length = 2, kind = u8(Value_Kind.Time)}, TEST_RECORD_TEXT)
+	testing.expect(t, ok)
+	testing.expect_value(t, start, 1)
+	testing.expect_value(t, end, 3)
+	testing.expect_value(t, kind, Value_Kind.Time)
 }
 
 // A byte that names no kind is refused: one past the last kind, and the

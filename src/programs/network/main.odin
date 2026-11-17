@@ -476,7 +476,16 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 	values := record.values
 	tag := record.tag
 	kind := record.kind
-	#partial switch datagram.Command(record.kind) {
+	// The program of the endpoint writes the word: a word that names no
+	// command, and None, are refused with their record.
+	command_kind, command_kind_ok := datagram.command_of_ring_word(record.kind)
+	if !command_kind_ok {
+		complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
+		return true
+	}
+	switch command_kind {
+	case .None:
+		// The border refused None above.
 	case .Info:
 		hardware_value: u64
 		for byte, place in hardware {
@@ -558,7 +567,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		if !granted(endpoint, tag, values[0], 0, false, kind, 1) {
 			return true
 		}
-		if datagram.Command(record.kind) == .Echo && values[2] > network.ICMP_DATA_LIMIT {
+		if command_kind == .Echo && values[2] > network.ICMP_DATA_LIMIT {
 			complete(endpoint, tag, .Too_Large, errors.ring_fail(kind, .Too_Long, .Bytes, 3, i64(min(values[2], 1 << 62)), network.ICMP_DATA_LIMIT))
 			return true
 		}
@@ -570,7 +579,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		hop := next_hop(address)
 		item := Pending{kind = .Resolve, endpoint = index, tag = tag, address = hop, target = address, deadline = now + ANSWER_TIME, start = now, bytes = int(values[2]), sequence = u16(values[1])}
 		destination, known := neighbor_of(hop)
-		if datagram.Command(record.kind) == .Echo {
+		if command_kind == .Echo {
 			item.kind = known ? .Echo_Sent : .Echo
 		}
 		if !pending_add(item) {
@@ -613,8 +622,6 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		}
 		validated := network.admitted_validate(&endpoint.admitted, u32(values[0]), u16(values[1]))
 		complete(endpoint, tag, .Ok, {0 = u64(validated)})
-	case:
-		complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
 	}
 	return true
 }
@@ -849,7 +856,10 @@ resolved :: proc "contextless" (address: u32, found: network.Hardware, now: u64)
 			continue
 		}
 		endpoint := &endpoints[item.endpoint]
-		#partial switch item.kind {
+		switch item.kind {
+		case .None, .Echo_Sent, .Statistics:
+			// No place, an echo that waits for its reply, and the statistics
+			// wait for no hardware address.
 		case .Send:
 			// It stays in flight: the frame service completes it.
 			payload_send(endpoint, item.endpoint, item.tag, item.place, found, item.target, item.length, item.data_place)
@@ -923,7 +933,16 @@ controlled :: proc "contextless" (record: ring.Record) {
 	result := datagram.Status.Ok
 	values: [7]u64
 	handle := system.Handle(record.values[0])
-	#partial switch datagram.Control(record.kind) {
+	// The root service writes the word: a word that names no control, and
+	// None, are refused with their record.
+	control_kind, control_kind_ok := datagram.control_of_ring_word(record.kind)
+	if !control_kind_ok {
+		system.send(&control.completions, ring.Record{kind = u32(datagram.Status.Bad_Command), tag = record.tag, values = errors.ring_fail(record.kind, .Unsupported, .None, 0, i64(record.kind))})
+		return
+	}
+	switch control_kind {
+	case .None:
+		// The border refused None above.
 	case .Endpoint_Add:
 		region_handle := system.Handle(record.values[1])
 		kind, _, through := system.handle_state(handle, control_memory)
@@ -1107,9 +1126,6 @@ controlled :: proc "contextless" (record: ring.Record) {
 			result = .Ok
 			values = {}
 		}
-	case:
-		result = .Bad_Command
-		values = errors.ring_fail(record.kind, .Unsupported, .None, 0, i64(record.kind))
 	}
 	system.send(&control.completions, ring.Record{kind = u32(result), tag = record.tag, values = values})
 }
@@ -1257,11 +1273,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				send_owners[tag - RECEIVE_PLACES] = {}
 				send_place_free(tag)
 				if owner.busy {
-					status := frame.Status(record.kind)
-					if status == .Ok {
+					// The frame service writes the word: it is compared, and
+					// a refusal carries the word as it came.
+					if record.kind == u32(frame.Status.Ok) {
 						complete_taken(&endpoints[owner.endpoint], owner.tag, .Ok)
 					} else {
-						complete_taken(&endpoints[owner.endpoint], owner.tag, .No_Region, errors.ring_fail(u32(datagram.Command.Send), .Refused, .Region, 1, 0, 0, i64(status)))
+						complete_taken(&endpoints[owner.endpoint], owner.tag, .No_Region, errors.ring_fail(u32(datagram.Command.Send), .Refused, .Region, 1, 0, 0, i64(record.kind)))
 					}
 				}
 			case tag >= TAG_READ_REGION_ADD && tag < TAG_READ_REGION_ADD + ENDPOINT_CAPACITY:

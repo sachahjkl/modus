@@ -234,11 +234,11 @@ caller_allowed :: proc "contextless" () -> bool {
 // went both ways, else a reset. The loop of the program runs its timers
 // after the call.
 connection_end :: proc "contextless" (index: int) {
-	#partial switch connections[index].state {
+	switch connections[index].state {
 	case .Established, .Close_Wait:
 		tcp.close(&table, index)
 	case .Closed, .Time_Wait, .Fin_Wait_1, .Fin_Wait_2, .Closing, .Last_Ack:
-	case:
+	case .Syn_Sent, .Syn_Received:
 		tcp.abort(&table, index)
 	}
 }

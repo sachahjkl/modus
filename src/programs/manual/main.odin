@@ -854,7 +854,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		changed |= step_due && system.time() >= step_time
 		changed |= system.service_run(&service) > 0
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Settings_Changed:
 				// A new font: each record is the same, each pixel of text is
 				// not. The next frame of each picture is whole.
@@ -914,6 +914,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 				pressed = down
+			case .None, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 	}

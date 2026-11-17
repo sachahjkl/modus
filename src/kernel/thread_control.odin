@@ -238,11 +238,12 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		if target_index == caller_index || !thread_held_off_processor(thread) {
 			return .Bad_State
 		}
-		#partial switch command {
-		case .Read_Registers:
+		// The case above holds the four members of a copy of the state.
+		switch {
+		case command == .Read_Registers:
 			registers := thread_registers_of_frame(thread)
 			user_copy(rawptr(uintptr(v[3])), &registers, size)
-		case .Write_Registers:
+		case command == .Write_Registers:
 			registers: op.Thread_Registers
 			user_copy(&registers, rawptr(uintptr(v[3])), size)
 			if refusal, value := op.thread_registers_refusal(&registers); refusal != .None {
@@ -255,10 +256,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// the debugging ends before the step, the step is dropped
 			// (debug_exception_is_dropped).
 			thread.debugger_step = by_debugger && registers.rflags & FLAG_TRAP != 0
-		case .Read_Extended_State:
+		case command == .Read_Extended_State:
 			user_copy(rawptr(uintptr(v[3])), &thread.extended_state, size)
 			results[1] = transmute(u64)extended_state_components
-		case .Write_Extended_State:
+		case command == .Write_Extended_State:
 			written := &cpu.extended_state_written
 			// The bytes past the size of a save keep the values of the thread:
 			// the area is copied whole below.

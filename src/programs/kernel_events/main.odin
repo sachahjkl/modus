@@ -57,6 +57,7 @@
 package kernel_events
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import "modus:contract/module"
 import op "modus:contract/operation"
@@ -97,12 +98,15 @@ Role :: enum u64 {
 	Faulter = 2, // Faults once, at FAULT_ADDRESS, and stops.
 }
 
-// role_of gives the role that the starter of this program wrote.
-role_of :: proc "contextless" (value: u64) -> Role {
-	if value & 0xFFFF_FFFF_0000_0000 != ROLE_TAG || value & 0xFFFF_FFFF > u64(max(Role)) {
-		return .Parent
+// role_of gives the role that the starter of this program wrote. A value
+// without the tag is the parent: the root service writes other values at
+// that place. A value with the tag whose role word names no role is
+// refused (ok false), never read as the parent.
+role_of :: proc "contextless" (value: u64) -> (role: Role, ok: bool) {
+	if value & 0xFFFF_FFFF_0000_0000 != ROLE_TAG {
+		return .Parent, true
 	}
-	return Role(value & 0xFFFF_FFFF)
+	return enum_word.member_of_word(Role, value & 0xFFFF_FFFF)
 }
 
 CALLS :: 1000 // The operations Memory_Size of one round of the load child.
@@ -385,7 +389,9 @@ tally_add :: proc "contextless" (tally: ^Tally, record: op.Event_Record) {
 		return
 	}
 	tally.kinds[record.kind] += 1
-	#partial switch record.kind {
+	switch record.kind {
+	case .None, .Switch, .Lock_Wait:
+		// The count above is all that the tally keeps of these.
 	case .Operation:
 		if record.value_0 > tally.longest {
 			tally.longest = record.value_0
@@ -413,10 +419,11 @@ nanoseconds_of :: proc "contextless" (cycles: u64) -> u64 {
 }
 
 operation_name :: proc "contextless" (operation: u64) -> string {
-	if operation > u64(max(op.Operation)) {
+	member, ok := enum_word.member_of_word(op.Operation, operation)
+	if !ok {
 		return "an unknown operation"
 	}
-	return op.OPERATIONS[op.Operation(operation)].name
+	return op.OPERATIONS[member].name
 }
 
 case_end :: proc "contextless" (index: int, right: bool, parts: ..system.Part) {
@@ -882,7 +889,12 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 // the console to revoke its machine handle, in the scenario of the test.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if role := role_of(ctx.values[VALUE_ROLE]); role != .Parent {
+	role, role_ok := role_of(ctx.values[VALUE_ROLE])
+	if !role_ok {
+		system.log("kernel_events: the context names the role ", ctx.values[VALUE_ROLE] & 0xFFFF_FFFF, ", which names no role")
+		system.stop(1)
+	}
+	if role != .Parent {
 		child_role_run(role)
 	}
 	if !random.generator_from_context(&program_generator, ctx) {

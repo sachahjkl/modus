@@ -103,6 +103,19 @@ ARGUMENT_NAMES := [Command][]string {
 	.Statistics = {},
 }
 
+// command_of_ring_word is the border of the kind of a command record of the
+// block ring: the command, or false for a word that names no command, None
+// included. The service answers a refusal with Bad_Command and the record
+// Unsupported. It reads and changes no state.
+command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
+	for member in Command {
+		if u32(member) == word && member != .None {
+			return member, true
+		}
+	}
+	return .None, false
+}
+
 // command_of_word is the border of the command word of a record or of an
 // error record: the member, or false for a word that names none.
 command_of_word :: proc "contextless" (word: i64) -> (command: Command, ok: bool) {

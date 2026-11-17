@@ -31,5 +31,7 @@ each_module_writer_has_its_word :: proc(t: ^testing.T) {
 	// A record that no kernel wrote is of the program: the starter must be
 	// a fact that the kernel adds, never the zero of a record.
 	record: Module_Record
-	testing.expect_value(t, record.writer, Module_Writer.Program)
+	writer, ok := module_writer_of_word(record.writer)
+	testing.expect(t, ok)
+	testing.expect_value(t, writer, Module_Writer.Program)
 }

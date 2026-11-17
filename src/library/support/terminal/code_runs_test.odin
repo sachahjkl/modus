@@ -222,7 +222,7 @@ list_rows_take_their_runs :: proc(t: ^testing.T) {
 style_holds_a_code_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, size_of(Style), 8)
 	style: Style
-	testing.expect_value(t, style.code, Code_Kind.None)
-	style = {tone = .Strong, code = .Type}
+	testing.expect_value(t, style.code, u8(Code_Kind.None))
+	style = {tone = u8(Tone.Strong), code = u8(Code_Kind.Type)}
 	testing.expect_value(t, (transmute([8]u8)style)[2], u8(Code_Kind.Type))
 }

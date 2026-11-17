@@ -949,7 +949,7 @@ table_make :: proc(given: []Given) -> []u8 {
 	header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 6, entry_count = u32(len(given))}
 	for item, index in given {
 		entry := (^palette_table.Entry)(&memory[palette_table.ENTRIES_OFFSET + index * size_of(palette_table.Entry)])
-		entry.kind = .Command
+		entry.kind = u8(palette_table.Entry_Kind.Command)
 		if item.destroys {
 			entry.flags = {.Destroys}
 		}
@@ -964,7 +964,7 @@ table_make :: proc(given: []Given) -> []u8 {
 			entry.parameter_units[number] = item.units[number]
 		}
 		if item.setting {
-			entry.kind = .Setting
+			entry.kind = u8(palette_table.Entry_Kind.Setting)
 			entry.setting_value = item.value
 		}
 	}
@@ -1059,13 +1059,14 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.about_length = 255}},
 		{.Bad_Byte, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.name[1] = 7}},
 		{.Bad_Byte, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.about[0] = 200}},
-		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind = palette_table.Entry_Kind(9)}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind = u8(max(palette_table.Entry_Kind)) + 1}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind = max(u8)}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.result = palette_table.Value_Kind(40)}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameters[5] = palette_table.Value_Kind(7)}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.flags = transmute(palette_table.Entry_Flags)u8(0x80)}},
 		{.Bad_Signature, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.signature[0] = 'x'}},
 		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.setting = 1}},
-		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind, entry.setting_value = .Setting, 9}},
+		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind, entry.setting_value = u8(palette_table.Entry_Kind.Setting), 9}},
 		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameter_name_lengths[0] = 99}},
 	}
 	for damage, number in damages {
@@ -1888,8 +1889,8 @@ the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
 	table := table_make(given[:])
 	defer delete(table)
 	entries := ([^]palette_table.Entry)(&table[palette_table.ENTRIES_OFFSET])
-	entries[0].kind = .Provider_Setting
-	entries[1].kind = .Provider_Setting
+	entries[0].kind = u8(palette_table.Entry_Kind.Provider_Setting)
+	entries[1].kind = u8(palette_table.Entry_Kind.Provider_Setting)
 	entries[1].flags = {.In_Use}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
 	// The entry of a row of the list, by its name: the order of two
@@ -1926,7 +1927,7 @@ the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
 	testing.expect(t, setting_in_use(panel, listed(panel, "set strategy to fair")))
 	testing.expect(t, !setting_in_use(panel, listed(panel, "set strategy to eevdf")))
 	// The flag on an entry that is no such setting: the table is refused.
-	entries[0].kind = .Command
+	entries[0].kind = u8(palette_table.Entry_Kind.Command)
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.Bad_Setting)
 }
 
@@ -1969,13 +1970,13 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 	row_texts_set(&entries[2], "settings.set:font", "font", "spleen")
 	strategies := [3]string{"round_robin", "fair", "eevdf"}
 	for value, index in strategies {
-		entries[3 + index].kind = .Provider_Setting
+		entries[3 + index].kind = u8(palette_table.Entry_Kind.Provider_Setting)
 		row_texts_set(&entries[3 + index], "strategy", "strategy", value)
 	}
 	entries[5].flags = {.In_Use}
 	shades := [7]string{"a", "b", "c", "d", "e", "f", "g"}
 	for value, index in shades {
-		entries[6 + index].kind = .Provider_Setting
+		entries[6 + index].kind = u8(palette_table.Entry_Kind.Provider_Setting)
 		row_texts_set(&entries[6 + index], "shade", "shade", value)
 	}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)

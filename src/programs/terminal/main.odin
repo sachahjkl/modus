@@ -80,6 +80,7 @@
 package terminal_program
 
 import "modus:contract/demand_cache"
+import "modus:contract/enum_word"
 import "modus:support/display"
 import "modus:support/fallback_glyphs"
 import "modus:support/graphics"
@@ -255,6 +256,9 @@ edit_runs_refused: u64
 runs_refusal_logged: bool
 // The log says one time that the program sent a list row that names no icon.
 rows_refusal_logged: bool
+// The records whose kind names no record, or None: the log says it one time.
+records_refused: u64
+records_refusal_logged: bool
 
 // The line under the edit line (terminal.Kind.Hint): a long form, and a
 // short form for a terminal too narrow for the long one. The text holds
@@ -423,7 +427,21 @@ keep :: proc "contextless" (first, second: []u8, style: terminal.Style) {
 
 apply :: proc "contextless" (record: ring.Record) {
 	records_read += 1
-	#partial switch terminal.Kind(record.kind) {
+	// The program writes the word: a word that names no record, and None,
+	// are refused and counted, and the log says it once.
+	kind, kind_ok := terminal.kind_of_ring_word(record.kind)
+	if !kind_ok {
+		// The drawer reads the count when the program stops.
+		intrinsics.atomic_add(&records_refused, 1)
+		if !records_refusal_logged {
+			records_refusal_logged = true
+			system.log("terminal: ", program_name, " sent a record of the kind ", u64(record.kind), ", which names no record: it is refused")
+		}
+		return
+	}
+	switch kind {
+	case .None:
+		// Refused above.
 	case .Text:
 		first, second := take(record.tag)
 		keep(first, second, transmute(terminal.Style)record.values[0])
@@ -470,7 +488,11 @@ apply :: proc "contextless" (record: ring.Record) {
 		terminal.list_keep_show(&list_keeping, record.values)
 	case .Code_Runs:
 		first, second := take(record.tag)
-		target := record.values[0] <= u64(max(terminal.Kind)) ? terminal.Kind(u32(record.values[0])) : terminal.Kind.None
+		target, target_ok := enum_word.member_of_word(terminal.Kind, record.values[0])
+		if !target_ok {
+			edit_runs_refused += 1 // The target names no record.
+			break
+		}
 		switch target {
 		case .Edit:
 			read, ok := terminal.code_runs_read(first, second)
@@ -509,13 +531,13 @@ style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 	}
 	colors := own_colors()
 	plain := colors.tones[.Default]
-	if tone, tone_ok := terminal.tone_of_byte(u8(style.tone)); tone_ok {
+	if tone, tone_ok := terminal.tone_of_byte(style.tone); tone_ok {
 		plain = colors.tones[tone]
 	}
 	if value_kind, value_kind_ok := value_kinds.value_kind_of(style.value_kind); value_kind_ok && value_kind != .None {
 		return graphics.value_kind_color(value_kind, graphics.appearance, plain)
 	}
-	code_kind, code_kind_ok := terminal.code_kind_of(u8(style.code))
+	code_kind, code_kind_ok := terminal.code_kind_of(style.code)
 	if !code_kind_ok {
 		return plain
 	}
@@ -707,7 +729,7 @@ note :: proc "contextless" (parts: ..system.Part) {
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
 		line_end()
 	}
-	keep(transmute([]u8)system.format(buffer[:], ..parts), nil, {tone = .Warning, flags = {.End_Line}})
+	keep(transmute([]u8)system.format(buffer[:], ..parts), nil, {tone = u8(terminal.Tone.Warning), flags = {.End_Line}})
 }
 
 // view_make fills the view for the request.
@@ -1454,6 +1476,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log("terminal: ", program_name, " stopped and did not read its keys: ", lost, " keys were lost")
 				}
+				if refused := intrinsics.atomic_load(&records_refused); refused != 0 {
+					system.log("terminal: ", program_name, " stopped after ", refused, " records whose kind names no record")
+				}
 				system.close(program)
 				program = 0
 				dirty = true
@@ -1659,7 +1684,9 @@ scroll_drag_moved: bool // The drag of the thumb that is held now moved the view
 
 // scroll_part_words gives the words of the log for a part of the scroll bar.
 scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> string {
-	#partial switch part {
+	switch part {
+	case .None:
+		return "no part"
 	case .Arrow_Back:
 		return "the arrow up"
 	case .Arrow_Forward:
@@ -1668,8 +1695,10 @@ scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> str
 		return "the track above the thumb"
 	case .Track_Forward:
 		return "the track under the thumb"
+	case .Thumb:
+		return "the thumb"
 	}
-	return "the thumb"
+	return "no part"
 }
 
 // wheel_log writes that the wheel moved the view of the lines, and where

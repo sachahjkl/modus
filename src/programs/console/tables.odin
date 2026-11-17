@@ -99,13 +99,15 @@ field_names :: proc "contextless" (table: Table) -> string {
 
 // row_value gives one field of a row as a value: an Integer, a Text or a Handle.
 row_value :: proc "contextless" (row: []u8, item: module.Field) -> Value {
-	#partial switch item.type {
+	switch item.type {
 	case .Integer:
 		return {kind = .Integer, integer = module.field_integer(row, item)}
 	case .Handle:
 		return {kind = .Handle, integer = i64((^u32)(&row[item.offset])^)}
 	case .Text:
 		return {kind = .Text, text = module.field_text(row, item)}
+	case .None, .Record, .Table, .Bytes:
+		// A field of a row holds no such value: the field gives none.
 	}
 	return {}
 }

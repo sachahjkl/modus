@@ -239,7 +239,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait)
 		system.service_run(&service)
 		for event in display.next_event(&window) {
-			#partial switch event.kind {
+			switch event.kind {
 			case .Pointer:
 				// The pointer reaches the action bar only.
 				interface.input_add(&window_memory.drawing.input, event)
@@ -256,6 +256,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !outcome.taken {
 					key_run(press)
 				}
+			case .None, .Settings_Changed, .Go_To:
+				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}
 	}

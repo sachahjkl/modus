@@ -80,14 +80,18 @@ Header :: struct {
 // One replacement row: where an import names the module `from`, a loader
 // gives the module `to`, for the importers of the scope. 136 bytes.
 //
+// The scope is a word, not a member: the row comes from a file, and `rows`
+// takes the word through scope_of_word, so no reader holds a scope that
+// the file did not name.
+//
 // Example: `{from = <hash of calendar>, to = <hash of calendar_fixed>,
-// scope = .System, principal = 0, signature = <by the signing key of the
-// system>}` lets the console ask for `replace("calendar",
+// scope = u32(Scope.System), principal = 0, signature = <by the signing
+// key of the system>}` lets the console ask for `replace("calendar",
 // "calendar_fixed")`.
 Row :: struct {
 	from:      [HASH_SIZE]u8, // The hash that an import names.
 	to:        [HASH_SIZE]u8, // The hash of the module that a loader gives in its place.
-	scope:     Scope,
+	scope:     u32, // The word of a Scope.
 	principal: u32, // The number of the principal for the scope Principal (1 or more); 0 for the scope System.
 	signature: [SIGNATURE_SIZE]u8, // Ed25519 over `signed_message(from, to, scope, principal)`.
 }
@@ -143,9 +147,9 @@ rows :: proc "contextless" (list: []u8) -> (result: []Row, problem: List_Problem
 	}
 	result = ([^]Row)(raw_data(list[size_of(Header):]))[:header.row_count]
 	for &row, index in result {
-		// A value of the file can be outside the enumeration: only the two
-		// known scopes pass.
-		scope, scope_ok := scope_of_word(u32(row.scope))
+		// A word of the file can name no scope: only the two known scopes
+		// pass.
+		scope, scope_ok := scope_of_word(row.scope)
 		if !scope_ok {
 			return nil, .Scope
 		}
@@ -179,7 +183,7 @@ rows :: proc "contextless" (list: []u8) -> (result: []Row, problem: List_Problem
 // gave.
 row_find :: proc "contextless" (list: []Row, from, to: [HASH_SIZE]u8, scope: Scope, principal: u32) -> (row: Row, found: bool) {
 	for &item in list {
-		if item.from == from && item.to == to && item.scope == scope && item.principal == principal {
+		if item.from == from && item.to == to && item.scope == u32(scope) && item.principal == principal {
 			return item, true
 		}
 	}
@@ -188,8 +192,9 @@ row_find :: proc "contextless" (list: []Row, from, to: [HASH_SIZE]u8, scope: Sco
 
 // signed_message gives the bytes that a key signs for one row: the label,
 // the old hash, the new hash, the scope and its principal. A signature of
-// one row verifies for no other pair, direction or scope.
-signed_message :: proc "contextless" (from, to: [HASH_SIZE]u8, scope: Scope, principal: u32) -> (message: [SIGNED_MESSAGE_SIZE]u8) {
+// one row verifies for no other pair, direction or scope. The scope is the
+// word of the row as the file holds it: the key signs that word.
+signed_message :: proc "contextless" (from, to: [HASH_SIZE]u8, scope: u32, principal: u32) -> (message: [SIGNED_MESSAGE_SIZE]u8) {
 	label := SIGNATURE_LABEL
 	for index in 0 ..< len(label) {
 		message[index] = label[index]
@@ -200,7 +205,7 @@ signed_message :: proc "contextless" (from, to: [HASH_SIZE]u8, scope: Scope, pri
 	}
 	tail := 32 + 2 * HASH_SIZE
 	for shift in 0 ..< 4 {
-		message[tail + shift] = u8(u32(scope) >> uint(8 * shift))
+		message[tail + shift] = u8(scope >> uint(8 * shift))
 		message[tail + 4 + shift] = u8(principal >> uint(8 * shift))
 	}
 	return

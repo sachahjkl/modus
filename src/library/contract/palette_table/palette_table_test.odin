@@ -126,7 +126,7 @@ the_runs_of_a_result :: proc(t: ^testing.T) {
 @(test)
 a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = .Provider_Setting
+	entry.kind = u8(Entry_Kind.Provider_Setting)
 	entry.name_length = u8(copy(entry.name[:], "set strategy to eevdf"))
 	entry.signature_length = u8(copy(entry.signature[:], "set strategy to eevdf"))
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
@@ -138,9 +138,9 @@ a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
 	entry.setting_value = 1 // It names no setting of the settings contract.
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.setting_value = 0
-	entry.kind = .Command
+	entry.kind = u8(Entry_Kind.Command)
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.kind = .Setting // The value in use of a setting is in the settings page, not in a flag.
+	entry.kind = u8(Entry_Kind.Setting) // The value in use of a setting is in the settings page, not in a flag.
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.flags = {}
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
@@ -148,15 +148,54 @@ a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
 	entry.flags = transmute(Entry_Flags)u8(1 << 2)
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
 	entry.flags = {}
-	entry.kind = Entry_Kind(u8(max(Entry_Kind)) + 1)
+	entry.kind = u8(max(Entry_Kind)) + 1
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.kind = max(u8)
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+}
+
+// The compositor writes the kind of each record of the ring of the provider:
+// None, one past the last command and the largest word are refused, and
+// give None. Then each command but None comes back from its word.
+@(test)
+command_of_ring_word_refuses_a_word_that_names_no_command :: proc(t: ^testing.T) {
+	refused := [?]u32{u32(Command.None), u32(max(Command)) + 1, max(u32)}
+	for word in refused {
+		read, ok := command_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no command, and it is taken", word)
+		testing.expect_value(t, read, Command.None)
+	}
+	for member in Command {
+		if member != .None {
+			read, ok := command_of_ring_word(u32(member))
+			testing.expect(t, ok)
+			testing.expect_value(t, read, member)
+		}
+	}
+}
+
+// The kind of an entry is a word that the provider wrote: one past the last
+// kind, a word past the width of the byte and the largest word name no
+// kind. Each kind then comes back from its own word. 0 is the kind Command.
+@(test)
+entry_kind_of_word_refuses_a_word_that_names_no_kind :: proc(t: ^testing.T) {
+	refused := [?]u64{u64(max(Entry_Kind)) + 1, 256, max(u64)}
+	for word in refused {
+		_, ok := entry_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no kind of an entry, and it is taken", word)
+	}
+	for member in Entry_Kind {
+		read, ok := entry_kind_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
 }
 
 // A Setting entry names a setting and a value that the machine has.
 @(test)
 a_setting_entry_is_checked :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = .Setting
+	entry.kind = u8(Entry_Kind.Setting)
 	entry.name_length = u8(copy(entry.name[:], "set font to spleen"))
 	entry.signature_length = u8(copy(entry.signature[:], "set font to spleen"))
 	entry.setting, entry.setting_value = 0, 1
@@ -167,7 +206,7 @@ a_setting_entry_is_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.setting, entry.parameter_count = 0, 1
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.kind, entry.parameter_count, entry.setting_value = .Command, 0, 1
+	entry.kind, entry.parameter_count, entry.setting_value = u8(Entry_Kind.Command), 0, 1
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	// The name of a parameter: its length and its bytes.
 	entry.setting_value = 0
@@ -264,7 +303,7 @@ a_word_that_names_no_kind_or_outcome_is_refused :: proc(t: ^testing.T) {
 @(test)
 an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = .Setting
+	entry.kind = u8(Entry_Kind.Setting)
 	entry.name_length = u8(copy(entry.name[:], "set font to spleen"))
 	entry.signature_length = u8(copy(entry.signature[:], "set font to spleen"))
 	entry.setting_value = 1
@@ -287,7 +326,7 @@ an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
 	entry.reserved_end = 0
 	// A command can have an act name, and joins no setting row.
-	entry.kind, entry.setting_value = .Command, 0
+	entry.kind, entry.setting_value = u8(Entry_Kind.Command), 0
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.setting_name_length, entry.value_name_length = 0, 0
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
@@ -300,7 +339,7 @@ an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 @(test)
 an_integer_unit_is_checked :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = .Command
+	entry.kind = u8(Entry_Kind.Command)
 	entry.name_length = u8(copy(entry.name[:], "bytes"))
 	entry.signature_length = u8(copy(entry.signature[:], "bytes(Handle, Integer, Integer) -> Bytes"))
 	entry.parameter_count = 3
@@ -334,7 +373,7 @@ an_integer_unit_is_checked :: proc(t: ^testing.T) {
 @(test)
 the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = .Command
+	entry.kind = u8(Entry_Kind.Command)
 	entry.name_length = u8(copy(entry.name[:], "time"))
 	entry.signature_length = u8(copy(entry.signature[:], "time(durée: Integer) -> Integer"))
 	entry.about_length = u8(copy(entry.about[:], "the été of the year"))
@@ -353,7 +392,7 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	act.act_name_length = u8(copy(act.act_name[:], "a b")) // An identifier has no space.
 	testing.expect_value(t, entry_problem(&act), Problem.Bad_Byte)
 	row := entry
-	row.kind = .Provider_Setting
+	row.kind = u8(Entry_Kind.Provider_Setting)
 	row.setting_name_length = u8(copy(row.setting_name[:], "subpixel order"))
 	row.value_name_length = u8(copy(row.value_name[:], "rgb"))
 	testing.expect_value(t, entry_problem(&row), Problem.None)

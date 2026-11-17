@@ -513,6 +513,27 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 	}
 }
 
+// control_of_ring_word, input_of_ring_word and command_of_ring_word are the
+// borders of the kind of a record that the compositor reads: from the root
+// service (Control), from the input service (Input) and from a window
+// (Command). Each gives the member, or false for a word that names no
+// member, None included. They read and change no state, so a host test
+// gives them each refused word.
+control_of_ring_word :: proc "contextless" (word: u32) -> (control: Control, ok: bool) {
+	member := enum_word.member_of_word(Control, u64(word)) or_return
+	return member, member != .None
+}
+
+input_of_ring_word :: proc "contextless" (word: u32) -> (input: Input, ok: bool) {
+	member := enum_word.member_of_word(Input, u64(word)) or_return
+	return member, member != .None
+}
+
+command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
+	member := enum_word.member_of_word(Command, u64(word)) or_return
+	return member, member != .None
+}
+
 // event_of_record is the border of an input record of the compositor: the
 // event, or false for a kind that names no event, None included. It reads
 // and changes no state, so a host test gives it each refused kind.

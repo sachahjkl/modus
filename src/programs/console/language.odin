@@ -106,13 +106,16 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 		if module.string_at(value.file, item.name_offset, item.name_count) != name {
 			continue
 		}
-		#partial switch item.type {
+		switch item.type {
 		case .Integer:
 			return {kind = .Integer, integer = module.field_integer(value.record, item)}, true
 		case .Handle:
 			return {kind = .Handle, integer = i64((^u32)(&value.record[item.offset])^)}, true
 		case .Text:
 			return {kind = .Text, text = module.field_text(value.record, item)}, true
+		case .None, .Record, .Table, .Bytes:
+			// A field of a record holds no such value: the field gives none.
+			return {}, false
 		}
 	}
 	return {}, false
@@ -241,7 +244,9 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
-	#partial switch value.kind {
+	switch value.kind {
+	case .None, .Integer, .Handle, .Bytes:
+		// The value holds no memory of the line: the slot keeps it as it is.
 	case .Text:
 		count := copy(slot.text[:], value.text)
 		slot.value.text = string(slot.text[:count])
