@@ -928,12 +928,22 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `glyph_cache`, `font_outlines` | raw | A glyph cache that `validate` accepts gives each glyph in its line and its words; font outlines write again to the same fonts |
 | `pointer_pictures` | raw | A theme that `validate` accepts gives a picture of each shape, size and time, with its pixels in the file |
 | `firmware_tables` | raw | The tables DMAR, IVRS and MCFG that the readers accept keep their counts, ranges and units in their bounds |
+| `acpi_processors` | raw | The processors that the table APIC names stay in the table of the caller, and those of the identifiers of 8 bits are processors of the other mode too |
+| `sentences` | raw | The sentence of any error record is a valid text; in a small buffer it is the start of the whole sentence, then the cut mark with the count of the bytes that it lacks |
+| `palette_table` | raw | The copies of the entries, of the result and of the candidates hold what the checks accept; the runs of a result and an argument write again to themselves |
+| `demand_cache` | raw | An entry that `find` gives is of its face and of the frame, and its glyphs read words of the cache only; the writer of the font service publishes it again |
+| `value_runs` | raw | The runs that `value_runs_check` accepts write again to themselves, and their parts in the records of the log are the runs cut at the bounds of the records |
+| `text_encoding` | raw | The check of a text agrees with the reader of UTF-8 of the Odin library, each character encodes to its own bytes, and a cut ends after a whole character |
+| `kept_stop_reports` | generated | A hidden stop report names no hidden value, and the table of the kept reports follows its model |
+| `kept_settings` | raw | The kept record, the text of a zone and the settings page read as valid values, and write again to them |
+| `tpm_answers` | raw | Each reader of an answer of the TPM agrees with the check of its header, gives no value on a refusal, and gives slices inside the answer |
+| `text_shaping` | raw | One placed glyph for each character, at its first byte, with the advance of its table and its pair; a text or a range past its limit is refused |
 
 A raw target reads its input as the bytes that the system reads. A generated target reads its input as choices, and builds a whole value from them.
 
 **The child.** The tool runs a target in a child process, `modustool fuzz-child`, which a fault ends. The child and the tool share the mailbox, a file in `build/fuzzing/<target>/`: before each execution the child copies the input there and adds one to its count of executions. When the count stays still for the hang bound, the tool ends the child, and the input is an input that never returns. The child places each input against a page with no access, after it or before it, so that a read past the input faults even through a raw pointer.
 
-**The instrumented child.** `modustool fuzz` and `modustool check` build `build/fuzzing/instrumented/modustool_instrumented`: the compiler writes the LLVM IR of each package, `opt -passes=sancov-module` adds an 8-bit edge counter to each edge of the packages under test and traces their comparisons, `llc` makes the objects, and `clang` links them with the flags that the compiler prints. The engine keeps an input that gives an edge a count in a class that no kept input gave.
+**The instrumented child.** `modustool fuzz` and `modustool check` build `build/fuzzing/instrumented/modustool_instrumented`: the compiler writes the LLVM IR of each package, `opt -passes=sancov-module` adds an 8-bit edge counter to each edge of the packages under test and traces their comparisons (a package is the name that its sources declare: the folder `src/library/support/terminal` holds `terminal_records`), `llc` makes the objects, and `clang` links them with the flags that the compiler prints. The engine keeps an input that gives an edge a count in a class that no kept input gave.
 
 **The corpus.** The corpus of each target is in `tools/modustool/fuzzing_corpus/<target>/`: the regression inputs in `regression/` and the reach inputs in `reach/`, one file for each input, named by the BLAKE3 hash of its bytes. A target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a name that is not the hash of its bytes, and a folder that names no target.
 

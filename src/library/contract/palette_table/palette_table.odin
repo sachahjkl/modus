@@ -440,6 +440,10 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 	}
 	for &entry, number in snapshot.entries[:count] {
 		if found := entry_problem(&entry); found != .None {
+			// A refused table gives no generation either: a caller that
+			// keeps the generation of its last snapshot would take this one
+			// for read, and never read the table again.
+			snapshot.generation = 0
 			return found, number
 		}
 	}
@@ -597,8 +601,10 @@ Argument_Value :: struct {
 
 // argument_unpack reads the values of an Argument command. ok is false
 // for a parameter past PARAMETER_CAPACITY, a kind that is not Integer or
-// Text, a length past ARGUMENT_TEXT_CAPACITY, a text that is not valid
-// UTF-8, and a quote: a line has no way to hold one in a text.
+// Text, an Integer with a length of text, a length past
+// ARGUMENT_TEXT_CAPACITY, a text that is not valid UTF-8, and a quote: a
+// line has no way to hold one in a text. A refusal gives the parameter 0
+// and the zero value.
 argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argument: Argument_Value, ok: bool) {
 	parameter = int(values[0] & 0xFF)
 	kind := values[0] >> 8 & 0xFF
@@ -612,7 +618,12 @@ argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argum
 	}
 	switch value_kind {
 	case .Integer:
-		return parameter, {kind = .Integer, integer = i64(values[1])}, length == 0
+		// An Integer has no bytes of text: a length is a record that no
+		// panel writes, and its refusal gives nothing, as each other.
+		if length != 0 {
+			return 0, {}, false
+		}
+		return parameter, {kind = .Integer, integer = i64(values[1])}, true
 	case .Text:
 		if length > ARGUMENT_TEXT_CAPACITY {
 			return 0, {}, false

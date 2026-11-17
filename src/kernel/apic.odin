@@ -1,6 +1,7 @@
 package kernel
 
 import info "modus:contract/boot_info"
+import "modus:contract/acpi_processors"
 import "base:intrinsics"
 
 // The interrupt controller of each processor (local APIC): the timer, and
@@ -138,7 +139,8 @@ timer_pause :: proc "contextless" (pause: bool) {
 // map does not hold them.
 @(private = "file")
 acpi_bytes :: proc "contextless" (address: u64, count: u64) -> [^]u8 {
-	if address == 0 || address + count > direct_map_size {
+	// No sum: an address of the firmware near 2^64 would wrap it.
+	if address == 0 || count > direct_map_size || address > direct_map_size - count {
 		return nil
 	}
 	return ([^]u8)(direct(address, u8))
@@ -187,36 +189,15 @@ acpi_table :: proc "contextless" (root: u64, signature: string) -> (table: [^]u8
 }
 
 // processors_find reads the identifiers of the processors that the firmware
-// lists as usable.
+// lists as usable. The reader of the table is a contract package, so that
+// the host reads the same bytes in its tests and its fuzz target.
 @(private = "file")
 processors_find :: proc "contextless" (root: u64, ids: []u32) -> (count: int) {
 	table, size := acpi_table(root, "APIC")
 	if table == nil {
 		return 0
 	}
-	for offset := u64(44); offset + 2 <= size; {
-		kind := table[offset]
-		length := u64(table[offset + 1])
-		if length < 2 || offset + length > size {
-			break
-		}
-		id: u32
-		flags: u32
-		switch {
-		case kind == 0 && length >= 8:
-			id = u32(table[offset + 3])
-			flags = load(table, offset + 4, u32)
-		case kind == 9 && length >= 16 && apic_msr:
-			id = load(table, offset + 4, u32)
-			flags = load(table, offset + 8, u32)
-		}
-		if flags & 1 != 0 && count < len(ids) {
-			ids[count] = id
-			count += 1
-		}
-		offset += length
-	}
-	return count
+	return acpi_processors.processors_read(table[:size], apic_msr, ids)
 }
 
 // The parameters at the end of the start code: see processor.asm.
