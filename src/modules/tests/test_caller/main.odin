@@ -1,7 +1,7 @@
 // A test module that imports test_callee and has the entry.
 //
 // **What it is for.** It is the caller of the first test of the loader, on
-// the host (`test_modules` in `tools/modustool/modules.odin`): its entry
+// the host (`test_modules` in `tools/modustool/build/modules.odin`): its entry
 // calls test_callee through an import slot, so the test checks the import
 // and the rebases of both modules in one number. It is not in the boot
 // image, and its entry is not the entry of a process: it returns a value.

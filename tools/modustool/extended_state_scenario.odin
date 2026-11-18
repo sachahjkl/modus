@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The extended state of the processor: three machines (docs/ARCHITECTURE.md,
 // "The extended state of the processor").
@@ -144,5 +145,5 @@ extended_state_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	with_each_feature[0].text = kernel_lines_with_each_feature[host]
 	with_each_feature[4].text = saved_lines_with_each_feature[host]
 	with_each_feature[7].text = kept_lines_with_each_feature[host]
-	return machine_test(part, with_each_feature[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_extended_state_without_avx[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = MACHINE_STOP_OK, processor = .Without_Avx}) && machine_test(part, scenario_extended_state_without_xsave[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = MACHINE_STOP_OK, processor = .Without_Xsave})
+	return machine_test(part, with_each_feature[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_extended_state_without_avx[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = build.MACHINE_STOP_OK, processor = .Without_Avx}) && machine_test(part, scenario_extended_state_without_xsave[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = build.MACHINE_STOP_OK, processor = .Without_Xsave})
 }

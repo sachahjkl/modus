@@ -11,6 +11,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The folder of the intent files, from the root of the repository.
 INTENT_FOLDER :: "src/md"
@@ -88,7 +89,7 @@ intent_has_title :: proc(content: string) -> bool {
 		if fenced {
 			continue
 		}
-		if level, _ := site_heading_level(line); level > 0 {
+		if level, _ := build.site_heading_level(line); level > 0 {
 			return level == 1
 		}
 	}
@@ -254,7 +255,7 @@ intent_index_problems :: proc(files: []Intent_File, outside_exists: proc(path: s
 		if fenced {
 			continue
 		}
-		if level, _ := site_heading_level(line); level > 0 {
+		if level, _ := build.site_heading_level(line); level > 0 {
 			in_index = line == INTENT_INDEX_HEADING
 			if in_index {
 				index_headings += 1

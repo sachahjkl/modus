@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The module `cryptography` as it ships: the process cryptography_vectors
 // imports it and runs the published vectors of each primitive through its
@@ -32,5 +33,5 @@ scenario_cryptography := [?]Step {
 }
 
 cryptography_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_cryptography[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_CRYPTOGRAPHY, exit_status = MACHINE_STOP_OK})
+	return machine_test(part, scenario_cryptography[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_CRYPTOGRAPHY, exit_status = build.MACHINE_STOP_OK})
 }

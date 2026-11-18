@@ -8,6 +8,7 @@ import "modus:support/disk_process"
 import "modus:support/principals"
 import "modus:private/storage/storage_mount"
 import "modustool:foundation"
+import "modustool:build"
 
 // The line that the scenario of the debugger names is the line of the
 // call of sleep_for_ever in the entry of visitor.
@@ -62,13 +63,13 @@ stored_module :: proc(contents: ^Disk_Contents, name: string) -> ^Stored_Object 
 the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 	// One block, a part of a block, two blocks with one object node, and
 	// 70 blocks with two levels of object nodes.
-	files := [?]Module_File {
+	files := [?]build.Module_File {
 		{"one_block", test_file_bytes(format.BLOCK_SIZE, 1)},
 		{"small", test_file_bytes(10, 2)},
 		{"two_blocks", test_file_bytes(format.BLOCK_SIZE + 904, 3)},
 		{"two_levels", test_file_bytes(69 * format.BLOCK_SIZE + 17, 4)},
 	}
-	image, encoded := module_disk_encode(files[:], 256 * format.BLOCK_SIZE)
+	image, encoded := build.module_disk_encode(files[:], 256 * format.BLOCK_SIZE)
 	if !testing.expect(t, encoded) {
 		return
 	}
@@ -78,7 +79,7 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 	contents := disk_contents(image, state)
 	mount := contents.mount
 	testing.expect(t, !mount.failed && !mount.needs_format, "the open takes the disk")
-	testing.expect_value(t, mount.generation, u64(MODULE_DISK_GENERATION))
+	testing.expect_value(t, mount.generation, u64(build.MODULE_DISK_GENERATION))
 	testing.expect_value(t, mount.stores, u64(1))
 	testing.expect_value(t, mount.objects, u64(len(files)))
 	testing.expect_value(t, mount.trees, u64(0))
@@ -113,11 +114,11 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
 	buffer: [32]u8
 	testing.expect(t, principals.store_name_write(&buffer, disk_process.STORE_NAME, 1, false))
-	testing.expect_value(t, string(buffer[:len(PRINCIPAL_MODULE_FILES_STORE)]), PRINCIPAL_MODULE_FILES_STORE)
-	testing.expect_value(t, buffer[len(PRINCIPAL_MODULE_FILES_STORE)], u8(0))
-	files := [?]Module_File{{"one", test_file_bytes(100, 1)}, {"two", test_file_bytes(200, 2)}}
-	principal_files := [?]Module_File{{"one", test_file_bytes(300, 3)}}
-	image, encoded := module_disk_encode(files[:], 64 * format.BLOCK_SIZE, principal_files[:])
+	testing.expect_value(t, string(buffer[:len(build.PRINCIPAL_MODULE_FILES_STORE)]), build.PRINCIPAL_MODULE_FILES_STORE)
+	testing.expect_value(t, buffer[len(build.PRINCIPAL_MODULE_FILES_STORE)], u8(0))
+	files := [?]build.Module_File{{"one", test_file_bytes(100, 1)}, {"two", test_file_bytes(200, 2)}}
+	principal_files := [?]build.Module_File{{"one", test_file_bytes(300, 3)}}
+	image, encoded := build.module_disk_encode(files[:], 64 * format.BLOCK_SIZE, principal_files[:])
 	if !testing.expect(t, encoded) {
 		return
 	}
@@ -132,7 +133,7 @@ the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
 	testing.expect_value(t, contents.mount.stores_with_wrong_count, u64(0))
 	found := false
 	for &item in contents.objects {
-		if item.store == PRINCIPAL_MODULE_FILES_STORE && item.name == "one" {
+		if item.store == build.PRINCIPAL_MODULE_FILES_STORE && item.name == "one" {
 			found = true
 			testing.expect(t, slice.equal(item.bytes, principal_files[0].bytes))
 		}
@@ -149,11 +150,11 @@ the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
 the_hash_of_an_entry_is_the_hash_of_the_bytes :: proc(t: ^testing.T) {
 	for count in ([]int{1, 1024, format.BLOCK_SIZE, format.BLOCK_SIZE + 1, 5 * format.BLOCK_SIZE, 64 * format.BLOCK_SIZE, 64 * format.BLOCK_SIZE + 1, 100_000}) {
 		bytes := test_file_bytes(count, 9)
-		disk := Module_Disk {
+		disk := build.Module_Disk {
 			image = make([]u8, 256 * format.BLOCK_SIZE, context.temp_allocator),
 			next  = 2,
 		}
-		entry, held, written := module_object_write(&disk, bytes)
+		entry, held, written := build.module_object_write(&disk, bytes)
 		testing.expectf(t, written, "an object of %d bytes is written", count)
 		testing.expectf(t, entry.hash == blake3.hash(bytes), "an object of %d bytes has the hash of its bytes", count)
 		testing.expect_value(t, entry.size, u64(count))
@@ -179,8 +180,8 @@ a_file_with_a_hole :: proc(t: ^testing.T) {
 	for &byte in bytes[2 * format.BLOCK_SIZE:][:2 * format.BLOCK_SIZE] {
 		byte = 0
 	}
-	files := [?]Module_File{{"holed", bytes}}
-	image, encoded := module_disk_encode(files[:], 64 * format.BLOCK_SIZE)
+	files := [?]build.Module_File{{"holed", bytes}}
+	image, encoded := build.module_disk_encode(files[:], 64 * format.BLOCK_SIZE)
 	if !testing.expect(t, encoded) {
 		return
 	}
@@ -212,15 +213,15 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 	module_file := test_file_bytes(300, 7)
 	// A debug object that the readers take is made by the build: here,
 	// only the refusals that need no build are checked, and the name.
-	refused, accepted := module_debug_object_file("small", module_file, test_file_bytes(200, 8))
+	refused, accepted := build.module_debug_object_file("small", module_file, test_file_bytes(200, 8))
 	testing.expect(t, !accepted && refused.name == "")
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.debug_object_name_write(&digits, blake3.hash(module_file))
 	// An object larger than a module file may be, and under the limit of a
 	// debug object.
 	large := test_file_bytes(disk_process.FILE_BYTES_LIMIT + format.BLOCK_SIZE, 9)
-	files := [?]Module_File{{"small", module_file}, {string(digits[:]), large}}
-	image, encoded := module_disk_encode(files[:], 2 * disk_process.FILE_BYTES_LIMIT)
+	files := [?]build.Module_File{{"small", module_file}, {string(digits[:]), large}}
+	image, encoded := build.module_disk_encode(files[:], 2 * disk_process.FILE_BYTES_LIMIT)
 	if !testing.expect(t, encoded) {
 		return
 	}
@@ -238,8 +239,8 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 		testing.expect_value(t, stored.size, u64(len(large)))
 		testing.expect(t, !stored.damaged)
 	}
-	over := [?]Module_File{{string(digits[:]), test_file_bytes(disk_process.DEBUG_OBJECT_BYTES_LIMIT + 1, 3)}}
-	_, over_encoded := module_disk_encode(over[:], 4 * disk_process.DEBUG_OBJECT_BYTES_LIMIT)
+	over := [?]build.Module_File{{string(digits[:]), test_file_bytes(disk_process.DEBUG_OBJECT_BYTES_LIMIT + 1, 3)}}
+	_, over_encoded := build.module_disk_encode(over[:], 4 * disk_process.DEBUG_OBJECT_BYTES_LIMIT)
 	testing.expect(t, !over_encoded)
 }
 
@@ -249,7 +250,7 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 @(test)
 the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {
 	good := test_file_bytes(100, 1)
-	refused := [][]Module_File {
+	refused := [][]build.Module_File {
 		{},
 		{{"", good}},
 		{{"a/b", good}},
@@ -259,22 +260,22 @@ the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {
 		{{"empty", nil}},
 	}
 	for files in refused {
-		image, encoded := module_disk_encode(files, 64 * format.BLOCK_SIZE)
+		image, encoded := build.module_disk_encode(files, 64 * format.BLOCK_SIZE)
 		testing.expectf(t, !encoded && image == nil, "%d files are refused", len(files))
 	}
 	// A debug object takes the hash of its module as its name, and no other
 	// name of 64 bytes: upper case digits are no such name.
 	upper_case_digits := "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
-	_, upper_encoded := module_disk_encode([]Module_File{{upper_case_digits, good}}, 64 * format.BLOCK_SIZE)
+	_, upper_encoded := build.module_disk_encode([]build.Module_File{{upper_case_digits, good}}, 64 * format.BLOCK_SIZE)
 	testing.expect(t, !upper_encoded)
-	many := make([]Module_File, format.LEAF_CAPACITY + 1, context.temp_allocator)
+	many := make([]build.Module_File, format.LEAF_CAPACITY + 1, context.temp_allocator)
 	for &file in many {
 		file = {"x", good}
 	}
-	_, encoded := module_disk_encode(many, 64 * format.BLOCK_SIZE)
+	_, encoded := build.module_disk_encode(many, 64 * format.BLOCK_SIZE)
 	testing.expect(t, !encoded)
 	// A disk that is too small for the file.
-	large := [?]Module_File{{"large", test_file_bytes(40 * format.BLOCK_SIZE, 1)}}
-	_, encoded = module_disk_encode(large[:], 16 * format.BLOCK_SIZE)
+	large := [?]build.Module_File{{"large", test_file_bytes(40 * format.BLOCK_SIZE, 1)}}
+	_, encoded = build.module_disk_encode(large[:], 16 * format.BLOCK_SIZE)
 	testing.expect(t, !encoded)
 }

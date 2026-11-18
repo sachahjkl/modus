@@ -9,6 +9,7 @@ import "modus:contract/release"
 import "modus:contract/system_description"
 import "modus:support/tpm2"
 import "modustool:foundation"
+import "modustool:build"
 
 // The machines of the trusted boot (docs/TRUSTED_BOOT.md), `modustool test
 // trusted_boot`. With the usual firmware, the boot program must refuse:
@@ -60,13 +61,6 @@ import "modustool:foundation"
 //      refused: its signing key is revoked;
 //  17. with Secure Boot off, so another PCR 7, each floor is foreign: the
 //      system of machine 14 starts, and its boot program changes no floor.
-
-// The module that the volumes of machines 1 and 5 change: the root service
-// starts it at each boot: with no check, the machine runs it.
-CHANGED_MODULE :: "console"
-// The module that the volume of machine 7 changes: no process of that
-// machine loads it.
-OTHER_SYSTEM_MODULE :: "lonely"
 
 TEST_OUTPUT_CHANGED_MODULE :: foundation.BUILD_FOLDER + "/test_output_changed_module.txt"
 TEST_OUTPUT_WRONG_SIGNATURE :: foundation.BUILD_FOLDER + "/test_output_wrong_signature.txt"
@@ -254,7 +248,7 @@ firmware_failure_report :: proc(machine: ^Machine, output: string) {
 
 scenario_changed_module := [?]Step {
 	{kind = .Wait, text = "boot program: started"},
-	{kind = .Wait, text = "boot program: " + CHANGED_MODULE + " does not have the hash of the system description: expected "},
+	{kind = .Wait, text = "boot program: " + build.CHANGED_MODULE + " does not have the hash of the system description: expected "},
 	{kind = .Wait, text = "boot program: the boot display shows the failure"},
 	{kind = .Shot, text = "boot_fails_changed_module"},
 	{kind = .Quit},
@@ -285,7 +279,7 @@ scenario_without_description := [?]Step {
 
 scenario_stated_hash := [?]Step {
 	{kind = .Wait, text = "boot program: started"},
-	{kind = .Wait, text = "boot program: " + CHANGED_MODULE + " states in the boot image another hash than the system description: expected "},
+	{kind = .Wait, text = "boot program: " + build.CHANGED_MODULE + " states in the boot image another hash than the system description: expected "},
 	{kind = .Wait, text = "boot program: the boot display shows the failure"},
 	{kind = .Quit},
 }
@@ -341,23 +335,23 @@ scenario_secure_boot_refused := [?]Step {
 // boot program, the two machines of the measure, and the three machines of
 // Secure Boot.
 trusted_boot_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	refused_machine_run(part, scenario_changed_module[:], BOOT_VOLUME_CHANGED_MODULE, TEST_OUTPUT_CHANGED_MODULE) or_return
-	refused_machine_run(part, scenario_wrong_signature[:], BOOT_VOLUME_WRONG_SIGNATURE, TEST_OUTPUT_WRONG_SIGNATURE) or_return
-	refused_machine_run(part, scenario_changed_kernel[:], BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
-	refused_machine_run(part, scenario_without_description[:], BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
-	refused_machine_run(part, scenario_stated_hash[:], BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
-	measured := measure_machine_run(part, scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
-	other := measure_machine_run(part, scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
+	refused_machine_run(part, scenario_changed_module[:], build.BOOT_VOLUME_CHANGED_MODULE, TEST_OUTPUT_CHANGED_MODULE) or_return
+	refused_machine_run(part, scenario_wrong_signature[:], build.BOOT_VOLUME_WRONG_SIGNATURE, TEST_OUTPUT_WRONG_SIGNATURE) or_return
+	refused_machine_run(part, scenario_changed_kernel[:], build.BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
+	refused_machine_run(part, scenario_without_description[:], build.BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
+	refused_machine_run(part, scenario_stated_hash[:], build.BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
+	measured := measure_machine_run(part, scenario_measured[:], build.BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
+	other := measure_machine_run(part, scenario_other_system[:], build.BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
 	if measured == other {
 		fmt.eprintln("modustool: test failed: a system with one byte of one module changed has the same measure")
 		return false
 	}
-	foundation.test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
+	foundation.test_passed_print("%s", "a system with one byte of the module " + build.OTHER_SYSTEM_MODULE + " changed has another measure")
 	// The tool ends QEMU: status 0.
-	machine_test(part, scenario_secure_boot[:], {volume = BOOT_VOLUME_SECURE_BOOT, output = TEST_OUTPUT_SECURE_BOOT, exit_status = 0, firmware = .With_Secure_Boot}) or_return
-	foundation.test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
-	refused_machine_run(part, scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
-	refused_machine_run(part, scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
+	machine_test(part, scenario_secure_boot[:], {volume = build.BOOT_VOLUME_SECURE_BOOT, output = TEST_OUTPUT_SECURE_BOOT, exit_status = 0, firmware = .With_Secure_Boot}) or_return
+	foundation.test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", build.BOOT_VOLUME_SECURE_BOOT)
+	refused_machine_run(part, scenario_secure_boot_refused[:], build.BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
+	refused_machine_run(part, scenario_secure_boot_refused[:], build.BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
 	release_image_machine_run(part) or_return
 	floor_tests_run(part) or_return
 	return true
@@ -394,9 +388,9 @@ Floor_Numbers :: struct {
 // floor_numbers_read reads the key number of the build from the key file
 // that every boot program holds (system_key_write).
 floor_numbers_read :: proc() -> (numbers: Floor_Numbers, ok: bool) {
-	bytes := foundation.read_file(SYSTEM_KEY_FILE) or_return
+	bytes := foundation.read_file(build.SYSTEM_KEY_FILE) or_return
 	if len(bytes) != system_description.PUBLIC_KEY_SIZE + 8 {
-		fmt.eprintfln("modustool: test failed: %s has %d bytes, not a public key and a key number", SYSTEM_KEY_FILE, len(bytes))
+		fmt.eprintfln("modustool: test failed: %s has %d bytes, not a public key and a key number", build.SYSTEM_KEY_FILE, len(bytes))
 		return {}, false
 	}
 	for index in 0 ..< 8 {
@@ -572,7 +566,7 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, version_name))
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
 	floor_started_steps(&machine)
-	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 12, false) or_return
+	floor_machine_run(part, &machine, build.BOOT_VOLUME_NEWER_SYSTEM, 12, false) or_return
 	foundation.test_passed_print("a newer system defined the TPM floors and raised them before its measure: the key floor to %d, the version floor of its key to %d", numbers.key_number, newer_version)
 
 	// Another system plants an index with an authorization value, and a
@@ -587,7 +581,7 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_wait(&machine, fmt.aprintf("boot program: %s: removed an index that was never written: another system planted it", version_name))
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
 	floor_started_steps(&machine)
-	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 13, false) or_return
+	floor_machine_run(part, &machine, build.BOOT_VOLUME_NEWER_SYSTEM, 13, false) or_return
 	foundation.test_passed_print("%s", "the boot program removed a planted index with an authorization value and a foreign index, and put the floors of this system back")
 
 	// 14. The system of the repository: below the version floor that
@@ -595,8 +589,8 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	held := fmt.aprintf(FLOOR_LINE, numbers.key_number, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS)
 	floor_start_steps(&machine, .With_Secure_Boot, held, numbers.key_number, numbers.security_version)
 	floor_refused_steps(&machine, fmt.aprintf("boot program: the security version %d of the system description is below the version floor %d of the TPM: an older system", numbers.security_version, newer_version))
-	floor_machine_run(part, &machine, BOOT_VOLUME_SECURE_BOOT, 14, true) or_return
-	foundation.test_passed_print("the boot program refused the system of %s after a newer one started: its security version %d is below the version floor %d", BOOT_VOLUME_SECURE_BOOT, numbers.security_version, newer_version)
+	floor_machine_run(part, &machine, build.BOOT_VOLUME_SECURE_BOOT, 14, true) or_return
+	foundation.test_passed_print("the boot program refused the system of %s after a newer one started: its security version %d is below the version floor %d", build.BOOT_VOLUME_SECURE_BOOT, numbers.security_version, newer_version)
 
 	// 15. A newer key raises the key floor, and starts the version floor of
 	// its own key number.
@@ -605,13 +599,13 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, newer_version_name))
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, newer_version_name, 0, newer_version))
 	floor_started_steps(&machine)
-	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_KEY, 15, false) or_return
+	floor_machine_run(part, &machine, build.BOOT_VOLUME_NEWER_KEY, 15, false) or_return
 	foundation.test_passed_print("a boot program with the key number %d raised the key floor from %d to %d", newer_key, numbers.key_number, newer_key)
 
 	// 16. The boot program of machine 12: its key is revoked.
 	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, newer_key, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS), numbers.key_number, newer_version)
 	floor_refused_steps(&machine, fmt.aprintf("boot program: the key number %d of this boot program is below the key floor %d of the TPM: its key is revoked", numbers.key_number, newer_key))
-	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 16, true) or_return
+	floor_machine_run(part, &machine, build.BOOT_VOLUME_NEWER_SYSTEM, 16, true) or_return
 	foundation.test_passed_print("the boot program with the key number %d refused to start after a boot program with the key number %d raised the key floor: its signing key is revoked", numbers.key_number, newer_key)
 
 	// 17. Another PCR 7: the system of the repository, whose boot program
@@ -621,7 +615,7 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_start_steps(&machine, .With_Tpm_Driver, fmt.aprintf(FLOOR_LINE, 0, FLOOR_FOREIGN_WORDS, numbers.key_number, 0, FLOOR_FOREIGN_WORDS), numbers.key_number, numbers.security_version)
 	append(&machine.steps, Step{kind = .Wait, text = FLOOR_STAY_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
 	floor_started_steps(&machine)
-	floor_machine_run(part, &machine, BOOT_VOLUME_SECURE_BOOT, 17, false, .With_Tpm_Driver) or_return
+	floor_machine_run(part, &machine, build.BOOT_VOLUME_SECURE_BOOT, 17, false, .With_Tpm_Driver) or_return
 	foundation.test_passed_print("%s", "with another PCR 7 (Secure Boot off), each floor is foreign: the older system started, and its boot program changed no floor")
 	fmt.println("modustool: the TPM floors: 6 machines passed")
 	return true
@@ -653,9 +647,9 @@ scenario_release_image := [?]Step {
 release_image_machine_run :: proc(part: ^Test_Part_Run) -> bool {
 	seed_text: string = RELEASE_TEST_SEED_TEXT
 	seed := transmute([]u8)seed_text
-	files := release_files_write(BOOT_VOLUME_SECURE_BOOT, release.RELEASE_NUMBER, RELEASE_TEST_FOLDER, RELEASE_TEST_FOLDER + "/" + RELEASE_OUTPUT_FOLDER, seed, .Test_Keys_Allowed) or_return
-	public_key := public_key_of_seed(seed) or_return
-	digits, problem := release_files_verify(files.image_path, files.checksum_path, public_key)
+	files := build.release_files_write(build.BOOT_VOLUME_SECURE_BOOT, release.RELEASE_NUMBER, RELEASE_TEST_FOLDER, RELEASE_TEST_FOLDER + "/" + build.RELEASE_OUTPUT_FOLDER, seed, .Test_Keys_Allowed) or_return
+	public_key := build.public_key_of_seed(seed) or_return
+	digits, problem := build.release_files_verify(files.image_path, files.checksum_path, public_key)
 	if problem != "" {
 		fmt.eprintfln("modustool: test failed: the files of the release image do not verify: %s", problem)
 		return false
@@ -664,7 +658,7 @@ release_image_machine_run :: proc(part: ^Test_Part_Run) -> bool {
 	_ = os.remove(RELEASE_TEST_DISK)
 	foundation.run([]string{"zstd", "-d", "-q", "-o", RELEASE_TEST_DISK, files.image_path}) or_return
 	// The disk is the output of this build: the machine starts from it.
-	boot_volume_ready_note(RELEASE_TEST_DISK)
+	build.boot_volume_ready_note(RELEASE_TEST_DISK)
 	// The tool ends QEMU: status 0.
 	machine_test(part, scenario_release_image[:], {volume = RELEASE_TEST_DISK, output = TEST_OUTPUT_RELEASE_IMAGE, exit_status = 0}) or_return
 	foundation.test_passed_print("the decompressed release image %s, a GPT disk, starts the system", RELEASE_TEST_DISK)
@@ -705,8 +699,8 @@ measure_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 	if !passed {
 		return
 	}
-	description := image_description_read(volume) or_return
-	expected := system_description.hexadecimal(measure_expected(description))
+	description := build.image_description_read(volume) or_return
+	expected := system_description.hexadecimal(build.measure_expected(description))
 	log_bytes := foundation.read_file(output) or_return
 	log := string(log_bytes)
 	at := strings.index(log, MEASURE_LINE)
@@ -720,5 +714,5 @@ measure_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 		return
 	}
 	foundation.test_passed_print("PCR 11 of %s is %s, the value that the tool computes from its system description", volume, found)
-	return measure_expected(description), true
+	return build.measure_expected(description), true
 }

@@ -48,6 +48,7 @@ import "modus:contract/timed_stream"
 import "modus:support/pci"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -68,6 +69,7 @@ import "modustool:resources"
 // last makes the whole run longer.
 HOST_TEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER,
+	foundation.TOOL_SOURCE_FOLDER + "/build",
 	foundation.TOOL_SOURCE_FOLDER + "/resources",
 	foundation.TOOL_SOURCE_FOLDER + "/foundation",
 	foundation.SOURCE_FOLDER_RUNTIME,
@@ -158,45 +160,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
-BOOT_OBJECT_FOLDER :: foundation.BUILD_FOLDER + "/boot"
-// The boot program of the main boot volume, and its object: each boot
-// volume has its own object folder (boot_volumes.odin).
-BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + BOOT_PROGRAM_FILE_NAME
-BOOT_PROGRAM_OBJECT :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + BOOT_PROGRAM_OBJECT_FILE_NAME
-BOOT_VOLUME :: foundation.BUILD_FOLDER + "/boot_volume.img"
-BOOT_VOLUME_FAILS :: foundation.BUILD_FOLDER + "/boot_volume_fails.img"
-BOOT_VOLUME_SHORTAGE :: foundation.BUILD_FOLDER + "/boot_volume_shortage.img"
-BOOT_VOLUME_MEASURE :: foundation.BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `modustool measure`.
-BOOT_VOLUME_WITHOUT_RETURN_CHECK :: foundation.BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: foundation.BUILD_FOLDER + "/test_output_shortage.txt"
-// The machine of the operation sequences (operation_sequences.odin), with
-// the kernel that ships.
-BOOT_VOLUME_OPERATION_SEQUENCES :: foundation.BUILD_FOLDER + "/boot_volume_operation_sequences.img"
 TEST_OUTPUT_OPERATION_SEQUENCES :: foundation.BUILD_FOLDER + "/test_output_operation_sequences.txt"
-BOOT_VOLUME_SELF_TEST :: foundation.BUILD_FOLDER + "/boot_volume_self_test_%d.img"
-// The volumes of `test trusted_boot` (trusted_boot_scenario.odin): one byte
-// of a module changed after the system description was made; one bit of the
-// description signature changed; one byte of a module changed before it was
-// made (another system, signed, measured).
-BOOT_VOLUME_CHANGED_MODULE :: foundation.BUILD_FOLDER + "/boot_volume_changed_module.img"
-BOOT_VOLUME_WRONG_SIGNATURE :: foundation.BUILD_FOLDER + "/boot_volume_wrong_signature.img"
-BOOT_VOLUME_OTHER_SYSTEM :: foundation.BUILD_FOLDER + "/boot_volume_other_system.img"
-// More volumes that the boot program must refuse: one byte of the kernel
-// changed; no system description; an entry that states another hash.
-BOOT_VOLUME_CHANGED_KERNEL :: foundation.BUILD_FOLDER + "/boot_volume_changed_kernel.img"
-BOOT_VOLUME_WITHOUT_DESCRIPTION :: foundation.BUILD_FOLDER + "/boot_volume_without_description.img"
-BOOT_VOLUME_STATED_HASH :: foundation.BUILD_FOLDER + "/boot_volume_stated_hash.img"
-// The boot program signed for Secure Boot, and the same with one byte
-// changed after the signature (secure_boot.odin).
-BOOT_VOLUME_SECURE_BOOT :: foundation.BUILD_FOLDER + "/boot_volume_secure_boot.img"
-BOOT_VOLUME_SECURE_BOOT_CHANGED :: foundation.BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
-// The volumes of the TPM floors, signed for Secure Boot: a newer system (a
-// security version one above the repository), and a newer system whose
-// boot program has a newer key (a key number one above too).
-BOOT_VOLUME_NEWER_SYSTEM :: foundation.BUILD_FOLDER + "/boot_volume_newer_system.img"
-BOOT_VOLUME_NEWER_KEY :: foundation.BUILD_FOLDER + "/boot_volume_newer_key.img"
-// The path where the firmware looks for the boot program of a disk.
-BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 // The private copy of the variable store of the firmware of `run`. A test
 // machine has its own copy beside its log, with the same name after the
 // name of its log (machine_command): two machines that run at the same
@@ -227,7 +192,6 @@ MACHINE_PROCESSOR_COUNT :: 4
 // before the first one, kept for the two others.
 TEST_PERSIST_DISK :: foundation.BUILD_FOLDER + "/test_persist_disk.img"
 TEST_OUTPUT_PERSIST :: foundation.BUILD_FOLDER + "/test_output_persist_%d.txt"
-DATA_DISK_SIZE :: 64 << 20
 SCRATCH_DISK_SIZE :: 32 << 20
 
 Command :: struct {
@@ -284,7 +248,7 @@ COMMANDS :: [?]Command {
 	// ```
 	// nix develop -c modustool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
@@ -298,7 +262,7 @@ COMMANDS :: [?]Command {
 	//
 	// The parallel build of `build` runs this command once for each step of a module.
 	// Run it by hand to see the errors of one module alone.
-	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = build.run_module},
 	// Builds one module from a folder outside the repository: the module
 	// file and its debug object, with the two steps of a module of the
 	// system.
@@ -318,8 +282,8 @@ COMMANDS :: [?]Command {
 	// (docs/TOOLS.md, "A module from a source outside the repository").
 	// Writes a data disk whose store of the module files holds module files: a
 	// machine with that disk starts each one from its console, by its hash.
-	{name = "module-disk", about = "module-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `module_files` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = run_module_disk},
-	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = run_module_build},
+	{name = "module-disk", about = "module-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `module_files` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = build.run_module_disk},
+	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + build.MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = build.run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
 	//
@@ -329,7 +293,7 @@ COMMANDS :: [?]Command {
 	// The build runs this command once for each boot volume that it must
 	// build, several at once. Run it by hand, after a build, to see the
 	// errors of one volume alone.
-	{name = "volume", about = "volume <name>: build one boot volume, after a build wrote the modules and the boot images (the build runs this command for each volume that it must build)", run = run_volume},
+	{name = "volume", about = "volume <name>: build one boot volume, after a build wrote the modules and the boot images (the build runs this command for each volume that it must build)", run = build.run_volume},
 	// Runs the machine tests: it builds, starts each test machine under QEMU,
 	// plays its scenario, and checks its log.
 	//
@@ -494,7 +458,7 @@ COMMANDS :: [?]Command {
 	// - `module`, `count`: the module and the count of builds.
 	// - `all count [host_processes]`: every module and the boot program, one row
 	//   each.
-	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [host_processes]`: every module and the boot program, one row each", run = run_repeat},
+	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [host_processes]`: every module and the boot program, one row each", run = build.run_repeat},
 	// Copies a file of `core:crypto` of the Odin compiler into the repository
 	// with the listed changes of its imports, and prints its line of the
 	// manifest of the origin.
@@ -521,7 +485,7 @@ COMMANDS :: [?]Command {
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
 	{name = "rule-checks", about = "check that " + foundation.OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
-	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = run_library_imports},
+	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = build.run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
 	// similarity score from 0 to 1 to each pair that it compares, groups
@@ -632,7 +596,7 @@ COMMANDS :: [?]Command {
 	// - `tag-check <tag>`: checks that a tag is `v` and the release number.
 	//
 	// The workflow of a release runs it on each tag `v*`.
-	{name = "release", about = "image: build the release volume with the keys of the publisher (" + SIGNING_KEY_VARIABLE + "), and write the compressed GPT disk image, " + RELEASE_CHECKSUM_FILE_NAME + " and its release signature in " + RELEASE_OUTPUT_FOLDER + "/; `release tag-check <tag>`: check that the tag is v and the release number", run = run_release},
+	{name = "release", about = "image: build the release volume with the keys of the publisher (" + build.SIGNING_KEY_VARIABLE + "), and write the compressed GPT disk image, " + build.RELEASE_CHECKSUM_FILE_NAME + " and its release signature in " + build.RELEASE_OUTPUT_FOLDER + "/; `release tag-check <tag>`: check that the tag is v and the release number", run = build.run_release},
 	// Verifies the files of a release: the release signature of the
 	// checksum list with the public key of the repository, then the SHA-256
 	// of the image against its line. The signature file is beside the
@@ -641,7 +605,7 @@ COMMANDS :: [?]Command {
 	// ```
 	// nix develop -c modustool verify modus-0.93.0-x86_64.img.zst SHA256SUMS.txt
 	// ```
-	{name = "verify", about = "verify <image> <" + RELEASE_CHECKSUM_FILE_NAME + ">: check the release signature of the checksum list with " + RELEASE_PUBLIC_KEY_FILE + ", then the SHA-256 of the image", run = run_verify},
+	{name = "verify", about = "verify <image> <" + build.RELEASE_CHECKSUM_FILE_NAME + ">: check the release signature of the checksum list with " + build.RELEASE_PUBLIC_KEY_FILE + ", then the SHA-256 of the image", run = build.run_verify},
 	// Records the hash of the file of each module of the build, or compares
 	// the build with such a record. It builds nothing: run `build` first.
 	//
@@ -654,7 +618,7 @@ COMMANDS :: [?]Command {
 	// It is the proof of a change that must not change the system, such as
 	// a move of the sources
 	// (docs/TOOLS.md, "The hashes of the modules of two builds").
-	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + foundation.MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = run_module_hashes},
+	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + foundation.MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = build.run_module_hashes},
 	// Runs every check of the work tree, and writes no file of the
 	// repository: the count of its checks goes to build/checks_passed.txt.
 	// The full check of a batch is `nix flake check`, which runs this
@@ -705,7 +669,7 @@ COMMANDS :: [?]Command {
 	//
 	// A system signed with the test key is for a test machine only: its
 	// private key is published.
-	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key), with the firmware signing key and the release signing key; `key write <folder>`: the same folder from the variables of the secrets of a workflow; `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
+	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key), with the firmware signing key and the release signing key; `key write <folder>`: the same folder from the variables of the secrets of a workflow; `key show`: print the public key that the build uses (" + build.SIGNING_KEY_VARIABLE + ", or the test signing key)", run = build.run_key},
 }
 
 main :: proc() {
@@ -713,8 +677,8 @@ main :: proc() {
 	// folder of the build in it (NIX_LDFLAGS). The linker would write it in
 	// each module, and the hash of a module would depend on that folder.
 	_ = os.unset_env("NIX_LDFLAGS")
-	when TOOL_BUILDS_ITSELF {
-		tool_build_current()
+	when build.TOOL_BUILDS_ITSELF {
+		build.tool_build_current()
 	}
 	if len(os.args) < 2 || os.args[1] == "help" || os.args[1] == "-h" || os.args[1] == "--help" {
 		usage()
@@ -754,10 +718,10 @@ run_build :: proc(args: []string) -> int {
 	// processes at once.
 	rest := args
 	if len(rest) >= 1 && rest[0] == "whole" {
-		build_whole = true
+		build.build_whole = true
 		rest = rest[1:]
 	}
-	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_host_processes(rest[0])) {
+	if len(rest) > 1 || (len(rest) == 1 && !build.parse_module_build_host_processes(rest[0])) {
 		fmt.eprintln("modustool: build [whole] [host_processes]")
 		return foundation.EXIT_USAGE
 	}
@@ -770,27 +734,27 @@ run_build :: proc(args: []string) -> int {
 // built and not checked: no machine of this process starts from it
 // (machine_command).
 build_system :: proc(needed_volumes: []string) -> int {
-	build_measure_start()
-	if !build_modules() {
+	build.build_measure_start()
+	if !build.build_modules() {
 		return foundation.EXIT_FAILURE
 	}
 	volumes_started := time.tick_now()
-	if !boot_volumes_build(needed_volumes) {
+	if !build.boot_volumes_build(needed_volumes) {
 		return foundation.EXIT_FAILURE
 	}
-	build_measure_step("the boot volumes, in all", volumes_started)
-	build_measure_print()
+	build.build_measure_step("the boot volumes, in all", volumes_started)
+	build.build_measure_print()
 	return 0
 }
 
 run_machine :: proc(args: []string) -> int {
 	if len(args) >= 1 && args[0] == "without_checks" {
-		test_build_checks = false
+		build.test_build_checks = false
 	}
-	if code := build_system(boot_volumes_of_command("run")); code != 0 {
+	if code := build_system(build.boot_volumes_of_command("run")); code != 0 {
 		return code
 	}
-	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
+	if !disk_prepare(DATA_DISK, build.DATA_DISK_SIZE, false) {
 		return foundation.EXIT_FAILURE
 	}
 	// The peer receives the calls of `modustool call` on a Unix socket of
@@ -808,7 +772,7 @@ run_machine :: proc(args: []string) -> int {
 	client_key := peer_remote_client_key_draw(peer.remote)
 	fmt.printfln("modustool: the key of the client of remote in the peer, for this run: %s; allow it in a console of the machine: remote_allow(\"%s\")", client_key, client_key)
 	defer peer_stop(&peer)
-	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, &peer)
+	command, ok := machine_command(build.BOOT_VOLUME, "", DATA_DISK, &peer)
 	if !ok {
 		return foundation.EXIT_FAILURE
 	}
@@ -916,7 +880,7 @@ run_screenshots :: proc(args: []string) -> int {
 	}
 	// The rates of the record come from measure runs on the host, with no
 	// other machine: the test measures none (measure_runs.odin).
-	if code := build_system(boot_volumes_of_command("screenshots")); code != 0 {
+	if code := build_system(build.boot_volumes_of_command("screenshots")); code != 0 {
 		return code
 	}
 	if !measure_runs_of_the_record() {
@@ -1000,16 +964,16 @@ TEST_OUTPUT_MEASURE :: foundation.BUILD_FOLDER + "/test_output_measure.txt"
 run_measure :: proc(args: []string) -> int {
 	args := args
 	if len(args) >= 1 && args[0] == "without_checks" {
-		test_build_checks = false
+		build.test_build_checks = false
 		args = args[1:]
 	}
 	// `measure shortage` boots the volume of the shortage of frames; each
 	// other form boots the volume of a measure run.
 	shortage := len(args) >= 1 && args[0] == "shortage"
-	if code := build_system(boot_volumes_of_command(shortage ? MEASURE_SHORTAGE_COMMAND : MEASURE_COMMAND)); code != 0 {
+	if code := build_system(build.boot_volumes_of_command(shortage ? build.MEASURE_SHORTAGE_COMMAND : build.MEASURE_COMMAND)); code != 0 {
 		return code
 	}
-	part := test_part_run_make(MEASURE_COMMAND)
+	part := test_part_run_make(build.MEASURE_COMMAND)
 	defer test_part_run_free(&part)
 	if !foundation.make_folder(SCREENSHOT_FOLDER) || !test_part_run_start(&part) {
 		return foundation.EXIT_FAILURE
@@ -1018,7 +982,7 @@ run_measure :: proc(args: []string) -> int {
 		return measure_windows(&part) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "address_space" {
-		return machine_test(&part, scenario_measure_address_space[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) ? 0 : foundation.EXIT_FAILURE
+		return machine_test(&part, scenario_measure_address_space[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) ? 0 : foundation.EXIT_FAILURE
 	}
 	// `measure <process>`: one process that measures itself, alone.
 	if len(args) == 1 {
@@ -1045,7 +1009,7 @@ run_measure :: proc(args: []string) -> int {
 			// Not in the temporary allocator: the scenario frees it after each step.
 			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", foundation.BUILD_FOLDER, run)
 			defer delete(output)
-			if !machine_test(&part, scenario_measure_scheduler[:], {volume = BOOT_VOLUME_MEASURE, output = output, exit_status = MACHINE_STOP_OK}) {
+			if !machine_test(&part, scenario_measure_scheduler[:], {volume = build.BOOT_VOLUME_MEASURE, output = output, exit_status = build.MACHINE_STOP_OK}) {
 				return foundation.EXIT_FAILURE
 			}
 		}
@@ -1055,7 +1019,7 @@ run_measure :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
 		return foundation.EXIT_USAGE
 	}
-	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
+	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
 		return foundation.EXIT_FAILURE
 	}
 	return 0
@@ -1063,13 +1027,13 @@ run_measure :: proc(args: []string) -> int {
 
 run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
-	build_whole = true
+	build.build_whole = true
 	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}
 	// The kernel and the contract packages import no support package. The
 	// compiler does not refuse such an import: the library is one.
-	if !library_imports_check() {
+	if !build.library_imports_check() {
 		return foundation.EXIT_FAILURE
 	}
 	// The count of the kernel operations is the count that the properties
@@ -1109,7 +1073,7 @@ run_check :: proc(args: []string) -> int {
 	if !comment_rule_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !glossary_check() {
+	if !build.glossary_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !intent_index_check() {
@@ -1136,7 +1100,7 @@ run_check :: proc(args: []string) -> int {
 	if run_test(nil) != 0 {
 		return foundation.EXIT_FAILURE
 	}
-	if !outputs_same_after_second_build() {
+	if !build.outputs_same_after_second_build() {
 		return foundation.EXIT_FAILURE
 	}
 	// `screenshots` reads the count from the output of the check of the
@@ -1214,7 +1178,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
 	// Secure Boot is an output of the build of one volume.
-	if !boot_volume_is_ready(volume) || (firmware == .With_Secure_Boot && !boot_volume_is_ready(BOOT_VOLUME_SECURE_BOOT)) {
+	if !build.boot_volume_is_ready(volume) || (firmware == .With_Secure_Boot && !build.boot_volume_is_ready(build.BOOT_VOLUME_SECURE_BOOT)) {
 		fmt.eprintfln("modustool: the boot volume %s, or the variable store of Secure Boot, was not built or kept by the build of this command: add it to the volumes of the command (boot_volumes.odin)", volume)
 		return nil, false
 	}
@@ -1238,7 +1202,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// which the build enrolled the certificate of the firmware signing key
 	// (secure_boot.odin), not from the empty store of the firmware.
 	if firmware == .With_Secure_Boot {
-		firmware_variables = SECURE_BOOT_VARIABLES
+		firmware_variables = build.SECURE_BOOT_VARIABLES
 	}
 	if firmware_code == "" || firmware_variables == "" {
 		fmt.eprintfln("modustool: %s and %s are not set. Use the development shell: nix develop", code_variable, variables_variable)

@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The names of the procedures of a stack trace. A process that has the
 // debug image names each frame itself: "fault::three + 0x8 in fault
@@ -51,7 +52,7 @@ trace_check :: proc(line: string, names: string) -> (found: string, ok: bool) {
 		if !parsed {
 			return fmt.tprintf("the frame \"%s\" has no offset", frame), false
 		}
-		object, read := foundation.read_file(debug_object_path(parts[0]))
+		object, read := foundation.read_file(build.debug_object_path(parts[0]))
 		if !read {
 			return fmt.tprintf("no debug object of the module %s", parts[0]), false
 		}
@@ -99,7 +100,7 @@ test_debug_objects :: proc() -> bool {
 		fmt.eprintfln(format, ..args)
 		return false
 	}
-	object := foundation.read_file(debug_object_path("fault")) or_return
+	object := foundation.read_file(build.debug_object_path("fault")) or_return
 	elf := foundation.read_file(foundation.join(foundation.MODULE_BUILD_FOLDER, "/fault/linked.elf")) or_return
 	module_file := foundation.read_file(foundation.module_path("fault")) or_return
 	if fault := debug_object.check(object); fault != .None {
@@ -111,10 +112,10 @@ test_debug_objects :: proc() -> bool {
 	}
 	// The address of fault::three, from the symbol table of the ELF file
 	// with the code of the tool that does not write the debug object.
-	header, sections, has_sections := elf_sections(elf)
-	code_start, code_end := elf_code_range(elf, header)
-	three: Debug_Procedure
-	for item in elf_function_symbols(elf, sections, code_start, code_end) {
+	header, sections, has_sections := build.elf_sections(elf)
+	code_start, code_end := build.elf_code_range(elf, header)
+	three: build.Debug_Procedure
+	for item in build.elf_function_symbols(elf, sections, code_start, code_end) {
 		if item.name == "fault::three" {
 			three = item
 		}

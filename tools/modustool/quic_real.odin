@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "modustool:foundation"
+import "modustool:build"
 
 // QUIC against a stack that this project did not write (docs/QUIC.md,
 // section 6): the QUIC client of OpenSSL (`openssl s_client -quic`, OpenSSL
@@ -55,7 +56,7 @@ scenario_quic_real := [?]Step {
 
 // quic_real_tests_run runs the machine of `modustool test quic-real`.
 quic_real_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_quic_real[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_QUIC_REAL, exit_status = MACHINE_STOP_OK})
+	return machine_test(part, scenario_quic_real[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_QUIC_REAL, exit_status = build.MACHINE_STOP_OK})
 }
 
 // openssl_quic_command gives the command of the step: the line, then {fin}

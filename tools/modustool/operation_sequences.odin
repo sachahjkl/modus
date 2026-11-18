@@ -9,6 +9,7 @@ import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
+import "modustool:build"
 
 // The machine of the operation sequences (src/md/infrastructure/kernel_fuzzing.md,
 // "The machine", "The oracles"): the tool writes each sequence in the
@@ -26,9 +27,6 @@ OPERATION_MAILBOX_LINE :: "operation_fuzzing: mailbox at "
 OPERATION_SEQUENCES_MEMORY_FILE :: foundation.BUILD_FOLDER + "/test_output_operation_sequences_memory.raw"
 OPERATION_REPLAY_MEMORY_FILE :: foundation.BUILD_FOLDER + "/test_output_operation_replay_memory.raw"
 TEST_OUTPUT_OPERATION_REPLAY :: foundation.BUILD_FOLDER + "/test_output_operation_replay.txt"
-// The command `fuzz replay operations`, as the table of the volumes of the
-// commands names it.
-OPERATION_REPLAY_COMMAND :: "operation_replay"
 
 // ---------------------------------------------------------------------
 // The statuses of the reference comments.
@@ -851,7 +849,7 @@ operation_sequences_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	defer {
 		_ = os.remove(OPERATION_SEQUENCES_MEMORY_FILE)
 	}
-	return machine_test(part, scenario_operation_sequences[:], {volume = BOOT_VOLUME_OPERATION_SEQUENCES, output = TEST_OUTPUT_OPERATION_SEQUENCES, exit_status = 0, memory_file = OPERATION_SEQUENCES_MEMORY_FILE})
+	return machine_test(part, scenario_operation_sequences[:], {volume = build.BOOT_VOLUME_OPERATION_SEQUENCES, output = TEST_OUTPUT_OPERATION_SEQUENCES, exit_status = 0, memory_file = OPERATION_SEQUENCES_MEMORY_FILE})
 }
 
 // operation_sequences_replay is `fuzz replay operations <file>`: one
@@ -866,7 +864,7 @@ operation_sequences_replay :: proc(path: string) -> int {
 		fmt.eprintfln("modustool: %s is not an operation sequence: %v", path, refusal)
 		return foundation.EXIT_USAGE
 	}
-	if code := build_system(boot_volumes_of_command(OPERATION_REPLAY_COMMAND)); code != 0 {
+	if code := build_system(build.boot_volumes_of_command(build.OPERATION_REPLAY_COMMAND)); code != 0 {
 		return code
 	}
 	steps := scenario_operation_sequences
@@ -875,12 +873,12 @@ operation_sequences_replay :: proc(path: string) -> int {
 			step.text = path
 		}
 	}
-	part := test_part_run_make(OPERATION_REPLAY_COMMAND)
+	part := test_part_run_make(build.OPERATION_REPLAY_COMMAND)
 	defer test_part_run_free(&part)
 	defer {
 		_ = os.remove(OPERATION_REPLAY_MEMORY_FILE)
 	}
-	if !test_part_run_start(&part) || !machine_test(&part, steps[:], {volume = BOOT_VOLUME_OPERATION_SEQUENCES, output = TEST_OUTPUT_OPERATION_REPLAY, exit_status = 0, memory_file = OPERATION_REPLAY_MEMORY_FILE}) {
+	if !test_part_run_start(&part) || !machine_test(&part, steps[:], {volume = build.BOOT_VOLUME_OPERATION_SEQUENCES, output = TEST_OUTPUT_OPERATION_REPLAY, exit_status = 0, memory_file = OPERATION_REPLAY_MEMORY_FILE}) {
 		fmt.eprintfln("modustool: fuzz replay operations: %s breaks an oracle on the kernel that ships, or the machine failed", path)
 		return foundation.EXIT_FAILURE
 	}

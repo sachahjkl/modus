@@ -3,7 +3,7 @@
 // The console loads it and calls its exports with the call form
 // (docs/MODULE_CONTRACT.md, section 4). The tool makes the description of each
 // export from this source: the name, the parameters, the result, and the
-// first sentence of the comment (tools/modustool/describe.odin).
+// first sentence of the comment (tools/modustool/build/describe.odin).
 //
 // **What it is for.** It is the first module that a reader loads to see
 // the call form at work: integers in, an integer or a text out, an error

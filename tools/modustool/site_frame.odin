@@ -16,6 +16,7 @@ import "core:strings"
 import "core:time"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 // The address of the site: the pages get canonical addresses, Open Graph,
 // a JSON-LD graph and a sitemap from it. An empty address gives a site of
@@ -181,7 +182,7 @@ Site :: struct {
 	firmware_certificate_present: bool, // The repository holds the certificate of the firmware signing key of the publisher (site_download.odin).
 	build_time:   string,
 	documents:    map[string]string, // A Markdown file ("docs/NETWORK.md" and "NETWORK.md") to its page.
-	glossary:     Glossary, // The folder docs/glossary, as glossary_read gives it.
+	glossary:     build.Glossary, // The folder docs/glossary, as glossary_read gives it.
 	terms:        []Site_Term,
 	not_rendered: [dynamic]string,
 	copies:       map[string]string, // A path in the site to the file of the repository that it copies.
@@ -223,7 +224,7 @@ Site :: struct {
 	document_references: map[string]bool,
 	document_outlines: map[string]Site_Document_Outline, // The title and the headings of each document that the site reads from its file.
 	document_headings_pending: bool, // While the guides are read for their headings only: no reference is counted.
-	declarations: Site_Declaration_Index, // Each declaration of the sources of the system (docs/SITE.md, "The declarations of the sources").
+	declarations: build.Site_Declaration_Index, // Each declaration of the sources of the system (docs/SITE.md, "The declarations of the sources").
 	declaration_spans: Site_Declaration_Span_Counts, // What became of the code spans that have the form of a name.
 	byte_layouts: map[string]Byte_Layout, // Each byte layout that a fence of a guide can name (docs/SITE.md, "The byte layouts").
 	byte_layout_problems: [dynamic]string, // The faults of the fences of byte layouts: each one stops the command.
@@ -479,10 +480,10 @@ site_description_cut :: proc(text: string) -> string {
 // the sort keeps the order of the file among names of one length. A name of
 // two letters is too short to link. A name that the glossary has twice links
 // to its first entry. Each term names the page of its group.
-site_glossary_terms :: proc(glossary: Glossary) -> []Site_Term {
+site_glossary_terms :: proc(glossary: build.Glossary) -> []Site_Term {
 	terms := make([dynamic]Site_Term, context.temp_allocator)
 	names := make(map[string]bool, context.temp_allocator)
-	for term in glossary_terms_in_order(glossary) {
+	for term in build.glossary_terms_in_order(glossary) {
 		if len(term.name) < 3 {
 			continue
 		}
@@ -571,7 +572,7 @@ site_build :: proc(address: string) -> bool {
 	// glossary, a folder of docs/, is pages of the reference.
 	document_paths := foundation.files_with_suffix("docs", ".md") or_return
 	for path in document_paths {
-		name := site_file_name(path)
+		name := build.site_file_name(path)
 		working := false
 		records := SITE_WORKING_RECORDS
 		for record in records {
@@ -586,7 +587,7 @@ site_build :: proc(address: string) -> bool {
 	}
 	glossary_problems: []string
 	glossary_ok: bool
-	site.glossary, glossary_problems, glossary_ok = glossary_read_folder()
+	site.glossary, glossary_problems, glossary_ok = build.glossary_read_folder()
 	if !glossary_ok || len(glossary_problems) > 0 {
 		for problem in glossary_problems {
 			fmt.eprintfln("modustool: site: %s", problem)
@@ -685,7 +686,7 @@ site_build :: proc(address: string) -> bool {
 	boot_log, site.boot_source = site_boot_log_choose(site.measure_record)
 	site.boot_stages = site_boot_stages(boot_log)
 	image_problem: string
-	site.boot_image, image_problem = site_boot_image_read(BOOT_IMAGE)
+	site.boot_image, image_problem = site_boot_image_read(build.BOOT_IMAGE)
 	if image_problem != "" {
 		fmt.eprintfln("modustool: site: %s", image_problem)
 		return false

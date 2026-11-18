@@ -3,6 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
+import "modustool:build"
 
 // Three works as the records of a repository give them: a font, the
 // runtime of the compiler, and a portrait whose record gives no identifier.
@@ -100,15 +101,15 @@ reuse_license_expressions :: proc(t: ^testing.T) {
 	testing.expect(t, reuse_license_is_spdx_expression("MIT"))
 	testing.expect(t, reuse_license_is_spdx_expression("MIT OR Apache-2.0"))
 	testing.expect(t, reuse_license_is_spdx_expression("CC-BY-SA-4.0"))
-	testing.expect(t, reuse_license_is_spdx_expression(REUSE_LICENSE_NONE))
+	testing.expect(t, reuse_license_is_spdx_expression(build.REUSE_LICENSE_NONE))
 	testing.expect(t, !reuse_license_is_spdx_expression(""))
 	testing.expect(t, !reuse_license_is_spdx_expression("MIT OR"))
 	testing.expect(t, !reuse_license_is_spdx_expression("SIL OFL 1.1"))
 	testing.expect(t, !reuse_license_is_spdx_expression("MIT, Zlib"))
-	testing.expect_value(t, reuse_spdx_of_record_words("SIL OFL 1.1, no Reserved Font Name"), "OFL-1.1")
-	testing.expect_value(t, reuse_spdx_of_record_words("CC BY-SA 4.0"), "CC-BY-SA-4.0")
-	testing.expect_value(t, reuse_spdx_of_record_words("All rights reserved by its producers"), REUSE_LICENSE_NONE)
-	testing.expect_value(t, reuse_spdx_of_record_words("words that name no license"), "")
+	testing.expect_value(t, build.reuse_spdx_of_record_words("SIL OFL 1.1, no Reserved Font Name"), "OFL-1.1")
+	testing.expect_value(t, build.reuse_spdx_of_record_words("CC BY-SA 4.0"), "CC-BY-SA-4.0")
+	testing.expect_value(t, build.reuse_spdx_of_record_words("All rights reserved by its producers"), build.REUSE_LICENSE_NONE)
+	testing.expect_value(t, build.reuse_spdx_of_record_words("words that name no license"), "")
 }
 
 @(test)

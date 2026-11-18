@@ -12,6 +12,7 @@ import "core:strings"
 import module "modus:contract/module"
 import "modus:support/graphics"
 import "modustool:foundation"
+import "modustool:build"
 
 // site_module_by_name gives the module of module_builds with this name.
 site_module_by_name :: proc(site: ^Site, name: string) -> (item: Site_Module, found: bool) {
@@ -148,17 +149,17 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 	append(&crumbs, ..site_crumbs(.Reference))
 	append(&crumbs, Site_Crumb{title = "Modules", path = modules_page})
 	for item in reference.modules {
-		build := item.build
+		module_build := item.build
 		description := item.description
 		b := strings.builder_make(context.temp_allocator)
-		title := fmt.tprintf("The %s %s", item.kind, build.name)
+		title := fmt.tprintf("The %s %s", item.kind, module_build.name)
 		strings.write_string(&b, "<h1>")
 		foundation.site_escape(&b, title)
 		strings.write_string(&b, "</h1>\n<div class=\"prose\">\n")
 		// A build of the source of another module with settings of its own
 		// says so first: the documentation below is the comment of that
 		// source, which describes the other module.
-		if len(build.defines) > 0 {
+		if len(module_build.defines) > 0 {
 			site_module_build_note(site, &b, item, modules_text)
 		}
 		// The documentation text: one paragraph for each line (text_of),
@@ -173,12 +174,12 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		fmt.sbprintf(&b, "<tr><td>Kind</td><td><a href=\"%s#%s\">%s</a></td></tr>\n", site_page_link(site, item.page, modules_page), site_module_group_ids[site_module_group(item)], site_module_group_titles[site_module_group(item)])
 		// The facts hold values of several kinds: each value has its icon.
 		strings.write_string(&b, "<tr><td>Source</td><td class=\"name\">")
-		site_value_link(&b, .File, site_folder_address(site, build.source), build.source, true)
+		site_value_link(&b, .File, site_folder_address(site, module_build.source), module_build.source, true)
 		strings.write_string(&b, "</td></tr>\n<tr><td>Boot image</td><td>")
-		if !foundation.module_in_boot_image(build) {
+		if !foundation.module_in_boot_image(module_build) {
 			site_value(&b, .No, "no", true)
 			strings.write_string(&b, ": not in the boot image")
-		} else if entry, found := site_boot_image_entry(site, build.name); found {
+		} else if entry, found := site_boot_image_entry(site, module_build.name); found {
 			site_value(&b, .Yes, "yes", true)
 			strings.write_string(&b, ": in the boot image, ")
 			site_value(&b, .Size, fmt.tprintf("%d bytes", entry.size), true)
@@ -191,29 +192,29 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			strings.write_string(&b, ": in the list of the boot image, not in the image of the last build")
 		}
 		strings.write_string(&b, "</td></tr>\n")
-		if build.kernel {
+		if module_build.kernel {
 			strings.write_string(&b, "<tr><td>Mode</td><td>runs in kernel mode</td></tr>\n")
 		}
 		// The settings of the compiler for this module only: two modules of
 		// one source differ by them.
 		strings.write_string(&b, "<tr><td>Build settings</td><td>")
-		if len(build.defines) == 0 {
+		if len(module_build.defines) == 0 {
 			strings.write_string(&b, "none: the defaults of the source")
 		} else {
 			settings := make([dynamic]string, context.temp_allocator)
-			for define in build.defines {
+			for define in module_build.defines {
 				append(&settings, strings.concatenate({"<code>", site_text_html(define), "</code>"}, context.temp_allocator))
 			}
 			site_value_list(&b, settings[:])
 		}
 		strings.write_string(&b, "</td></tr>\n")
 		strings.write_string(&b, "<tr><td>Imports</td><td>")
-		site_module_list(site, &b, item.page, build.imports)
+		site_module_list(site, &b, item.page, module_build.imports)
 		strings.write_string(&b, "</td></tr>\n<tr><td>Imported by</td><td>")
 		importers := make([dynamic]string, context.temp_allocator)
 		for other in reference.modules {
 			for name in other.build.imports {
-				if name == build.name {
+				if name == module_build.name {
 					append(&importers, other.build.name)
 				}
 			}
@@ -223,7 +224,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		site_table_end(&b, facts_table)
 
 		// What it imports and what imports it, as a figure.
-		site_module_neighbours_write(site, &b, item.page, graph_inputs, build.name)
+		site_module_neighbours_write(site, &b, item.page, graph_inputs, module_build.name)
 
 		// The exports: a summary table, then each export as a documented
 		// symbol, as a package page of a programming language shows it.
@@ -241,16 +242,16 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			}
 			site_table_end(&b, exports_table)
 			for export in description.exports {
-				site_export_symbol_write(site, &b, item.page, build.name, description, export)
+				site_export_symbol_write(site, &b, item.page, module_build.name, description, export)
 			}
 		}
-		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/modustool/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/modustool/describe.odin"))
+		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/modustool/build/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/modustool/build/describe.odin"))
 
 		// What the root service gives a process.
 		sources := make([dynamic]string, context.temp_allocator)
-		append(&sources, SITE_MODULES_FILE, build.source)
+		append(&sources, SITE_MODULES_FILE, module_build.source)
 		if item.kind == "entry" {
-			role, has_role := site_role_row_of(reference.process_roles, build.name)
+			role, has_role := site_role_row_of(reference.process_roles, module_build.name)
 			budget := description.budget
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
 			// The grants and the fields of the budget are lists of values: a
@@ -260,7 +261,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			// the page of the grants: the root service and a disk process
 			// have none, so their cell names the grants with no link.
 			if has_role {
-				fmt.sbprintf(&b, "<tr><td><a href=\"%s#processes-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), foundation.site_slug(build.name))
+				fmt.sbprintf(&b, "<tr><td><a href=\"%s#processes-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), foundation.site_slug(module_build.name))
 			} else {
 				strings.write_string(&b, "<tr><td>Grants</td><td>")
 			}
@@ -278,7 +279,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			// budget of that part: its starter chooses that amount.
 			amounts := make([dynamic]string, context.temp_allocator)
 			if budget.stated {
-				counted, _ := budget_count(budget.parts, 0, nil)
+				counted, _ := build.budget_count(budget.parts, 0, nil)
 				parts := [6]struct {
 					name:  string,
 					value: u64,
@@ -308,14 +309,14 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
-			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a process, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
+			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/build/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a process, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/build/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
 			append(&sources, foundation.SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"
-		if len(build.defines) > 0 {
-			about = strings.concatenate({"its source ", build.source, " built with ", strings.join(build.defines, ", ", context.temp_allocator)}, context.temp_allocator)
+		if len(module_build.defines) > 0 {
+			about = strings.concatenate({"its source ", module_build.source, " built with ", strings.join(module_build.defines, ", ", context.temp_allocator)}, context.temp_allocator)
 		}
-		site_page_add(site, Site_Page{path = item.page, title = title, description = site_description_cut(fmt.tprintf("The %s %s of %s: %s.", item.kind, build.name, SITE_SYSTEM_NAME, about)), section = .Reference, crumbs = crumbs[:], body = strings.to_string(b), sources = sources[:], layout = .Documentation})
+		site_page_add(site, Site_Page{path = item.page, title = title, description = site_description_cut(fmt.tprintf("The %s %s of %s: %s.", item.kind, module_build.name, SITE_SYSTEM_NAME, about)), section = .Reference, crumbs = crumbs[:], body = strings.to_string(b), sources = sources[:], layout = .Documentation})
 	}
 }
 
@@ -362,9 +363,9 @@ site_module_build_note :: proc(site: ^Site, b: ^strings.Builder, item: Site_Modu
 // its parameters, its result, how it fails, and its line in the source. The
 // rules that give these facts are those of the build (describe.odin): no
 // fact is typed here.
-site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_name: string, description: Module_Description, export: Export_Description) {
+site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_name: string, description: build.Module_Description, export: build.Export_Description) {
 	facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
-	if export.name == ENTRY_NAME {
+	if export.name == build.ENTRY_NAME {
 		append(&facts, Site_Symbol_Fact{label = "Form", html = site_text_html("The entry of the module: one parameter, an address, fixed by the contract.")})
 	} else {
 		// Each type opens its card: the wire form and the record.
@@ -416,9 +417,9 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	}
 	built := len(entries) > 0
 	if !built {
-		for build in foundation.module_builds {
-			if foundation.module_in_boot_image(build) {
-				append(&entries, Site_Image_Entry{name = build.name})
+		for module_build in foundation.module_builds {
+			if foundation.module_in_boot_image(module_build) {
+				append(&entries, Site_Image_Entry{name = module_build.name})
 			}
 		}
 	}
@@ -447,7 +448,7 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	}
 	strings.write_string(b, "</ul>\n")
 	if built {
-		fmt.sbprintf(b, "<p class=\"source\">%d modules, %d KiB, in <code>%s</code> of the last build. A tile is a module: its width follows its size, and is at least the width of its name; its color comes from its hash.</p>\n", len(entries), (total - 1) / 1024, BOOT_IMAGE)
+		fmt.sbprintf(b, "<p class=\"source\">%d modules, %d KiB, in <code>%s</code> of the last build. A tile is a module: its width follows its size, and is at least the width of its name; its color comes from its hash.</p>\n", len(entries), (total - 1) / 1024, build.BOOT_IMAGE)
 	} else {
 		fmt.sbprintf(b, "<p class=\"missing\">The boot image is not built: the tiles are the modules of <code>module_builds</code> that it holds, with no size and no color.</p>\n")
 	}

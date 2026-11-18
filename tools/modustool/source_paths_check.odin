@@ -10,6 +10,7 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The documents of the root of the repository that the check reads.
 SOURCE_PATH_ROOT_DOCUMENTS :: [?]string{"README.md", "AGENTS.md"}
@@ -170,7 +171,7 @@ source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: 
 	paths := make([dynamic]string, context.temp_allocator)
 	guides := foundation.files_with_suffix(DOCUMENT_FOLDER, ".md") or_return
 	append(&paths, ..guides)
-	glossary_files := foundation.files_with_suffix(GLOSSARY_FOLDER, ".md") or_return
+	glossary_files := foundation.files_with_suffix(build.GLOSSARY_FOLDER, ".md") or_return
 	append(&paths, ..glossary_files)
 	roots := SOURCE_PATH_ROOT_DOCUMENTS
 	for root in roots {

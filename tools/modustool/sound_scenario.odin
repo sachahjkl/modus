@@ -7,6 +7,7 @@ import "core:strings"
 import "modus:contract/byte_order"
 import "modus:contract/timed_stream"
 import "modustool:foundation"
+import "modustool:build"
 
 // Sound, the first timed stream: one machine with a virtio sound device
 // whose output goes to a wave file (src/md/features/timed_stream.md, "The
@@ -57,7 +58,7 @@ scenario_sound := [?]Step {
 sound_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	output_file := machine_file(TEST_OUTPUT_SOUND, SOUND_OUTPUT_SUFFIX)
 	_ = os.remove(output_file)
-	if !machine_test(part, scenario_sound[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_SOUND, exit_status = MACHINE_STOP_OK, sound_device = true}) {
+	if !machine_test(part, scenario_sound[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_SOUND, exit_status = build.MACHINE_STOP_OK, sound_device = true}) {
 		return false
 	}
 	machine_log, log_error := os.read_entire_file(TEST_OUTPUT_SOUND, context.temp_allocator)

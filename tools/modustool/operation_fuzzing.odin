@@ -11,6 +11,7 @@ import "modus:contract/enum_word"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
+import "modustool:build"
 
 // The loop of the kernel fuzzing with no counters
 // (src/md/infrastructure/kernel_fuzzing.md, "The loop and the speed";
@@ -22,9 +23,6 @@ import "modustool:foundation"
 // The loop and the minimizer reach a machine through Operation_Machine
 // only, so a host test runs them on a fake machine.
 
-// The command `fuzz operations`, as the table of the volumes of the
-// commands names it.
-OPERATION_FUZZING_COMMAND :: "operation_fuzzing"
 // The files of a run, which git ignores: the repository never holds a
 // finding of a run. The findings of a run are in a folder of its seed.
 OPERATION_FUZZING_FOLDER :: FUZZING_BUILD_FOLDER + "/operations"
@@ -1112,11 +1110,11 @@ operation_machine_stopped :: proc(state: ^Operation_Qemu) -> (fault: Operation_F
 // operation_machine_kernel_object reads the debug object of the kernel of
 // the volume, which names the procedure of the address of a report.
 operation_machine_kernel_object :: proc() -> []u8 {
-	for row in boot_volumes() {
-		if row.path != BOOT_VOLUME_OPERATION_SEQUENCES || row.kernel == "" {
+	for row in build.boot_volumes() {
+		if row.path != build.BOOT_VOLUME_OPERATION_SEQUENCES || row.kernel == "" {
 			continue
 		}
-		object, error := os.read_entire_file(debug_object_path(row.kernel), context.allocator)
+		object, error := os.read_entire_file(build.debug_object_path(row.kernel), context.allocator)
 		if error != nil {
 			return nil
 		}
@@ -1136,7 +1134,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 	_ = os.remove(OPERATION_FUZZING_MEMORY_FILE)
 	_ = os.remove(OPERATION_FUZZING_OUTPUT)
 	clock := machine_clock_of(time.time_to_unix(time.now()))
-	command, made := machine_command(BOOT_VOLUME_OPERATION_SEQUENCES, OPERATION_FUZZING_OUTPUT, state.part.data_disk, &state.peer, clock_argument = clock.argument, memory_file = OPERATION_FUZZING_MEMORY_FILE)
+	command, made := machine_command(build.BOOT_VOLUME_OPERATION_SEQUENCES, OPERATION_FUZZING_OUTPUT, state.part.data_disk, &state.peer, clock_argument = clock.argument, memory_file = OPERATION_FUZZING_MEMORY_FILE)
 	if !made {
 		return false
 	}
@@ -1298,7 +1296,7 @@ operation_qemu_open :: proc() -> ^Operation_Qemu {
 	if !grammar_read {
 		return nil
 	}
-	if code := build_system(boot_volumes_of_command(OPERATION_FUZZING_COMMAND)); code != 0 {
+	if code := build_system(build.boot_volumes_of_command(build.OPERATION_FUZZING_COMMAND)); code != 0 {
 		return nil
 	}
 	if !foundation.make_folder(OPERATION_FUZZING_FOLDER) {
@@ -1312,7 +1310,7 @@ operation_qemu_open :: proc() -> ^Operation_Qemu {
 	if state.kernel_object == nil {
 		fmt.println("modustool: fuzz operations: no debug object of the kernel: a signature of a stop names no procedure")
 	}
-	state.part = test_part_run_make(OPERATION_FUZZING_COMMAND)
+	state.part = test_part_run_make(build.OPERATION_FUZZING_COMMAND)
 	if !test_part_run_start(&state.part) || !peer_start(&state.peer) {
 		operation_qemu_close(state)
 		return nil

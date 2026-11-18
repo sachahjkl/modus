@@ -5,6 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
+import "modustool:build"
 
 // The list "**Statuses**" of a comment: a comment with no list, a list with
 // no line, a name that is no status, the status Ok, a code mark with no end
@@ -398,14 +399,14 @@ the_oracles_of_the_planted_steps :: proc(t: ^testing.T) {
 @(test)
 a_release_refuses_the_modules_of_a_test_image :: proc(t: ^testing.T) {
 	module_bytes := []u8{1, 2, 3}
-	testing.expect(t, release_test_module_problem(module_bytes, "bytes") != "", "bytes that are no boot image are taken")
+	testing.expect(t, build.release_test_module_problem(module_bytes, "bytes") != "", "bytes that are no boot image are taken")
 	for name in ([]string{foundation.OPERATION_FUZZING_MODULE, foundation.OPERATION_SEQUENCE_RUNNER_MODULE}) {
-		files := []Image_File{{name = "root", file = module_bytes}, {name = name, file = module_bytes}}
-		image := boot_image_encode(files, len(files))
-		testing.expectf(t, release_test_module_problem(image, "an image") != "", "an image with %s is taken", name)
+		files := []build.Image_File{{name = "root", file = module_bytes}, {name = name, file = module_bytes}}
+		image := build.boot_image_encode(files, len(files))
+		testing.expectf(t, build.release_test_module_problem(image, "an image") != "", "an image with %s is taken", name)
 	}
-	files := []Image_File{{name = "root", file = module_bytes}, {name = "input", file = module_bytes}}
-	testing.expect_value(t, release_test_module_problem(boot_image_encode(files, len(files)), "an image"), "")
+	files := []build.Image_File{{name = "root", file = module_bytes}, {name = "input", file = module_bytes}}
+	testing.expect_value(t, build.release_test_module_problem(build.boot_image_encode(files, len(files)), "an image"), "")
 }
 
 // The two modules of the operation sequences are in no image but their

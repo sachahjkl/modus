@@ -29,6 +29,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 NEWS_FOLDER :: "news"
 // The one file of the news folder that is not an entry.
@@ -145,7 +146,7 @@ news_guide_problem :: proc(guide: string) -> string {
 	}
 	// A file of the glossary is a page of the site too: the page of its
 	// group, or the index for the index of the folder.
-	if glossary_is_file(guide) {
+	if build.glossary_is_file(guide) {
 		return ""
 	}
 	if !strings.has_prefix(guide, "docs/") || !strings.has_suffix(guide, ".md") || strings.contains(guide[len("docs/"):], "/") {

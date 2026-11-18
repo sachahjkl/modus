@@ -363,7 +363,7 @@ process_roles := [?]Process_Role_Row {
 // process_roles whose grants are System_Part, and Serve beside it for the
 // compositor, whose exports serve the processes: the tool refuses another
 // set, and the grant System_Part on another row
-// (tools/modustool/process_roles_check.odin), because the debug access to
+// (tools/modustool/build/process_roles_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
 system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "glyphs"}

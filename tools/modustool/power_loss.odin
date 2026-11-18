@@ -16,6 +16,7 @@ import "modus:private/storage/storage_mount"
 import block_tree "modus:private/storage/storage_object"
 import tree "modus:private/storage/storage_tree"
 import "modustool:foundation"
+import "modustool:build"
 
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it
@@ -650,7 +651,7 @@ power_loss_run :: proc(part: ^Test_Part_Run) -> bool {
 // a machine on the hard image. `thinning`: the commit in flight must thin
 // versions.
 power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, output_number: int, thinning: bool) -> bool {
-	fresh := make([]u8, DATA_DISK_SIZE)
+	fresh := make([]u8, build.DATA_DISK_SIZE)
 	defer delete(fresh)
 	server: Network_Block_Device
 	if !disk_server_start(&server, fresh) {
@@ -658,7 +659,7 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 	}
 	defer disk_server_free(&server)
 	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
-	ran := machine_test(part, steps, {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, output_number), exit_status = 0, data_disk = address, disk_server = &server})
+	ran := machine_test(part, steps, {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, output_number), exit_status = 0, data_disk = address, disk_server = &server})
 	disk_server_stop(&server)
 	if !ran {
 		return false
@@ -715,7 +716,7 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 		append(&second, Step{kind = .Shot, text = "power_loss"})
 	}
 	append(&second, Step{kind = .Quit})
-	return machine_test(part, second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, output_number + 1), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
+	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, output_number + 1), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
 }
 
 // The settings through a loss of power (docs/FONTS.md, "The setting"): the
@@ -770,7 +771,7 @@ kept_settings_of :: proc(contents: ^Disk_Contents) -> (text: string, found: bool
 }
 
 power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
-	fresh := make([]u8, DATA_DISK_SIZE)
+	fresh := make([]u8, build.DATA_DISK_SIZE)
 	defer delete(fresh)
 	server: Network_Block_Device
 	if !disk_server_start(&server, fresh) {
@@ -778,7 +779,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	defer disk_server_free(&server)
 	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
-	ran := machine_test(part, scenario_power_loss_settings_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 3), exit_status = 0, data_disk = address, disk_server = &server})
+	ran := machine_test(part, scenario_power_loss_settings_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 3), exit_status = 0, data_disk = address, disk_server = &server})
 	disk_server_stop(&server)
 	if !ran {
 		return false
@@ -823,7 +824,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Wait, text = "root: settings stopped with code 0"},
 		{kind = .Quit},
 	}
-	return machine_test(part, second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 4), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
+	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 4), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
 }
 
 // The range writes through a loss of power (docs/STORAGE.md, "Ranges"):
@@ -867,7 +868,7 @@ stored_object_of :: proc(contents: ^Disk_Contents, store: string, name: string) 
 }
 
 power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
-	fresh := make([]u8, DATA_DISK_SIZE)
+	fresh := make([]u8, build.DATA_DISK_SIZE)
 	defer delete(fresh)
 	server: Network_Block_Device
 	if !disk_server_start(&server, fresh) {
@@ -875,7 +876,7 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	defer disk_server_free(&server)
 	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
-	ran := machine_test(part, scenario_power_loss_ranges[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 5), exit_status = 0, data_disk = address, disk_server = &server})
+	ran := machine_test(part, scenario_power_loss_ranges[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 5), exit_status = 0, data_disk = address, disk_server = &server})
 	disk_server_stop(&server)
 	if !ran {
 		return false
@@ -950,5 +951,5 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&second, Step{kind = .Wait, text = "ranges: after the remount: the same object of 1 MiB under a third name took no block: the open found it by its hash: as it must"})
 	append(&second, Step{kind = .Wait, text = "ranges: done, 0 wrong"})
 	append(&second, Step{kind = .Quit})
-	return machine_test(part, second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 6), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
+	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 6), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
 }

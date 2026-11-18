@@ -1,6 +1,7 @@
 package modustool
 
 import "core:testing"
+import "modustool:foundation"
 
 // A package that declares a family of modes and uses it as choices: a case
 // of a switch, and an argument of a parameter named `mode` from another
@@ -36,6 +37,31 @@ run :: proc "contextless" () {
 	}
 }
 `
+
+// The same family in a package of the tool, whose second member another
+// package of the tool uses through the source library of the tool: the
+// family is refused, as it is when the two are one package. An import of
+// another library with a near name names no package of the tool.
+@(test)
+a_family_used_through_a_package_of_the_tool_is_refused :: proc(t: ^testing.T) {
+	used := "package user\n\nimport \"" + foundation.TOOL_IMPORT_START + "choices\"\n\nrun :: proc \"contextless\" () {\n\tchoices.start(u64(choices.MODE_STOP))\n}\n"
+	sources := []Export_Source {
+		{path = foundation.TOOL_SOURCE_FOLDER + "/choices/choices.odin", text = CHOICES_DECLARED},
+		{path = foundation.TOOL_SOURCE_FOLDER + "/user/main.odin", text = used},
+	}
+	families, ok := choice_families_of_sources(sources)
+	testing.expect(t, ok)
+	if !testing.expect_value(t, len(families), 1) {
+		return
+	}
+	testing.expect_value(t, families[0].folder, foundation.TOOL_SOURCE_FOLDER + "/choices")
+	testing.expect_value(t, len(families[0].members), 2)
+	other := "package user\n\nimport \"" + foundation.TOOL_LIBRARY_NAME + "x:choices\"\n\nrun :: proc \"contextless\" () {\n\tchoices.start(u64(choices.MODE_STOP))\n}\n"
+	sources[1].text = other
+	families_of_other, other_ok := choice_families_of_sources(sources)
+	testing.expect(t, other_ok)
+	testing.expect_value(t, len(families_of_other), 0)
+}
 
 // The family of modes is refused once, with its two members that the code
 // uses as choices, and the first use in the order of the files.

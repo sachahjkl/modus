@@ -53,7 +53,7 @@ When no output differs, `check` prints one line with the counts, for example "84
 
 ## What the build does to give the same bytes
 
-A deterministic compiler is necessary and not sufficient: the build itself must put no fact of the host in an output. `build_module` (`tools/modustool/modules.odin`) does this:
+A deterministic compiler is necessary and not sufficient: the build itself must put no fact of the host in an output. `build_module` (`tools/modustool/build/modules.odin`) does this:
 
 - **No path of the build folder.** The compiler gets `-source-code-locations:filename`: a message of a check holds the file name and the line, not the full path. So the hash of a module does not depend on the folder of the build.
 - **No build identifier.** The linker gets `--build-id=none`.
@@ -64,7 +64,7 @@ A deterministic compiler is necessary and not sufficient: the build itself must 
 - **One direction of the instruction scheduler.** `llc` gets `-misched-topdown` (`module_object_command`). Reason: in its bottom-up direction, the scheduler of machine instructions of LLVM 18 orders some register copies in another way when debug instructions stand in the block. The two builds of the kernel then differ with and without debug information. In the top-down direction they are the same bytes (section 8).
 - **No path of the host in a debug object.** A source path in a debug object is from the root of the repository or of the Odin installation. The tool refuses to write a debug object that holds an absolute path or the folder of the build (section 8).
 - **No unwind table.** After `llc` the tool removes the section `.eh_frame` from the object of a module (`llvm-objcopy`). No part of the system reads it: the converter leaves it out of the module, and a stack trace walks the frame pointers. With debug information `llc` writes an entry for more functions, so the section has another size and the code after it has other addresses: a module was not the same bytes with and without debug information.
-- **No time of the compile.** With debug information the compiler writes the time of the compile in the debug information of each package, as the value of the constant `ODIN_COMPILE_TIMESTAMP`. No source of the system reads it. The tool writes 0 for that value in the LLVM IR before `llc` makes the object (`llvm_ir_without_compile_time`, `tools/modustool/compile_time.odin`), so the LLVM IR, the object and the debug object of two builds are the same bytes.
+- **No time of the compile.** With debug information the compiler writes the time of the compile in the debug information of each package, as the value of the constant `ODIN_COMPILE_TIMESTAMP`. No source of the system reads it. The tool writes 0 for that value in the LLVM IR before `llc` makes the object (`llvm_ir_without_compile_time`, `tools/modustool/build/compile_time.odin`), so the LLVM IR, the object and the debug object of two builds are the same bytes.
 
 ## The incremental build and the same bytes
 
@@ -133,7 +133,7 @@ This patch is not written. The estimate: several hundred lines in about 8 files,
 
 ## 5. The parallelism of the tool
 
-The parallelism is one level up: `modustool build` runs one host process of the compiler for each module, several at once, and assembles the boot image in the fixed order of the module table (`tools/modustool/parallel_build.odin`).
+The parallelism is one level up: `modustool build` runs one host process of the compiler for each module, several at once, and assembles the boot image in the fixed order of the module table (`tools/modustool/build/parallel_build.odin`).
 
 - **One host process for each step of a module.** The compile step of a module runs in its own host process of the tool (the command `module`), which runs one compiler; its conversion runs in another host process, after the compile steps of its level. The tool runs as many host processes at once as the host has processors; `modustool build <host_processes>` and `repeat all <count> <host_processes>` set another count.
 - **Levels.** A module needs the files of its imports at its conversion: their hashes go into its import table. So a module with no import is in level 0, and a module is in the level after the highest level of its imports. Each level starts after the level before it ended.
@@ -146,7 +146,7 @@ Measured with one compiler thread for each host process, the whole `modustool bu
 
 Proved:
 - `modustool repeat all 100` with the patched compiler, under a host load of 9.5 to 62: one module, one LLVM IR file and one object for each of 61 modules, and one boot program and one object.
-- Each full check builds everything two times and compares the module, the LLVM IR, the object and the debug object of each module, the pointer theme files, and the boot program and its object (`outputs_same_after_second_build` in `tools/modustool/repeat.odin`). The module table has 89 modules today; the counts 61, 64 and 88 in this document are those of the day of each measure.
+- Each full check builds everything two times and compares the module, the LLVM IR, the object and the debug object of each module, the pointer theme files, and the boot program and its object (`outputs_same_after_second_build` in `tools/modustool/build/repeat.odin`). The module table has 89 modules today; the counts 61, 64 and 88 in this document are those of the day of each measure.
 - Each full check then builds every module a third time with no debug information and compares each module with the module of the build (`modules_same_without_debug_information`). With the compiler and the flags of today: "89 modules are the same bytes with and without debug information" (section 8).
 - With no option `-debug-info`, the fork gives the output of the release: the LLVM IR of 88 modules is the same bytes without `-debug`, and the same except the time of the compile with `-debug` (section 8).
 
@@ -203,7 +203,7 @@ The option `-debug` of the Odin compiler does three things: it writes debug info
 
 ### How the build asks for it
 
-- **The compile.** `module_compile_command` (`tools/modustool/modules.odin`) passes `-debug-info:same-code`, and no `-debug`. The build with no debug information passes neither.
+- **The compile.** `module_compile_command` (`tools/modustool/build/modules.odin`) passes `-debug-info:same-code`, and no `-debug`. The build with no debug information passes neither.
 - **The object.** `module_object_command` passes `-misched-topdown` to `llc`, in both builds. Reason: the rule of the option ends at the code that LLVM receives. In its bottom-up direction, the scheduler of machine instructions of LLVM 18 orders some register copies in another way when debug instructions stand in the block.
 - **The module.** The converter copies the segments of the linked file only: the sections `.debug_*` are not in the module.
 - **The unwind table and the time of the compile** are removed for the same purpose ("What the build does to give the same bytes").

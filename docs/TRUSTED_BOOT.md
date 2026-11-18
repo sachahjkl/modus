@@ -276,12 +276,12 @@ The machines with this firmware run with four processors, as every other machine
 | The check of the root service | `src/modules/system/root/trust.odin` |
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
-| The signature, the keys, the key numbers, the command `key` | `tools/modustool/system_description.odin`, `resources/keys/key_numbers` |
+| The signature, the keys, the key numbers, the command `key` | `tools/modustool/build/system_description.odin`, `resources/keys/key_numbers` |
 | The seventeen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/trusted_boot_scenario.odin` |
 | The check and the raise of the TPM floors by the boot program | `src/boot/trust.odin` (`floors_check`, `floor_raise`) |
 | The commands of the indices of the floors, the checks of their answers, the decisions | `src/library/support/tpm2` |
-| The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/secure_boot.odin` |
-| The release volume, the GPT disk, the release signature, `release`, `verify`, `key write` | `tools/modustool/release_image.odin` |
+| The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/build/secure_boot.odin` |
+| The release volume, the GPT disk, the release signature, `release`, `verify`, `key write` | `tools/modustool/build/release_image.odin` |
 | The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
 | The TPM service, after the start | `src/modules/system/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |
 

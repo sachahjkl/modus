@@ -135,7 +135,7 @@ Each guide has the documentation layout (see "The two layouts"): its headings of
 
 ## The glossary
 
-The glossary (`docs/glossary/`) is one folder, read by one reader: `glossary_read` (`tools/modustool/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term, the link pages of the manual and the check of the tool all take the terms that it gives.
+The glossary (`docs/glossary/`) is one folder, read by one reader: `glossary_read` (`tools/modustool/build/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term, the link pages of the manual and the check of the tool all take the terms that it gives.
 
 ### The files of the folder
 
@@ -1334,7 +1334,7 @@ What the tables cannot show:
 
 `docs/reference/modules/` lists each module of `module_builds` (`tools/modustool/foundation/module_table.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Modules with an entry (a row marked `entry`: a module with an entry function that the root service starts), Modules with no entry (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
 
-- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/modustool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
+- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/modustool/build/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
 - for a module that is a build of the source of another module with settings of its own (`defines` of its row of `module_builds`), a first paragraph before the documentation: "The module `kernel` built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true`", then the comment above its row in `module_builds`, which says why it exists. The documentation after it is the comment of the shared source, which describes the other module. Its description for other sites names its source and its settings;
 - its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
@@ -1452,7 +1452,7 @@ A name of a document on a page is a reference to a real place, or a link, or it 
 
 ## The Markdown of a source comment
 
-A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the modules of the system is `src/library/private/manual/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/build/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the modules of the system is `src/library/private/manual/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -1743,7 +1743,7 @@ The size: the declarations of the page of the types are 963 lines, 53 KB of text
 
 ## The declarations of the sources
 
-A code span in a guide that names a procedure links to its declaration, and a code span that holds an expression is colored. The code is `tools/modustool/site_declarations.odin`; its host tests are `site_declarations_test.odin`.
+A code span in a guide that names a procedure links to its declaration, and a code span that holds an expression is colored. The index of the declarations is `tools/modustool/build/declaration_index.odin`, because each build also writes the link pages of the manual from it; the pages and the links of the site are `tools/modustool/site_declarations.odin`, and its host tests are `site_declarations_test.odin`.
 
 ### The declaration index
 

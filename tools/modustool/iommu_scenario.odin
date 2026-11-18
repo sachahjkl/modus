@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The IOMMU (src/md/infrastructure/iommu.md): one machine with the
 // remapping unit of Intel (machine_command, the argument iommu). The
@@ -73,7 +74,7 @@ scenario_iommu := [?]Step {
 }
 
 iommu_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_iommu[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_IOMMU, exit_status = MACHINE_STOP_OK, iommu = .Intel, entropy_device = true})
+	return machine_test(part, scenario_iommu[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_IOMMU, exit_status = build.MACHINE_STOP_OK, iommu = .Intel, entropy_device = true})
 }
 
 // The IOMMU of AMD (src/md/infrastructure/iommu.md, "Two vendors behind
@@ -169,5 +170,5 @@ scenario_iommu_amd := [?]Step {
 }
 
 iommu_amd_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_iommu_amd[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_IOMMU_AMD, exit_status = MACHINE_STOP_OK, iommu = .Amd})
+	return machine_test(part, scenario_iommu_amd[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_IOMMU_AMD, exit_status = build.MACHINE_STOP_OK, iommu = .Amd})
 }

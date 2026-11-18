@@ -20,6 +20,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
 import "modustool:foundation"
+import "modustool:build"
 
 SITE_TYPES_FOLDER :: SITE_REFERENCE_FOLDER + "/types"
 SITE_TYPES_FILE :: "tools/modustool/site_types.odin"
@@ -536,9 +537,9 @@ site_type_declarations_read :: proc(folder: string) -> (declarations: []Site_Typ
 			if !is_type {
 				continue
 			}
-			description := markdown_of(declaration.docs)
+			description := build.markdown_of(declaration.docs)
 			if description == "" {
-				description = markdown_of(declaration.comment)
+				description = build.markdown_of(declaration.comment)
 			}
 			append(&list, Site_Type_Declaration{package_name = package_name, name = identifier.name, file = path, line = declaration.pos.line, description = description, declaration = source[declaration.pos.offset:declaration.end.offset]})
 		}
@@ -770,7 +771,7 @@ site_types_read :: proc(site: ^Site) -> bool {
 // record of a module (src/library/contract/module, Field): an Integer of its size, 8
 // when the detail is 0; a Handle of the size of a handle; a Text of its
 // detail bytes, which hold no number.
-site_record_field_size :: proc(field: Field_Description) -> (size: int, alignment: int) {
+site_record_field_size :: proc(field: build.Field_Description) -> (size: int, alignment: int) {
 	#partial switch field.type {
 	case .Integer:
 		size = field.detail == 0 ? 8 : int(field.detail)
@@ -971,7 +972,7 @@ site_type_summary :: proc(site: ^Site, type: Site_Type) -> string {
 	if type.alias_of != "" {
 		fmt.sbprintf(&b, " An alias of %s.", type.alias_of)
 	}
-	if first := site_source_comment_plain(site, markdown_first_sentence(type.description)); first != "" {
+	if first := site_source_comment_plain(site, build.markdown_first_sentence(type.description)); first != "" {
 		strings.write_byte(&b, ' ')
 		strings.write_string(&b, first)
 		strings.write_byte(&b, '.')

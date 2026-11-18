@@ -8,6 +8,7 @@ import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 SITE_NEWS_FEED :: "news.xml"
 // The entries that the home shows.
@@ -71,7 +72,7 @@ site_news_read :: proc(site: ^Site) -> bool {
 		if entry.picture != NEWS_NONE {
 			data := foundation.read_file(entry.picture) or_return
 			item.picture_width, item.picture_height, _ = foundation.site_png_size(data)
-			item.picture = strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", site_file_name(entry.picture)}, context.temp_allocator)
+			item.picture = strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", build.site_file_name(entry.picture)}, context.temp_allocator)
 			site.copies[item.picture] = entry.picture
 			// The alt text: the caption of the picture in README.md, the
 			// description of the mark, or the title of the entry.
@@ -91,7 +92,7 @@ site_news_read :: proc(site: ^Site) -> bool {
 				fmt.eprintfln("modustool: site: the film %s states no width and no height of its pictures", entry.film)
 				return false
 			}
-			item.film = strings.concatenate({SITE_FILM_FOLDER, "/", site_file_name(entry.film)}, context.temp_allocator)
+			item.film = strings.concatenate({SITE_FILM_FOLDER, "/", build.site_file_name(entry.film)}, context.temp_allocator)
 			item.film_width, item.film_height, item.film_bytes = film_width, film_height, len(data)
 			site.copies[item.film] = entry.film
 		}
@@ -173,7 +174,7 @@ site_news_film :: proc(b: ^strings.Builder, from_page: string, item: Site_News) 
 	fmt.sbprintf(b, "<source src=\"%s\" %s>", film_link, SITE_FILM_SOURCE_TYPE)
 	fmt.sbprintf(b, "<a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", film_link, picture_link, item.picture_width, item.picture_height)
 	site_plain(b, item.picture_alt)
-	fmt.sbprintf(b, "\"></a></video><figcaption>Film: <a href=\"%s\">%s</a>, WebM with AV1, %s.</figcaption></figure>\n", film_link, site_file_name(item.film), site_film_size_text(item.film_bytes))
+	fmt.sbprintf(b, "\"></a></video><figcaption>Film: <a href=\"%s\">%s</a>, WebM with AV1, %s.</figcaption></figure>\n", film_link, build.site_file_name(item.film), site_film_size_text(item.film_bytes))
 }
 
 // site_news_film_card_picture writes the picture of an entry with a film

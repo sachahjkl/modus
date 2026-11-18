@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The return to a process (docs/ARCHITECTURE.md, "The return to a process"):
 // three machines.
@@ -108,5 +109,5 @@ scenario_non_maskable_interrupt := [?]Step {
 }
 
 return_fault_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_return_fault[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RETURN_FAULT, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_return_fault_without_check[:], {volume = BOOT_VOLUME_WITHOUT_RETURN_CHECK, output = TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_non_maskable_interrupt[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_NON_MASKABLE_INTERRUPT, exit_status = MACHINE_STOP_FAULT})
+	return machine_test(part, scenario_return_fault[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RETURN_FAULT, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_return_fault_without_check[:], {volume = build.BOOT_VOLUME_WITHOUT_RETURN_CHECK, output = TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_non_maskable_interrupt[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NON_MASKABLE_INTERRUPT, exit_status = build.MACHINE_STOP_FAULT})
 }

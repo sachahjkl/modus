@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // Kernel events (docs/ARCHITECTURE.md, "Kernel events"): one machine. The
 // process kernel_events gives event tables to the kernel and reads the
@@ -216,7 +217,7 @@ kernel_events_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&steps, ..scenario_kernel_events[:])
 	append(&steps, ..scenario_thread_counters[:])
 	append(&steps, ..scenario_kernel_events_end[:])
-	if !machine_test(part, steps[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_KERNEL_EVENTS, exit_status = MACHINE_STOP_OK}) {
+	if !machine_test(part, steps[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_KERNEL_EVENTS, exit_status = build.MACHINE_STOP_OK}) {
 		return false
 	}
 	log, read_err := os.read_entire_file(TEST_OUTPUT_KERNEL_EVENTS, context.temp_allocator)

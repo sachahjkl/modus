@@ -28,12 +28,12 @@ import "core:time"
 import "core:time/datetime"
 import "core:time/timezone"
 import "modustool:foundation"
+import "modustool:build"
 
 CHANGELOG_FILE :: "CHANGELOG.md"
 FRAGMENT_FOLDER :: "changelog.d"
 // The one file of the fragment folder that is not a fragment.
 FRAGMENT_FOLDER_GUIDE :: "README.md"
-RELEASE_NUMBER_SOURCE :: foundation.SOURCE_FOLDER_CONTRACT + "/release/release.odin"
 // The source of the release number in every place that it ever had: the
 // file moved once, and the record of an old release is in the old path. In
 // a git pathspec, `*` also matches `/`.
@@ -870,20 +870,20 @@ changelog_read :: proc(problems: ^[dynamic]string) -> (changelog: Changelog, ok:
 // release_number_source_problem compares RELEASE_NUMBER in its source with
 // the newest release of CHANGELOG.md.
 release_number_source_problem :: proc(changelog: Changelog) -> string {
-	content, err := os.read_entire_file(RELEASE_NUMBER_SOURCE, context.temp_allocator)
+	content, err := os.read_entire_file(build.RELEASE_NUMBER_SOURCE, context.temp_allocator)
 	if err != nil {
-		return fmt.tprintf("%s: cannot read: %v", RELEASE_NUMBER_SOURCE, err)
+		return fmt.tprintf("%s: cannot read: %v", build.RELEASE_NUMBER_SOURCE, err)
 	}
 	written, line, found := release_number_source_parse(string(content))
 	if !found {
-		return fmt.tprintf("%s: no line starts with %q", RELEASE_NUMBER_SOURCE, RELEASE_NUMBER_LINE_START)
+		return fmt.tprintf("%s: no line starts with %q", build.RELEASE_NUMBER_SOURCE, RELEASE_NUMBER_LINE_START)
 	}
 	if len(changelog.releases) == 0 {
 		return ""
 	}
 	newest := release_number_text(changelog.releases[0].number)
 	if written != newest {
-		return fmt.tprintf("%s, line %d: RELEASE_NUMBER is %s; the newest release of %s is %s", RELEASE_NUMBER_SOURCE, line, written, CHANGELOG_FILE, newest)
+		return fmt.tprintf("%s, line %d: RELEASE_NUMBER is %s; the newest release of %s is %s", build.RELEASE_NUMBER_SOURCE, line, written, CHANGELOG_FILE, newest)
 	}
 	return ""
 }
@@ -1027,9 +1027,9 @@ changelog_release :: proc(number_text: string) -> bool {
 		problems_print(after_problems[:])
 		return false
 	}
-	source, source_err := os.read_entire_file(RELEASE_NUMBER_SOURCE, context.temp_allocator)
+	source, source_err := os.read_entire_file(build.RELEASE_NUMBER_SOURCE, context.temp_allocator)
 	if source_err != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", RELEASE_NUMBER_SOURCE, source_err)
+		fmt.eprintfln("modustool: cannot read %s: %v", build.RELEASE_NUMBER_SOURCE, source_err)
 		return false
 	}
 	// The copy of the measure record is decided before a file changes: a
@@ -1046,8 +1046,8 @@ changelog_release :: proc(number_text: string) -> bool {
 		fmt.eprintfln("modustool: cannot write %s: %v", CHANGELOG_FILE, err)
 		return false
 	}
-	if err := os.write_entire_file(RELEASE_NUMBER_SOURCE, transmute([]u8)new_source); err != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", RELEASE_NUMBER_SOURCE, err)
+	if err := os.write_entire_file(build.RELEASE_NUMBER_SOURCE, transmute([]u8)new_source); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", build.RELEASE_NUMBER_SOURCE, err)
 		return false
 	}
 	for fragment in fragments {
@@ -1058,7 +1058,7 @@ changelog_release :: proc(number_text: string) -> bool {
 		}
 	}
 	measure_history_copy_write(measure_history_copy) or_return
-	fmt.printfln("modustool: wrote the release %s - %s UTC with %d entries and its release link in %s, set RELEASE_NUMBER in %s, deleted %d fragments", number_text, moment, len(fragments), CHANGELOG_FILE, RELEASE_NUMBER_SOURCE, len(fragments))
+	fmt.printfln("modustool: wrote the release %s - %s UTC with %d entries and its release link in %s, set RELEASE_NUMBER in %s, deleted %d fragments", number_text, moment, len(fragments), CHANGELOG_FILE, build.RELEASE_NUMBER_SOURCE, len(fragments))
 	return true
 }
 

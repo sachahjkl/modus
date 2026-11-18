@@ -14,6 +14,7 @@ import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modustool:foundation"
+import "modustool:build"
 
 SITE_OPERATION_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 SITE_ERRORS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
@@ -37,12 +38,16 @@ SITE_MODULES_FOLDER :: SITE_REFERENCE_FOLDER + "/modules"
 // the roles leaves them out.
 SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 
+// The description of a module, named before Site_Module: inside that
+// struct, its field build hides the package build.
+Site_Module_Description :: build.Module_Description
+
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       foundation.Module_Build,
 	kind:        string, // "entry" for a row marked entry, else "module".
 	page:        string,
-	description: Module_Description,
+	description: Site_Module_Description,
 }
 
 // What the reference tables show, read once before any page is written:
@@ -164,13 +169,13 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	reference.root_grant_names, problem = foundation.site_names_read(grants_text, foundation.SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
 	note(&problems, problem)
 	system_parts: []string
-	reference.process_roles, system_parts, problem = process_roles_read(roles_text)
+	reference.process_roles, system_parts, problem = build.process_roles_read(roles_text)
 	note(&problems, problem)
 	// A page shows each grant of a row as a link to its row, and a page of
 	// each process its role: a grant of no member, or a process with no
 	// row, stops the command, as it stops the build.
 	if problem == "" {
-		for item in process_roles_problems(reference.process_roles, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE) {
+		for item in build.process_roles_problems(reference.process_roles, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE) {
 			note(&problems, item)
 		}
 	}
@@ -206,10 +211,10 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	// The modules: each one of module_builds, with the description that the
 	// build writes into the module, read from the same source.
 	modules := make([dynamic]Site_Module, context.temp_allocator)
-	for build in foundation.module_builds {
-		description := describe_package(build.source) or_return
-		kind := build.entry ? "entry" : "module"
-		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
+	for module_build in foundation.module_builds {
+		description := build.describe_package(module_build.source) or_return
+		kind := module_build.entry ? "entry" : "module"
+		append(&modules, Site_Module{build = module_build, kind = kind, page = site_module_page(module_build.name), description = description})
 	}
 	reference.modules = modules[:]
 	// The module graph needs each import to name a module of the build, and
@@ -319,7 +324,7 @@ site_code_link :: proc(site: ^Site, code: string) -> (target: string, found: boo
 
 // site_type_text gives a type as the console prints it
 // (src/library/support/sentence, write_type and write_parameter_type).
-site_type_text :: proc(description: Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
+site_type_text :: proc(description: build.Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
 	record_name := "Record"
 	if detail >= 1 && int(detail) <= len(description.records) {
 		record_name = description.records[detail - 1].name
@@ -356,7 +361,7 @@ site_type_text :: proc(description: Module_Description, type: module.Type, detai
 
 // site_export_signature gives an export as the console prints it:
 // "write(name: Text, data: Text) -> Integer".
-site_export_signature :: proc(description: Module_Description, export: Export_Description) -> string {
+site_export_signature :: proc(description: build.Module_Description, export: build.Export_Description) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, export.name)
 	strings.write_byte(&builder, '(')
@@ -383,7 +388,7 @@ site_export_signature :: proc(description: Module_Description, export: Export_De
 // site_type_html gives a type as site_type_text writes it, with the wire
 // form and the record as references to their cards: the same text, from
 // the same data.
-site_type_html :: proc(site: ^Site, module_name: string, description: Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
+site_type_html :: proc(site: ^Site, module_name: string, description: build.Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	form_key := site_wire_form_key(type)
 	form_name := fmt.tprintf("%v", type)
@@ -428,7 +433,7 @@ site_type_html :: proc(site: ^Site, module_name: string, description: Module_Des
 
 // site_export_signature_html gives the signature of an export as
 // site_export_signature writes it, with each type as a reference.
-site_export_signature_html :: proc(site: ^Site, module_name: string, description: Module_Description, export: Export_Description) -> string {
+site_export_signature_html :: proc(site: ^Site, module_name: string, description: build.Module_Description, export: build.Export_Description) -> string {
 	// Each part in the color of its role in the code: the name, the
 	// punctuation, and each type as a reference.
 	builder := strings.builder_make(context.temp_allocator)

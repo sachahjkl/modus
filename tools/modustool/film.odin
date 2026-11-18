@@ -10,6 +10,7 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 import "modustool:foundation"
+import "modustool:build"
 
 // The films of the machine (docs/TOOLS.md, "The film").
 //
@@ -434,7 +435,7 @@ run_film :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: film [" + FILM_NAMES + "]")
 		return foundation.EXIT_USAGE
 	}
-	if code := build_system(boot_volumes_of_command("film")); code != 0 {
+	if code := build_system(build.boot_volumes_of_command("film")); code != 0 {
 		return code
 	}
 	if !foundation.make_folder(FILM_FOLDER) || !foundation.make_folder(SCREENSHOT_FOLDER) {
@@ -451,7 +452,7 @@ run_film :: proc(args: []string) -> int {
 	part := test_part_run_make("film")
 	defer test_part_run_free(&part)
 	// The tool ends QEMU: status 0.
-	if !test_part_run_start(&part) || !machine_test(&part, film.steps, {volume = BOOT_VOLUME, output = film.output, exit_status = 0, vnc = true, paused = paused}) {
+	if !test_part_run_start(&part) || !machine_test(&part, film.steps, {volume = build.BOOT_VOLUME, output = film.output, exit_status = 0, vnc = true, paused = paused}) {
 		return foundation.EXIT_FAILURE
 	}
 	return film_write(film.name) ? 0 : foundation.EXIT_FAILURE
