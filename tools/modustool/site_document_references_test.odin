@@ -4,6 +4,7 @@ import "core:strings"
 import "core:testing"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // A site with the guide of the architecture, whose page has a few headings
 // of known ids. The file of the guide is read for its title only when the
@@ -30,7 +31,7 @@ reference_test_site :: proc() -> Site {
 
 // The bytes that a pointer takes from its text.
 @(private = "file")
-taken :: proc(text: string, pointer: Site_Document_Pointer) -> string {
+taken :: proc(text: string, pointer: checks.Site_Document_Pointer) -> string {
 	return text[pointer.start:pointer.end]
 }
 
@@ -67,7 +68,7 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 		{"A step (docs/glossary/running_code.md, \"Thread\").", "docs/glossary/running_code.md", {"\"Thread\""}, true, " (docs/glossary/running_code.md, \"Thread\")"},
 	}
 	for item in cases {
-		pointers := site_document_pointers(item.text)
+		pointers := checks.site_document_pointers(item.text)
 		testing.expectf(t, len(pointers) == 1, "%q: %d pointers", item.text, len(pointers))
 		if len(pointers) != 1 {
 			continue
@@ -86,7 +87,7 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 
 	// Two pointers in one parenthesis: each takes its part and one "; ".
 	two := "The bar (docs/DESIGN.md, section 5; docs/FONTS.md, section 12.6) is drawn."
-	pointers := site_document_pointers(two)
+	pointers := checks.site_document_pointers(two)
 	testing.expect_value(t, len(pointers), 2)
 	if len(pointers) == 2 {
 		testing.expect_value(t, taken(two, pointers[0]), "docs/DESIGN.md, section 5; ")
@@ -98,7 +99,7 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 	// A file in lower case is a document only in the folder of the
 	// glossary, and a folder under it is not one.
 	for text in ([]string{"tools/docs/ARCHITECTURE.md", "docs/notes.txt", "docs/lower.md", "the docs/ folder", "docs/A.mdx", "The record of a call.", "", "the docs/glossary/ folder", "docs/glossary/.md", "docs/glossary/old/text.md", "docs/research/lower.md", "docs/glossary/text.mdx"}) {
-		testing.expectf(t, len(site_document_pointers(text)) == 0, "%q has a pointer", text)
+		testing.expectf(t, len(checks.site_document_pointers(text)) == 0, "%q has a pointer", text)
 	}
 }
 
@@ -176,7 +177,7 @@ site_document_pointers_to_a_working_record :: proc(t: ^testing.T) {
 		b := strings.builder_make(context.temp_allocator)
 		site_document_reference_write(&site, &b, "docs/reference/modules/kernel/index.html", targets[0])
 		html := strings.to_string(b)
-		testing.expect(t, strings.has_prefix(html, SITE_DOCUMENT_REFERENCE_OPEN + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md#L"), html)
+		testing.expect(t, strings.has_prefix(html, SITE_DOCUMENT_REFERENCE_OPEN + checks.SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md#L"), html)
 		testing.expect(t, strings.has_suffix(html, ">The site: The pages<span class=\"document-outside\"> in the repository</span></a>"), html)
 	}
 	whole := site_document_targets(&site, record, nil)

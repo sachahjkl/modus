@@ -11,6 +11,7 @@ import "core:thread"
 import "core:time"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // The films of the machine (docs/TOOLS.md, "The film").
 //
@@ -185,7 +186,7 @@ film_slot_count :: proc(runs: []Film_Run) -> int {
 
 // The two files of a film, by the suffix of their name.
 FILM_MP4_SUFFIX :: ".mp4"
-FILM_WEBM_SUFFIX :: FILM_DOCUMENT_SUFFIX
+FILM_WEBM_SUFFIX :: checks.FILM_DOCUMENT_SUFFIX
 
 // The encoder of the MP4 file: H.264, which each site that takes a film
 // plays. The index of the file is at its start, so a player starts before

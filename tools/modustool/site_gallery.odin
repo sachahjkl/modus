@@ -14,6 +14,7 @@ import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 // The folder of the pictures of the screen that the machine tests take.
 SITE_SCREEN_PICTURE_FOLDER :: "docs/screenshots"
@@ -327,8 +328,8 @@ site_gallery_table_problems :: proc(rows: []Site_Gallery_Row, excluded: []Site_G
 		if !strings.has_prefix(row.guide, "docs/") || !strings.has_suffix(row.guide, ".md") {
 			append(&problems, fmt.tprintf("%s: the guide \"%s\" is not a document of docs/", row.file, row.guide))
 		}
-		if row.film != "" && (!strings.has_prefix(row.film, FILM_DOCUMENT_FOLDER + "/") || !strings.has_suffix(row.film, ".webm")) {
-			append(&problems, fmt.tprintf("%s: the film \"%s\" is not a WebM file of %s", row.file, row.film, FILM_DOCUMENT_FOLDER))
+		if row.film != "" && (!strings.has_prefix(row.film, checks.FILM_DOCUMENT_FOLDER + "/") || !strings.has_suffix(row.film, ".webm")) {
+			append(&problems, fmt.tprintf("%s: the film \"%s\" is not a WebM file of %s", row.file, row.film, checks.FILM_DOCUMENT_FOLDER))
 		}
 		home_count += row.home ? 1 : 0
 	}
@@ -405,7 +406,7 @@ site_gallery_read :: proc(site: ^Site) -> bool {
 		} else {
 			// The site copies the film as it is, as the news does.
 			film_data := foundation.read_file(row.film) or_return
-			film_width, film_height, sized := film_document_picture_size(film_data)
+			film_width, film_height, sized := checks.film_document_picture_size(film_data)
 			if !sized {
 				fmt.eprintfln("modustool: site: the film %s states no width and no height of its pictures", row.film)
 				return false

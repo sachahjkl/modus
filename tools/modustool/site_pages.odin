@@ -11,8 +11,8 @@ import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
-SITE_BOOT_STAGE_PREFIX :: "kernel: boot: "
 // The file of the table of the commands of the tool.
 SITE_TOOL_MAIN_FILE :: "tools/modustool/main.odin"
 
@@ -529,7 +529,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	{
 		path := site_page_file(SITE_NUMBERS_FOLDER)
 		site_page_add(site, Site_Page{path = path, title = "Measured numbers", description = site_description_cut(fmt.tprintf("%d numbers that the machine tests of %s printed, each quoted whole from its log with its conditions.", len(site.measured), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = site_numbers_body(site), sources = site_sources("tools/modustool/site.odin"), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = MEASURE_RECORD_FILE, count = len(site.measured), kind = .Number})
+		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = checks.MEASURE_RECORD_FILE, count = len(site.measured), kind = .Number})
 	}
 
 	// The licenses.
@@ -541,7 +541,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
-		site_source_line(site, &b, resources.SITE_LICENSE_FILE, SITE_FONT_FOLDER, resources.SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, resources.HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
+		site_source_line(site, &b, resources.SITE_LICENSE_FILE, checks.SITE_FONT_FOLDER, resources.SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, checks.SITE_ODIN_LICENSE_FILE, checks.SITE_FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, resources.HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(resources.SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}
@@ -581,14 +581,14 @@ site_numbers_run :: proc(site: ^Site, b: ^strings.Builder) {
 		from_build += number.source == .Build ? 1 : 0
 	}
 	if !site.measure_record.present {
-		fmt.sbprintf(b, "<p class=\"missing\">The repository holds no measure record (<code>%s</code>): only the logs in <code>%s/</code> of this work tree give numbers.</p>\n", MEASURE_RECORD_FILE, foundation.BUILD_FOLDER)
+		fmt.sbprintf(b, "<p class=\"missing\">The repository holds no measure record (<code>%s</code>): only the logs in <code>%s/</code> of this work tree give numbers.</p>\n", checks.MEASURE_RECORD_FILE, foundation.BUILD_FOLDER)
 	} else {
 		record := site.measure_record.record
 		strings.write_string(b, "<p>The full check of ")
 		site_time(b, record.time)
 		strings.write_string(b, ", on the tree of ")
 		if record.commit != "" {
-			fmt.sbprintf(b, "<a href=\"%s/commit/%s\"><code>", SITE_REPOSITORY_ADDRESS, record.commit)
+			fmt.sbprintf(b, "<a href=\"%s/commit/%s\"><code>", checks.SITE_REPOSITORY_ADDRESS, record.commit)
 			foundation.site_escape(b, site_short_commit(record.commit))
 			strings.write_string(b, "</code></a>")
 		} else {
@@ -600,7 +600,7 @@ site_numbers_run :: proc(site: ^Site, b: ^strings.Builder) {
 		foundation.site_escape(b, record.release)
 		strings.write_string(b, ". The host: ")
 		foundation.site_escape(b, record.host)
-		fmt.sbprintf(b, ". %d checks passed. The record is <code>%s</code>.</p>\n", record.checks_passed, MEASURE_RECORD_FILE)
+		fmt.sbprintf(b, ". %d checks passed. The record is <code>%s</code>.</p>\n", record.checks_passed, checks.MEASURE_RECORD_FILE)
 		if record.release != site.release {
 			strings.write_string(b, "<p class=\"missing\">The measure record is of the release ")
 			foundation.site_escape(b, record.release)
@@ -678,7 +678,7 @@ site_numbers_body :: proc(site: ^Site) -> string {
 		site_inline(&b, number.measure.reading)
 		strings.write_string(&b, "</p>\n</section>\n")
 	}
-	fmt.sbprintf(&b, "<p class=\"source\">The lines come from the measure record <code>%s</code>, which <code>modustool screenshots</code> writes after a full check that passed, or from the logs in <code>%s/</code> that a later <code>modustool test</code> or <code>modustool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ", MEASURE_RECORD_FILE, foundation.BUILD_FOLDER)
+	fmt.sbprintf(&b, "<p class=\"source\">The lines come from the measure record <code>%s</code>, which <code>modustool screenshots</code> writes after a full check that passed, or from the logs in <code>%s/</code> that a later <code>modustool test</code> or <code>modustool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ", checks.MEASURE_RECORD_FILE, foundation.BUILD_FOLDER)
 	strings.write_string(&b, "<a href=\"")
 	foundation.site_escape(&b, site_repository_file(site, "tools/modustool/site.odin"))
 	strings.write_string(&b, "\"><code>tools/modustool/site.odin</code></a>.</p>\n")
@@ -745,20 +745,20 @@ site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows:
 site_releases_add :: proc(site: ^Site) {
 	path := site_section_page(.Releases)
 	b := strings.builder_make(context.temp_allocator)
-	types := CHANGE_TYPES
+	types := checks.CHANGE_TYPES
 	releases := site.changelog.releases
-	oldest := release_number_text(releases[len(releases) - 1].number)
+	oldest := checks.release_number_text(releases[len(releases) - 1].number)
 	strings.write_string(&b, "<h1>Releases</h1>\n")
 	site_subscribe_menu_html(&b, path, SITE_RELEASES_FEED)
 	fmt.sbprintf(&b, "<p>Every release of the system, newest first: %d releases, from %s to %s. The merge of step N on <code>master</code> is the release 0.N.0.</p>\n<p>A release lists its changes by type, in the form of Keep a Changelog: Added, Changed, Deprecated, Removed, Fixed, Security. Each change is written once, in the commit that made it, as one fragment; <code>modustool changelog release</code> gathers the fragments into the release. Under a release, a line links to each news entry that names it: the news tell in prose what a reader can now see, and this page lists each change.</p>\n", len(releases), oldest, site.release)
-	site_source_line(site, &b, CHANGELOG_FILE)
+	site_source_line(site, &b, checks.CHANGELOG_FILE)
 	// This page lists the work that is done; the planned work has its page.
 	site_roadmap_link_line(site, &b, path)
 	// The files of the newest release, and how to verify them.
 	site_download_write(site, &b, path)
 	for changelog_release in releases {
-		number := release_number_text(changelog_release.number)
-		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <time class=\"date\" datetime=\"%s\">%s</time></h2>\n", site_release_id(number), number, release_moment_attribute(changelog_release), release_moment_shown(changelog_release))
+		number := checks.release_number_text(changelog_release.number)
+		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <time class=\"date\" datetime=\"%s\">%s</time></h2>\n", site_release_id(number), number, checks.release_moment_attribute(changelog_release), checks.release_moment_shown(changelog_release))
 		site_news_of_release(site, &b, path, number)
 		type_index := -1
 		// Each change has an id: the band of the newest release of the
@@ -772,7 +772,7 @@ site_releases_add :: proc(site: ^Site) {
 				fmt.sbprintf(&b, "<h3>%s</h3>\n<ul>\n", types[type_index])
 			}
 			fmt.sbprintf(&b, "<li id=\"%s\">", site_change_id(number, entry_index + 1))
-			site_inline(&b, entry_joined(entry.lines))
+			site_inline(&b, checks.entry_joined(entry.lines))
 			strings.write_string(&b, "</li>\n")
 		}
 		if type_index >= 0 {
@@ -780,7 +780,7 @@ site_releases_add :: proc(site: ^Site) {
 		}
 		strings.write_string(&b, "</section>\n")
 	}
-	site_page_add(site, Site_Page{path = path, title = "Releases", description = site_description_cut(fmt.tprintf("Every release of %s, newest first: %d releases, from %s to %s, with what each one brings.", SITE_SYSTEM_NAME, len(releases), oldest, site.release)), section = .Releases, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(CHANGELOG_FILE)})
+	site_page_add(site, Site_Page{path = path, title = "Releases", description = site_description_cut(fmt.tprintf("Every release of %s, newest first: %d releases, from %s to %s, with what each one brings.", SITE_SYSTEM_NAME, len(releases), oldest, site.release)), section = .Releases, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(checks.CHANGELOG_FILE)})
 }
 
 // One stage of the start of the machine, as the kernel logs it:
@@ -797,10 +797,10 @@ Site_Boot_Stage :: struct {
 site_boot_stages :: proc(content: string) -> []Site_Boot_Stage {
 	stages := make([dynamic]Site_Boot_Stage, context.temp_allocator)
 	for line in foundation.site_lines(content) {
-		if !strings.has_prefix(line, SITE_BOOT_STAGE_PREFIX) || !strings.has_suffix(line, " us") {
+		if !strings.has_prefix(line, checks.SITE_BOOT_STAGE_PREFIX) || !strings.has_suffix(line, " us") {
 			continue
 		}
-		rest := line[len(SITE_BOOT_STAGE_PREFIX):len(line) - len(" us")]
+		rest := line[len(checks.SITE_BOOT_STAGE_PREFIX):len(line) - len(" us")]
 		last := strings.last_index(rest, ": ")
 		if last < 0 {
 			continue
@@ -860,7 +860,7 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 		}
 		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, site_section_page(.Home), site_section_page(section)), site_section_titles[section])
 	}
-	fmt.sbprintf(b, "<li><a href=\"%s\">The repository</a></li>\n", SITE_REPOSITORY_ADDRESS)
+	fmt.sbprintf(b, "<li><a href=\"%s\">The repository</a></li>\n", checks.SITE_REPOSITORY_ADDRESS)
 	strings.write_string(b, "</ul>\n</div>\n</header>\n")
 }
 
@@ -908,5 +908,5 @@ site_home_add :: proc(site: ^Site) {
 	site_release_band_write(site, &b, home)
 	// The files of the newest release, and how to verify them.
 	site_download_write(site, &b, home)
-	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE, SITE_GALLERY_SOURCE_FILE), script = SITE_CAROUSEL_SCRIPT})
+	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, checks.CHANGELOG_FILE, SITE_GALLERY_SOURCE_FILE), script = SITE_CAROUSEL_SCRIPT})
 }

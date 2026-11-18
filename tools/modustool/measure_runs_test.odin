@@ -2,6 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
+import "modustool:checks"
 
 // The main scenario of the test waits for no rate: a line with "in one
 // second" comes from a measure run only.
@@ -56,7 +57,7 @@ measure_process_steps_wait_for_the_lines :: proc(t: ^testing.T) {
 measure_process_lines_keeps_the_lines_of_the_process :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
 	log := "[kernel] kernel: ok\n[clock] clock: the time page: 5 reads in one second\r\n[root] root: started clock\n[clock] clock: ok\n"
-	lines := measure_process_lines(log, "clock")
+	lines := checks.measure_process_lines(log, "clock")
 	testing.expect_value(t, len(lines), 2)
 	if len(lines) == 2 {
 		testing.expect_value(t, lines[0], "[clock] clock: the time page: 5 reads in one second")

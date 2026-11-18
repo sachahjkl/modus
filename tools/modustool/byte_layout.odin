@@ -20,6 +20,7 @@ import "modus:contract/draw_record"
 import module "modus:contract/module"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // A row of a diagram: 8 bytes, so that a 64-bit field of the format is one
 // rectangle and never crosses two rows.
@@ -506,7 +507,7 @@ byte_layout_documents_rewrite :: proc(write: bool) -> bool {
 		fmt.printfln("modustool: byte layouts: wrote the fences of %s", path)
 	}
 	if len(problems) > 0 {
-		problems_print(problems[:])
+		checks.problems_print(problems[:])
 		fmt.eprintfln("modustool: test failed: the byte layouts of the guides have %d problems", len(problems))
 		return false
 	}

@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 // One picture of a test, with a guide that the site of the tests has.
 @(private = "file")
@@ -186,7 +187,7 @@ site_gallery_captions_are_one_sentence :: proc(t: ^testing.T) {
 // shows as a page, and its film is a file of the repository.
 @(test)
 site_gallery_guides_are_pages :: proc(t: ^testing.T) {
-	working_records := SITE_WORKING_RECORDS
+	working_records := checks.SITE_WORKING_RECORDS
 	for row in site_gallery_rows {
 		testing.expectf(t, os.exists(row.guide), "%s: the guide %s is not a file", row.file, row.guide)
 		for record in working_records {

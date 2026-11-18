@@ -13,6 +13,7 @@ import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 Site_Heading :: struct {
 	level:           int,
@@ -564,7 +565,7 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 				// place after it (`ARCHITECTURE.md`, "The fault ring"), is a
 				// reference to that place, as a pointer of a source comment.
 				if path, names_document := site_document_of_code_span(renderer.site, code); names_document && !renderer.in_heading {
-					labels, labels_end := site_pointer_labels(text, index)
+					labels, labels_end := checks.site_pointer_labels(text, index)
 					targets := site_document_targets(renderer.site, path, labels)
 					if len(targets) > 0 {
 						site_document_references_count(renderer.site, path, labels, targets)

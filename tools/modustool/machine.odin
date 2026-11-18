@@ -15,6 +15,7 @@ import "core:time"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 // The machine test: the tool starts the machine under QEMU, and it acts as
 // the input. It presses keys and moves the mouse through the QEMU monitor,
@@ -477,8 +478,6 @@ scenario_persist_cut := [?]Step {
 // case, then the measures. The scenario revokes the grant of the network:
 // the next datagram is refused. Then the endpoint ends with its process,
 // and each page is free or paid.
-TEST_OUTPUT_NETWORK :: foundation.BUILD_FOLDER + "/test_output_network.txt"
-
 scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "net"},
@@ -3476,14 +3475,14 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
 	// The quality profile that the compositor chose at its start
 	// (quality_measure.odin).
-	{kind = .Wait, text = QUALITY_PROFILE_LINE, any_order = true},
+	{kind = .Wait, text = checks.QUALITY_PROFILE_LINE, any_order = true},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "locks"},
 	// The start of its window: locks draws its first frame before its
 	// measures.
-	{kind = .Wait, text = QUALITY_WINDOW_START_LOCKS, any_order = true},
+	{kind = .Wait, text = checks.QUALITY_WINDOW_START_LOCKS, any_order = true},
 	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
 	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
@@ -3513,13 +3512,13 @@ scenario_measure := [?]Step {
 	// The 24 characters of that line are more than the keys of a line of
 	// the time of a key to the screen: the compositor wrote one, with the
 	// line of the frames, since the last wait (quality_measure.odin).
-	{kind = .Wait, text = QUALITY_FRAME, any_order = true},
-	{kind = .Wait, text = QUALITY_KEY, any_order = true},
-	{kind = .Wait, text = PROCESSOR_FRAME_CLEAR_AND_PRESENT, fails_on = PROCESSOR_FRAME_WRONG},
-	{kind = .Wait, text = PROCESSOR_FRAME_FULL_FRAME, fails_on = PROCESSOR_FRAME_WRONG},
-	{kind = .Wait, text = PROCESSOR_FRAME_FRAME_IN_ITS_DAMAGE, fails_on = PROCESSOR_FRAME_WRONG},
-	{kind = .Wait, text = PROCESSOR_FRAME_DRAW_TABLE, fails_on = PROCESSOR_FRAME_WRONG},
-	{kind = .Wait, text = PROCESSOR_FRAME_DONE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = checks.QUALITY_FRAME, any_order = true},
+	{kind = .Wait, text = checks.QUALITY_KEY, any_order = true},
+	{kind = .Wait, text = checks.PROCESSOR_FRAME_CLEAR_AND_PRESENT, fails_on = checks.PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = checks.PROCESSOR_FRAME_FULL_FRAME, fails_on = checks.PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = checks.PROCESSOR_FRAME_FRAME_IN_ITS_DAMAGE, fails_on = checks.PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = checks.PROCESSOR_FRAME_DRAW_TABLE, fails_on = checks.PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = checks.PROCESSOR_FRAME_DONE, fails_on = checks.PROCESSOR_FRAME_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

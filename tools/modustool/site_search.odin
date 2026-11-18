@@ -23,6 +23,7 @@ import "core:strings"
 import "core:unicode/utf8"
 import "modus:support/line_editor"
 import "modustool:foundation"
+import "modustool:checks"
 
 SITE_SEARCH_INDEX :: "search.json"
 SITE_SEARCH_SCRIPT :: "search.js"
@@ -393,9 +394,9 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, item.entry.title, site_section_page(.News), item.anchor, .News, site_news_lead(item.entry))
 	}
 	for changelog_release in site.changelog.releases {
-		number := release_number_text(changelog_release.number)
-		first := len(changelog_release.entries) > 0 ? entry_joined(changelog_release.entries[0].lines) : ""
-		site_search_add(&entries, number, site_section_page(.Releases), site_release_id(number), .Release, fmt.tprintf("%s: %s", release_moment_shown(changelog_release), first))
+		number := checks.release_number_text(changelog_release.number)
+		first := len(changelog_release.entries) > 0 ? checks.entry_joined(changelog_release.entries[0].lines) : ""
+		site_search_add(&entries, number, site_section_page(.Releases), site_release_id(number), .Release, fmt.tprintf("%s: %s", checks.release_moment_shown(changelog_release), first))
 	}
 	system_ids, build_ids := site_license_row_ids(site.licenses)
 	license_page := site_page_file(SITE_LICENSES_FOLDER)

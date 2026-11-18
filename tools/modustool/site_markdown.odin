@@ -9,8 +9,8 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:checks"
 
-SITE_PROPERTIES_FILE :: "docs/PROPERTIES.md"
 SITE_README_FILE :: "README.md"
 SITE_DESIGN_FILE :: "docs/DESIGN.md"
 
@@ -184,7 +184,7 @@ site_part_sentence :: proc(lines: []string) -> (sentence: string, found: bool) {
 //   the properties end at the first "## " heading that is not "## <n>. ".
 site_properties_parse :: proc(content: string) -> (principles: Site_Principles, problem: string) {
 	lines := foundation.site_lines(content)
-	file :: SITE_PROPERTIES_FILE
+	file :: checks.SITE_PROPERTIES_FILE
 
 	objective_lines, has_objective := site_section_lines(lines, "## Objective")
 	if !has_objective {

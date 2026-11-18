@@ -17,6 +17,7 @@ import "core:time"
 import "modus:support/sentence"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // The call from the host (docs/MODULE_CONTRACT.md, section 4, "A call from
 // the host"): `modustool call "monitor.processes()"` calls an export of a
@@ -684,7 +685,7 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		}
 	case .Record:
 		described, _ := module.record_type(call.file, call.function.result_detail)
-		append(&outcome.lines, record_text(call.file, described, result))
+		append(&outcome.lines, checks.record_text(call.file, described, result))
 	case .Table:
 		described, _ := module.record_type(call.file, call.function.result_detail)
 		outcome.rows = table_print(&outcome.lines, call.file, described, result, answer.value)
@@ -824,29 +825,6 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 		}
 	}
 	return "", false
-}
-
-// record_text gives a record as Name{field = value, field = "text"}.
-record_text :: proc(file: []u8, described: module.Record, record: []u8) -> string {
-	builder := strings.builder_make(context.temp_allocator)
-	strings.write_string(&builder, module.string_at(file, described.name_offset, described.name_count))
-	strings.write_byte(&builder, '{')
-	for number in 0 ..< described.field_count {
-		item, _ := module.field(file, described, number)
-		if number > 0 {
-			strings.write_string(&builder, ", ")
-		}
-		strings.write_string(&builder, module.string_at(file, item.name_offset, item.name_count))
-		strings.write_string(&builder, " = ")
-		value := build.field_value(record, item)
-		if item.type == u8(module.Type.Text) {
-			strings.write_quoted_string(&builder, value)
-		} else {
-			strings.write_string(&builder, value)
-		}
-	}
-	strings.write_byte(&builder, '}')
-	return strings.to_string(builder)
 }
 
 // table_print writes a table: one line of the names of the fields, one line

@@ -238,7 +238,7 @@ frames_measure :: proc "contextless" (draw: proc "contextless" ()) -> (times: Fr
 }
 
 // measure_log writes the line of one part. The tool reads its form
-// (tools/modustool/processor_frame_measure.odin): change both together.
+// (tools/modustool/checks/processor_frame_measure.odin): change both together.
 measure_log :: proc "contextless" (part: string, times: Frame_Times) {
 	least, median := least_and_median(times)
 	frames := u64(1_000_000_000) / max(median, 1)

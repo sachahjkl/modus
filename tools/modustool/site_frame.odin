@@ -17,6 +17,7 @@ import "core:time"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 // The address of the site: the pages get canonical addresses, Open Graph,
 // a JSON-LD graph and a sitemap from it. An empty address gives a site of
@@ -41,10 +42,6 @@ SITE_LICENSES_FOLDER :: SITE_REFERENCE_FOLDER + "/licenses"
 SITE_STATUS_FOLDER :: "status"
 SITE_NEWS_FOLDER :: "news"
 SITE_RELEASES_FOLDER :: "releases"
-// The documents of docs/ that are working records of the project, not
-// guides: the site leaves them out. A link of a page to one of them names
-// the file in the repository.
-SITE_WORKING_RECORDS :: [?]string{"SITE.md"}
 SITE_DESCRIPTION_LIMIT :: 160
 // The start of the refresh of a redirect page; the link to the new address
 // follows it.
@@ -192,10 +189,10 @@ Site :: struct {
 	guides:       [dynamic]Site_Guide,
 	principles:   Site_Principles,
 	readme:       Site_Readme,
-	changelog:    Changelog,
+	changelog:    checks.Changelog,
 	measured:     []Site_Measured,
 	measure_record: Site_Measure_Record, // The measure record of the work tree.
-	measure_history: []Measure_History_Release, // The measure record of each release, oldest first (measure_history.odin).
+	measure_history: []checks.Measure_History_Release, // The measure record of each release, oldest first (measure_history.odin).
 	boot_stages:  []Site_Boot_Stage, // The stages of the start that the home shows.
 	boot_source:  Site_Measure_Source,
 	gallery:      []Site_Gallery_Picture, // The pictures of the table of the gallery (site_gallery.odin); the home shows a few of them.
@@ -205,7 +202,7 @@ Site :: struct {
 	code_links:   map[string]string, // The text of a code span to the row of a reference table that it names.
 	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
 	news:         []Site_News, // Newest first.
-	roadmap:      Roadmap, // ROADMAP.md, as roadmap_read gives it.
+	roadmap:      checks.Roadmap, // ROADMAP.md, as roadmap_read gives it.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
 	redirect_counts: [Site_Address_Generation]int, // The redirect pages of each generation of old addresses.
 	reference_entries: []Site_Reference_Entry, // The pages of the reference, in the order of its index: the tree lists them.
@@ -455,7 +452,7 @@ site_check_redirects :: proc(redirects: map[string]string, written: map[string]s
 // commit of the build, or on master when the commit is not known.
 site_repository_file :: proc(site: ^Site, path: string) -> string {
 	at := site.commit != "" ? site.commit : "master"
-	return strings.concatenate({SITE_REPOSITORY_ADDRESS, "/blob/", at, "/", path}, context.temp_allocator)
+	return strings.concatenate({checks.SITE_REPOSITORY_ADDRESS, "/blob/", at, "/", path}, context.temp_allocator)
 }
 
 // site_description_cut gives a text of at most SITE_DESCRIPTION_LIMIT bytes,
@@ -538,7 +535,7 @@ site_build :: proc(address: string) -> bool {
 	site.pages = make([dynamic]Site_Page, context.temp_allocator)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 
-	properties_text := foundation.site_read(SITE_PROPERTIES_FILE) or_return
+	properties_text := foundation.site_read(checks.SITE_PROPERTIES_FILE) or_return
 	readme_text := foundation.site_read(SITE_README_FILE) or_return
 	properties_problem, readme_problem: string
 	site.principles, properties_problem = site_properties_parse(properties_text)
@@ -551,13 +548,13 @@ site_build :: proc(address: string) -> bool {
 	}
 	changelog_problems := make([dynamic]string, context.temp_allocator)
 	changelog_ok: bool
-	site.changelog, changelog_ok = changelog_read(&changelog_problems)
+	site.changelog, changelog_ok = checks.changelog_read(&changelog_problems)
 	if !changelog_ok || len(changelog_problems) > 0 || len(site.changelog.releases) == 0 {
-		problems_print(changelog_problems[:])
-		fmt.eprintfln("modustool: site: %s does not have its form; `modustool changelog check` says the same", CHANGELOG_FILE)
+		checks.problems_print(changelog_problems[:])
+		fmt.eprintfln("modustool: site: %s does not have its form; `modustool changelog check` says the same", checks.CHANGELOG_FILE)
 		return false
 	}
-	site.release = release_number_text(site.changelog.releases[0].number)
+	site.release = checks.release_number_text(site.changelog.releases[0].number)
 	// The news names releases of the changelog, pictures and guides.
 	site_news_read(&site) or_return
 	// The planned work: a fault of the form of its file stops the command.
@@ -574,7 +571,7 @@ site_build :: proc(address: string) -> bool {
 	for path in document_paths {
 		name := build.site_file_name(path)
 		working := false
-		records := SITE_WORKING_RECORDS
+		records := checks.SITE_WORKING_RECORDS
 		for record in records {
 			working ||= name == record
 		}
@@ -665,20 +662,20 @@ site_build :: proc(address: string) -> bool {
 	// The measured numbers and the stages of the start: from the logs of
 	// build/ when they are newer than the measure record, else from the
 	// record. A clean checkout has the record only.
-	measure_record_found, measure_record_problem := site_measure_record_read(MEASURE_RECORD_FILE)
+	measure_record_found, measure_record_problem := site_measure_record_read(checks.MEASURE_RECORD_FILE)
 	if measure_record_problem != "" {
 		fmt.eprintfln("modustool: site: %s", measure_record_problem)
 		return false
 	}
 	site.measure_record = measure_record_found
 	measure_history_problem: string
-	site.measure_history, measure_history_problem = measure_history_read(MEASURE_HISTORY_FOLDER)
+	site.measure_history, measure_history_problem = checks.measure_history_read(checks.MEASURE_HISTORY_FOLDER)
 	if measure_history_problem != "" {
 		fmt.eprintfln("modustool: site: %s", measure_history_problem)
 		return false
 	}
 	measured := make([dynamic]Site_Measured, context.temp_allocator)
-	for measure in site_measures {
+	for measure in checks.site_measures {
 		append(&measured, site_measure_resolve(site_measure_read(measure), site.measure_record))
 	}
 	site.measured = measured[:]
@@ -944,15 +941,15 @@ site_build :: proc(address: string) -> bool {
 			from_build += 1
 		}
 	}
-	fmt.printfln("modustool: site: %d of %d numbers measured: %d from %s, %d from the logs in %s/ that are newer", len(site.measured) - missing, len(site.measured), from_record, MEASURE_RECORD_FILE, from_build, foundation.BUILD_FOLDER)
+	fmt.printfln("modustool: site: %d of %d numbers measured: %d from %s, %d from the logs in %s/ that are newer", len(site.measured) - missing, len(site.measured), from_record, checks.MEASURE_RECORD_FILE, from_build, foundation.BUILD_FOLDER)
 	if site.measure_record.present {
 		record := site.measure_record.record
-		fmt.printfln("modustool: site: %s: the full check of %s, on the tree of %s (%s), the release %s, %d checks passed", MEASURE_RECORD_FILE, record.time, site_short_commit(record.commit), measure_tree_state_names[record.tree], record.release, record.checks_passed)
+		fmt.printfln("modustool: site: %s: the full check of %s, on the tree of %s (%s), the release %s, %d checks passed", checks.MEASURE_RECORD_FILE, record.time, site_short_commit(record.commit), checks.measure_tree_state_names[record.tree], record.release, record.checks_passed)
 		if record.release != site.release {
-			fmt.printfln("modustool: site: %s is of the release %s, older than the release %s of the site", MEASURE_RECORD_FILE, record.release, site.release)
+			fmt.printfln("modustool: site: %s is of the release %s, older than the release %s of the site", checks.MEASURE_RECORD_FILE, record.release, site.release)
 		}
 	} else {
-		fmt.printfln("modustool: site: no %s", MEASURE_RECORD_FILE)
+		fmt.printfln("modustool: site: no %s", checks.MEASURE_RECORD_FILE)
 	}
 	for cell in site.licenses.gaps {
 		fmt.printfln("modustool: site: a cell of the licenses is not recorded: %s", cell)
@@ -1102,7 +1099,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	fmt.sbprintf(&b, "<p class=\"foot-maker\">%s · by <span class=\"maker\"><img src=\"%s\" width=\"16\" height=\"16\" alt=\"\"><a href=\"%s\">%s</a></span></p>\n", SITE_MARK_NAME_HTML, link(page, resources.SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE), SITE_MAKER_ADDRESS, SITE_MAKER_NAME)
 	write(&b, "<p>Generated by <code>modustool site</code> from ")
 	if site.commit != "" {
-		fmt.sbprintf(&b, "the commit <a href=\"%s/commit/%s\"><code>%s</code></a>", SITE_REPOSITORY_ADDRESS, site.commit, site.commit[:12])
+		fmt.sbprintf(&b, "the commit <a href=\"%s/commit/%s\"><code>%s</code></a>", checks.SITE_REPOSITORY_ADDRESS, site.commit, site.commit[:12])
 	} else {
 		write(&b, "a work tree whose commit the tool cannot read")
 	}
@@ -1121,7 +1118,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		}
 		write(&b, ".</p>\n")
 	}
-	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Licenses</a></p>\n</div>\n</footer>\n</body>\n</html>\n", SITE_REPOSITORY_ADDRESS, site_page_link(site, page.path, site_page_file(SITE_LICENSES_FOLDER)))
+	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Licenses</a></p>\n</div>\n</footer>\n</body>\n</html>\n", checks.SITE_REPOSITORY_ADDRESS, site_page_link(site, page.path, site_page_file(SITE_LICENSES_FOLDER)))
 	return strings.to_string(b)
 }
 

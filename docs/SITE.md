@@ -779,7 +779,7 @@ The measure history (`glossary/project.md`) is the folder `docs/measures/release
 
 The page of the measured numbers has a section "Each measure over the releases", after the table. It says how many releases the history holds, and the noise: each point is one run of the full check on a host that runs other work, two runs of one build differ, and a step that is not larger than that spread says nothing. When the copies name more than one host, a paragraph says that a change of the host is not a change of the system, and each list names the host of each release.
 
-**The number that a chart follows.** A measure is the same across releases when its sentence of `site_measures` is the same; a measure that changes its meaning gets a new sentence. The table `measure_history_series` (`tools/modustool/measure_history.odin`) gives, for each sentence, the one number that its chart follows: the words of the line just before it and just after it, the unit in words, and whether a higher or a lower number is faster. A line whose words changed gives no number for its release. The second build gives a fact, not a number: it has no chart. A host test checks that each sentence of the table is a sentence of `site_measures`, and that each series reads its number from the line of today.
+**The number that a chart follows.** A measure is the same across releases when its sentence of `site_measures` is the same; a measure that changes its meaning gets a new sentence. The table `measure_history_series` (`tools/modustool/checks/measure_history.odin`) gives, for each sentence, the one number that its chart follows: the words of the line just before it and just after it, the unit in words, and whether a higher or a lower number is faster. A line whose words changed gives no number for its release. The second build gives a fact, not a number: it has no chart. A host test checks that each sentence of the table is a sentence of `site_measures`, and that each series reads its number from the line of today.
 
 **A chart** is drawn for each measure with a number in two releases or more, in the card and the grid of the charts of the home, in the accent of the measure:
 
@@ -1397,7 +1397,7 @@ The identity card (`glossary/project.md`) of a module: its name (a link to its p
 
 ## The references to documents
 
-A reference to a document in a text, such as "docs/ARCHITECTURE.md, systems K1 to K5", is a link with a style of its own, not bare text that a reader cannot follow. The code is `tools/modustool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
+A reference to a document in a text, such as "docs/ARCHITECTURE.md, systems K1 to K5", is a link with a style of its own, not bare text that a reader cannot follow. The code is `tools/modustool/site_document_references.odin`, with the reader of a pointer in `tools/modustool/checks/document_pointers.odin`, because the rule on comments reads the same pointers; its host tests are `site_document_references_test.odin`.
 
 A comment of the source names a document for a person who reads the code: a document pointer (`glossary/project.md`). The rule of the comments allows it. On a page, the path and a label such as "U3" or "section 8" mean nothing: the site writes a document reference (`glossary/project.md`) in its place.
 

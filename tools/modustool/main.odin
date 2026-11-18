@@ -49,6 +49,7 @@ import "modus:support/pci"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -62,104 +63,6 @@ import "modustool:build"
 // source_folders.odin; the rule of the kernel is held by
 // library_imports_check.odin.
 
-// The folders whose host tests `modustool check` runs: `odin test` on
-// each, several at once (host_tests.odin). The pool starts them in this
-// order, and reports them in it: the tool comes first, because its
-// compile and its tests are the longest, and a long folder that starts
-// last makes the whole run longer.
-HOST_TEST_FOLDERS :: [?]string {
-	foundation.TOOL_SOURCE_FOLDER,
-	foundation.TOOL_SOURCE_FOLDER + "/build",
-	foundation.TOOL_SOURCE_FOLDER + "/resources",
-	foundation.TOOL_SOURCE_FOLDER + "/foundation",
-	foundation.SOURCE_FOLDER_RUNTIME,
-	foundation.SOURCE_FOLDER_CONTRACT + "/blake3",
-	foundation.SOURCE_FOLDER_CONTRACT + "/module",
-	foundation.SOURCE_FOLDER_CONTRACT + "/isolated",
-	foundation.SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
-	foundation.SOURCE_FOLDER_CONTRACT + "/remote",
-	foundation.SOURCE_FOLDER_CONTRACT + "/root_ring",
-	foundation.SOURCE_FOLDER_CONTRACT + "/enum_word",
-	foundation.SOURCE_FOLDER_SUPPORT + "/sentence",
-	foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
-	foundation.SOURCE_FOLDER_PRIVATE + "/cryptography/cryptography_primitives",
-	foundation.SOURCE_FOLDER_SUPPORT + "/quic",
-	foundation.SOURCE_FOLDER_CONTRACT + "/date",
-	foundation.SOURCE_FOLDER_CONTRACT + "/disk_process_page",
-	foundation.SOURCE_FOLDER_KERNEL + "/iommu",
-	foundation.SOURCE_FOLDER_CONTRACT + "/bridge_requester",
-	foundation.SOURCE_FOLDER_KERNEL + "/debug_exception",
-	foundation.SOURCE_FOLDER_KERNEL + "/processor_counters",
-	foundation.SOURCE_FOLDER_KERNEL + "/stolen_time",
-	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
-	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
-	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",
-	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
-	foundation.SOURCE_FOLDER_SUPPORT + "/principals",
-	foundation.SOURCE_FOLDER_SUPPORT + "/tpm2",
-	foundation.SOURCE_FOLDER_SUPPORT + "/disk_process",
-	foundation.SOURCE_FOLDER_SUPPORT + "/calendar",
-	foundation.SOURCE_FOLDER_SUPPORT + "/line_editor",
-	foundation.SOURCE_FOLDER_PRIVATE + "/console/console_language",
-	foundation.SOURCE_FOLDER_PRIVATE + "/debugger/debugging",
-	foundation.LIBRARY_MODULE_SOURCES + "interface_module",
-	foundation.LIBRARY_MODULE_SOURCES + "drawing",
-	foundation.DEMONSTRATION_MODULE_SOURCES + "sample",
-	foundation.SOURCE_FOLDER_SUPPORT + "/system",
-	foundation.SOURCE_FOLDER_SUPPORT + "/twins",
-	foundation.SOURCE_FOLDER_PRIVATE + "/kernel_events/kernel_events_rounds",
-	foundation.SOURCE_FOLDER_CONTRACT + "/tpm_service",
-	foundation.SOURCE_FOLDER_SUPPORT + "/storage",
-	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/bar",
-	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/palette",
-	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
-	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/quality",
-	foundation.SOURCE_FOLDER_CONTRACT + "/palette_table",
-	foundation.SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
-	foundation.SOURCE_FOLDER_SUPPORT + "/graphics",
-	foundation.SOURCE_FOLDER_SUPPORT + "/interface",
-	foundation.SOURCE_FOLDER_PRIVATE + "/inspect/addresses",
-	foundation.SOURCE_FOLDER_PRIVATE + "/manual/information",
-	foundation.SOURCE_FOLDER_SUPPORT + "/vector_font",
-	foundation.SOURCE_FOLDER_SUPPORT + "/network",
-	foundation.SOURCE_FOLDER_SUPPORT + "/tcp",
-	foundation.SOURCE_FOLDER_SUPPORT + "/virtio",
-	foundation.SOURCE_FOLDER_SUPPORT + "/bochs_display",
-	foundation.SOURCE_FOLDER_SUPPORT + "/web",
-	foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
-	foundation.SOURCE_FOLDER_SUPPORT + "/random",
-	foundation.SOURCE_FOLDER_CONTRACT + "/entropy_service",
-	foundation.SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
-	foundation.SOURCE_FOLDER_CONTRACT + "/settings",
-	foundation.LIBRARY_MODULE_SOURCES + "text_shaping",
-	foundation.SOURCE_FOLDER_SUPPORT + "/text_shaping",
-	foundation.SOURCE_FOLDER_SUPPORT + "/mark",
-	foundation.SOURCE_FOLDER_SUPPORT + "/terminal",
-	foundation.SOURCE_FOLDER_CONTRACT + "/cut_mark",
-	foundation.SOURCE_FOLDER_CONTRACT + "/text_encoding",
-	foundation.SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
-	foundation.SOURCE_FOLDER_SUPPORT + "/instruction_sets",
-	foundation.SOURCE_FOLDER_CONTRACT + "/system_description",
-	foundation.SOURCE_FOLDER_CONTRACT + "/replacement_list",
-	foundation.SOURCE_FOLDER_PRIVATE + "/root/replacement_signature",
-	foundation.SOURCE_FOLDER_CONTRACT + "/operation",
-	foundation.SOURCE_FOLDER_CONTRACT + "/operation_sequence",
-	foundation.SOURCE_FOLDER_CONTRACT + "/debug_object",
-	foundation.SOURCE_FOLDER_CONTRACT + "/value_kinds",
-	foundation.SOURCE_FOLDER_PRIVATE + "/manual/source_comment_markdown",
-	foundation.SOURCE_FOLDER_PRIVATE + "/console/console_results",
-	foundation.SOURCE_FOLDER_SUPPORT + "/key_path",
-	foundation.SOURCE_FOLDER_SUPPORT + "/kind_icons",
-	foundation.SOURCE_FOLDER_CONTRACT + "/manual_pages",
-	foundation.SOURCE_FOLDER_PRIVATE + "/manual/manual_navigation",
-	foundation.SOURCE_FOLDER_CONTRACT + "/ring",
-	foundation.SOURCE_FOLDER_CONTRACT + "/glyph_cache",
-	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",
-	foundation.SOURCE_FOLDER_CONTRACT + "/byte_order",
-	foundation.SOURCE_FOLDER_CONTRACT + "/timed_stream",
-	foundation.SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
-	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
-}
 TEST_OUTPUT_SHORTAGE :: foundation.BUILD_FOLDER + "/test_output_shortage.txt"
 TEST_OUTPUT_OPERATION_SEQUENCES :: foundation.BUILD_FOLDER + "/test_output_operation_sequences.txt"
 // The private copy of the variable store of the firmware of `run`. A test
@@ -172,7 +75,6 @@ FIRMWARE_TPM_VARIABLES :: foundation.BUILD_FOLDER + "/ovmf_tpm_vars.fd"
 FIRMWARE_VARIABLES_SUFFIX :: "_ovmf_vars.fd"
 FIRMWARE_FULL_VARIABLES_SUFFIX :: "_ovmf_full_vars.fd"
 FIRMWARE_TPM_VARIABLES_SUFFIX :: "_ovmf_tpm_vars.fd"
-TEST_OUTPUT :: foundation.BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: foundation.BUILD_FOLDER + "/test_output_fails.txt"
 TEST_OUTPUT_SELF_TEST :: foundation.BUILD_FOLDER + "/test_output_self_test_%d.txt"
 // The disks beside the boot volume (src/library/support/pci has their places on the
@@ -346,7 +248,7 @@ COMMANDS :: [?]Command {
 	// - `compress`: no machine; it compresses each PNG file of
 	//   `docs/screenshots` and `resources` whose data is stored with no
 	//   compression, and prints the bytes before and after.
-	{name = "screenshots", about = "take the pictures and the logs of the check of the flake (its one run of the machine test), run the measure runs on the host, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + foundation.DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + foundation.DOCUMENT_SCREENSHOT_FOLDER + " and " + foundation.RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "take the pictures and the logs of the check of the flake (its one run of the machine test), run the measure runs on the host, then write the measure record " + checks.MEASURE_RECORD_FILE + " and copy the pictures to " + foundation.DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + foundation.DOCUMENT_SCREENSHOT_FOLDER + " and " + foundation.RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	// Runs a machine that measures, with no other load: the numbers that it
 	// prints are measures, never conditions of the test.
 	//
@@ -370,7 +272,7 @@ COMMANDS :: [?]Command {
 	//
 	// The tool checks no speed: a process checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other process, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the process scheduler N times; `measure clock|crowd|disk|flow|limits`: the process alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other process, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + checks.TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the process scheduler N times; `measure clock|crowd|disk|flow|limits`: the process alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that runs the scenario of a film, and films
 	// it: the pictures of the screen, taken while the scenario types, become
 	// a film with ffmpeg, which must be on the path. The film is for the
@@ -379,7 +281,7 @@ COMMANDS :: [?]Command {
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
 	// - `heron`: the film of the process heron.
-	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
+	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + checks.FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only
@@ -465,15 +367,15 @@ COMMANDS :: [?]Command {
 	//
 	// - `origin`: the file, under the root of Odin.
 	// - `file`: its path in the repository.
-	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
+	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = checks.run_cryptography_take},
 	// Prints the line of the list of the system files for each `.odin` file of
 	// `src/library/support/cryptography` that the manifest of the origin does not name:
 	// the files that the project wrote, which a reviewer checks before the
 	// lines go into the list.
-	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + foundation.CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = run_cryptography_system_hashes},
+	{name = "cryptography-system-hashes", about = "print the line of " + checks.CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + foundation.CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = checks.run_cryptography_system_hashes},
 	// Checks that each file that the manifest of the origin names is its file
 	// in Odin with the listed changes only. `modustool check` runs it.
-	{name = "cryptography-origin", about = "check that each file of " + foundation.CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
+	{name = "cryptography-origin", about = "check that each file of " + foundation.CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = checks.run_cryptography_origin},
 	// Checks that each import of each source file of src/ follows the rule
 	// of its file: a source that is not a test imports no package of the
 	// core library, the kernel and a contract package import no support
@@ -484,7 +386,7 @@ COMMANDS :: [?]Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + foundation.OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
+	{name = "rule-checks", about = "check that " + foundation.OPERATION_SOURCE + " declares the count of kernel operations that " + checks.OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = checks.run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = build.run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
@@ -522,18 +424,18 @@ COMMANDS :: [?]Command {
 	//   commit of its release, and adds each missing release link.
 	//
 	// No one edits `CHANGELOG.md` by hand: this command writes it.
-	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number> | times: the fragments of `" + FRAGMENT_FOLDER + "` and the releases of `" + CHANGELOG_FILE + "`", run = run_changelog},
+	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number> | times: the fragments of `" + checks.FRAGMENT_FOLDER + "` and the releases of `" + checks.CHANGELOG_FILE + "`", run = checks.run_changelog},
 	// Makes a release in one command: `changelog release`, a commit, a signed
 	// release tag, and one atomic push of both to master. It refuses a branch
 	// other than master, a tree with changes, and a master that does not hold
 	// origin/master; when origin moved, it undoes, merges and tries again with
 	// the next number (docs/TOOLS.md, "The release").
-	{name = "ship", about = "step | correction | <release number> [--dry-run]: the release in one command: the changelog, a commit, a signed release tag v<number>, one atomic push to master", run = run_ship},
+	{name = "ship", about = "step | correction | <release number> [--dry-run]: the release in one command: the changelog, a commit, a signed release tag v<number>, one atomic push to master", run = checks.run_ship},
 	// Gives each release tag whose tree holds a measure record its copy in
 	// the measure history, for the releases from before the release command
 	// copied the record. It changes no file that exists
 	// (docs/TOOLS.md, "The release").
-	{name = "measure-history", about = "the copy of the measure record of each release tag that holds one, in `" + MEASURE_HISTORY_FOLDER + "`, for the charts of each measure over the releases", run = run_measure_history},
+	{name = "measure-history", about = "the copy of the measure record of each release tag that holds one, in `" + checks.MEASURE_HISTORY_FOLDER + "`, for the charts of each measure over the releases", run = checks.run_measure_history},
 	// Works on the news entries of `news/`, the dated reports of what a
 	// reader can now see or use.
 	//
@@ -541,7 +443,7 @@ COMMANDS :: [?]Command {
 	//   and no text: the check fails until they are written.
 	// - `check`: checks the head, the date, the picture, the release, the
 	//   guide and the length of each entry. `modustool check` runs it.
-	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a reader can now see or use, for the page of the news of the site", run = run_news},
+	{name = "news", about = "new <subject> | check: the news entries of " + checks.NEWS_FOLDER + ", dated reports in prose of what a reader can now see or use, for the page of the news of the site", run = checks.run_news},
 	// Checks the roadmap, `ROADMAP.md`: the planned work of the system, in
 	// the sections Now, Next and Later.
 	//
@@ -554,7 +456,7 @@ COMMANDS :: [?]Command {
 	// The file is written by hand: an entry is added when a work is planned,
 	// and removed in the commit that ends the work
 	// (docs/TOOLS.md, "The roadmap").
-	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next, Later and Maybe, for the page of the roadmap of the site", run = run_roadmap},
+	{name = "roadmap", about = "check: the planned work of `" + checks.ROADMAP_FILE + "`, in the sections Now, Next, Later and Maybe, for the page of the roadmap of the site", run = checks.run_roadmap},
 	// Works on the fences `byte-layout` of the guides, whose body is the
 	// text form of the byte layout of a record of a format.
 	//
@@ -580,7 +482,7 @@ COMMANDS :: [?]Command {
 	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
 	// the number that a workflow gives to a release.
-	{name = "release_number", about = "print the release number of the system: the newest release of `" + CHANGELOG_FILE + "`", run = run_release_number},
+	{name = "release_number", about = "print the release number of the system: the newest release of `" + checks.CHANGELOG_FILE + "`", run = checks.run_release_number},
 	// Makes the files of a release: the disk image of the system that a
 	// principal writes to a USB key, its checksum list and the release
 	// signature of the list (docs/INSTALL.md).
@@ -864,7 +766,7 @@ run_screenshots :: proc(args: []string) -> int {
 	// The facts of the tree before the pass changes it: the pass writes the
 	// pictures and the record into the repository. A log of the check is
 	// copied after this time, so the record reads it as a log of this run.
-	run_facts := measure_run_facts_read()
+	run_facts := checks.measure_run_facts_read()
 	// The check of the flake runs the host checks, the whole machine test
 	// and the second build in the sandbox; it fails when one of them fails.
 	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs"}) {
@@ -886,7 +788,7 @@ run_screenshots :: proc(args: []string) -> int {
 	if !measure_runs_of_the_record() {
 		return foundation.EXIT_FAILURE
 	}
-	if !measure_record_write(run_facts) {
+	if !checks.measure_record_write(run_facts) {
 		return foundation.EXIT_FAILURE
 	}
 	return 0
@@ -948,8 +850,6 @@ screenshots_copy :: proc() -> bool {
 	return true
 }
 
-TEST_OUTPUT_MEASURE :: foundation.BUILD_FOLDER + "/test_output_measure.txt"
-
 // run_measure runs the measures of the process `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other processes of
 // the test. The process checks its counts; the tool does not check a speed.
@@ -982,7 +882,7 @@ run_measure :: proc(args: []string) -> int {
 		return measure_windows(&part) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "address_space" {
-		return machine_test(&part, scenario_measure_address_space[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) ? 0 : foundation.EXIT_FAILURE
+		return machine_test(&part, scenario_measure_address_space[:], {volume = build.BOOT_VOLUME_MEASURE, output = checks.TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) ? 0 : foundation.EXIT_FAILURE
 	}
 	// `measure <process>`: one process that measures itself, alone.
 	if len(args) == 1 {
@@ -1019,7 +919,7 @@ run_measure :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
 		return foundation.EXIT_USAGE
 	}
-	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
+	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = checks.TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !checks.processor_frame_lines_check(checks.TEST_OUTPUT_MEASURE) || !checks.quality_lines_check(checks.TEST_OUTPUT_MEASURE) {
 		return foundation.EXIT_FAILURE
 	}
 	return 0
@@ -1040,11 +940,11 @@ run_check :: proc(args: []string) -> int {
 	// state, no source of the system calls an allocator, each export that
 	// fails gives an error record, and no family of integer constants is a
 	// closed set of choices.
-	if !operation_count_check() || !allocator_check() || !export_error_record_check() || !choice_constant_check() {
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() {
 		return foundation.EXIT_FAILURE
 	}
-	host_test_folders := HOST_TEST_FOLDERS
-	if !host_tests_run(host_test_folders[:]) {
+	host_test_folders := checks.HOST_TEST_FOLDERS
+	if !checks.host_tests_run(host_test_folders[:]) {
 		return foundation.EXIT_FAILURE
 	}
 	// The fuzz targets: their corpus, then a fixed count of new executions
@@ -1052,7 +952,7 @@ run_check :: proc(args: []string) -> int {
 	if !fuzz_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !cryptography_origin_check() {
+	if !checks.cryptography_origin_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !resources.logo_check() {
@@ -1061,40 +961,40 @@ run_check :: proc(args: []string) -> int {
 	if !readme_pictures_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !fixed_addresses_check() {
+	if !checks.fixed_addresses_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !test_bound_check() {
+	if !checks.test_bound_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !text_cut_check() {
+	if !checks.text_cut_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !comment_rule_check() {
+	if !checks.comment_rule_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !build.glossary_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !intent_index_check() {
+	if !checks.intent_index_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !source_paths_check() {
+	if !checks.source_paths_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !changelog_check() {
+	if !checks.changelog_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !news_check() {
+	if !checks.news_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !roadmap_check() {
+	if !checks.roadmap_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !byte_layouts_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !reuse_list_check() {
+	if !checks.reuse_list_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {

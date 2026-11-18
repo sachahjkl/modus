@@ -15,10 +15,11 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 SITE_OPERATION_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 SITE_ERRORS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
-SITE_FIXED_ADDRESSES_FILE :: FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
+SITE_FIXED_ADDRESSES_FILE :: checks.FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
 // The rule of the root service for the budget that a module asks for.
 SITE_ROOT_BUDGETS_FILE :: foundation.SYSTEM_MODULE_SOURCES + "root/budgets.odin"
 SITE_START_GRANT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/start_grant/start_grant.odin"
@@ -121,7 +122,7 @@ site_line_address :: proc(site: ^Site, path: string, line: int) -> string {
 // site_folder_address gives the address of a folder of the repository.
 site_folder_address :: proc(site: ^Site, path: string) -> string {
 	at := site.commit != "" ? site.commit : "master"
-	return strings.concatenate({SITE_REPOSITORY_ADDRESS, "/tree/", at, "/", path}, context.temp_allocator)
+	return strings.concatenate({checks.SITE_REPOSITORY_ADDRESS, "/tree/", at, "/", path}, context.temp_allocator)
 }
 
 // site_reference_read reads every source of the reference tables. A file

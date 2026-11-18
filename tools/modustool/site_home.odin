@@ -9,6 +9,7 @@ import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:checks"
 
 // What the card of a stage of the start says: what the stage does, which
 // code runs it, and the guide that explains it. The key is the name of the
@@ -302,7 +303,7 @@ site_boot_timeline_write :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 			site_inline(b, text.runs)
 			strings.write_string(b, "</dd>\n")
 		}
-		strings.write_string(b, "<dt>Measured from</dt><dd><code>" + SITE_BOOT_STAGE_PREFIX)
+		strings.write_string(b, "<dt>Measured from</dt><dd><code>" + checks.SITE_BOOT_STAGE_PREFIX)
 		foundation.site_escape(b, name)
 		fmt.sbprintf(b, ": %d us</code></dd>\n", stage.microseconds)
 		if has_text {
@@ -482,8 +483,8 @@ SITE_RELEASE_BAND_CHANGE_COUNT :: 4
 
 // site_change_summary gives the bold summary at the start of a change of
 // the changelog, with no mark; a change with none gives its first sentence.
-site_change_summary :: proc(entry: Changelog_Entry) -> string {
-	text := strings.trim_space(entry_joined(entry.lines))
+site_change_summary :: proc(entry: checks.Changelog_Entry) -> string {
+	text := strings.trim_space(checks.entry_joined(entry.lines))
 	if strings.has_prefix(text, "**") {
 		if end := strings.index(text[2:], "**"); end > 0 {
 			return strings.trim_right(text[2:2 + end], ".:")
@@ -508,11 +509,11 @@ site_release_band_write :: proc(site: ^Site, b: ^strings.Builder, from_page: str
 	}
 	newest := site.changelog.releases[0]
 	releases_link := site_page_link(site, from_page, site_section_page(.Releases))
-	types := CHANGE_TYPES
+	types := checks.CHANGE_TYPES
 	strings.write_string(b, "<section class=\"card accent-boot release-band\" aria-labelledby=\"release\">\n<h2 id=\"release\">The newest release</h2>\n<p class=\"release-head\">")
 	fmt.sbprintf(b, "<span class=\"value value-%s release-number\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Version])
 	foundation.site_escape(b, site.release)
-	fmt.sbprintf(b, "</span> <span class=\"release-facts\"><time datetime=\"%s\">%s</time>, <strong>%d</strong> changes</span></p>\n", release_moment_attribute(newest), release_moment_shown(newest), len(newest.entries))
+	fmt.sbprintf(b, "</span> <span class=\"release-facts\"><time datetime=\"%s\">%s</time>, <strong>%d</strong> changes</span></p>\n", checks.release_moment_attribute(newest), checks.release_moment_shown(newest), len(newest.entries))
 	shown := min(len(newest.entries), SITE_RELEASE_BAND_CHANGE_COUNT)
 	if shown > 0 {
 		strings.write_string(b, "<ul class=\"release-changes\">\n")

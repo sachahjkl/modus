@@ -466,7 +466,7 @@ The check prefers a comment breach that it does not see to a correct comment tha
 - a step of one digit, and a date of a decision with no word of a decision in the 48 bytes before it;
 - a comment `/* ... */`, and a line of a string that runs over several lines (the scanner reads one line at a time).
 
-A file that `src/library/support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `modustool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/modustool/comment_rule_check.odin` names, with the reason.
+A file that `src/library/support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `modustool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/modustool/checks/comment_rule_check.odin` names, with the reason.
 
 The marks of Markdown (next section) are not words: a list item, a mark of bold or a link is not a breach, and a breach in bold or in a list item is still a breach. The host test `comment_markdown_and_the_comment_rules` checks both.
 
@@ -503,7 +503,7 @@ The folder `src/md` holds the intent files (`glossary/project.md`, "Intent file"
 
 **Why a check.** A reader who starts work on a part reads the file index first, and opens only the files that it lists. A file that the index does not list is a design that nobody finds. An entry with no file sends a reader nowhere. Both faults come from a change that touched one side only, so a check keeps the two the same set.
 
-`modustool check` runs `intent_index_check` (`tools/modustool/intent_index.odin`). It reads each `.md` file of `src/md` and of its folders, and refuses:
+`modustool check` runs `intent_index_check` (`tools/modustool/checks/intent_index.odin`). It reads each `.md` file of `src/md` and of its folders, and refuses:
 
 | Fault | Message |
 |---|---|
@@ -533,7 +533,7 @@ The link opens the guide for a reader of the repository. The labels after it are
 
 ## The source paths in the documents
 
-A code span of a document that names a file of the repository is a link on the site. A span whose file is gone stays plain code, with no error: the link is lost in silence. A source that moves, or that gets a new name, must change each document that names it. `modustool check` runs `source_paths_check` (`tools/modustool/source_paths_check.odin`), which is the proof of that change.
+A code span of a document that names a file of the repository is a link on the site. A span whose file is gone stays plain code, with no error: the link is lost in silence. A source that moves, or that gets a new name, must change each document that names it. `modustool check` runs `source_paths_check` (`tools/modustool/checks/source_paths_check.odin`), which is the proof of that change.
 
 **What it reads.** Each document of `docs/` but the records of their time, `README.md`, `AGENTS.md`, and each intent file of `src/md`. In them, each code span outside a fence of code, also a span of a heading.
 
@@ -650,7 +650,7 @@ Four rules of the system are checked when the tool builds, not only read.
 
 **No source of the system calls an allocator.** A process has no heap: its memory is a mapping that it asks the kernel for, or a variable of its module. The tool reads each source file of the kernel, of the boot program, of the modules and of the source library that is not a test, and refuses a line that calls `make`, `new`, `new_clone`, `delete`, `free` or `free_all`, or that names `context.allocator`, `context.temp_allocator` or `[dynamic]`. A comment and the text of a string are not read. A procedure of the system whose name ends with one of these words, as `caller_grant_make`, is not a call of the built-in procedure. The compiler also gets `-default-to-nil-allocator`: with it a call of an allocator fails when the process runs; the check refuses the call before the process exists.
 
-**Each export that fails gives an error record.** A caller reads why a call failed from the error record of the export (`MODULE_CONTRACT.md`, "8. Errors that diagnose"), never from a bare negative number. A negative result can be an answer (`number("-5")` is -5), so the check reads the forms of a failure, not the values. `export_error_record_check` (`tools/modustool/export_error_record_check.odin`) parses each source file of `src/modules` that is not a test, one folder as one package. For each export with an `i64` result, no parameter `error`, and a name other than `entry`, it refuses a `return` whose value is:
+**Each export that fails gives an error record.** A caller reads why a call failed from the error record of the export (`MODULE_CONTRACT.md`, "8. Errors that diagnose"), never from a bare negative number. A negative result can be an answer (`number("-5")` is -5), so the check reads the forms of a failure, not the values. `export_error_record_check` (`tools/modustool/checks/export_error_record_check.odin`) parses each source file of `src/modules` that is not a test, one folder as one package. For each export with an `i64` result, no parameter `error`, and a name other than `entry`, it refuses a `return` whose value is:
 
 - a minus before a literal, a call or a conversion, or before a constant of the package: `-1`, `-i64(status)`;
 - a constant of the package whose value is a minus before a literal: `ERROR :: -1`;
@@ -665,7 +665,7 @@ modustool: src/modules/system/manual/main.odin:618: the export show gives a nega
 
 What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. A 0 and an empty text are also answers (`tally.last()` before the first add, `roman(0)`), and the source does not tell the two apart. Review holds them. The design: `src/md/api/export_error_records.md`.
 
-**A closed set of choices is an enum.** A set of choices is an `enum`, never a family of integer constants passed as an integer. A word that carries a choice across a border (a value of the context, a field of a record, a word of a ring) becomes its member at one place, which refuses a word that names no member, and each `switch` on the member names each member. `choice_constant_check` (`tools/modustool/choice_constant_check.odin`) parses each source of the kernel, of the boot program, of the modules, of the source library and of the tool that is not a test. A constant that a file names with the name of an imported package (`modus:`, or `modustool:` for a package of the tool) is a use of the constant of that package. It keeps the constants of each package whose value is from -255 to 255: an integer or a character literal, a negation of one (the answers of an export, `ERROR_NAME :: -3`), or a value computed from them and from other constants of the package (`B :: A + 1`, `KEY_EXTENDED | 0x53`), in a declaration of one name or of several. It refuses two constants or more of one package, with the same first word, or with the same last word when their first word gives no family (`READ_REQUEST`, `WRITE_REQUEST`), that the code uses as choices:
+**A closed set of choices is an enum.** A set of choices is an `enum`, never a family of integer constants passed as an integer. A word that carries a choice across a border (a value of the context, a field of a record, a word of a ring) becomes its member at one place, which refuses a word that names no member, and each `switch` on the member names each member. `choice_constant_check` (`tools/modustool/checks/choice_constant_check.odin`) parses each source of the kernel, of the boot program, of the modules, of the source library and of the tool that is not a test. A constant that a file names with the name of an imported package (`modus:`, or `modustool:` for a package of the tool) is a use of the constant of that package. It keeps the constants of each package whose value is from -255 to 255: an integer or a character literal, a negation of one (the answers of an export, `ERROR_NAME :: -3`), or a value computed from them and from other constants of the package (`B :: A + 1`, `KEY_EXTENDED | 0x53`), in a declaration of one name or of several. It refuses two constants or more of one package, with the same first word, or with the same last word when their first word gives no family (`READ_REQUEST`, `WRITE_REQUEST`), that the code uses as choices:
 
 - a value of a `case`, except in a `switch` on `len(...)`, whose cases are quantities;
 - an operand of `==` or `!=` whose other operand is a variable, not a constant, with a word of a choice in its name (`mode`, `kind`, `state`, `form`, `level`, `stage`, `strength`, `role`, `phase`, `action`, `origin`, `change`, `step`, `round`, `variety`, `reason`, `request`, `choice`, `strategy`, `answer`);
@@ -693,7 +693,7 @@ What the check does not see: a `#partial switch`, a constant declared inside a p
 
 ## The reuse list
 
-The section "Reuse list" of `PROPERTIES.md` names each work of others that the system ships in a module or in the boot image, or that the repository holds as a copy. `modustool check` runs `reuse_list_check` (`tools/modustool/reuse_list.odin`), which compares the table with the records of the repository. The design: `src/md/infrastructure/reuse_list.md`.
+The section "Reuse list" of `PROPERTIES.md` names each work of others that the system ships in a module or in the boot image, or that the repository holds as a copy. `modustool check` runs `reuse_list_check` (`tools/modustool/checks/reuse_list.odin`), which compares the table with the records of the repository. The design: `src/md/infrastructure/reuse_list.md`.
 
 **The form of the table.** The header is `| Work | Place | License | License file |`. Each row has four cells:
 
@@ -1588,7 +1588,7 @@ A news entry can name a film: `film: docs/films/<name>.webm` in its head (`news/
 - The bound of 4 MiB: each version of the file stays in the history of the repository, and a reader of the site loads it on a phone. The film of the palette, 36.8 s of the whole screen, has 1.5 MiB.
 - A film is not the same bytes at each run: the pictures are taken at the times of the host. Run the command to change the film, and commit the new file only then.
 
-The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/modustool/film_document.odin`.
+The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/modustool/film_document.odin`, which writes the film, and `tools/modustool/checks/film_document_check.odin`, which reads it for the check of the news.
 
 **A film shows time; a test waits for conditions.** A scenario of a test has no fixed time ("How the tool sends input and waits"). A film is for a viewer, who must see a text being typed and must have the time to read a state. So a film has two kinds of step with a fixed time, and they exist only in the scenario of a film:
 
@@ -1735,7 +1735,7 @@ A release (`glossary/project.md`, "Release") is one section of `CHANGELOG.md`, o
 | The order | The release numbers descend and the release times do not rise. Two headings with a time compare by the minute; with a day alone, by the day |
 | The release links | One for each release, in the order of the releases, each with the address of its release tag; no link for a number that is not a release; no empty line between two links; nothing after them |
 
-The code is `tools/modustool/changelog.odin` and `tools/modustool/ship.odin`; the host tests are `changelog_test.odin` and `ship_test.odin`. A test checks the plan of git commands as data, and never runs git.
+The code is `tools/modustool/checks/changelog.odin` and `tools/modustool/checks/ship.odin`; the host tests are `changelog_test.odin` and `ship_test.odin`. A test checks the plan of git commands as data, and never runs git.
 
 ### The roadmap
 
@@ -1789,7 +1789,7 @@ A few lines that say what the file is.
 
 **The last rule, and its limit.** The tool cannot know that a work is done. It knows that an entry of the changelog has the summary of an entry of the roadmap. So the fragment that ends a planned work takes the summary of its roadmap entry as its bold summary, and the check then fails until the entry is removed: the removal cannot be forgotten in that commit. A fragment with another summary is not seen: the rule helps the writer who follows it, and proves nothing about the others. Two summaries that are equal by chance name two works with one name; the roadmap entry then takes a more exact summary. Two summaries are compared with no regard to the case and to the marks (`roadmap_summary_key`).
 
-The code is `tools/modustool/roadmap.odin`; the host tests are `roadmap_test.odin`. The page of the site: `SITE.md`, "The roadmap".
+The code is `tools/modustool/checks/roadmap.odin`; the host tests are `roadmap_test.odin`. The page of the site: `SITE.md`, "The roadmap".
 
 ## The bounds of the tests
 
@@ -1804,7 +1804,7 @@ A test checks a condition: a value, a state, a line of the log. A test that depe
 - **A behaviour in time of the system is checked by order and by its own clock.** A deadline that ends a wait, a budget of processor time that throttles a process, a timer of TCP, the idle timeout of QUIC and the clock are behaviours. The check has a lower bound where the behaviour is "not before" ("the idle end held its bound": the end came no earlier than the idle timeout, in time of the machine). Its upper side is the hang bound only, and the line prints how late the end came. A wake is checked by a deadline that is the hang bound: a wait that ended before its deadline was woken.
 - **A test waits for a condition, never for a fixed time.** A thread that must be in its wait before a wake is read with `Thread_State` or `Process_State` until it is `Waiting`. A stress of a fixed time goes on until each side did its work at least once.
 
-`modustool check` checks the steps of the machine tests (`tools/modustool/test_bound_check.odin`). The field `seconds` of a step is a named constant, never a number, and a line of comment just above the constant gives its reason. The steps with a bound of their own today: the long case of the fault ring (its progress) and the firmware of the TPM and of Secure Boot (a command of the TPM that the firmware abandons costs it about two minutes).
+`modustool check` checks the steps of the machine tests (`tools/modustool/checks/test_bound_check.odin`). The field `seconds` of a step is a named constant, never a number, and a line of comment just above the constant gives its reason. The steps with a bound of their own today: the long case of the fault ring (its progress) and the firmware of the TPM and of Secure Boot (a command of the TPM that the firmware abandons costs it about two minutes).
 
 The same check reads each `time.sleep` of the tool: its period is a name, and no digit stands outside a name in it (`time.Millisecond * 20` is refused too). A poll inside a bounded wait sleeps `CONDITION_POLL_PERIOD` (`tools/modustool/machine_input.odin`); any other period is a constant with its reason, as the pause between the sends of the HTTP case "split" (`HTTP_SPLIT_SEND_PAUSE`), which shapes the input and waits for no state.
 
