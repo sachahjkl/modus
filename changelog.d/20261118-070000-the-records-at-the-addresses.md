@@ -1,0 +1,3 @@
+type: Added
+
+**The records at the addresses of the kernel operations.** The generator of the operation sequences writes a table of `Page_Range` where `Memory_Commit` reads one, and a register image, a breakpoint image or the legacy part and the header of an extended state area where a write command of `Thread_Control` reads one, in place of plain bytes, so a sequence reaches the code behind the first check of each record. Of 16 records, 12 are valid, 3 hold one edge value of a field, and 1 holds a word that names nothing, so the refusals of each field still run; half of the steps of `Thread_Control` name one of the three write commands. A seed still gives the same sequences, byte for byte.
