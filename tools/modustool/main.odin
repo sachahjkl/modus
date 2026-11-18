@@ -113,6 +113,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_PRIVATE + "/compositor/bar",
 	SOURCE_FOLDER_PRIVATE + "/compositor/palette",
 	SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
+	SOURCE_FOLDER_PRIVATE + "/compositor/quality",
 	SOURCE_FOLDER_CONTRACT + "/palette_table",
 	SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
 	SOURCE_FOLDER_SUPPORT + "/graphics",
@@ -1112,7 +1113,7 @@ run_measure :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
 		return EXIT_USAGE
 	}
-	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) {
+	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
 		return EXIT_FAILURE
 	}
 	return 0

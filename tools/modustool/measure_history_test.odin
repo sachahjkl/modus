@@ -52,8 +52,11 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 		"[processor_frame] processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows: least 9120.0 us, median 9300.5 us, 107 frames in one second at the median, over 21 frames",
 		"[processor_frame] processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, 122432 pixels: least 310.2 us, median 322.9 us, 3096 frames in one second at the median, over 21 frames",
 		"[processor_frame] processor_frame: measure: the execution of a draw table of 1920x1080 with 339 records: 38 opaque rectangles and gradients, 120 texts in the font of the cells, 144 in the interface font, 12 opaque pictures, 25 rectangles and pictures with alpha: least 14800.3 us, median 15022.0 us, 66 frames in one second at the median, over 21 frames",
+		"[compositor] " + QUALITY_FRAME + ": least 812.4 us, median 9031.0 us, over 64 frames",
+		"[compositor] " + QUALITY_KEY + ": least 1203.7 us, median 14000.2 us, over 16 keys",
+		"[compositor:surfaces] " + QUALITY_WINDOW_START_LOCKS + "51234.5 us",
 	}
-	expected := [len(measure_history_series)]string{"25399040", "1106119202", "200581", "3887", "2272", "429355", "8215", "331", "66", "89509", "112.4", "20.5", "2823", "2310.4", "9120.0", "310.2", "14800.3"}
+	expected := [len(measure_history_series)]string{"25399040", "1106119202", "200581", "3887", "2272", "429355", "8215", "331", "66", "89509", "112.4", "20.5", "2823", "2310.4", "9120.0", "310.2", "14800.3", "812.4", "1203.7", "51234.5"}
 	sentences := make(map[string]bool, context.temp_allocator)
 	for series, index in measure_history_series {
 		in_table := false
