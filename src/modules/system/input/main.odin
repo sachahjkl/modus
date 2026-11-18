@@ -55,6 +55,7 @@ package input
 import "modus:support/display"
 import "modus:support/key_path"
 import "modus:private/input/keyboard_layout"
+import "modus:private/input/ps2_controller"
 import "modus:contract/fixed_addresses"
 import "modus:contract/ring"
 import "modus:contract/settings"
@@ -71,10 +72,7 @@ GRANT_KEYBOARD_INTERRUPT :: 2
 GRANT_MOUSE_INTERRUPT :: 3
 
 PORT_DATA :: 0x60
-PORT_STATUS :: 0x64
-STATUS_OUTPUT_FULL :: 1 << 0
-STATUS_INPUT_FULL :: 1 << 1
-STATUS_MOUSE :: 1 << 5
+PORT_STATUS :: 0x64 // Its bits are in src/library/private/input/ps2_controller.
 
 // The settings page, when the root service mapped it: the layout of the
 // keyboard is read there at each key, so a change of the setting holds from
@@ -110,9 +108,6 @@ MOUSE_ENABLE_REPORTING :: 0xF4
 // with a wheel knows this order and answers MOUSE_IDENTITY_WHEEL after it.
 @(rodata)
 mouse_wheel_rates := [3]u8{200, 100, 80}
-// The reads of the status port before a wait for the controller ends: a
-// bound on a device that does not answer, not a time.
-CONTROLLER_POLLS :: 100000
 
 output: ring.Ring
 output_memory: system.Handle
@@ -136,16 +131,16 @@ key_records_refused: u64
 pointer_records_refused: u64
 
 controller_wait_write :: proc "contextless" () {
-	for _ in 0 ..< CONTROLLER_POLLS {
-		if system.port_read_8(PORT_STATUS) & STATUS_INPUT_FULL == 0 {
+	for _ in 0 ..< ps2_controller.CONTROLLER_POLLS {
+		if system.port_read_8(PORT_STATUS) & ps2_controller.STATUS_INPUT_FULL == 0 {
 			return
 		}
 	}
 }
 
 controller_read :: proc "contextless" () -> u8 {
-	for _ in 0 ..< CONTROLLER_POLLS {
-		if system.port_read_8(PORT_STATUS) & STATUS_OUTPUT_FULL != 0 {
+	for _ in 0 ..< ps2_controller.CONTROLLER_POLLS {
+		if system.port_read_8(PORT_STATUS) & ps2_controller.STATUS_OUTPUT_FULL != 0 {
 			break
 		}
 	}
@@ -167,13 +162,13 @@ controller_data :: proc "contextless" (value: u8) {
 // at the start is read as the answer of the mouse, and the answer stays in
 // the controller. ok is false when the mouse did not answer.
 mouse_answer_read :: proc "contextless" () -> (value: u8, ok: bool) {
-	for _ in 0 ..< CONTROLLER_POLLS {
+	for _ in 0 ..< ps2_controller.CONTROLLER_POLLS {
 		state := system.port_read_8(PORT_STATUS)
-		if state & STATUS_OUTPUT_FULL == 0 {
+		if state & ps2_controller.STATUS_OUTPUT_FULL == 0 {
 			continue
 		}
 		byte_read := system.port_read_8(PORT_DATA)
-		if state & STATUS_MOUSE != 0 {
+		if state & ps2_controller.STATUS_MOUSE != 0 {
 			return byte_read, true
 		}
 		keyboard_bytes_dropped_at_start += 1
@@ -213,7 +208,10 @@ mouse_command :: proc "contextless" (command: u8) {
 // ends.
 //
 // **The stop**: with no ring, it writes `input: no ring` and stops with the
-// code 1. Else it never returns.
+// code 1. With no PS/2 controller (a status port that reads all ones, or a
+// drain that does not end), it writes `input: no PS/2 controller: no
+// keyboard and no mouse` and stops with the code 1; the compositor runs
+// with no input. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output_memory = ctx.handles[GRANT_RING]
@@ -228,8 +226,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
 	}
 
-	for system.port_read_8(PORT_STATUS) & STATUS_OUTPUT_FULL != 0 {
-		system.port_read_8(PORT_DATA)
+	// The drain of the bytes that wait finds a controller that is absent:
+	// its status port reads all ones, so a byte would seem to wait for
+	// ever, and this loop would hold one processor for ever.
+	bytes_drained: u64
+	drain: for {
+		switch ps2_controller.drain_step(system.port_read_8(PORT_STATUS), bytes_drained) {
+		case .Done:
+			break drain
+		case .Read_Byte:
+			system.port_read_8(PORT_DATA)
+			bytes_drained += 1
+		case .No_Controller:
+			system.log("input: no PS/2 controller: no keyboard and no mouse")
+			system.stop(1)
+		}
 	}
 	controller_command(0xA8) // Enable the mouse port.
 	controller_command(0x20) // Read the configuration.
@@ -261,10 +272,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for {
 			pointer_backlog_send()
 			state := system.port_read_8(PORT_STATUS)
-			if state & STATUS_OUTPUT_FULL == 0 {
+			if state & ps2_controller.STATUS_OUTPUT_FULL == 0 {
 				break
 			}
-			from_mouse := state & STATUS_MOUSE != 0
+			from_mouse := state & ps2_controller.STATUS_MOUSE != 0
 			// A byte of the keyboard needs room for two records while an
 			// accent waits: the accent alone and the character.
 			records_needed := from_mouse ? 1 : keyboard_layout.key_records_needed(&dead_key)

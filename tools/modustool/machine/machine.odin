@@ -4070,6 +4070,12 @@ Machine_Options :: struct {
 	// The memory of the machine in this file, and one processor: the
 	// machine of the operation sequences (operation_sequences.odin). "": none.
 	memory_file:    string,
+	// The parts that the machine lacks (missing_devices_scenario.odin): no
+	// display device, no PS/2 controller, an entropy device whose source
+	// never answers.
+	without_screen:         bool,
+	without_ps2_controller: bool,
+	entropy_device_silent:  bool,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4126,7 +4132,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "")
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent)
 		if !ok {
 			return false
 		}

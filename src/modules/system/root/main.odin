@@ -351,6 +351,12 @@ prepared: system.Prepared_Modules
 compositor: system.Handle
 control: ring.Ring
 control_memory: system.Handle
+// The machine has no screen: no framebuffer at the start, or a compositor
+// that stopped. With no screen this service starts no input service, no
+// compositor and no console, gives no process a window, and refuses a start
+// that needs a terminal: the rest of the system runs, and `remote` serves
+// the calls (src/md/features/missing_hardware.md).
+screen_absent: bool
 
 // The replacement table of the machine: this service writes it. Each
 // process that this service starts receives its records (a process cannot
@@ -520,8 +526,15 @@ entropy_report: random.Entropy_Report
 //    then the TPM service when the system is measured into a TPM, then
 //    `unlock`.
 //
-// A failure in steps 1 to 8 calls `fail`: the boot display shows the cause,
-// and the machine waits until it is stopped from outside.
+// With no screen (no framebuffer, or a compositor that stopped before the
+// console started), step 7 starts no input service and no compositor, and
+// step 8 starts `remote` in place of the console, with the line
+// "root: no screen: no console; remote calls still reach the system". With
+// ports of the PS/2 controller that the kernel refuses, step 7 writes its
+// line and starts no input service.
+//
+// Another failure in steps 1 to 8 calls `fail`: the boot display shows the
+// cause, and the machine waits until it is stopped from outside.
 //
 // Then one loop runs for ever. It waits on the control ring of the
 // compositor (a start or a stop from the desktop), on the root ring of each
@@ -575,9 +588,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	show("the root service starts input", .Running, .Input)
 	replacement_table_create()
 	remote_clients_create()
-	input_memory := input_start()
-	show("the root service starts the compositor", .Running, .Compositor)
-	compositor_start(ctx, input_memory)
+	// The control ring exists with no compositor too: the loop waits on it,
+	// and a record for a compositor that is absent stays there.
+	control_ring_create()
+	// The same test as the compositor makes at its start: a framebuffer
+	// that maps. With no screen, nothing reads keys or draws windows.
+	if screen.pixels == nil {
+		screen_absence_note()
+	} else {
+		input_memory := input_start()
+		show("the root service starts the compositor", .Running, .Compositor)
+		compositor_start(ctx, input_memory)
+	}
 	processes_of_the_boot_start()
 	for {
 		root_loop_pass()
@@ -645,22 +667,34 @@ replacement_table_create :: proc "contextless" () {
 
 // input_start starts the input service with the ports and the interrupts
 // of the PS/2 controller. It gives the input ring, which the compositor
-// receives too.
+// receives too. When the kernel refuses a device of the controller, it
+// writes one line and starts no input service: the compositor then gets a
+// ring that no process writes, and the start goes on.
 input_start :: proc "contextless" () -> (input_memory: system.Handle) {
 	status: system.Status
 	input_memory, _, status = system.ring_create()
 	if status != .Ok {
 		fail("cannot create a ring", status)
 	}
-	device :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> system.Handle {
-		results, status := system.call(.Device_Create, u64(machine), u64(kind), a, b)
-		if status != .Ok {
-			fail("cannot create a device handle", status)
-		}
-		return system.Handle(results[0])
-	}
 	// The devices: this service closes its handles after the start.
-	devices := [3]system.Handle{device(.Ports, 0x60, 5), device(.Interrupt, 1, 0), device(.Interrupt, 12, 0)}
+	device_requests := [3]struct {
+		kind: op.Device_Kind,
+		first, second: u64,
+	}{{.Ports, 0x60, 5}, {.Interrupt, 1, 0}, {.Interrupt, 12, 0}}
+	devices: [3]system.Handle
+	defer for handle in devices {
+		if handle != 0 {
+			system.close(handle)
+		}
+	}
+	for request, index in device_requests {
+		results, device_status := system.call(.Device_Create, u64(machine), u64(request.kind), request.first, request.second)
+		if device_status != .Ok {
+			system.log_in("devices", .Warning, "root: no PS/2 controller: the kernel refused its device ", u64(index), " with the status ", device_status, ": no keyboard and no mouse")
+			return input_memory
+		}
+		devices[index] = system.Handle(results[0])
+	}
 	context_grants: system.Context_Grants
 	system.grant_put(&context_grants, INPUT_GRANT_RING, {input_memory, {.Read, .Write}})
 	system.grant_put(&context_grants, INPUT_GRANT_PORTS, {devices[0], {}})
@@ -685,10 +719,50 @@ input_start :: proc "contextless" () -> (input_memory: system.Handle) {
 	if status != .Ok {
 		fail("cannot start input", status)
 	}
-	for handle in devices {
-		system.close(handle)
-	}
 	return input_memory
+}
+
+// control_ring_create makes the control ring of the compositor: a start or
+// a stop from the desktop, and the windows that this service adds.
+control_ring_create :: proc "contextless" () {
+	status: system.Status
+	control_memory, control, status = system.ring_create()
+	if status != .Ok {
+		fail("cannot create a ring", status)
+	}
+}
+
+// screen_absence_note records that the machine has no screen, and writes
+// its line once: at the start with no framebuffer, or when the compositor
+// stopped.
+screen_absence_note :: proc "contextless" () {
+	if screen_absent {
+		return
+	}
+	screen_absent = true
+	system.log_in("devices", .Warning, "root: no screen: no console; remote calls still reach the system")
+}
+
+// remote_start_with_no_screen starts `remote` when it does not run: with no
+// screen no principal can start it from the desktop, and the calls of a
+// client key that a principal allowed before still reach the services.
+remote_start_with_no_screen :: proc "contextless" () {
+	if find("remote") != nil {
+		return
+	}
+	if status := start("remote"); status != .Ok {
+		system.log_in("processes", .Warning, "root: cannot start remote with no screen: status ", status, ": the machine takes no call")
+	}
+}
+
+// compositor_stopped says if the compositor that this service started has
+// stopped: it found no framebuffer, or a fault stopped it.
+compositor_stopped :: proc "contextless" () -> bool {
+	if compositor == 0 {
+		return true
+	}
+	state, _ := system.process_state(compositor)
+	return state == .Stopped
 }
 
 // compositor_start starts the compositor with the framebuffer, the input
@@ -696,10 +770,6 @@ input_start :: proc "contextless" () -> (input_memory: system.Handle) {
 // the table of the processes: a connection to it finds it there by its name.
 compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: system.Handle) {
 	status: system.Status
-	control_memory, control, status = system.ring_create()
-	if status != .Ok {
-		fail("cannot create a ring", status)
-	}
 	context_grants: system.Context_Grants
 	// The two screen pages of the standard VGA and its registers, in place
 	// of the framebuffer of the firmware: the compositor then puts each
@@ -807,8 +877,19 @@ processes_of_the_boot_start :: proc "contextless" () {
 	if status := start("date"); status != .Ok {
 		system.log_in("processes", .Warning, "root: cannot start date: the system has no date")
 	}
-	if status := start("console"); status != .Ok {
-		fail("cannot start the console", status)
+	// A compositor that stopped (a fault, no memory for its frame) takes no
+	// window: the start of the console fails there, and the start goes on
+	// with no screen.
+	if !screen_absent {
+		if status := start("console"); status != .Ok {
+			if !compositor_stopped() {
+				fail("cannot start the console", status)
+			}
+			screen_absence_note()
+		}
+	}
+	if screen_absent {
+		remote_start_with_no_screen()
 	}
 	// The settings that were kept (text_settings.odin).
 	settings_boot_pass_start()
@@ -861,9 +942,9 @@ root_loop_pass :: proc "contextless" () {
 	appearance_step(&wait)
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
-	// storage service. The next read of the fresh bytes has one too
-	// (entropy.odin).
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline))
+	// storage service. The next read of the fresh bytes has one too, and a
+	// read of the entropy device in flight (entropy.odin).
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1771,7 +1852,15 @@ reap :: proc "contextless" () {
 			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 				unlock_stopped()
 			}
+			// release closes the handle of the process, which is the handle
+			// of the compositor: no later start may give to it.
+			compositor_reaped := item.process == compositor
 			release(&item)
+			if compositor_reaped {
+				compositor = 0
+				screen_absence_note()
+				remote_start_with_no_screen()
+			}
 		}
 	}
 }

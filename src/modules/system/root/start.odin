@@ -301,7 +301,17 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // and the text region, and a free place for its terminal; else a window: a
 // ring to the compositor. This service does not keep the memory objects
 // that it makes here.
+//
+// With no screen, a process with the grant Terminal does not start: its
+// terminal would show nothing, and its writes would fill a ring that no
+// process reads. Another process starts with no window: `display.open`
+// refuses it with the record No_Grant of a surface, and a process that runs
+// with no window (a service, `remote`) runs. The line of the absence of the
+// screen says this once; each refusal here adds no line.
 start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
+	if screen_absent {
+		return .Terminal in work.role.grants ? .Bad_State : .Ok
+	}
 	if .Terminal in work.role.grants {
 		for &item in started {
 			if place_is_free(&item) && &item != work.slot {

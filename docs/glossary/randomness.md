@@ -84,7 +84,7 @@ Do not use: entropy page, reseed page.
 
 A fresh bytes refresh is one read of the entropy device that the root service mixes into its generator, then the write of the fresh bytes page of each process that has one.
 
-The root service asks for one read every 30 seconds, with one read in flight at most. A read that adds nothing writes no page; after 3 in a row the root service asks for no more. A refresh wakes no process. It is not a reseed of each process at each draw: a process mixes the page at its next refill or key.
+The root service asks for one read every 30 seconds, with one read in flight at most. A read that adds nothing writes no page; after 3 in a row the root service asks for no more. A read that does not end in 60 seconds counts as refused, and the root service stops the entropy service. A refresh wakes no process. It is not a reseed of each process at each draw: a process mixes the page at its next refill or key.
 
 The design: `src/md/features/fresh_bytes.md`.
 
