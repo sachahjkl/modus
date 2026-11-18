@@ -355,15 +355,11 @@ control_memory: system.Handle
 // The machine has no screen: no framebuffer at the start, or a compositor
 // that stopped. With no screen this service starts no input service, no
 // compositor and no console, gives no process a window, and refuses a start
-// that needs a terminal: the rest of the system runs, and `remote` serves
-// the calls (src/md/features/missing_hardware.md).
+// that needs a terminal: the other services start
+// (src/md/features/missing_hardware.md).
 screen_absent: bool
-// The machine had no screen before the first start of a process: a
-// machine with no screen, which this service gives `remote`. A screen that
-// is lost later (a compositor that stopped) starts nothing: no act of a
-// principal in this run opened the calls of the persisted client keys.
-// This form waits for a decision (src/md/features/missing_hardware.md,
-// "The decision that waits").
+// The machine had no screen before the first start of a process, and not a
+// compositor that stopped later: it chooses the line of the absence.
 no_screen_at_the_start: bool
 
 // The replacement table of the machine: this service writes it. Each
@@ -535,9 +531,10 @@ entropy_report: random.Entropy_Report
 //    `unlock`.
 //
 // With no screen before the first start (modus:support/screen_presence),
-// step 7 starts no input service and no compositor, and step 8 starts
-// `remote` in place of the console, with the line
-// "root: no screen: no console; remote calls still reach the system";
+// step 7 starts no input service and no compositor, and step 8 starts no
+// console, with the line "root: no screen: no console, no window; the
+// other services start"; the processes that start with no screen are a
+// decision of a start plan that is not built, so this service adds none;
 // `unlock` starts, as a machine key that the TPM releases needs no typing,
 // and when it must have a key typed it writes its line and stops, and it is
 // not started again. A compositor that stops later gives one line and
@@ -602,8 +599,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// and a record for a compositor that is absent stays there.
 	control_ring_create()
 	// With no screen before the first start, nothing reads keys or draws
-	// windows, and the machine is a machine with no screen: only then does
-	// this service start `remote` (remote_start_on_a_machine_with_no_screen).
+	// windows: no input service and no compositor start.
 	if !screen_at_the_start {
 		no_screen_at_the_start = true
 		screen_absence_note()
@@ -743,31 +739,18 @@ control_ring_create :: proc "contextless" () {
 
 // screen_absence_note records that the machine has no screen, and writes
 // one line, once: at the start with no framebuffer, or when the compositor
-// stopped. Only the line of the start says that `remote` takes the calls:
-// only then does this service start it.
+// stopped. This service starts no process in place of the console: which
+// processes start with no screen is a decision of a start plan, which is
+// not built (src/md/features/missing_hardware.md).
 screen_absence_note :: proc "contextless" () {
 	if screen_absent {
 		return
 	}
 	screen_absent = true
 	if no_screen_at_the_start {
-		system.log_in("devices", .Warning, "root: no screen: no console; remote calls still reach the system")
+		system.log_in("devices", .Warning, "root: no screen: no console, no window; the other services start")
 	} else {
 		system.log_in("devices", .Warning, "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on")
-	}
-}
-
-// remote_start_on_a_machine_with_no_screen starts `remote` on a machine
-// that had no screen before its first start: no principal can start it from
-// a desktop that never ran, and the calls of a client key that a principal
-// allowed in an earlier run still reach the services. It runs as the
-// machine, as each process that this service starts at the boot.
-remote_start_on_a_machine_with_no_screen :: proc "contextless" () {
-	if !no_screen_at_the_start || find("remote") != nil {
-		return
-	}
-	if status := start("remote"); status != .Ok {
-		system.log_in("processes", .Warning, "root: cannot start remote with no screen: status ", status, ": the machine takes no call")
 	}
 }
 
@@ -895,8 +878,7 @@ processes_of_the_boot_start :: proc "contextless" () {
 	}
 	// A compositor that stopped (a fault, no memory for its frame) takes no
 	// window: the start of the console fails there, and the start goes on
-	// with no screen, and with no `remote`: the screen was there at the
-	// start.
+	// with no screen.
 	if !screen_absent {
 		if status := start("console"); status != .Ok {
 			if !compositor_stopped() {
@@ -905,7 +887,6 @@ processes_of_the_boot_start :: proc "contextless" () {
 			screen_absence_note()
 		}
 	}
-	remote_start_on_a_machine_with_no_screen()
 	// The settings that were kept (text_settings.odin).
 	settings_boot_pass_start()
 	// The TPM service, when the system is measured into a TPM: `unlock`
@@ -1872,8 +1853,7 @@ reap :: proc "contextless" () {
 			compositor_reaped := item.process == compositor
 			release(&item)
 			// A later start gets no window and a start with a terminal is
-			// refused (start_view_give), and nothing starts here: a screen
-			// lost after the start opens no call.
+			// refused (start_view_give), and nothing starts here.
 			if compositor_reaped {
 				compositor = 0
 				screen_absence_note()

@@ -72,14 +72,13 @@ test_parts := [?]Test_Part {
 		procedures = {"disk_processes_tests_run", "disk_processes_named_principal_tests_run"},
 		volumes = {build.BOOT_VOLUME},
 	},
-	// The machines of a part that the machine lacks; the first two seal the
-	// machine key with Secure Boot and a software TPM.
+	// The machines of a part that the machine lacks.
 	{
 		name = "missing_devices",
-		does = "The four machines of a part that the machine lacks, each with its line and a later step that works: a machine with Secure Boot and a software TPM seals the machine key and allows the client key of the peer; on its disk and its TPM, a machine with no display device (`-vga none`) starts no console, starts `remote`, refuses a call to the absent compositor through it, and runs a call that starts the storage service; a machine with no PS/2 controller (`i8042=off`) stops the input service and shows the desktop; an entropy device whose source never answers (`rng-egd` with no client) passes the deadline of its reads, which count as refused",
+		does = "The three machines of a part that the machine lacks, each with its line and a later step that works: a machine with no display device (`-vga none`) starts no compositor and no console, and the boot pass of `settings` through the storage service, then `unlock`, run; a machine with no PS/2 controller (`i8042=off`) stops the input service and shows the desktop; an entropy device whose source never answers (`rng-egd` with no client) passes the deadline of its reads, which count as refused",
 		run = missing_devices_tests_run,
-		procedures = {"missing_devices_tests_run", "missing_devices_tpm_machine_run", "missing_devices_silent_entropy_run"},
-		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_SECURE_BOOT},
+		procedures = {"missing_devices_tests_run", "missing_devices_silent_entropy_run"},
+		volumes = {build.BOOT_VOLUME},
 	},
 	// The two machines of the measure boot the main volume and the other
 	// system.
