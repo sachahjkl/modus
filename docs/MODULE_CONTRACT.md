@@ -415,7 +415,7 @@ What this design removes, compared with ELF:
 
 Built. A disk program is a program whose module file is an object of the storage service, and not a file of the boot image. A module is added to a machine with no new boot image.
 
-**Where the file is.** The store `programs` of a principal holds the module files of that principal: each entry of its root tree is one file, and the name of the entry is the name of the program, 1 to 23 visible characters of ASCII with no `/` (`STORAGE.md`, "1. The model"). The name of a program is an identifier of the system, as the name of a module: it stays ASCII, so that each layout types it and it has one form only (`docs/glossary/text.md`, "Text encoding").
+**Where the file is.** The store `module_files` of a principal holds the module files of that principal: each entry of its root tree is one file, and the name of the entry is the name of the program, 1 to 23 visible characters of ASCII with no `/` (`STORAGE.md`, "1. The model"). The name of a program is an identifier of the system, as the name of a module: it stays ASCII, so that each layout types it and it has one form only (`docs/glossary/text.md`, "Text encoding").
 
 **The command.** The console command names the program and the hash of its file:
 
@@ -425,7 +425,7 @@ Built. A disk program is a program whose module file is an object of the storage
 
 The hash is 64 hexadecimal digits: the BLAKE3 hash of the module file, as the tool that wrote the file prints it. The console sends the record `Start_From_Disk` on the root ring (`root_ring.Root_Command`): the hash in four values, the name in three.
 
-**The root service reads and checks.** The root service opens a connection of its own to the storage service, on the store `programs` of the principal of the caller. It asks for the size of the object, then for its bytes, into memory of its own budget. Then it computes the BLAKE3 hash of the bytes. It starts the program only when that hash is the hash of the command. So the storage service carries the bytes and does not choose them: bytes with another hash are refused, and the line of the log holds both hashes:
+**The root service reads and checks.** The root service opens a connection of its own to the storage service, on the store `module_files` of the principal of the caller. It asks for the size of the object, then for its bytes, into memory of its own budget. Then it computes the BLAKE3 hash of the bytes. It starts the program only when that hash is the hash of the command. So the storage service carries the bytes and does not choose them: bytes with another hash are refused, and the line of the log holds both hashes:
 
 ```
 root: refused visitor from the disk: its bytes have the hash 9d41…, and the hash asked is 5f0c…
@@ -454,7 +454,7 @@ root: refused notes from the disk: the grant table of the root service names it,
 
 Without this rule a file named `notes` would start with the store of `notes`.
 
-**The imports.** A disk program imports by hash. Its load source is the boot image, the replacements of the machine, and the files of the store `programs` of its principal that an import scan found for this load. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
+**The imports.** A disk program imports by hash. Its load source is the boot image, the replacements of the machine, and the files of the store `module_files` of its principal that an import scan found for this load. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
 
 **The import scan.** When the program file imports a hash that no module of the boot image has, the root service looks for it in the same store, after the check of the program file and before the start (`glossary/code.md`, "Import scan"). It lists the root tree, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. A name finds nothing: the name of an entry only says which object to read next. The imports of a kept file are wanted too, and a replacement of the machine applies as in the loader. The scan runs inside the load, with its connection, its deadline and its rules for each answer, and has three bounds of its own:
 
@@ -468,42 +468,42 @@ The bytes of a kept file are memory of the root service, paid by the one budget 
 
 ```
 > start_from_disk("store_importer", "8e21…")
-root: store_importer imports 1 modules that the boot image does not hold: the import scan reads the store programs to find them by the hash of their bytes
-root: store_importer: the import 3a9c… of store_importer is the file store_library of the store programs, checked on its bytes
+root: store_importer imports 1 modules that the boot image does not hold: the import scan reads the store module_files to find them by the hash of their bytes
+root: store_importer: the import 3a9c… of store_importer is the file store_library of the store module_files, checked on its bytes
 root: started store_importer from the disk, hash 8e21…, with no grant
-store_importer: triple(14) of the module store_library of the store programs gives 42: as it must
+store_importer: triple(14) of the module store_library of the store module_files gives 42: as it must
 ```
 
 A hash that no file has refuses the start with one line, which names the importer and the import:
 
 ```
-root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 7 files
+root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store module_files has bytes with this hash; the import scan read 7 files
 ```
 
 A disk program whose imports are all in the boot image makes no scan.
 
 **The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname; with the unit `Modules`, an import that no file has), `Full` with the unit `Modules` (the imports pass the bounds of the import scan), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
 
-**The file from the network.** The module file service, the program `programs`, puts a module file in the store on a machine that runs. Its private store is the store `programs` of its principal: the root service names a private store by the name of its program. Its other grants are a client grant of TCP to one web server, 10.0.2.100 port 80 (the address that QEMU gives to a server of the host), and its exports. The console calls them through a connection:
+**The file from the network.** The module file service, the module `module_files`, puts a module file in the store on a machine that runs. Its private store is the store `module_files` of its principal: the root service names a private store by the name of its program. Its other grants are a client grant of TCP to one web server, 10.0.2.100 port 80 (the address that QEMU gives to a server of the host), and its exports. The console calls them through a connection:
 
 ```
-> connect("programs")
-> programs.receive("visitor", "/visitor")
+> connect("module_files")
+> module_files.receive("visitor", "/visitor")
 5f0c…
-> programs.list()
+> module_files.list()
 > start_from_disk("visitor", "5f0c…")
 ```
 
-- `programs.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk program: `programs` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
-- `programs.list()` gives a row for each object of the root tree but `grant_table` and the debug objects (section "The debug object of a disk program"): `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
+- `module_files.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk program: `programs` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
+- `module_files.list()` gives a row for each object of the root tree but `grant_table` and the debug objects (section "The debug object of a disk program"): `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
 
 The caller must act for the principal of the store: the root service gives the service the number of its principal (`disk_program.SERVICE_VALUE_PRINCIPAL`). The hash that the service gives is a help, not a proof: the root service checks the bytes at the start, so a changed service or a changed web server cannot make other bytes run under the hash that the principal types. The log has one line for each file stored, and one for each row of a list:
 
 ```
-programs: stored visitor from /visitor: <count> bytes, the BLAKE3 hash of its bytes 5f0c…
+module_files: stored visitor from /visitor: <count> bytes, the BLAKE3 hash of its bytes 5f0c…
 ```
 
-**The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file. The debug object of each file goes beside it, under the hash of the module: the debugger names the procedures and the lines of a disk program (section "The debug object of a disk program").
+**The file on the disk.** `modustool` writes a data disk that holds the store `module_files` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file. The debug object of each file goes beside it, under the hash of the module: the debugger names the procedures and the lines of a disk program (section "The debug object of a disk program").
 
 Not built: a budget above the largest budget of a disk program; an import from the store; a remote that the principal chooses for the module file service; a disk program that is a service.
 
@@ -511,7 +511,7 @@ Not built: a budget above the largest budget of a disk program; an import from t
 
 Built in part. The principal gives a disk program a grant with a command. The grant names the file, by its hash, and the nickname of the file.
 
-**The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. The log writes the hash of the file beside the nickname.
+**The nickname.** The name of the entry of a file in the store `module_files` is its nickname: the principal chooses it, and the file never does. The log writes the hash of the file beside the nickname.
 
 **The disk grant table.** The root service keeps one disk grant table for each principal. A row binds a nickname to the hash of one file, with the grants of that file. A table has 16 rows. Two hashes never share a nickname: a start of a nickname with another hash than its row is refused before any read:
 
@@ -549,16 +549,16 @@ Each other start grant is refused with `Unsupported`: a command gives `store` on
 **How long a table lasts.** A table persists only under a key: the machine key for principal 0, from its machine passphrase or sealed by the TPM, or a key of a named principal. The store of a nickname stays on the disk in each case, and the next grant of `store` finds its data.
 
 - **Principal 0 with no machine key** (no machine passphrase, and no machine key sealed by the TPM). No key signs its table: it lasts until the machine stops.
-- **Principal 0 with a machine key** (`PRINCIPALS.md`, "Principal 0 and its machine passphrase"; `PRINCIPALS.md`, "The machine key sealed by the TPM"). The table is the object `grant_table` of the store `programs`. The root service reads it when principal 0 gets its machine key at the start (after the passphrase is typed, or when the TPM releases the key), and writes it after each change. Until then, the disk programs of principal 0 start with no grant, and a change of the table is refused; the machine runs, and nothing waits.
-- **A named principal** (`PRINCIPALS.md`, "The disk grant table of a named principal"). The table is the object `grant_table` of its store `programs.principal.1`, under a key that `unlock` derives from its unlock key. The root service reads it at the first unlock of the run, and writes it after each change. A console that the desktop starts during the session acts for the principal, and changes its table.
+- **Principal 0 with a machine key** (`PRINCIPALS.md`, "Principal 0 and its machine passphrase"; `PRINCIPALS.md`, "The machine key sealed by the TPM"). The table is the object `grant_table` of the store `module_files`. The root service reads it when principal 0 gets its machine key at the start (after the passphrase is typed, or when the TPM releases the key), and writes it after each change. Until then, the disk programs of principal 0 start with no grant, and a change of the table is refused; the machine runs, and nothing waits.
+- **A named principal** (`PRINCIPALS.md`, "The disk grant table of a named principal"). The table is the object `grant_table` of its store `module_files.principal.1`, under a key that `unlock` derives from its unlock key. The root service reads it at the first unlock of the run, and writes it after each change. A console that the desktop starts during the session acts for the principal, and changes its table.
 
 The persisted form is in `modus:support/disk_program` (`table_encode`, `table_decode`): 1136 bytes, the rows that persist, the client keys of `remote` that the principal allowed (4 at most; `PRINCIPALS.md`, "The client keys of remote"), a global setting of persistence with an exception for each row (the default is to persist; the client keys follow the global setting), and a tag of keyed BLAKE2b. The name `grant_table` is no name of a disk program, as `programs` is not. A table whose tag fails is refused with a line of the log, and gives no grant, so a reader of the disk with no passphrase adds no grant:
 
 ```
-root: refused the disk grant table of principal 0 from the store programs: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and it is kept: no change is written over it
+root: refused the disk grant table of principal 0 from the store module_files: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and it is kept: no change is written over it
 ```
 
-A refused table is kept when the key opened an existing record: it can be a good table of another key. Each change of the table of the principal is then refused until the machine starts again with a table that verifies; a caller that acts for the principal can restore such a version in its store `programs`. Only the key of a new record writes over a refused table: a new machine passphrase, set on a machine with no record, or a new named principal.
+A refused table is kept when the key opened an existing record: it can be a good table of another key. Each change of the table of the principal is then refused until the machine starts again with a table that verifies; a caller that acts for the principal can restore such a version in its store `module_files`. Only the key of a new record writes over a refused table: a new machine passphrase, set on a machine with no record, or a new named principal.
 
 A write of the table that fails is tried again at once, 3 tries at most. After the third failure the log says that the disk keeps an older table, and each change is refused until the machine starts again.
 
@@ -1592,11 +1592,11 @@ A variable range, 12 bytes:
 
 ### The debug object of a disk program
 
-The module of a disk program is not in the boot image, so the debug image has no object for it. Its debug object is an object of the same store `programs`, beside its module file. The design is `src/md/features/debug_object_of_a_disk_program.md`.
+The module of a disk program is not in the boot image, so the debug image has no object for it. Its debug object is an object of the same store `module_files`, beside its module file. The design is `src/md/features/debug_object_of_a_disk_program.md`.
 
-- **Its name** is the 64 hexadecimal digits of the hash of the module, in lower case (`disk_program.debug_object_name_write`). The module names it, not the principal: one file can have two nicknames. A nickname has at most 23 bytes, so no nickname is such a name. `programs.list()` does not list it.
-- **The tool writes it.** `modustool program-disk disk.img build/my_program.module` puts `build/my_program.debug` beside the module file in the store, when the file is there. It refuses a debug object that names another module.
-- **The debugger service reads it** at `attach`, for the module of the program that the boot image does not hold and the debug image does not describe. It sends the command `Debug_Store` of the root ring, with the name of the program and the call ring of its caller, as for `Debug`. The root service gives a connection to the store `programs` of the principal of the program only when it gave the service the debug access to that program for that caller, and only for a disk program. The connection reads only (`isolated.CALLER_READS_ONLY`): the storage service refuses each change on it. It reaches the whole store, for the read of one object: after the read, on each path, the service sends `Debug_Store` with the flag of an end, and the root service ends the connection. It ends at the latest with the debug access.
+- **Its name** is the 64 hexadecimal digits of the hash of the module, in lower case (`disk_program.debug_object_name_write`). The module names it, not the principal: one file can have two nicknames. A nickname has at most 23 bytes, so no nickname is such a name. `module_files.list()` does not list it.
+- **The tool writes it.** `modustool module-disk disk.img build/my_program.module` puts `build/my_program.debug` beside the module file in the store, when the file is there. It refuses a debug object that names another module.
+- **The debugger service reads it** at `attach`, for the module of the program that the boot image does not hold and the debug image does not describe. It sends the command `Debug_Store` of the root ring, with the name of the program and the call ring of its caller, as for `Debug`. The root service gives a connection to the store `module_files` of the principal of the program only when it gave the service the debug access to that program for that caller, and only for a disk program. The connection reads only (`isolated.CALLER_READS_ONLY`): the storage service refuses each change on it. It reaches the whole store, for the read of one object: after the read, on each path, the service sends `Debug_Store` with the flag of an end, and the root service ends the connection. It ends at the latest with the debug access.
 - **The bounds.** The object has at most 8 MiB (`disk_program.DEBUG_OBJECT_BYTES_LIMIT`), in memory of the budget of the debugger service. The answer of the root service and the read have one deadline of 1500 ms. With the 2000 ms of the answer to `Debug`, the waits of `attach` take at most 3500 ms, under the 5000 ms after which `remote` ends a call. Each answer of the storage service must make progress, as in the load of a module file.
 - **The check.** The storage service chose the bytes: the service uses the object only when `debug_object.check` takes it and when the hash that it names is the hash of the module record. A read that fails is one line of the log, and the attach goes on with no debug object for the module.
 - **The use.** The debugger names the procedures, the lines, the types and the variables of the module, as for a module of the boot image, and names the module by the name of the program.
@@ -1605,8 +1605,8 @@ The module of a disk program is not in the boot image, so the debug image has no
 The log of the attach, for the outside module of the test part `disk_programs`:
 
 ```
-root: gave debugger a connection that reads only to the store programs of principal 0, for the debug object of outsider
-debugger: read the debug object 5f0c… of outsider from the store programs of principal 0: <size> bytes, checked whole
+root: gave debugger a connection that reads only to the store module_files of principal 0, for the debug object of outsider
+debugger: read the debug object 5f0c… of outsider from the store module_files of principal 0: <size> bytes, checked whole
 root: disconnected programs from the service storage
 ```
 
@@ -1616,7 +1616,7 @@ Then `columns(where(stack(0), "procedure", "entry"), "module procedure file line
 
 - `system.frame_text` writes a frame of a stop report: "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)". Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before it. With no debug image, the frame is "fault + 0x1478".
 - The console (`fault_print`), the program `errors` (the stack of `fault`) and `inspect` (the stop report, made when the report changes) use it. `TOOLS.md`, "Names and lines".
-- The debugger service reads the debug image, and the debug object of a disk program from the store `programs` (section "The debug object of a disk program").
+- The debugger service reads the debug image, and the debug object of a disk program from the store `module_files` (section "The debug object of a disk program").
 - The modus tool reads the same debug objects with the same reader: the step `Trace` of the machine test, and the test of the build that reads the debug object of `fault` against its linked file.
 
 ### What the debug information does not give

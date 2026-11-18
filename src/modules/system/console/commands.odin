@@ -428,7 +428,7 @@ commands_start :: proc "contextless" () {
 	// "the root service did not answer" after 3 seconds.
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
 	// Asks the root service to start a disk program: a program whose module
-	// file is an object of the store `programs` of the storage service, and
+	// file is an object of the store `module_files` of the storage service, and
 	// not a file of the boot image. It gives nothing.
 	//
 	// - `name`: the nickname of the program: the name of its entry in the
@@ -454,7 +454,7 @@ commands_start :: proc "contextless" () {
 	// boot image has the name, or the root service gives the name a grant;
 	// another load runs; the loader refuses the file; the storage service
 	// stopped or gave no answer.
-	command("start_from_disk", {.Text, .Text}, .None, "start a program of the store programs, by nickname and hash", start_from_disk)
+	command("start_from_disk", {.Text, .Text}, .None, "start a program of the store module_files, by nickname and hash", start_from_disk)
 	// Gives a grant to the file that a nickname names, from its next start
 	// (docs/MODULE_CONTRACT.md, "The grants of a disk program"). It gives
 	// nothing.
@@ -2897,12 +2897,12 @@ start_from_disk_refusal :: proc "contextless" (name: string, completion: ring.Re
 	#partial switch kind {
 	case .Not_Authentic:
 		head := transmute([8]u8)u64(error.value)
-		result = fail("start_from_disk: the bytes of \"", name, "\" in the store programs do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
+		result = fail("start_from_disk: the bytes of \"", name, "\" in the store module_files do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
 	case .Absent:
 		if errors.Unit(error.unit) == .Grants {
 			result = fail("start_from_disk: the nickname \"", name, "\" has no row in the disk grant table: name the hash of its file")
 		} else {
-			result = fail("start_from_disk: the store programs has no object \"", name, "\"")
+			result = fail("start_from_disk: the store module_files has no object \"", name, "\"")
 		}
 	case .Exists:
 		if errors.Unit(error.unit) == .Grants {

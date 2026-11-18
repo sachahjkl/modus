@@ -31,7 +31,7 @@ Each part of the network is a program or a library of user space. The table name
 | Protocol library | `src/library/support/network` | For the network service: Ethernet, ARP, IPv4, ICMP echo, and the checks of the header of UDP and TCP (`parse`). For a program with a datagram endpoint: the UDP header and its checksum (`udp_header_write`, `udp_data_read`) |
 | Server | `src/modules/demonstrations/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `src/modules/demonstrations/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
-| Module file service | `src/modules/system/programs` | A client with the same grant: it fetches a module file and stores it in the store `programs` of its principal (`MODULE_CONTRACT.md`, "A program from a disk") |
+| Module file service | `src/modules/system/module_files` | A client with the same grant: it fetches a module file and stores it in the store `module_files` of its principal (`MODULE_CONTRACT.md`, "A program from a disk") |
 | QUIC server | `src/modules/demonstrations/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
 | Remote service | `src/modules/system/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
 | Peer | `tools/modustool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
@@ -140,7 +140,7 @@ The root service names the grant by the name of the program, as for UDP (`endpoi
 
 | Form | Local ports | Remotes | Use |
 |---|---|---|---|
-| TCP client grant | A block of 64 TCP ports (`datagram.PORT_BLOCK`) that the network service chooses | One remote address and one remote TCP port | A program that connects to one server: `fetch`, and the module file service `programs` |
+| TCP client grant | A block of 64 TCP ports (`datagram.PORT_BLOCK`) that the network service chooses | One remote address and one remote TCP port | A program that connects to one server: `fetch`, and the module file service `module_files` |
 | TCP listen grant | One TCP port that the root service names | Each remote that sent a SYN to that port | A server: `server`, on the port 80 |
 | UDP client grant | One UDP port that the network service gives (`Info`); the program writes it as the source port of each datagram | One remote address and one remote UDP port | A program that talks to one remote over datagrams |
 | UDP listen grant | One UDP port that the root service names | Each remote that sent a first datagram of 1200 bytes at least, and with a named address, that address only | A QUIC server: `quic_echo` on the port 4433, `remote` on the port 7100 (section "The listen grant of UDP") |

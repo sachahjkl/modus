@@ -32,7 +32,7 @@ Pointer :: struct {
 	keys:    i64, // The key records that the input service sent since the start: each press and each release is one. The palette takes some of them, and a record goes to no window when none is open.
 	keys_waiting: i64, // The key records that wait in the compositor for a window whose ring is full.
 	keys_refused: i64, // The key records that the compositor lost since the start: the ring of the window and the queue of the compositor for it were full. 0 on a system that works.
-	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
+	menu:    [16]u8, // The menu of the bar that is open: "start", "windows", or empty.
 	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result; 5 it has the form of a command. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
 	form:     [8]u8, // The pointer form on the screen: "dark" or "light", from the appearance in force (docs/POINTERS.md).
@@ -116,7 +116,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   start, because the ring of a window and the queue of the compositor
 //   for it were both full. It is 0 on a system that works; the log has a
 //   line for each loss period.
-// - `menu`: `programs`, `windows`, or empty.
+// - `menu`: `start`, `windows`, or empty.
 // - `palette`: the state of the palette: 0 while it is closed; 1 while it
 //   is open and the input searches; 2 while it asks for a second Enter; 3
 //   while it waits for what its provider gives; 4 while it shows a result;
@@ -147,8 +147,8 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		switch menu_open {
 		case .None:
 			// No menu: the field stays empty.
-		case .Programs:
-			copy(result[0].menu[:], "programs")
+		case .Start:
+			copy(result[0].menu[:], "start")
 		case .Windows:
 			copy(result[0].menu[:], "windows")
 		}

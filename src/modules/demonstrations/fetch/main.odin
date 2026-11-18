@@ -16,7 +16,7 @@
 // or from a port that the grant does not name, is refused with an
 // [error record](term:error-record) that names the grant.
 //
-// **What a reader sees.** It is not in the menu of the programs: start it
+// **What a reader sees.** It is not in the start menu: start it
 // with `start("fetch")` in the console. The window lists the cases: the
 // grant that the network service reports, the two refused segments, the
 // handshake with 10.0.2.100 port 80, then requests of HTTP/1.1

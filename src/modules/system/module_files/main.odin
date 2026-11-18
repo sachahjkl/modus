@@ -1,30 +1,30 @@
 // The module file service: it stores a module file that a web server
-// gives in the store `programs` of its principal, and lists the files of
+// gives in the store `module_files` of its principal, and lists the files of
 // that store with the hash of their bytes. A developer then adds a program
 // to a machine that runs, with no disk from the tool
 // (docs/MODULE_CONTRACT.md, "A program from a disk").
 //
 // **What it is for.** The root service starts a disk program from the
-// store `programs` when the hash of its bytes is the hash that the
+// store `module_files` when the hash of its bytes is the hash that the
 // principal names. This service puts a file in that store from the
 // network, and gives the hash to type. It starts nothing: the root service
 // checks the bytes at the start, so this service carries them as the
 // storage service does, and does not choose what runs.
 //
-// **Start**: `connect("programs")` in the console starts it, as the
+// **Start**: `connect("module_files")` in the console starts it, as the
 // storage service starts. Then:
 //
 // ```
-// programs.receive("visitor", "/visitor")   the hash of the file that came
-// programs.list()                           the files, with their hashes
+// module_files.receive("visitor", "/visitor")   the hash of the file that came
+// module_files.list()                           the files, with their hashes
 // start_from_disk("visitor", "<the hash>")
 // ```
 //
 // **Grants**, as the root service gives them:
 //
 // - **Store**: its private store. The root service names a private store
-//   by the name of its program, so the store of this program is the store
-//   `programs` of its principal.
+//   by the name of its module, so the store of this module is the store
+//   `module_files` of its principal.
 // - **Network**: a client grant of TCP to one web server, 10.0.2.100 port
 //   80: the address that QEMU gives to a server of the host.
 // - **Serve**: the two exports for the console.
@@ -33,13 +33,13 @@
 // (disk_program.SERVICE_VALUE_PRINCIPAL): a caller of another principal
 // is refused.
 //
-// **What a reader sees.** No window. The log has "programs: serves the
-// store programs of principal 0, ...", one line for each file that it
+// **What a reader sees.** No window. The log has "module_files: serves the
+// store module_files of principal 0, ...", one line for each file that it
 // stores, and one line for each row of a list.
 //
 // The design: (src/md/features/programs_from_a_disk.md, "How the file
 // reaches the disk").
-package programs
+package module_files
 
 import "modus:contract/blake3"
 import "modus:contract/datagram"
@@ -95,8 +95,8 @@ ERROR_NETWORK :: -4
 ERROR_ANSWER :: -5
 ERROR_STORE :: -6
 
-// One row of programs.list().
-Program_File_Row :: struct {
+// One row of module_files.list().
+Module_File_Row :: struct {
 	name:  [64]u8, // The name of the entry: the nickname of the file.
 	bytes: i64, // The bytes of the object.
 	hash:  [72]u8, // The 64 hexadecimal digits of the BLAKE3 hash of its bytes; empty when its bytes did not come or pass 4 MiB.
@@ -127,7 +127,7 @@ service: system.Service
 program_generator: random.Generator // The random generator of this program, from the seed of its starter.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log("programs: ", text)
+	system.log("module_files: ", text)
 	system.stop(1)
 }
 
@@ -253,7 +253,7 @@ remote_ended :: proc "contextless" (index: int) -> bool {
 // network_failure writes the line of a failure of the fetch, and gives the
 // result of the export.
 network_failure :: proc "contextless" (error: ^errors.Error_Record, result: i64, kind: errors.Kind, unit: errors.Unit, path: string, why: string, found: i64 = 0) -> i64 {
-	system.log("programs: GET ", path, ": ", why, ": nothing is stored")
+	system.log("module_files: GET ", path, ": ", why, ": nothing is stored")
 	return errors.fail(error, result, kind, unit, 2, 0, 0, found)
 }
 
@@ -358,19 +358,19 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 	} else {
 		system.write_bytes(&writer, transmute([]u8)string("the storage service gave no answer that its export allows"))
 	}
-	system.log("programs: the store programs refused ", system.format(subject_buffer[:], ..subject), ": ", system.written(&writer))
+	system.log("module_files: the store module_files refused ", system.format(subject_buffer[:], ..subject), ": ", system.written(&writer))
 	return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 }
 
-// receive fetches a module file from the web server of the grant, and stores it in the store programs under a nickname.
+// receive fetches a module file from the web server of the grant, and stores it in the store module_files under a nickname.
 //
 // The service sends `GET path` to the web server, takes a body of 1 to 4 MiB with a Content-Length, writes it as the
-// object `nickname` of the root tree of the store `programs` of its principal in one commit, then gives the 64
+// object `nickname` of the root tree of the store `module_files` of its principal in one commit, then gives the 64
 // hexadecimal digits of the BLAKE3 hash of the bytes that came. The hash is the one to type in `start_from_disk`: the
 // root service checks the bytes against it at the start, so a file with other bytes never runs under it. A file of the
 // same nickname is replaced, and the store keeps the one before as a version.
 //
-// - **nickname**: the name of the entry, 1 to 23 bytes, with no zero byte and no `/`; not `programs` and not
+// - **nickname**: the name of the entry, 1 to 23 bytes, with no zero byte and no `/`; not `module_files` and not
 //   `grant_table`.
 // - **path**: the path of the request, 1 to 200 bytes that start with `/`, with no space and no control byte.
 // - **result**: the 64 hexadecimal digits of the hash.
@@ -386,7 +386,7 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 //   it), no Content-Length of 1 to 4 MiB, or a body that ends early.
 // - `Refused` (-6): the service has no store, or the storage service refused the file.
 //
-// Example: `programs.receive("visitor", "/visitor")`.
+// Example: `module_files.receive("visitor", "/visitor")`.
 @(export, link_name = "receive")
 receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	if !caller_allowed() {
@@ -459,7 +459,7 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	}
 	digits: [disk_program.HASH_DIGITS]u8
 	disk_program.hash_write(&digits, hash)
-	system.log("programs: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+	system.log("module_files: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
 	copy(result^, digits[:])
 	return disk_program.HASH_DIGITS
 }
@@ -483,7 +483,7 @@ bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_progr
 	return blake3.hash(file[:size]), true
 }
 
-// list gives one row for each module file of the store programs: its name, its bytes, and the BLAKE3 hash of its bytes.
+// list gives one row for each module file of the store module_files: its name, its bytes, and the BLAKE3 hash of its bytes.
 //
 // The service reads the bytes of each object again and computes the hash: the hash that the storage service keeps for
 // an entry differs from the hash of the bytes when the object has a hole. The object `grant_table`, the disk grant
@@ -491,7 +491,7 @@ bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_progr
 // by the 64 hexadecimal digits of the hash of its module. An object over 4 MiB, the limit of a module file, or whose
 // bytes did not come, has a row with no hash. The log has one line for each row.
 //
-// - **result**: a table of `Program_File_Row` rows; the call fills at most its length.
+// - **result**: a table of `Module_File_Row` rows; the call fills at most its length.
 //
 // The caller must act for the principal of the store (**Acts_For_Principal**). The result is the count of the rows, or
 // a negative number with an error record:
@@ -499,9 +499,9 @@ bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_progr
 // - `No_Grant` (-1): the caller does not act for the principal of the store.
 // - `Refused` (-6): the service has no store, or the storage service refused the listing.
 //
-// Example: `programs.list()`.
+// Example: `module_files.list()`.
 @(export, link_name = "list")
-list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i64 {
+list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i64 {
 	if !caller_allowed() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
@@ -520,7 +520,7 @@ list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i
 			return store_failure(error, &store_error, status, "the listing of its root tree")
 		}
 		if len(page) == 0 {
-			system.log("programs: listed ", u64(total), " module files of the store programs, each hash computed on its bytes")
+			system.log("module_files: listed ", u64(total), " module files of the store module_files, each hash computed on its bytes")
 			return i64(total)
 		}
 		for item in page {
@@ -544,9 +544,9 @@ list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i
 			hash, hashed := bytes_hash(entry_name, int(min(item.size, i64(disk_program.FILE_BYTES_LIMIT) + 1)))
 			if hashed {
 				disk_program.hash_write(&digits, hash)
-				system.log("programs: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+				system.log("module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
 			} else {
-				system.log("programs: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
+				system.log("module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
 			}
 			if total < len(result^) {
 				row := &result[total]
@@ -559,11 +559,11 @@ list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i
 			total += 1
 		}
 	}
-	system.log("programs: the listing of the store programs did not end after ", u64(LIST_PAGE_LIMIT), " pages")
+	system.log("module_files: the listing of the store module_files did not end after ", u64(LIST_PAGE_LIMIT), " pages")
 	return errors.fail(error, ERROR_STORE, .Refused, .Store)
 }
 
-// The entry of programs: it opens its service, its store and its endpoint,
+// The entry of module_files: it opens its service, its store and its endpoint,
 // then serves the calls of the console and the timers of TCP until the
 // machine stops.
 //
@@ -572,7 +572,7 @@ list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i
 //    file; a missing part stops it with a line of the log;
 // 3. asks the network service for its grant; a grant that is not a client
 //    grant of TCP stops it;
-// 4. writes "programs: serves the store programs of principal N: ...".
+// 4. writes "module_files: serves the store module_files of principal N: ...".
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {
@@ -584,7 +584,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no service ring")
 	}
 	if store_client, opened = storage.open(ctx); !opened {
-		fail("no store: the root service gave no connection to the store programs")
+		fail("no store: the root service gave no connection to the store module_files")
 	}
 	file_memory, file_status := system.memory_create(FILE_PAGES)
 	if file_status != .Ok {
@@ -653,7 +653,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address_buffer: [16]u8
 	address_writer := system.Writer{buffer = address_buffer[:]}
 	network.address_write(&address_writer, remote_address)
-	system.log("programs: serves the store programs of principal ", store_principal, ": a file from the web server ", system.written(&address_writer), " port ", u64(remote_port), ", and the list of the files with the hash of their bytes")
+	system.log("module_files: serves the store module_files of principal ", store_principal, ": a file from the web server ", system.written(&address_writer), " port ", u64(remote_port), ", and the list of the files with the hash of their bytes")
 	for {
 		wait := system.wait_begin()
 		deadline, _ := network_step()

@@ -350,9 +350,9 @@ COMMANDS :: [?]Command {
 	// the names of the exports. A module with an import needs the built
 	// modules of the system: run `build` in the folder of the system first
 	// (docs/TOOLS.md, "A module from a source outside the repository").
-	// Writes a data disk whose store of the programs holds module files: a
+	// Writes a data disk whose store of the module files holds module files: a
 	// machine with that disk starts each one from its console, by its hash.
-	{name = "program-disk", about = "program-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `programs` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = run_program_disk},
+	{name = "module-disk", about = "module-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `module_files` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = run_module_disk},
 	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
@@ -791,7 +791,7 @@ run_build :: proc(args: []string) -> int {
 		build_whole = true
 		rest = rest[1:]
 	}
-	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_processes(rest[0])) {
+	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_host_processes(rest[0])) {
 		fmt.eprintln("modustool: build [whole] [processes]")
 		return EXIT_USAGE
 	}
@@ -1575,12 +1575,12 @@ network_device_problem :: proc(device: string) -> string {
 
 // run starts a program with the terminal of this tool and waits for its end.
 run :: proc(command: []string) -> bool {
-	process, err := os.process_start({command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
+	host_process, err := os.process_start({command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
 	if err != nil {
 		fmt.eprintfln("modustool: cannot start %s: %v", command[0], err)
 		return false
 	}
-	state, wait_err := os.process_wait(process)
+	state, wait_err := os.process_wait(host_process)
 	if wait_err != nil || !state.success {
 		fmt.eprintfln("modustool: %s failed (code %d)", command[0], state.exit_code)
 		return false

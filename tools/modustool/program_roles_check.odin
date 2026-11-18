@@ -66,7 +66,7 @@ program_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 		}
 	}
 	for build in builds {
-		if !build.program || !module_in_a_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
+		if !build.entry || !module_in_a_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
 			continue
 		}
 		if !named[build.name] {

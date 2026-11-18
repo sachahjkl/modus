@@ -25,7 +25,7 @@
 // of a computation in silence. This program puts that work under load,
 // with a pattern in each register, and checks every bit.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("extended_state")` in the console. The window shows the level of
 // registers that the threads use, the threads, the passes and the checks.
 // The log gets `extended_state: ok, <count> threads on <count> processors,

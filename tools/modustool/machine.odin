@@ -88,7 +88,7 @@ Step_Kind :: enum {
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
-	Launch, // Open the menu of the programs, and press the line of the program text.
+	Launch, // Open the start menu, and press the line of the program text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
@@ -750,7 +750,7 @@ scenario_network := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "p"},
-	{kind = .Wait, text = " for \"p\": plasma (program), plasma (window), pages (program), paint (program), ..."},
+	{kind = .Wait, text = " for \"p\": plasma (module), plasma (window), pages (module), paint (module), ..."},
 	{kind = .Key, text = "down"},
 	{kind = .Wait, text = "compositor: the palette chooses plasma (window)"},
 	{kind = .Shot, text = "palette"},
@@ -1124,9 +1124,9 @@ scenario := [?]Step {
 	{kind = .Keys, text = "p"},
 	{kind = .Wait, text = "compositor: the palette lists "},
 	{kind = .Wait, text = " for \"p\": "},
-	{kind = .Shot, text = "palette_programs"},
+	{kind = .Shot, text = "palette_modules"},
 	{kind = .Keys, text = "la"},
-	{kind = .Wait, text = " for \"pla\": plasma (program)"},
+	{kind = .Wait, text = " for \"pla\": plasma (module)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts plasma"},
 	{kind = .Wait, text = "plasma: ok", any_order = true},
@@ -1139,7 +1139,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "mon"},
-	{kind = .Wait, text = " for \"mon\": monitor (window), monitor (program)"},
+	{kind = .Wait, text = " for \"mon\": monitor (window), monitor (module)"},
 	{kind = .Shot, text = "palette_windows"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette brings monitor to the front"},
@@ -1158,10 +1158,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette has no entry to run"},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
-	// The menu of the programs: the button of the bar opens and closes it.
-	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
+	// The start menu: the button of the bar opens and closes it.
+	{kind = .Click, text = BAR_START_BUTTON},
 	{kind = .Shot, text = "menu"},
-	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
+	{kind = .Click, text = BAR_START_BUTTON},
 	// The menu of the windows: a press on a line brings the window to the
 	// front.
 	{kind = .Click, text = BAR_WINDOWS_BUTTON},
@@ -1384,7 +1384,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "settings"},
-	{kind = .Wait, text = " for \"settings\": settings (program)"},
+	{kind = .Wait, text = " for \"settings\": settings (module)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
@@ -1448,7 +1448,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "scheduler"},
-	{kind = .Wait, text = " for \"scheduler\": scheduler (program)"},
+	{kind = .Wait, text = " for \"scheduler\": scheduler (module)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts scheduler"},
 	{kind = .Wait, text = "scheduler: round robin: two threads that wake each other"},
@@ -3191,7 +3191,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "pointers_system"},
 	{kind = .Close, text = "pointers"},
 	{kind = .Wait, text = "root: pointers stopped"},
-	{kind = .Point, x = 116, y = 14, text = "pointing_hand"}, // The button of the programs in the bar.
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand"}, // The button start in the bar.
 	{kind = .Point, x = 600, y = 16, text = "arrow"}, // The bar.
 	{kind = .Front, text = "console"},
 	{kind = .Point, inside_window = "console", x = 200, y = 120, text = "text"}, // The surface of the terminal: its request.
@@ -3652,7 +3652,7 @@ scenario_film := [?]Step {
 
 Machine :: struct {
 	part:      ^Test_Part_Run, // What the machines of its part share: the remembered values, the screen texts, the times.
-	process:   os.Process,
+	host_process:   os.Process,
 	monitor:   ^os.File,
 	seen:      int, // The bytes of the log that the Wait steps used.
 	failure_scanned: int, // The bytes of the log that common_failure_line read.
@@ -3757,7 +3757,7 @@ key_name :: proc(character: u8) -> string {
 // takes its middle from the layout of the bar (machine_bar_layout), not
 // from a typed place, because the width of a button is the width of its
 // name in the font that draws it.
-BAR_PROGRAMS_BUTTON :: "the button programs of the bar"
+BAR_START_BUTTON :: "the button start of the bar"
 BAR_WINDOWS_BUTTON :: "the button windows of the bar"
 
 WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
@@ -3892,7 +3892,7 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 		}
 	}
 	layout = bar.layout_of(&machine_interface_cache)
-	expected := fmt.tprintf("%sprograms %d pixels, windows %d, the widest name %d", INTERFACE_LINE, layout.label_width, layout.windows_label_width, layout.longest_name_width)
+	expected := fmt.tprintf("%sstart %d pixels, windows %d, the widest name %d", INTERFACE_LINE, layout.label_width, layout.windows_label_width, layout.longest_name_width)
 	if !strings.has_prefix(text[interface_at:], expected) {
 		end := strings.index_byte(text[interface_at:], '\n')
 		fmt.eprintfln("modustool: test failed: the tool measures the bar as \"%s\", the compositor wrote \"%s\"", expected, text[interface_at:][:end < 0 ? len(text) - interface_at : end])
@@ -4067,12 +4067,12 @@ MACHINE_START_TRIES :: 3
 // qmp_socket_wait waits until QEMU made the socket of its machine protocol,
 // or ended (then the process is reaped). A QEMU that ends before it makes
 // the socket fails its start at once, not at the bound of a hang.
-qmp_socket_wait :: proc(process: os.Process, path: string) -> (made: bool, ended: bool) {
+qmp_socket_wait :: proc(host_process: os.Process, path: string) -> (made: bool, ended: bool) {
 	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
 		if os.exists(path) {
 			return true, false
 		}
-		if state, wait_error := os.process_wait(process, 0); wait_error == nil && state.exited {
+		if state, wait_error := os.process_wait(host_process, 0); wait_error == nil && state.exited {
 			return false, true
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
@@ -4116,7 +4116,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine, and a state of its own unless the machines
 	// of a part share one (tpm_start).
-	tpm: Tpm_Process
+	tpm: Tpm_Host_Process
 	if tpm_device && !tpm_start(&tpm, output, options.tpm_state) {
 		return false
 	}
@@ -4155,7 +4155,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 			_ = os.remove(machine_file(output, suffix))
 		}
 	}
-	process: os.Process
+	host_process: os.Process
 	monitor_read, monitor_write: ^os.File
 	qmp: Qmp
 	qmp_opened := false
@@ -4175,7 +4175,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 			return false
 		}
 		start_err: os.Error
-		process, start_err = os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
+		host_process, start_err = os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
 		// QEMU has its copy of the socket of the peer now.
 		peer_machine_socket_lent_close(&peer)
 		if start_err != nil {
@@ -4186,14 +4186,14 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		}
 		// The keys, the moves of the pointer and the pictures go through the
 		// machine protocol of QEMU: QEMU listens when it started.
-		socket_made, ended := qmp_socket_wait(process, qmp_socket_of(output))
+		socket_made, ended := qmp_socket_wait(host_process, qmp_socket_of(output))
 		qmp_opened = socket_made && qmp_open(&qmp, qmp_socket_of(output))
 		if qmp_opened || !options.user_network || try == MACHINE_START_TRIES {
 			break
 		}
 		// QEMU closed the protocol before its greeting: it ends.
 		if !ended && qmp.ended {
-			state, wait_error := os.process_wait(process, HANG_BOUND)
+			state, wait_error := os.process_wait(host_process, HANG_BOUND)
 			ended = wait_error == nil && state.exited
 		}
 		// A QEMU that runs and gave no greeting is a failure of the machine,
@@ -4223,7 +4223,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		started_at = time.tick_now(),
 		started_unix = time.time_to_unix(time.now()),
 		clock_offset_seconds = clock.offset_seconds,
-		process   = process,
+		host_process   = host_process,
 		monitor   = monitor_write,
 		output    = output,
 		call_socket = peer.call_socket,
@@ -4266,10 +4266,10 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	state: os.Process_State
 	if passed && machine.powered_off {
-		state, _ = os.process_wait(process, HANG_BOUND)
+		state, _ = os.process_wait(host_process, HANG_BOUND)
 	} else if passed {
 		wait_err: os.Error
-		state, wait_err = os.process_wait(process, HANG_BOUND)
+		state, wait_err = os.process_wait(host_process, HANG_BOUND)
 		if wait_err != nil || !state.exited {
 			fmt.eprintln("modustool: test failed: the machine did not stop")
 			passed = false
@@ -4279,8 +4279,8 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		}
 	}
 	if !state.exited {
-		_ = os.process_kill(process)
-		_, _ = os.process_wait(process)
+		_ = os.process_kill(host_process)
+		_, _ = os.process_wait(host_process)
 	}
 	// The whole log once more after the end: a line lost after the last
 	// wait, or during a step that waits for no line, fails the machine too.
@@ -4652,13 +4652,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// layout that the compositor wrote in its log, measured here
 			// from the same cache of the build.
 			layout: bar.Layout
-			if step.kind == .Launch || step.kind == .Click && (step.text == BAR_PROGRAMS_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
+			if step.kind == .Launch || step.kind == .Click && (step.text == BAR_START_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
 				known: bool
 				if layout, known = machine_bar_layout(machine); !known {
 					return false
 				}
 			}
-			if step.kind == .Click && step.text == BAR_PROGRAMS_BUTTON {
+			if step.kind == .Click && step.text == BAR_START_BUTTON {
 				step.x, step.y = bar.button_center(layout)
 			}
 			if step.kind == .Click && step.text == BAR_WINDOWS_BUTTON {
@@ -4668,7 +4668,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				found: bool
 				step.x, step.y, found = bar.center(layout, step.text)
 				if !found {
-					fmt.eprintfln("error: the menu of the programs does not have the program %s", step.text)
+					fmt.eprintfln("error: the start menu does not have the program %s", step.text)
 					return false
 				}
 			}
@@ -4682,12 +4682,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				open := false
 				for start := time.now(); !open && time.since(start) < HANG_BOUND; {
 					text := log_read(machine)
-					if open = len(text) > before && strings.contains(text[before:], "compositor: the menu of the programs is open"); !open {
+					if open = len(text) > before && strings.contains(text[before:], "compositor: the start menu is open"); !open {
 						log_change_wait(machine)
 					}
 				}
 				if !open {
-					fmt.eprintfln("modustool: test failed: step %d: the menu of the programs did not open for %s: the machine did not receive the press on its button", index + 1, step.text)
+					fmt.eprintfln("modustool: test failed: step %d: the start menu did not open for %s: the machine did not receive the press on its button", index + 1, step.text)
 					return false
 				}
 			}
@@ -5053,7 +5053,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			// A kill: QEMU writes nothing more. The tool knows what was
 			// durable when the disk lost its power.
-			_ = os.process_kill(machine.process)
+			_ = os.process_kill(machine.host_process)
 			machine.powered_off = true
 			sync.mutex_lock(&server.lock)
 			roots, at_root, counting, writes, marker := server.power_off_roots, server.power_off_at_root, server.power_off_counting, server.writes, server.power_off_marker

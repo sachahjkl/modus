@@ -36,7 +36,7 @@ The root service reads the bus, as today, and finds each device by its PCI ident
 Trust follows the source of the module:
 
 - **A device service of the boot image** is trusted by the signed system description, as each module of the boot image is. Its row in the table of identities is a part of the system description.
-- **A device service from the disk** (a module of the store `programs`, written by a third party) needs an explicit grant of a principal for that one device, in the disk grant table of the principal ([programs_from_a_disk.md](programs_from_a_disk.md)). The grant names the hash of the module and the identity and the place of the device. The name of a module gives nothing.
+- **A device service from the disk** (a module of the store `module_files`, written by a third party) needs an explicit grant of a principal for that one device, in the disk grant table of the principal ([programs_from_a_disk.md](programs_from_a_disk.md)). The grant names the hash of the module and the identity and the place of the device. The name of a module gives nothing.
 
 A device for which no row and no grant exist gets no device service. The root service writes one line that names its identity, and the device stays with no context entry in the IOMMU, so each of its accesses is refused.
 
@@ -52,7 +52,7 @@ The kernel already ends the device domain of a stopped device service before its
 
 ## Firmware blobs
 
-Many devices need a firmware blob that the device service sends to the device at its start. A blob is a resource, named by its hash: in the boot image for a device service of the boot image, or in the store `programs` beside its module for a device service from the disk, under the same grant. The device service receives it read-only and sends it to the device. The system never runs it on the processor.
+Many devices need a firmware blob that the device service sends to the device at its start. A blob is a resource, named by its hash: in the boot image for a device service of the boot image, or in the store `module_files` beside its module for a device service from the disk, under the same grant. The device service receives it read-only and sends it to the device. The system never runs it on the processor.
 
 ## A driver domain for the devices that the system will never serve
 

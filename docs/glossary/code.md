@@ -164,7 +164,7 @@ Do not use: search path, library path, module store (for this).
 
 ### Disk program
 
-A disk program is a program whose module file is an object of the store `programs` of the storage service, and not a file of the boot image.
+A disk program is a program whose module file is an object of the store `module_files` of the storage service, and not a file of the boot image.
 
 A disk program adds a program to a machine with no new boot image. The principal names its file by a nickname and by its hash: `start_from_disk("visitor", "5f0c…")`. The root service starts the bytes only when their BLAKE3 hash is that hash: the storage service carries the bytes and does not choose them. Its name gives it no grant: it receives the grants of its nickname in the disk grant table. A disk program is not a package: it has no signer and no version, and nothing is installed.
 
@@ -174,9 +174,9 @@ Do not use: installed program, side-loaded program.
 
 ### Module file service
 
-The module file service is the program `programs`: it stores a module file that a web server gives in the store `programs` of its principal, and lists the files of that store with the hash of their bytes.
+The module file service is the module `module_files`: it stores a module file that a web server gives in the store `module_files` of its principal, and lists the files of that store with the hash of their bytes.
 
-A developer adds a program to a machine that runs, with no disk from the modus tool. In the console, `programs.receive(nickname, path)` gives the hash of the bytes that came, then `start_from_disk(nickname, hash)` starts them. `programs.list()` gives each file with the hash that the service computes again. The service starts no program and proves nothing: the root service checks the bytes against the hash. It is not a package manager: it reads no signature, version or dependency.
+A developer adds a program to a machine that runs, with no disk from the modus tool. In the console, `module_files.receive(nickname, path)` gives the hash of the bytes that came, then `start_from_disk(nickname, hash)` starts them. `module_files.list()` gives each file with the hash that the service computes again. The service starts no program and proves nothing: the root service checks the bytes against the hash. It is not a package manager: it reads no signature, version or dependency.
 
 The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
 
@@ -184,9 +184,9 @@ Do not use: package manager, installer, downloader.
 
 ### Import scan
 
-An import scan is the read of the store `programs` of a principal by the root service, to find each import of a disk program that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
+An import scan is the read of the store `module_files` of a principal by the root service, to find each import of a disk program that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
 
-A developer puts a program and its library modules in the store `programs`, under any nicknames. At the start, the root service reads each entry, keeps the bytes whose hash an import names, and gives them to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
+A developer puts a program and its library modules in the store `module_files`, under any nicknames. At the start, the root service reads each entry, keeps the bytes whose hash an import names, and gives them to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
 
 The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
 

@@ -240,7 +240,7 @@ Do not use: file, user file.
 
 The module store is the set of all modules and system data, each named by the hash of its content.
 
-In the model, the module store is the objects of the tree of the system: the root service loads each module, font and pointer theme by its hash, and an object can come by any channel, because its hash proves it. It is not built: today the boot image is the source of each module, except the module files of the disk programs in the store `programs`. The module store is not a store of the storage service, and not a repository of packages with versions by name.
+In the model, the module store is the objects of the tree of the system: the root service loads each module, font and pointer theme by its hash, and an object can come by any channel, because its hash proves it. It is not built: today the boot image is the source of each module, except the module files of the disk programs in the store `module_files`. The module store is not a store of the storage service, and not a repository of packages with versions by name.
 
 The design: `docs/STORAGE.md`, "5. Not built: the next steps".
 

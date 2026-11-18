@@ -18,7 +18,7 @@
 // import slot, with its cost measured, and that two programs that import
 // one module share one copy of its code.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("imports")` in the console. The window has one row for each case:
 // the load of `agenda` with no replacement (the year 2000 has 365 days),
 // with `calendar_fixed` (366 days), and with `calendar_changed` (refused at

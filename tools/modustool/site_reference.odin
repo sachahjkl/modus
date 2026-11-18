@@ -42,7 +42,7 @@ SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       Module_Build,
-	kind:        string, // "program" for a row marked program, else "module".
+	kind:        string, // "entry" for a row marked entry, else "module".
 	page:        string,
 	description: Module_Description,
 }
@@ -210,7 +210,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	modules := make([dynamic]Site_Module, context.temp_allocator)
 	for build in module_builds {
 		description := describe_package(build.source) or_return
-		kind := build.program ? "program" : "module"
+		kind := build.entry ? "entry" : "module"
 		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
 	}
 	reference.modules = modules[:]

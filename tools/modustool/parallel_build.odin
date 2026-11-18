@@ -13,7 +13,7 @@ import "core:time"
 // process of this tool (the command `module`): the compile step runs one compiler.
 // The compiler uses its own threads too: its output does not depend on
 // their count (docs/REPRODUCIBLE_BUILD.md, section 7). The tool runs at
-// most `module_build_processes` processes at once, keeps the output of
+// most `module_build_host_processes` processes at once, keeps the output of
 // each one, prints it whole in the order of the module table, and
 // assembles the boot image in that order.
 //
@@ -35,10 +35,10 @@ import "core:time"
 
 // The count of module processes at once. 0: the count of processors.
 // `modustool build <processes>` and `repeat all <count> <processes>` set it.
-module_build_processes := 0
+module_build_host_processes := 0
 
 // What one process of a build gave.
-Build_Process_Outcome :: struct {
+Build_Host_Process_Outcome :: struct {
 	started:  bool,
 	success:  bool,
 	output:   []u8, // Its standard output, then its standard error.
@@ -47,25 +47,25 @@ Build_Process_Outcome :: struct {
 
 // The processes of one step of a build, which the worker threads share:
 // the modules of one level, or the boot volumes that must be built.
-Build_Process_Pool :: struct {
+Build_Host_Process_Pool :: struct {
 	commands: [][]string, // One command for each process.
 	next:     int, // The next place in commands to take (atomic).
 	failed:   bool, // A process failed: no new process starts (atomic).
-	outcomes: []Build_Process_Outcome, // By place in commands.
+	outcomes: []Build_Host_Process_Outcome, // By place in commands.
 }
 
-// build_processes_run runs each command in its own process, at most
+// build_host_processes_run runs each command in its own process, at most
 // `processes` at once, and keeps the output of each one. After a failure no
 // new process starts; the processes that run end. The outcomes have the
 // order of the commands; the caller frees the output of each one.
-build_processes_run :: proc(commands: [][]string, processes: int, allocator := context.allocator) -> []Build_Process_Outcome {
-	pool := Build_Process_Pool {
+build_host_processes_run :: proc(commands: [][]string, host_processes: int, allocator := context.allocator) -> []Build_Host_Process_Outcome {
+	pool := Build_Host_Process_Pool {
 		commands = commands,
-		outcomes = make([]Build_Process_Outcome, len(commands), allocator),
+		outcomes = make([]Build_Host_Process_Outcome, len(commands), allocator),
 	}
-	workers := make([]^thread.Thread, max(0, min(processes, len(commands))), context.temp_allocator)
+	workers := make([]^thread.Thread, max(0, min(host_processes, len(commands))), context.temp_allocator)
 	for &worker in workers {
-		worker = thread.create_and_start_with_data(&pool, build_process_worker)
+		worker = thread.create_and_start_with_data(&pool, build_host_process_worker)
 	}
 	thread.join_multiple(..workers)
 	for worker in workers {
@@ -74,10 +74,10 @@ build_processes_run :: proc(commands: [][]string, processes: int, allocator := c
 	return pool.outcomes
 }
 
-// build_process_worker takes the commands of a pool one at a time and runs
+// build_host_process_worker takes the commands of a pool one at a time and runs
 // each one.
-build_process_worker :: proc(data: rawptr) {
-	pool := (^Build_Process_Pool)(data)
+build_host_process_worker :: proc(data: rawptr) {
+	pool := (^Build_Host_Process_Pool)(data)
 	for {
 		place := sync.atomic_add(&pool.next, 1)
 		if place >= len(pool.commands) || sync.atomic_load(&pool.failed) {
@@ -145,12 +145,12 @@ BUILT_MODULE_NAMES_MOST :: 12
 MODULE_STEP_COMPILE :: "compile"
 MODULE_STEP_CONVERT :: "convert"
 
-// module_step_processes_run runs one step (MODULE_STEP_COMPILE or
+// module_step_host_processes_run runs one step (MODULE_STEP_COMPILE or
 // MODULE_STEP_CONVERT) of each module of a list, each in its own process
 // of the tool, and prints the output of each process in the order of the
 // list. finished says, for each place of the list, that its process
 // ended with success.
-module_step_processes_run :: proc(tool_path: string, indexes: []int, step: string, processes: int) -> (finished: []bool, ok: bool) {
+module_step_host_processes_run :: proc(tool_path: string, indexes: []int, step: string, host_processes: int) -> (finished: []bool, ok: bool) {
 	// Each setting of the build that this process holds goes to the
 	// module process as an argument: a setting that stays here gives a
 	// module of another build, with no error.
@@ -165,7 +165,7 @@ module_step_processes_run :: proc(tool_path: string, indexes: []int, step: strin
 		command[5] = step
 		commands[place] = command
 	}
-	outcomes := build_processes_run(commands, processes, context.temp_allocator)
+	outcomes := build_host_processes_run(commands, host_processes, context.temp_allocator)
 	finished = make([]bool, len(indexes), context.temp_allocator)
 	ok = true
 	for index, place in indexes {
@@ -220,9 +220,9 @@ build_modules_in_parallel :: proc() -> bool {
 	converted_count := 0
 	built_count := 0
 	step_names := strings.builder_make(context.temp_allocator)
-	processes := module_build_processes
-	if processes <= 0 {
-		processes = os.get_processor_core_count()
+	host_processes := module_build_host_processes
+	if host_processes <= 0 {
+		host_processes = os.get_processor_core_count()
 	}
 	// The file of this process, not its first argument: the compiler that
 	// runs the tool gives only the name of the file there, and that name
@@ -271,13 +271,13 @@ build_modules_in_parallel :: proc() -> bool {
 		}
 		build_measure.record_checks += time.tick_since(checks_started)
 		step_started := time.tick_now()
-		_, compiled := module_step_processes_run(tool_path, compile_indexes[:], MODULE_STEP_COMPILE, processes)
+		_, compiled := module_step_host_processes_run(tool_path, compile_indexes[:], MODULE_STEP_COMPILE, host_processes)
 		build_measure.module_compile_steps += time.tick_since(step_started)
 		finished: []bool
 		converted := false
 		if compiled {
 			step_started = time.tick_now()
-			finished, converted = module_step_processes_run(tool_path, convert_indexes[:], MODULE_STEP_CONVERT, processes)
+			finished, converted = module_step_host_processes_run(tool_path, convert_indexes[:], MODULE_STEP_CONVERT, host_processes)
 			build_measure.module_conversions += time.tick_since(step_started)
 		}
 		// The build record of each module whose conversion ended: the key
@@ -354,14 +354,14 @@ run_module :: proc(args: []string) -> int {
 	return EXIT_USAGE
 }
 
-// parse_module_build_processes reads the count of processes of the
+// parse_module_build_host_processes reads the count of processes of the
 // parallel build from an argument of a command.
-parse_module_build_processes :: proc(text: string) -> bool {
+parse_module_build_host_processes :: proc(text: string) -> bool {
 	count, parsed := strconv.parse_int(text)
 	if !parsed || count < 1 {
 		fmt.eprintfln("modustool: %s is not a count of processes (1 or more)", text)
 		return false
 	}
-	module_build_processes = count
+	module_build_host_processes = count
 	return true
 }

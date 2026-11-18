@@ -88,7 +88,7 @@ flowchart TB
 
 Solid arrows carry data. They do not enter the kernel (P5, P6).
 Dotted arrows are kernel operations. They set up mappings, transfer handles, and wait.
-The picture shows the systems that run. The document service ("U6. Document service") and a desktop shell apart from the compositor ("U10. Desktop shell") have a design and no code. The module store is the store `programs` of the storage service ("U3. Module store and loader").
+The picture shows the systems that run. The document service ("U6. Document service") and a desktop shell apart from the compositor ("U10. Desktop shell") have a design and no code. The module store is the store `module_files` of the storage service ("U3. Module store and loader").
 
 The same picture in text:
 
@@ -245,7 +245,7 @@ The first program. The kernel gives it every handle that exists at boot.
 
 A resource is a file of the boot image that is not a module: data that a program reads in place, such as a pointer theme file (`docs/POINTERS.md`). This section is the one description of the mechanism; each kind of resource has its own format and its own document.
 
-Today the boot image is the one source of every resource and of every module that runs before the storage service; after it, a program can also start from a module file of the store `programs` ("U3. Module store and loader"). That is a state of the construction, not the model. In the model the boot image is a transport: it carries only the objects that the machine needs before the storage service runs, and the rest are objects of the tree of the system, named by their hash (`STORAGE.md`, "1. The model" and "5. Not built: the next steps").
+Today the boot image is the one source of every resource and of every module that runs before the storage service; after it, a program can also start from a module file of the store `module_files` ("U3. Module store and loader"). That is a state of the construction, not the model. In the model the boot image is a transport: it carries only the objects that the machine needs before the storage service runs, and the rest are objects of the tree of the system, named by their hash (`STORAGE.md`, "1. The model" and "5. Not built: the next steps").
 
 - **In the image** (`src/library/contract/boot_info`): after the table of the modules (`Image_Header.count` entries), a second table of `Image_Header.resource_count` entries of the same record, `Image_Entry`: a name of 31 bytes at most, the BLAKE3 hash of the bytes, the offset and the size. Each file starts on a page. A reader of modules reads the first table only, so a resource is never taken for a module; an image with `resource_count` 0 has no resource.
 - **Identity** (P11): the hash of the bytes, as for a module. The name is for people and for the code that chooses.
@@ -257,7 +257,7 @@ Today the boot image is the one source of every resource and of every module tha
 
 A module is the unit of code of the system; a program starts from one module and the modules that it imports. This system finds a module by its hash and makes a program of it.
 
-- **Store**: keeps modules by content hash, and answers "give me the module with this hash". It has no separate index: functions read the flat tables of the modules (P11, P12). A module comes from one of two sources. The boot image: the boot program brings it, the root service checks each file of it against the system description, and a program with the grant `Image` (the console) finds a module in it by name. The store `programs` of the storage service: the root service starts a program from a module file of that store, named by its hash, and finds each library module that it imports there by the hash of its bytes (`src/md/features/programs_from_a_disk.md`).
+- **Store**: keeps modules by content hash, and answers "give me the module with this hash". It has no separate index: functions read the flat tables of the modules (P11, P12). A module comes from one of two sources. The boot image: the boot program brings it, the root service checks each file of it against the system description, and a program with the grant `Image` (the console) finds a module in it by name. The store `module_files` of the storage service: the root service starts a program from a module file of that store, named by its hash, and finds each library module that it imports there by the hash of its bytes (`src/md/features/programs_from_a_disk.md`).
 - **Loader** (built: `src/library/support/system`, `load.odin`): builds a new program. It asks the kernel for a new program (`Program_Create`), maps the segments of the module and of the modules that it imports (`Memory_Map`), records each module for the reports (`Program_Module`), and starts it (`Program_Start`).
 - The loader is in user space. The kernel only maps memory.
 
@@ -381,7 +381,7 @@ A set of modules that most programs use. It is not a C library and no program is
 
 The program that the principal sees: starts programs, shows windows, shows grants. It is a normal program with handles from the root service.
 
-- **Today**: the compositor is the desktop shell too: its bar has the menu of the programs, the menu of the windows, the palette, the clock and the date (`DESIGN.md`). The grants are shown by the console (`grants`), not by the shell.
+- **Today**: the compositor is the desktop shell too: its bar has the start menu, the menu of the windows, the palette, the clock and the date (`DESIGN.md`). The grants are shown by the console (`grants`), not by the shell.
 
 ![The desktop: the bar of the compositor, its menus, and four windows](screenshots/desktop.png)
 

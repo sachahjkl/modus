@@ -654,13 +654,13 @@ file_with_a_hole_at_its_end_reads_as_its_whole_bytes :: proc(t: ^testing.T) {
 // The count of volume processes at once: the count that the command gives,
 // or the processors up to the bound, and never more than the volumes.
 @(test)
-boot_volume_processes_follow_the_processors_up_to_the_bound :: proc(t: ^testing.T) {
-	testing.expect_value(t, boot_volume_processes(18, 0, 4), 4)
-	testing.expect_value(t, boot_volume_processes(18, 0, 16), MOST_BOOT_VOLUME_PROCESSES)
-	testing.expect_value(t, boot_volume_processes(2, 0, 16), 2)
-	testing.expect_value(t, boot_volume_processes(18, 3, 16), 3)
-	testing.expect_value(t, boot_volume_processes(18, 12, 16), 12)
-	testing.expect_value(t, boot_volume_processes(1, 0, 0), 1)
+boot_volume_host_processes_follow_the_processors_up_to_the_bound :: proc(t: ^testing.T) {
+	testing.expect_value(t, boot_volume_host_processes(18, 0, 4), 4)
+	testing.expect_value(t, boot_volume_host_processes(18, 0, 16), MOST_BOOT_VOLUME_HOST_PROCESSES)
+	testing.expect_value(t, boot_volume_host_processes(2, 0, 16), 2)
+	testing.expect_value(t, boot_volume_host_processes(18, 3, 16), 3)
+	testing.expect_value(t, boot_volume_host_processes(18, 12, 16), 12)
+	testing.expect_value(t, boot_volume_host_processes(1, 0, 0), 1)
 }
 
 // A machine starts only from a volume that the build of the process built
@@ -681,17 +681,17 @@ only_a_volume_of_this_build_is_ready :: proc(t: ^testing.T) {
 // The pool gives one outcome for each command, in the order of the
 // commands; a command that cannot start is a failure.
 @(test)
-build_processes_keep_the_outcome_of_each_command :: proc(t: ^testing.T) {
+build_host_processes_keep_the_outcome_of_each_command :: proc(t: ^testing.T) {
 	commands := make([][]string, 1, context.temp_allocator)
 	command := make([]string, 1, context.temp_allocator)
 	command[0] = "/a program that is not there"
 	commands[0] = command
-	outcomes := build_processes_run(commands, 4, context.temp_allocator)
+	outcomes := build_host_processes_run(commands, 4, context.temp_allocator)
 	testing.expect_value(t, len(outcomes), 1)
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
 	testing.expect(t, outcomes[0].duration >= time.Duration(0), "the time of a process is a measure")
 	// The output is memory of the worker thread, outside the memory that
 	// the test runner follows: the test does not free it.
-	none := build_processes_run(nil, 4, context.temp_allocator)
+	none := build_host_processes_run(nil, 4, context.temp_allocator)
 	testing.expect_value(t, len(none), 0)
 }

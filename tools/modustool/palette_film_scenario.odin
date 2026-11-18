@@ -66,7 +66,7 @@ scenario_palette_film := [?]Step {
 	// Scene 3: letters of a program. The list narrows at each key, and
 	// Enter starts the program.
 	{kind = .Film_Type, text = "pla"},
-	{kind = .Wait, text = " for \"pla\": plasma (program)"},
+	{kind = .Wait, text = " for \"pla\": plasma (module)"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts plasma"},

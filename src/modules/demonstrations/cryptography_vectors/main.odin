@@ -14,7 +14,7 @@
 // through the same exports that the QUIC of the remote service calls, and
 // names it by its hash, so the check is of that exact code.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("cryptography_vectors")` in the console. The window has one row
 // for each primitive and its standard, passed or failed, then the speeds.
 // The log gets one line for each primitive (`cryptography_vectors: <name>

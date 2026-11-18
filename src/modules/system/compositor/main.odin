@@ -1,7 +1,7 @@
 // The compositor (docs/ARCHITECTURE.md, "U8. Graphics: the draw table and the compositor"): the service that owns the
 // display. It combines the surfaces of programs into the framebuffer, and it
 // sends input to the program that has focus. It is also the desktop shell of
-// this first version: a bar with the menu of the programs and the menu of
+// this first version: a bar with the start menu and the menu of
 // the windows, and windows that the input moves. It follows the design
 // rules (docs/DESIGN.md): rectangles only, the grid of 8 pixels, the colors
 // of src/library/support/graphics.
@@ -17,13 +17,13 @@
 //
 // **What a reader sees.** The whole screen: the background with its grid
 // of points, the [bar](term:bar) at the top (the
-// [menu of the programs](term:menu-of-the-programs), the
+// [start menu](term:start-menu), the
 // [menu of the windows](term:menu-of-the-windows), the hint of the
 // [palette](term:palette), the date and the time), the windows with their
 // [title bar](term:title-bar) and their close button, and the
 // [pointer](term:pointer). The input can:
 //
-// - press a line of the menu of the programs: the compositor asks the root
+// - press a line of the start menu: the compositor asks the root
 //   service to start that program;
 // - press the key super: the palette opens; typed letters narrow one list
 //   of the programs and of the windows, and Enter starts the chosen
@@ -256,7 +256,7 @@ dragging := -1
 // A menu of the bar.
 Menu :: enum {
 	None,
-	Programs, // The menu of the programs: a press on a line starts the program.
+	Start, // The start menu: a press on a line starts the module.
 	Windows, // One line for each window, in the order of the client table: a press brings the window to the front.
 }
 
@@ -370,7 +370,7 @@ bar_layout_known: bool
 bar_in_interface_font: bool
 
 // bar_measure writes once in the log the time of one whole frame of the
-// bar with the menu of the programs open, built and drawn, in the font of
+// bar with the start menu open, built and drawn, in the font of
 // the cells and in the interface font: the least of 20 rounds, so that a
 // round that the host stops in its middle does not count. It runs before
 // the first frame, which draws the whole screen after it.
@@ -378,7 +378,7 @@ bar_measure :: proc "contextless" () {
 	ROUNDS :: 20
 	font := display.interface_font_of()
 	saved_layout, saved_menu := bar_layout, menu_open
-	menu_open = .Programs
+	menu_open = .Start
 	fonts := [2]^display.Interface_Font{nil, font}
 	least := [2]u64{max(u64), max(u64)}
 	measured := 0
@@ -399,10 +399,10 @@ bar_measure :: proc "contextless" () {
 	}
 	bar_layout, menu_open = saved_layout, saved_menu
 	if measured < 2 {
-		system.log("compositor: the bar and the menu of the programs, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
+		system.log("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
 		return
 	}
-	system.log("compositor: the bar and the menu of the programs, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
+	system.log("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
 }
 
 // bar_layout_update measures the bar in the font that draws it now, and
@@ -423,7 +423,7 @@ bar_layout_update :: proc "contextless" () {
 	damage_add(0, 0, screen.width, BAR_HEIGHT)
 	damage_menu_of(bar_layout)
 	if in_interface_font {
-		system.log("compositor: the bar is in the interface font: programs ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
+		system.log("compositor: the bar is in the interface font: start ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
 	} else {
 		system.log("compositor: the bar is in the font of the cells")
 	}
@@ -1116,12 +1116,12 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		resize_pointer_moved(buttons & display.BUTTON_LEFT != 0) // window_resize.odin
 		return
 	}
-	// The menu of the programs: its button opens it. A press on a line
+	// The start menu: its button opens it. A press on a line
 	// starts the program. Any press closes the menu.
 	// The menu of the windows: its button opens it, and a press on a line
 	// brings the window to the front.
 	if menu_open != .None {
-		over := menu_open == .Programs ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
+		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
 		if over != menu_line {
 			menu_line = over
 			damage_menu()
@@ -1130,7 +1130,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	if pressed {
 		was_open := menu_open
 		if menu_open != .None {
-			if menu_open == .Programs && menu_line >= 0 {
+			if menu_open == .Start && menu_line >= 0 {
 				packed := system.name_pack(bar.names[menu_line])
 				system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 			}
@@ -1148,9 +1148,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			damage_menu()
 		}
 		under := bar.button_at(bar_layout, pointer_x, pointer_y)
-		if under == .Programs && was_open != .Programs {
-			menu_open = .Programs
-			system.log_in("surfaces", .Info, "compositor: the menu of the programs is open")
+		if under == .Start && was_open != .Start {
+			menu_open = .Start
+			system.log_in("surfaces", .Info, "compositor: the start menu is open")
 			damage_menu()
 		}
 		if under == .Windows && was_open != .Windows {
@@ -1711,7 +1711,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 	}
 	left, top, button_width, button_height := bar.button(bar_layout)
-	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Programs)
+	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Start)
 	left, top, button_width, button_height = bar.windows_button(bar_layout)
 	bar_button_records(table, left, top, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
 	// The hint of the palette: a name, in the interface font, measured in
@@ -1777,7 +1777,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			}
 		}
 	}
-	if menu_open == .Programs {
+	if menu_open == .Start {
 		menu_left, menu_top, menu_width, menu_height := bar.menu(bar_layout)
 		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROGRAMS", "bar.names", graphics.colors.kernel, interface.number_text(&count, len(bar.names)))
 		for name, index in bar.names {

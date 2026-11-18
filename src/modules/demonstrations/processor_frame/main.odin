@@ -304,8 +304,8 @@ screen_build :: proc "contextless" () {
 	first := table.record_count
 	interface.draw_vertical_gradient(table, 0, 0, SCREEN_WIDTH, BAR_HEIGHT - 1, graphics.colors.card_top, graphics.colors.card_bottom)
 	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, SCREEN_WIDTH, 1, graphics.colors.track)
-	after_programs := bar_button_records(table, 48, "programs")
-	bar_button_records(table, after_programs + 8, "windows")
+	after_start := bar_button_records(table, 48, "start")
+	bar_button_records(table, after_start + 8, "windows")
 	interface.draw_text(table, SCREEN_WIDTH - CLOCK_WIDTH - 16, 8, BAR_CLOCK_TEXT, graphics.colors.text)
 	screen_parts[screen_part_count] = {first = first, count = table.record_count - first}
 	screen_part_count += 1

@@ -19,7 +19,7 @@
 // [table parameter](term:table-parameter) passes the tables of the caller
 // with no copy. The measures give the cost of a call through an import.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("interface_through_module")` in the console. The window is drawn
 // through the module. The log gets the times of the two builds, the time
 // of the damage and the drawing through the module and the size of its

@@ -35,7 +35,7 @@ Stop_Frame_Row :: struct {
 // on a fault, 8 of them and 4 for one principal, until a run of the
 // nickname ends with no fault: a program that stopped can be attached
 // to by no debugger. This export asks the root service for the report, and
-// reads the debug object of the module from the store `programs`, as
+// reads the debug object of the module from the store `module_files`, as
 // `attach` does. The report holds only the frames that a module record
 // holds, as `Inspect` gives them: the root service hid each other value,
 // which can be a word of the memory of the program.

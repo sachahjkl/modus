@@ -1,7 +1,7 @@
 package root
 
 // A disk program: a program whose module file is an object of the store
-// `programs` of the storage service, and not a file of the boot image
+// `module_files` of the storage service, and not a file of the boot image
 // (docs/MODULE_CONTRACT.md, "A program from a disk").
 //
 // The command Start_From_Disk names the program and the hash of its file.
@@ -220,7 +220,7 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		values^ = disk_refused(name, errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1), "another load from the disk runs")
 		return .Bad_State, false
 	}
-	// The connection: the store `programs` of the principal of the asker.
+	// The connection: the store `module_files` of the principal of the asker.
 	disk_reader = {}
 	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_program.STORE_NAME)
 	disk_reader.principal = asker.principal

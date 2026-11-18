@@ -343,7 +343,7 @@ Debugging from another machine needs no mechanism of its own.
 - **What the host can do.** For a program with no grant, a client whose key a principal allowed reads each byte of its memory and each register, writes its registers, and so chooses what the program runs. With the handles of that program it draws in its window and reads the keys and the pointer events that the compositor sends to it. The clients of one principal are the one caller `remote`: they share one debugging, and one can steer or detach the debugging of another (`QUIC.md`, section 7, "Who may call").
 - **The time of a call.** `remote` ends a call that takes more than 5000 ms, and with it its connection to the service: the root service then ends the debugging. Each export of the service has a bound under that time ("The bounds of the exports"). `wait_stop` waits 3000 ms at most: a caller on another machine calls it again, or reads `events()` after the line of the stop in the log.
 - **The source line.** `modustool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: src/modules/tests/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
-- **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. The module of a disk program is not in the debug image: at `attach`, the service reads its debug object from the store `programs`, beside its module file, through a connection that reads only and that the root service gives with the debug access (`MODULE_CONTRACT.md`, "The debug object of a disk program"). A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
+- **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. The module of a disk program is not in the debug image: at `attach`, the service reads its debug object from the store `module_files`, beside its module file, through a connection that reads only and that the root service gives with the debug access (`MODULE_CONTRACT.md`, "The debug object of a disk program"). A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
 
 ### The test
 
@@ -351,7 +351,7 @@ Debugging from another machine needs no mechanism of its own.
 
 ### The window of the debugger
 
-The program `debugger_window` shows the rows of the service in one window, with a key or a click for each act: a developer needs the console for no act of the debugger. Start it from the menu of the programs, or with `start("debugger_window")`.
+The program `debugger_window` shows the rows of the service in one window, with a key or a click for each act: a developer needs the console for no act of the debugger. Start it from the start menu, or with `start("debugger_window")`.
 
 ![The window of the debugger, attached to a program, with the frame of the caller of a held thread](screenshots/debugger_window.png)
 
@@ -883,10 +883,10 @@ The sizes, the hashes and the exports of this example are not those of a real mo
 
 The check does not compare the bytes of the two module files. The compiler orders the procedures of a module by the path of its packages, and the package of the copy has another path. The passed line of each example prints the start of the two hashes and says whether the bytes are the same: it is a fact of the run, not a condition.
 
-**An outside module in a machine.** A machine starts an outside module from a disk, as it starts any disk program ("The disk of the disk programs"): the boot image does not change. The command `program-disk` writes a data disk whose store `programs` holds each module file, under the name of its file, and its debug object `<name>.debug` from the same folder, under the hash of the module. It refuses a debug object that names another module. It prints the line of the console that starts each one:
+**An outside module in a machine.** A machine starts an outside module from a disk, as it starts any disk program ("The disk of the disk programs"): the boot image does not change. The command `module-disk` writes a data disk whose store `module_files` holds each module file, under the name of its file, and its debug object `<name>.debug` from the same folder, under the hash of the module. It refuses a debug object that names another module. It prints the line of the console that starts each one:
 
 ```
-modustool program-disk build/data_disk.img ~/my_program/build/my_program.module
+modustool module-disk build/data_disk.img ~/my_program/build/my_program.module
 modustool run
 ```
 
@@ -925,7 +925,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
 | `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
-| `program-disk <disk file> <module file> ...` | Writes a data disk whose store `programs` holds each module file under the name of its file, and prints the line of the console that starts each one ("A module from a source outside the repository") |
+| `module-disk <disk file> <module file> ...` | Writes a data disk whose store `module_files` holds each module file under the name of its file, and prints the line of the console that starts each one ("A module from a source outside the repository") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `modustool call`, draws the key of its client for this run, and prints it with the line to type in a console of the machine: `remote_allow("<key>")` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result. The call acts for the principal that allowed the key of the client of the peer; with no such principal it fails: "remote refused the key of this client in the handshake (access_denied)" |
@@ -1047,7 +1047,7 @@ The table is in the tool (`test_parts`, `tools/modustool/test_parts.odin`), and 
 | `quic` | The machine of QUIC through the network service | `main` |
 | `network` | The machine of the network service | `main` |
 | `principals` | The two machines of the principals, then the ten machines of the keys sealed by the TPM, with a software TPM whose state they share: nine with Secure Boot on, on the volumes `secure_boot` and `other_system`, and one with Secure Boot off, where the seal is refused (`PRINCIPALS.md`, "8. The tests") | `main`, `secure_boot`, `other_system` |
-| `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock ("The disk of the disk programs") | `main` |
+| `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `module_files`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock ("The disk of the disk programs") | `main` |
 | `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign | `main`, `changed_module`, `wrong_signature`, `other_system`, `changed_kernel`, `without_description`, `stated_hash`, `secure_boot`, `secure_boot_changed`, `newer_system`, `newer_key` |
 | `hierarchy` | The machines of the hierarchy of storage | `main` |
 | `power` | The loss of power: of the storage, of the settings, of the ranges, and the write that the disk drops | `main` |
@@ -1143,13 +1143,13 @@ The corpus of the kernel operations is in `tools/modustool/fuzzing_corpus/operat
 
 ### The disk of the disk programs
 
-The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with the store `programs`, whose root tree holds the module files and, for the test, a disk grant table, and the store `programs.principal.1` of the named principal 1, with a module file and a disk grant table. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
+The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_modules_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with the store `module_files`, whose root tree holds the module files and, for the test, a disk grant table, and the store `module_files.principal.1` of the named principal 1, with a module file and a disk grant table. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
 
 The tool prints one line for each file, with the hash that the command `start_from_disk` names:
 
 ```
-modustool: build/test_disk_programs_disk.img: the store programs holds visitor, <count> bytes, hash <64 hexadecimal digits>
-modustool: build/test_disk_programs_disk.img: the store programs holds the debug object of the module <64 hexadecimal digits>, <count> bytes
+modustool: build/test_disk_modules_disk.img: the store module_files holds visitor, <count> bytes, hash <64 hexadecimal digits>
+modustool: build/test_disk_modules_disk.img: the store module_files holds the debug object of the module <64 hexadecimal digits>, <count> bytes
 ```
 
 The module of the test is `visitor`: a row of the module table of the tool with no `image`, so the build makes its file and no boot image holds it. The disk of the test has these entries:
@@ -1160,7 +1160,7 @@ The module of the test is `visitor`: a row of the module table of the tool with 
 | `changed` | The module file with one byte changed | The line names the hash of the module file: the root service refuses the bytes, and the log holds their hash |
 | `notes` | The module file | The grant table of the root service gives the name `notes` a store: the root service refuses the name before any read |
 | `outsider` | The module file of `visitor` built outside the sources by `module-build` ("An outside module in a machine") | The root service starts it with no grant; the debugger attaches to it and names a frame of its held thread by its procedure, its file and its line |
-| the hash of `outsider` | The debug object of `outsider`, under the 64 hexadecimal digits of the hash of the module | The debugger service reads it through the connection that reads only of the debug access, and checks that it names that module (`MODULE_CONTRACT.md`, "The debug object of a disk program"); `programs.list()` does not list it, and the import scan does not read it: its name of 64 bytes is no name of a disk program |
+| the hash of `outsider` | The debug object of `outsider`, under the 64 hexadecimal digits of the hash of the module | The debugger service reads it through the connection that reads only of the debug access, and checks that it names that module (`MODULE_CONTRACT.md`, "The debug object of a disk program"); `module_files.list()` does not list it, and the import scan does not read it: its name of 64 bytes is no name of a disk program |
 | `grant_table` | A disk grant table that gives `visitor` the grant store, with a tag under a key of zero bytes | What a reader of the disk with no passphrase can write: the root service refuses it when the machine passphrase is set, and writes over it; restored later, it is refused under the opened key and kept |
 | `store_library` | The library module `store_library`, a row of the module table that no boot image holds | The import scan finds it by the hash of its bytes, for `store_importer` |
 | `store_importer` | The program `store_importer`, which imports `store_library` | The root service starts it with the library of the store; the program calls `triple(14)` and writes 42 |
@@ -1177,15 +1177,15 @@ Then the scenario checks the disk grant table of principal 0 (`MODULE_CONTRACT.m
 
 The first machine has QEMU user networking, and the listener of the tool serves the module file at `/visitor` (`NETWORK.md`, "The tests"). The console connects to the module file service (`MODULE_CONTRACT.md`, "A program from a disk"):
 
-1. `programs.receive("received", "/visitor")` fetches the file through the network of the machine, stores it under the nickname `received`, and writes its size and the hash of its bytes: the hash that the tool computed.
-2. `programs.receive("grant_table", "/visitor")` is refused: the service writes no file over the disk grant table.
-3. `programs.list()` writes one line for each module file, with the hash of its bytes: the hash of `changed` is its own, and `received` and `visitor` have the same hash; then "listed 8 module files".
+1. `module_files.receive("received", "/visitor")` fetches the file through the network of the machine, stores it under the nickname `received`, and writes its size and the hash of its bytes: the hash that the tool computed.
+2. `module_files.receive("grant_table", "/visitor")` is refused: the service writes no file over the disk grant table.
+3. `module_files.list()` writes one line for each module file, with the hash of its bytes: the hash of `changed` is its own, and `received` and `visitor` have the same hash; then "listed 8 module files".
 4. `start_from_disk("received", <the hash>)` starts the file with no grant.
 
 Then the import scan (`MODULE_CONTRACT.md`, "A program from a disk"):
 
-1. `start_from_disk("store_importer", <its hash>)`: the root service says that the program imports 1 module that the boot image does not hold, then that the import is the file `store_library` of the store, checked on its bytes. The program writes "triple(14) of the module store_library of the store programs gives 42".
-2. `programs.receive("store_library", "/store_library_changed")` writes the library with one byte changed over its entry: the listener of the tool serves those bytes.
+1. `start_from_disk("store_importer", <its hash>)`: the root service says that the program imports 1 module that the boot image does not hold, then that the import is the file `store_library` of the store, checked on its bytes. The program writes "triple(14) of the module store_library of the store module_files gives 42".
+2. `module_files.receive("store_library", "/store_library_changed")` writes the library with one byte changed over its entry: the listener of the tool serves those bytes.
 3. The same start is refused with one line: the program imports the hash of the library, and no file of the boot image or of the store has bytes with this hash; the scan read 7 files, each entry but the program and the disk grant table.
 
 A second machine starts on the same disk. The table of principal 0 did not last: `start_from_disk("visitor", "")` is refused. After a start by the hash and a new `allow`, the program finds the visit 3 in the store of its nickname. Then `machine_passphrase()` opens the window of `unlock`, and the scenario types the passphrase two times there. The root service reads `grant_table`, refuses it with its line ("its tag does not verify under the key of the principal"), and writes its own table of 1 row (`PRINCIPALS.md`, "Principal 0 and its machine passphrase").
@@ -1194,7 +1194,7 @@ A third machine starts on the same disk, and the window of `unlock` asks for the
 
 A fourth machine starts on the same disk. The machine passphrase opens the record, and the table on the disk does not verify under its key: the root service refuses it and keeps it, with no write. `start_from_disk("visitor", "")`, `allow` and `machine_passphrase()` are refused.
 
-The disk has a second store, `programs.principal.1`: the store of the module files of the named principal 1, written before that principal exists. It holds `visitor` and the same forged `grant_table` (`PRINCIPALS.md`, "The disk grant table of a named principal").
+The disk has a second store, `module_files.principal.1`: the store of the module files of the named principal 1, written before that principal exists. It holds `visitor` and the same forged `grant_table` (`PRINCIPALS.md`, "The disk grant table of a named principal").
 
 A fifth machine starts on the same disk. The scenario skips the machine passphrase with Enter, and `principal_create("alice")` opens the window of `unlock`, where the scenario types her passphrase two times. The root service reads the table of principal 1, refuses it, as the principal is new, and writes a table of 0 rows. A console started from the menu of the desktop runs in the session of alice. In it, `start_from_disk("visitor", <the hash>)` reads the store of alice, and `allow("visitor", "store")` writes a table of 1 row. `remote_allow("{client key}")` allows the key of the client of the peer for alice, and writes the table again with 1 client key of `remote`. The next `start_from_disk("visitor", "")` has the store `disk-visitor.principal.1`, and the visit 1 there.
 

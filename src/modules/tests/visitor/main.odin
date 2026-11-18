@@ -9,7 +9,7 @@
 // uses the store of its nickname when it has one.
 //
 // **Start**: `start_from_disk("visitor", hash)` in the console, on a
-// machine whose data disk holds the store `programs` with its file. The
+// machine whose data disk holds the store `module_files` with its file. The
 // modus tool writes that disk for the test part `disk_programs`, and
 // prints the hash. `start("visitor")` is refused: the boot image has no
 // such module.

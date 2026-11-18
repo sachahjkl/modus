@@ -14,7 +14,7 @@ import "core:testing"
 @(test)
 host_test_pool_stops_after_a_failure :: proc(t: ^testing.T) {
 	missing := []string{"/a program that is not there"}
-	outcomes := build_processes_run([][]string{missing, []string{"true"}, []string{"true"}}, 1, context.temp_allocator)
+	outcomes := build_host_processes_run([][]string{missing, []string{"true"}, []string{"true"}}, 1, context.temp_allocator)
 	testing.expect_value(t, len(outcomes), 3)
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
 	testing.expect(t, len(outcomes[0].output) > 0, "a command that cannot start says why")
@@ -22,7 +22,7 @@ host_test_pool_stops_after_a_failure :: proc(t: ^testing.T) {
 	// A program that runs and ends with a status that is not 0: its
 	// output is kept, and the next command does not start.
 	absent := "/a folder that is not there/of a host test"
-	outcomes = build_processes_run([][]string{[]string{"ls", absent}, []string{"true"}}, 1, context.temp_allocator)
+	outcomes = build_host_processes_run([][]string{[]string{"ls", absent}, []string{"true"}}, 1, context.temp_allocator)
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a status that is not 0 is a failure")
 	testing.expect(t, strings.contains(string(outcomes[0].output), absent), "the output of a failure is kept: it names the folder")
 	testing.expect(t, !outcomes[1].started, "no process starts after a failure")
@@ -32,11 +32,11 @@ host_test_pool_stops_after_a_failure :: proc(t: ^testing.T) {
 // command as not started, never as passed. host_tests_run asks for one
 // at the least.
 @(test)
-host_test_pool_with_no_process_starts_none :: proc(t: ^testing.T) {
-	for processes in ([]int{0, -1}) {
-		outcomes := build_processes_run([][]string{[]string{"true"}}, processes, context.temp_allocator)
+host_test_pool_with_no_host_process_starts_none :: proc(t: ^testing.T) {
+	for host_processes in ([]int{0, -1}) {
+		outcomes := build_host_processes_run([][]string{[]string{"true"}}, host_processes, context.temp_allocator)
 		testing.expect_value(t, len(outcomes), 1)
-		testing.expectf(t, !outcomes[0].started && !outcomes[0].success, "%d processes at once start no command", processes)
+		testing.expectf(t, !outcomes[0].started && !outcomes[0].success, "%d processes at once start no command", host_processes)
 	}
 }
 
@@ -44,7 +44,7 @@ host_test_pool_with_no_process_starts_none :: proc(t: ^testing.T) {
 // ends, and each keeps its own output. The successful case is the last.
 @(test)
 host_test_pool_keeps_the_order_of_the_commands :: proc(t: ^testing.T) {
-	outcomes := build_processes_run([][]string{[]string{"echo", "first"}, []string{"echo", "second"}, []string{"echo", "third"}}, 3, context.temp_allocator)
+	outcomes := build_host_processes_run([][]string{[]string{"echo", "first"}, []string{"echo", "second"}, []string{"echo", "third"}}, 3, context.temp_allocator)
 	testing.expect_value(t, len(outcomes), 3)
 	for text, place in ([]string{"first\n", "second\n", "third\n"}) {
 		testing.expectf(t, outcomes[place].started && outcomes[place].success, "the command %d passed", place)

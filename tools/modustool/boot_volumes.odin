@@ -666,17 +666,17 @@ boot_volume_is_ready_with_the_lock :: proc(path: string) -> bool {
 // thread (the one LLVM module that holds the image), so one process for
 // each processor is the right count on a small host; the bound keeps the
 // memory of all the processes under a few gigabytes on a large one.
-MOST_BOOT_VOLUME_PROCESSES :: 8
+MOST_BOOT_VOLUME_HOST_PROCESSES :: 8
 
-// boot_volume_processes gives the count of volume processes at once: the
+// boot_volume_host_processes gives the count of volume processes at once: the
 // count of `build <processes>`, or the count of the processors, at most
-// MOST_BOOT_VOLUME_PROCESSES.
-boot_volume_processes :: proc(volume_count: int, asked: int, processors: int) -> int {
-	processes := asked
-	if processes <= 0 {
-		processes = min(processors, MOST_BOOT_VOLUME_PROCESSES)
+// MOST_BOOT_VOLUME_HOST_PROCESSES.
+boot_volume_host_processes :: proc(volume_count: int, asked: int, processors: int) -> int {
+	host_processes := asked
+	if host_processes <= 0 {
+		host_processes = min(processors, MOST_BOOT_VOLUME_HOST_PROCESSES)
 	}
-	return max(1, min(processes, volume_count))
+	return max(1, min(host_processes, volume_count))
 }
 
 // The names of the built volumes that the line of the kept volumes prints.
@@ -759,9 +759,9 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 		command[2] = boot_volume_name(volume.path)
 		commands[place] = command
 	}
-	processes := boot_volume_processes(len(to_build), module_build_processes, os.get_processor_core_count())
-	build_measure.volume_processes = processes
-	outcomes := build_processes_run(commands, processes, context.temp_allocator)
+	host_processes := boot_volume_host_processes(len(to_build), module_build_host_processes, os.get_processor_core_count())
+	build_measure.volume_host_processes = host_processes
+	outcomes := build_host_processes_run(commands, host_processes, context.temp_allocator)
 	defer {
 		for outcome in outcomes {
 			delete(outcome.output)

@@ -35,7 +35,7 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 // the address, and the frames of its stack), and keeps it while a handle
 // names the program, so that a developer tool reads it later.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("fault")` in the console. It has no window and no grant. The log
 // gets `fault: this program writes to address 0`, then the line of the
 // kernel that reports the page fault (vector 14) and stops the program.

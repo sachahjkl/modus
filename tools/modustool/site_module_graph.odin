@@ -41,32 +41,32 @@ SITE_GRAPH_BAND_COLUMNS :: 2 // The columns of the modules with no edge, on the 
 // and is imported by none: it is not a node.
 Site_Graph_Kind :: enum {
 	Kernel, // Runs in kernel mode.
-	Program, // A module with an entry: a program starts from it.
+	Entry, // A module with an entry: it can start.
 	No_Entry, // A module with no entry: another module imports it, or a program loads it.
 }
 
 site_graph_kind_names := [Site_Graph_Kind]string {
 	.Kernel   = "kernel",
-	.Program  = "program",
+	.Entry    = "module with an entry",
 	.No_Entry = "module with no entry",
 }
 
 site_graph_kind_classes := [Site_Graph_Kind]string {
 	.Kernel   = "graph-kernel",
-	.Program  = "graph-program",
+	.Entry    = "graph-entry",
 	.No_Entry = "graph-no-entry",
 }
 
 site_graph_kind_meanings := [Site_Graph_Kind]string {
 	.Kernel   = "runs in kernel mode",
-	.Program  = "has an entry: a program starts from it",
+	.Entry    = "has an entry: it can start",
 	.No_Entry = "has no entry: another module imports it, or a program loads it by its name",
 }
 
 // The accent of each kind: the colors of the card of the boot image.
 site_graph_kind_colors := [Site_Graph_Kind]graphics.Color {
 	.Kernel   = graphics.DARK_KERNEL,
-	.Program  = graphics.DARK_PROGRAM,
+	.Entry    = graphics.DARK_PROGRAM,
 	.No_Entry = graphics.DARK_NO_ENTRY,
 }
 
@@ -74,7 +74,7 @@ site_graph_kind_colors := [Site_Graph_Kind]graphics.Color {
 // contrast of a graphic on the light background.
 site_graph_kind_light_shades := [Site_Graph_Kind]u32 {
 	.Kernel   = 73,
-	.Program  = 58,
+	.Entry    = 58,
 	.No_Entry = 55,
 }
 
@@ -627,7 +627,7 @@ site_module_graph_inputs :: proc(site: ^Site) -> []Site_Graph_Input {
 		} else {
 			for export in item.description.exports {
 				if export.name == ENTRY_NAME {
-					input.kind = .Program
+					input.kind = .Entry
 				}
 			}
 		}
@@ -761,7 +761,7 @@ SITE_MODULE_GRAPH_RULES :: `/* The module graph (docs/SITE.md, "The module graph
 .graph text { font-family: var(--mono); font-size: 12px; fill: var(--text); }
 .graph .graph-heading { fill: var(--dim); }
 .graph-kernel { --graph-color: var(--graph-kernel); }
-.graph-program { --graph-color: var(--graph-program); }
+.graph-entry { --graph-color: var(--graph-entry); }
 .graph-no-entry { --graph-color: var(--graph-no-entry); }
 .graph-bar { fill: var(--graph-color); }
 .graph-size-unknown .graph-bar { fill: none; stroke: var(--graph-color); stroke-width: 1px; }
@@ -792,7 +792,7 @@ SITE_MODULE_GRAPH_RULES :: `/* The module graph (docs/SITE.md, "The module graph
 site_module_graph_variables :: proc(builder: ^strings.Builder, light: bool) {
 	strings.write_string(builder, ":root {\n")
 	site_variable(builder, "graph-kernel", site_graph_kind_color(.Kernel, light))
-	site_variable(builder, "graph-program", site_graph_kind_color(.Program, light))
+	site_variable(builder, "graph-entry", site_graph_kind_color(.Entry, light))
 	site_variable(builder, "graph-no-entry", site_graph_kind_color(.No_Entry, light))
 	strings.write_string(builder, "}\n")
 }

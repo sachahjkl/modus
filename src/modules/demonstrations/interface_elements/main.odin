@@ -19,7 +19,7 @@
 // [draw table](term:draw-table) that the package compares with the table
 // of the frame before, and only the rectangles that differ are drawn again.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("interface_elements")` in the console. The input can press the
 // button, choose a line of the list, and type in the text input; the
 // second card shows the cost of each frame. The [action bar](term:action-bar)

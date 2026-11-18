@@ -9,7 +9,7 @@
 // that any holder of the machine with **Inspect** can ask for, and it
 // changes nothing.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("inspect")` in the console. The window has a list of the programs
 // at the left. The input chooses one: Up and Down, a click, or letters that
 // filter the list. The window then shows, for that program:

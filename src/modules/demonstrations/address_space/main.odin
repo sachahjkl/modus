@@ -33,7 +33,7 @@
 // kernel operations of the virtual memory, and checks that the budget pays
 // only for what the program uses, and gets each page back.
 //
-// **How to start it.** From the menu of the programs, or with
+// **How to start it.** From the start menu, or with
 // `start("address_space")` in the console.
 //
 // **Its budget** from the root service holds 40960 pages and 2 programs:

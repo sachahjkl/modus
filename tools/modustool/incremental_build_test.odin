@@ -409,7 +409,7 @@ build_measure_lines_name_the_counts_and_the_steps :: proc(t: ^testing.T) {
 	append(&steps, Build_Step_Time{name = "the debug image", duration = 250 * time.Millisecond})
 	volume_times := make([dynamic]Build_Step_Time, context.temp_allocator)
 	append(&volume_times, Build_Step_Time{name = "main", duration = 3 * time.Second}, Build_Step_Time{name = "shortage", duration = 2500 * time.Millisecond})
-	measure := Build_Measure{input_files = 1200, input_bytes = 9000000, input_hash = 200 * time.Millisecond, modules = 4 * time.Second, modules_built = 3, modules_converted = 33, modules_kept = 48, module_compile_steps = 3500 * time.Millisecond, module_conversions = 250 * time.Millisecond, steps = steps, volumes_built = 2, volumes_kept = 1, volumes_not_needed = 15, volume_processes = 2, volume_times = volume_times}
+	measure := Build_Measure{input_files = 1200, input_bytes = 9000000, input_hash = 200 * time.Millisecond, modules = 4 * time.Second, modules_built = 3, modules_converted = 33, modules_kept = 48, module_compile_steps = 3500 * time.Millisecond, module_conversions = 250 * time.Millisecond, steps = steps, volumes_built = 2, volumes_kept = 1, volumes_not_needed = 15, volume_host_processes = 2, volume_times = volume_times}
 	lines := build_measure_lines(measure, 60 * time.Second)
 	testing.expect_value(t, len(lines), 5)
 	testing.expect(t, strings.contains(lines[0], "the hash of 1200 input files (9000000 bytes) 0.20 s"), lines[0])

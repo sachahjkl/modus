@@ -21,7 +21,7 @@ Each claim names the program that shows it, and its picture below.
 
 ## Try it
 
-The Nix flake supplies every tool. `nix develop`, then `modustool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
+The Nix flake supplies every tool. `nix develop`, then `modustool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the start menu with the button "start" of the bar. The section "Use" lists the other commands.
 
 To start the system on a real machine, write the disk image of a release to a USB key: [`docs/INSTALL.md`](docs/INSTALL.md).
 
@@ -33,7 +33,7 @@ To start the system on a real machine, write the disk image of a release to a US
 
 ![The palette: the key super opens it, one list of the programs, of the windows, of the commands of the console and of the settings narrows at each typed key, Enter starts the chosen program, brings the chosen window to the front or runs the chosen command](docs/screenshots/palette.png)
 
-![The menu of the programs: the button of the bar opens it](docs/screenshots/menu.png)
+![The start menu: the button of the bar opens it](docs/screenshots/menu.png)
 
 ![The interface package: each element live, the draw table of the last frame, the damage by difference](docs/screenshots/interface_elements.png)
 
@@ -259,7 +259,7 @@ modustool run
 | `build` | Build the modules, the boot image and the boot program. One process for each module, as many at once as the processors; `build <processes>` sets the count. A module or a boot volume whose inputs are the same as at its last build is kept; `build whole` builds all |
 | `module` | `module <name> with_checks\|without_checks with_debug_information\|without_debug_information [compile\|convert]`: build one module of the table, or run one of its two steps alone (the parallel build runs it for each step) |
 | `module-build` | `module-build <folder> [--system <folder>] [--out <folder>]`: build one module from a folder of another project, with its file `module.txt` ("Build a module of your own", below) |
-| `program-disk` | `program-disk <disk file> <module file> ...`: write a data disk whose store of the programs holds the module files; a machine with that disk starts each one with `start_from_disk` |
+| `module-disk` | `module-disk <disk file> <module file> ...`: write a data disk whose store of the module files holds the module files; a machine with that disk starts each one with `start_from_disk` |
 | `volume` | `volume <name>`: build one boot volume (the build runs it for each boot volume that it must build, several at once) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
@@ -278,7 +278,7 @@ modustool run
 
 `nix flake check` runs the formatting hooks and `check`. The check workflow runs it at each push; the release workflow publishes the files of a release at each tag `v<release number>`.
 
-In the machine, type `help()` in the console. The button "programs" of the bar opens the menu that starts programs.
+In the machine, type `help()` in the console. The button "start" of the bar opens the menu that starts programs.
 
 ### Build a module of your own
 

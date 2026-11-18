@@ -43,7 +43,7 @@ SITE_SEARCH_ROWS :: 8
 Site_Search_Kind :: enum u8 {
 	Page,
 	Module,
-	Program,
+	Entry_Module,
 	Export,
 	Operation,
 	Error_Kind,
@@ -79,7 +79,7 @@ Site_Search_Kind_Description :: struct {
 site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Page            = {name = "page", value_kind = .File, folder = ""},
 	.Module          = {name = "module", value_kind = .Module, folder = SITE_MODULES_FOLDER},
-	.Program         = {name = "program", value_kind = .Module, folder = SITE_MODULES_FOLDER},
+	.Entry_Module    = {name = "entry module", value_kind = .Module, folder = SITE_MODULES_FOLDER},
 	.Export          = {name = "export", value_kind = .Operation, folder = ""},
 	.Operation       = {name = "operation", value_kind = .Operation, folder = SITE_OPERATIONS_FOLDER},
 	.Error_Kind      = {name = "error kind", value_kind = .Status, folder = SITE_ERRORS_FOLDER},
@@ -339,7 +339,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, page.title, page.path, "", .Page, page.description)
 	}
 	for item in site.reference.modules {
-		kind: Site_Search_Kind = item.kind == "program" ? .Program : .Module
+		kind: Site_Search_Kind = item.kind == "entry" ? .Entry_Module : .Module
 		site_search_add(&entries, item.build.name, item.page, "", kind, site_source_comment_plain(site, item.description.about))
 		for export in item.description.exports {
 			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))

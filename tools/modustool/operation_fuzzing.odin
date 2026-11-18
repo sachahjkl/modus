@@ -1067,7 +1067,7 @@ Operation_Qemu :: struct {
 	part:          Test_Part_Run, // Its data disk, which no program of the image drives.
 	peer:          Peer,
 	peer_started:  bool,
-	process:       os.Process,
+	host_process:       os.Process,
 	monitor_read:  ^os.File,
 	monitor_write: ^os.File,
 	mailbox:       Operation_Mailbox,
@@ -1102,7 +1102,7 @@ operation_stop_fault :: proc(state: ^Operation_Qemu, exit_code: int) -> Operatio
 @(private = "file")
 operation_machine_stopped :: proc(state: ^Operation_Qemu) -> (fault: Operation_Fault, stopped: bool) {
 	// A wait of 0 does not block: Timeout says that QEMU runs.
-	if ended, wait_error := os.process_wait(state.process, 0); wait_error == nil && ended.exited {
+	if ended, wait_error := os.process_wait(state.host_process, 0); wait_error == nil && ended.exited {
 		return operation_stop_fault(state, ended.exit_code), true
 	}
 	return {}, false
@@ -1145,7 +1145,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 		fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_error)
 		return false
 	}
-	process, start_error := os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
+	host_process, start_error := os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
 	// QEMU has its copy of the socket of the peer now.
 	peer_machine_socket_lent_close(&state.peer)
 	if start_error != nil {
@@ -1154,7 +1154,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 		fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_error)
 		return false
 	}
-	state.process = process
+	state.host_process = host_process
 	state.monitor_read, state.monitor_write = monitor_read, monitor_write
 	state.running, state.exited, state.mailbox_open, state.log_scanned = true, false, false, 0
 	for started := time.tick_now(); time.tick_since(started) < BOOT_HANG_BOUND; {
@@ -1168,7 +1168,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 			state.mailbox, state.mailbox_open = mailbox, true
 			return true
 		}
-		if ended, wait_error := os.process_wait(process, 0); wait_error == nil && ended.exited {
+		if ended, wait_error := os.process_wait(host_process, 0); wait_error == nil && ended.exited {
 			state.exited = true
 			fmt.eprintfln("modustool: fuzz operations: QEMU ended with the status %d before the line \"%s\"; the log is %s", ended.exit_code, OPERATION_MAILBOX_LINE, OPERATION_FUZZING_OUTPUT)
 			operation_machine_end(state)
@@ -1191,7 +1191,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 @(private = "file")
 operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Sequence, bytes: []u8) -> Operation_Fault {
 	state := (^Operation_Qemu)(data)
-	end, ended, problem := operation_execute_watched(&state.mailbox, bytes, state.header, state.results, &state.process)
+	end, ended, problem := operation_execute_watched(&state.mailbox, bytes, state.header, state.results, &state.host_process)
 	switch end {
 	case .Counted:
 	case .Machine_Ended:
@@ -1271,10 +1271,10 @@ operation_machine_end :: proc(data: rawptr) {
 	}
 	if !state.exited {
 		_, _ = os.write_string(state.monitor_write, "quit\n")
-		ended, wait_error := os.process_wait(state.process, HANG_BOUND)
+		ended, wait_error := os.process_wait(state.host_process, HANG_BOUND)
 		if wait_error != nil || !ended.exited {
-			_ = os.process_kill(state.process)
-			_, _ = os.process_wait(state.process)
+			_ = os.process_kill(state.host_process)
+			_, _ = os.process_wait(state.host_process)
 		}
 		state.exited = true
 	}

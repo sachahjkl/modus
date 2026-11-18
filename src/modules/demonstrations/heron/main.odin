@@ -11,7 +11,7 @@
 // run. The program draws again only the part of its window that changed,
 // and its log says how long a picture takes and how many pixels it damages.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("heron")` in the console. The heron is still for about 40 % of
 // the time; between two still times one animation plays. Each animation
 // plays once before one plays again, and none follows itself: the rule of

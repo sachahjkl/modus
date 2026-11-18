@@ -94,7 +94,7 @@ Do not use: TTY, shell.
 
 The desktop shell is the program that starts programs and shows their windows to the principal.
 
-In the first version, the compositor is the desktop shell: its bar has the menu of the programs and the menu of the windows, the palette starts a program and reaches a window, and the close button of a window stops its program. It starts a program by the command `Start` to the root service, which decides the grants of the program. The desktop shell is not a window manager with rules of placement: the compositor places new windows at fixed steps on the grid.
+In the first version, the compositor is the desktop shell: its bar has the start menu and the menu of the windows, the palette starts a program and reaches a window, and the close button of a window stops its program. It starts a program by the command `Start` to the root service, which decides the grants of the program. The desktop shell is not a window manager with rules of placement: the compositor places new windows at fixed steps on the grid.
 
 The design: `docs/ARCHITECTURE.md`, "U10. Desktop shell".
 
@@ -160,15 +160,15 @@ The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 
 Do not use: bar geometry, bar metrics.
 
-### Menu of the programs
+### Start menu
 
-The menu of the programs is the menu of the bar with one line for each name of the table `bar.names`: a press on a line starts that program.
+The start menu is the menu of the bar under the button `start`, with one line for each module of the table `bar.names`: a press on a line starts that module.
 
-The menu is the way of the pointer to start a program. It is a card under the button `programs`, in two columns. A press sends `Start` with the name to the root service, which decides the grants of the program. The menu of the programs is not the palette, which the key super opens and which narrows as the input types. It is not a start menu with folders: it has one flat table.
+The menu is the way of the pointer to start a module. It is a card in two columns. A press sends `Start` with the name to the root service, which decides the grants of the program. The start menu is not the palette, which the key super opens and which narrows as the input types. It has no folders and no recent entries: one flat table.
 
 The design: `docs/DESIGN.md`, "Menus".
 
-Do not use: start menu, application menu.
+Do not use: application menu, launcher.
 
 ### Menu of the windows
 

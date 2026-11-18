@@ -399,7 +399,7 @@ image_layout: image_card.Layout
 // The name of each kind of file of the boot image.
 @(private, rodata)
 image_kind_names := [image_card.File_Kind]string {
-	.Program  = "programs",
+	.Entry    = "entry",
 	.No_Entry = "no entry",
 	.Resource = "resources",
 }
@@ -407,7 +407,7 @@ image_kind_names := [image_card.File_Kind]string {
 // The color of each kind of file of the boot image.
 @(private, rodata)
 image_kind_colors := [image_card.File_Kind]graphics.Color {
-	.Program  = graphics.DARK_PROGRAM,
+	.Entry    = graphics.DARK_PROGRAM,
 	.No_Entry = graphics.DARK_NO_ENTRY,
 	.Resource = graphics.DARK_RESOURCE,
 }

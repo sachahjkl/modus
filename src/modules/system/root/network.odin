@@ -45,7 +45,7 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 		return {address = remote.HOST_ADDRESS, port = remote.LISTEN_PORT, listen = true}
 	case "server":
 		return {port = 80, tcp = true, listen = true}
-	case "fetch", "programs":
+	case "fetch", "module_files":
 		return {address = 0x0A000264, port = 80, tcp = true}
 	case "quic_echo":
 		return {port = QUIC_ECHO_PORT, listen = true}

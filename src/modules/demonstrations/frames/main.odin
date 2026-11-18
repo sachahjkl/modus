@@ -17,7 +17,7 @@
 // only: the code is in memory once, and a program that writes to it faults
 // alone.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("frames")` in the console. The window has one row for each case,
 // with the answer of the kernel, then the measures. Its lines in the log:
 // the time to create and map 8192 pages with each frame now and with

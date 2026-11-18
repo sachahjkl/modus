@@ -19,7 +19,7 @@
 // with and without its adjustment, and one word at three positions of a
 // pixel.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("interface_font")` in the console. The log gets the time of
 // shaping and of drawing one line, then `interface_font: ok, B612 Regular
 // and Bold, <count> and <count> pairs, ...`. After its first frame it

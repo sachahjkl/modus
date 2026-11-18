@@ -102,7 +102,7 @@ link_test_site :: proc() -> Site {
 	exports := make([]Export_Description, 1, context.temp_allocator)
 	exports[0] = {name = "edges"}
 	modules := make([]Site_Module, 1, context.temp_allocator)
-	modules[0] = {build = {name = "manual", source = "programs/manual"}, kind = "program", page = site_module_page("manual"), description = {exports = exports}}
+	modules[0] = {build = {name = "manual", source = "programs/manual"}, kind = "entry", page = site_module_page("manual"), description = {exports = exports}}
 	site.reference.modules = modules
 	site.declarations = site_declaration_index_make()
 	sources := [2][2]string {

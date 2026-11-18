@@ -193,7 +193,7 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pendin
 // program").
 //
 // For a disk program, the service also reads the debug object of its
-// module from the store `programs`, where it is beside the module file,
+// module from the store `module_files`, where it is beside the module file,
 // through a connection that the root service gives with the debug access
 // (docs/MODULE_CONTRACT.md, "The debug object of a disk program"). A read
 // that fails is one line of the log, and `described` does not count the
@@ -292,7 +292,7 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	session.name_count = copy(session.name[:], name)
 	reports_read()
 	// The module of a disk program has its debug object in the store
-	// `programs`, beside its module file, and not in the debug image.
+	// `module_files`, beside its module file, and not in the debug image.
 	if disk_hash, from_disk := disk_module_of(); from_disk {
 		disk_debug_object_read(name, caller.ring_memory, disk_hash, completion.values[5])
 	}

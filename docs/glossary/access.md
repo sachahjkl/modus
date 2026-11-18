@@ -472,7 +472,7 @@ Do not use: control socket, init channel.
 
 ### Nickname
 
-A nickname is the name that the principal gives a disk program: the name of the entry of its module file in the store `programs`.
+A nickname is the name that the principal gives a disk program: the name of the entry of its module file in the store `module_files`.
 
 The principal chooses the nickname, and the file never does. The root service names a disk program by its nickname, and the log writes the hash of the file beside it; its window has the nickname as its title. The store of a disk program is attached to its nickname, so a new version under the same nickname keeps its data. A nickname gives no grant by itself, and it is not the name of a module of the boot image.
 

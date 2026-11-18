@@ -19,7 +19,7 @@ import module "modus:contract/module"
 
 // What a file of the boot image is: the kind sets its color and its row.
 File_Kind :: enum u8 {
-	Program, // A module with an entry export: a program starts from it.
+	Entry, // A module with an entry export: it can start.
 	No_Entry, // A module with no entry export: other modules import it.
 	Resource, // A file of the resource table of the image.
 }
@@ -118,7 +118,7 @@ files_read :: proc "contextless" (layout: ^Layout, image: []u8, failed_name: str
 		file, inside := info.image_entry_bytes(image, &entry)
 		kind := File_Kind.No_Entry
 		if head, error := module.header(file); error == .None && head.entry_export != 0 {
-			kind = .Program
+			kind = .Entry
 		}
 		file_add(layout, entry_name(&entry), inside ? entry.size : 0, kind, failed_name)
 	}

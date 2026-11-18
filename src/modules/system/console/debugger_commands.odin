@@ -247,7 +247,7 @@ debugger_commands_start :: proc "contextless" () {
 	command("wait_stop", {.Integer}, .Table, "wait for a stop of the debugged program: debugger.wait_stop()", debug_wait_stop, {value_kinds.time_in(.Milliseconds)})
 	// Gives one row for each frame of the stop report of a disk program
 	// that stopped on a fault: the module, the procedure, the file and the
-	// line, from the debug object of its module in the store `programs`.
+	// line, from the debug object of its module in the store `module_files`.
 	// It needs no `debug`: the program stopped, and the root service kept
 	// its report. Row 0 also says what stopped it.
 	//

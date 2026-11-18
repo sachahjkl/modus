@@ -19,7 +19,7 @@
 // not on the path of the data: an entry is a wait or a wake, and one entry
 // serves many requests when several are in flight.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("disk")` in the console. The window has one row for each of the
 // five runs: a read or a write, the blocks in each request, the
 // requests in flight, a bar of the requests that the check sent, and a bar

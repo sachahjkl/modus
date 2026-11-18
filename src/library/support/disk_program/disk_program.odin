@@ -1,6 +1,6 @@
 // What the root service, the console and the modus tool agree on for a
 // disk program: a program whose module file is an object of the store
-// `programs` of the storage service, and not a file of the boot image
+// `module_files` of the storage service, and not a file of the boot image
 // (docs/MODULE_CONTRACT.md, "A program from a disk").
 //
 // No allocator and no kernel operation: the host tests run each procedure
@@ -37,7 +37,7 @@
 // - `Import_Scan`, `scan_want`, `scan_entry_add`, `scan_next`,
 //   `scan_read_done`, `scan_skip` (import_scan.odin): the account of the
 //   import scan that finds an import of a disk program in the store
-//   `programs` by the hash of its bytes, with its bounds.
+//   `module_files` by the hash of its bytes, with its bounds.
 // - `Kept_Stop_Reports`, `stop_report_hide`, `kept_stop_report_keep`,
 //   `kept_stop_report_find` (kept_stop_report.odin): the stop report of a
 //   disk program that stopped on a fault, which the root service keeps
@@ -49,14 +49,14 @@ package disk_program
 // The store whose root tree holds the module files: one entry for each
 // program, its name the name of the program. For a named principal the
 // root service adds the principal to this name, as for each store.
-STORE_NAME :: "programs"
+STORE_NAME :: "module_files"
 
-// The object of the root tree of the store `programs` that holds the
+// The object of the root tree of the store `module_files` that holds the
 // persisted disk grant table of its principal (grant_table.odin). No disk
 // program has this name.
 TABLE_OBJECT_NAME :: "grant_table"
 
-// The limit of blocks of the store `programs`, as the root service grants
+// The limit of blocks of the store `module_files`, as the root service grants
 // it and as the modus tool writes it: 16 MiB. The two numbers are one
 // constant, so the grant of a read never differs from the limit on the
 // disk.
@@ -84,9 +84,9 @@ DEBUG_OBJECT_BYTES_LIMIT :: 8 << 20
 // answer; it is not a measure of the disk.
 LOAD_DEADLINE_MILLISECONDS :: 30_000
 
-// The value of the context of the module file service, the program
-// `programs`, that holds the number of its principal: its private store
-// is the store `programs` of that principal, and it serves the callers
+// The value of the context of the module file service, the module
+// `module_files`, that holds the number of its principal: its private store
+// is the store `module_files` of that principal, and it serves the callers
 // that act for that principal only. The other values of 0 to 15 that a
 // service with a store and an endpoint receives are 1, 2 and 3.
 SERVICE_VALUE_PRINCIPAL :: 4

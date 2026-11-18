@@ -161,7 +161,7 @@ Root_Command :: enum u32 {
 	// and when a provider exists already (Bad_State).
 	Palette_Provide = 15,
 	// Start_From_Disk starts a disk program: a program whose module file is
-	// an object of the store `programs` of the storage service, and not a
+	// an object of the store `module_files` of the storage service, and not a
 	// file of the boot image
 	// (docs/MODULE_CONTRACT.md, "A program from a disk").
 	// This command does not carry its name as the others do:
@@ -175,7 +175,7 @@ Root_Command :: enum u32 {
 	// log and a window, no grant, and the budget of a program that the
 	// tables of the root service do not name; its name gives it nothing.
 	// The program belongs to the session of the caller, and the store is
-	// the store `programs` of the principal of that session.
+	// the store `module_files` of the principal of that session.
 	//
 	// The completion comes when the program started or the load ended, and
 	// not before: the root service serves each other ring meanwhile. A
@@ -245,7 +245,7 @@ Root_Command :: enum u32 {
 	// `Absent` (unit `Grants`).
 	Disk_Grant_Persistence = 21,
 	// Debug_Store gives the debugger service a connection to the storage
-	// service that reads only, to the store `programs` of the principal of
+	// service that reads only, to the store `module_files` of the principal of
 	// the disk program with this name: the service reads there the debug
 	// object of the module of the program
 	// (docs/MODULE_CONTRACT.md, "The debug object of a disk program").

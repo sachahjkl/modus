@@ -10,7 +10,7 @@
 // that the root service grants; it sees
 // the cells only through the exports, never the memory of the program.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("life")` in the console. A board of 96 by 64 cells, filled at
 // random, takes one step each 80 ms. The input draws cells with the left
 // button; Space pauses; `r` fills the board at random; `c` clears it. The

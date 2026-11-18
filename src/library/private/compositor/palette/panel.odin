@@ -211,8 +211,8 @@ kind_words :: proc "contextless" (kind: Entry_Kind) -> string {
 	switch kind {
 	case .Window:
 		return "window"
-	case .Program:
-		return "program"
+	case .Module:
+		return "module"
 	case .Close_Window:
 		return "close a window"
 	case .Command:
@@ -238,13 +238,13 @@ entry_words :: proc "contextless" (entry: ^Entry) -> string {
 // the panel has a field for each parameter of the entry. manual: the typed
 // part has the prefix of the manual.
 entry_hint :: proc "contextless" (entry: ^Entry, form: bool, manual: bool) -> string {
-	if manual && entry.kind == .Program {
+	if manual && entry.kind == .Module {
 		return "enter: its page of the manual"
 	}
 	switch entry.kind {
 	case .Window:
 		return "enter: to the front"
-	case .Program:
+	case .Module:
 		return "enter: start"
 	case .Close_Window:
 		return "enter: close"
@@ -283,8 +283,8 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 			interface.text_put(builder, entry_name(entry))
 			interface.text_put(builder, " to the front and gives it the focus.")
 		}
-	case .Program:
-		interface.text_put(builder, "Starts the program ")
+	case .Module:
+		interface.text_put(builder, "Starts the module ")
 		interface.text_put(builder, entry_name(entry))
 		if entry.windows == 0 {
 			interface.text_put(builder, ". It has no window now.")
@@ -393,7 +393,7 @@ entry_icon :: proc "contextless" (entry: ^Entry, in_use: bool) -> (icon: ^kind_i
 		icon = kind_icons.cells_of_desktop_kind(.Window)
 		color = graphics.colors.title
 		quiet = entry.mark != .Has_Focus
-	case .Program:
+	case .Module:
 		icon = kind_icons.cells_of_value_kind(.Module)
 		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 		quiet = entry.mark != .Has_Window
@@ -463,7 +463,7 @@ part_color :: proc "contextless" (part: palette_table.Run_Part) -> graphics.Colo
 
 HEADING_RECENT :: "recent"
 HEADING_WINDOWS :: "windows"
-HEADING_PROGRAMS :: "programs"
+HEADING_MODULES :: "modules"
 PLACEHOLDER :: "type a part of a name"
 KEYS_END :: "   esc: close"
 MODE_RUN :: "enter: run" // The mode of an entry that runs: each entry that does not destroy.
@@ -613,8 +613,8 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 				rows[index] = {kind = .Heading, name = HEADING_RECENT}
 			case .Heading_Windows:
 				rows[index] = {kind = .Heading, name = HEADING_WINDOWS}
-			case .Heading_Programs:
-				rows[index] = {kind = .Heading, name = HEADING_PROGRAMS}
+			case .Heading_Modules:
+				rows[index] = {kind = .Heading, name = HEADING_MODULES}
 			case .Entry:
 				entry := &list.entries[min(int(row.entry), ENTRY_CAPACITY - 1)]
 				in_use := entry.kind == .Setting && setting_in_use(panel, entry)

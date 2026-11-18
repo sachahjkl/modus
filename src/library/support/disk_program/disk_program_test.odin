@@ -23,7 +23,7 @@ names_that_are_refused :: proc(t: ^testing.T) {
 		{"café", .Bad_Byte, 3}, // A name of a program is ASCII.
 		{".", .Bad_Byte, 0},
 		{"..", .Bad_Byte, 0},
-		{"programs", .Store_Name, 0},
+		{"module_files", .Store_Name, 0},
 		{"grant_table", .Table_Name, 0},
 	}
 	for item in cases {

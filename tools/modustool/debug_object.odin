@@ -1058,7 +1058,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 		if header_length > u64(unit_end - unit.at) {
 			return nil, nil, "the header of a line program is longer than its unit"
 		}
-		program_start := unit.at + int(header_length)
+		line_program_start := unit.at + int(header_length)
 		minimum_instruction_length := dwarf_unsigned(&unit, 1)
 		if version >= 4 {
 			dwarf_unsigned(&unit, 1) // The operations of one instruction: 1 on x86-64.
@@ -1143,7 +1143,7 @@ dwarf_line_rows :: proc(section, line_strings, debug_strings: []u8, compilation_
 			return nil, nil, "the header of a line program is cut"
 		}
 		// The state machine of the line program.
-		unit.at = program_start
+		unit.at = line_program_start
 		address: u64
 		file: u64 = 1
 		line: i64 = 1

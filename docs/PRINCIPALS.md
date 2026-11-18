@@ -331,7 +331,7 @@ remote: the grants of 4 connections to services ended (a revocation, or a lock o
 **Across a restart.** Each allowed key is also a client key of the disk grant table of its principal, under the tag of that table (`MODULE_CONTRACT.md`, "The grants of a disk program"). The table keeps 4 keys at most. So a key lasts as the other grants of its principal do: across a restart for a named principal, and for principal 0 with a machine passphrase or a machine key sealed by the TPM; until the machine stops for principal 0 with neither, and when the global setting of the table is to forget (`disk_persistence("", "forget")`). The end of the line of an allow says which. After the read of the table, at the first unlock of a named principal or when principal 0 gets its machine key, each key holds again with a new serial:
 
 ```
-root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal; 1 client keys of remote
+root: read the disk grant table of principal 1 from the store module_files: 1 rows, with the tag of the key of the principal; 1 client keys of remote
 root: the client key 6a1f0c2d9e8b7a65 of remote holds again for principal 1, from its disk grant table: each call of that client acts for it
 ```
 
@@ -381,7 +381,7 @@ root: refused a machine passphrase: the record of the machine passphrase cannot 
 
 **At the start.** The root service starts `unlock` at boot, as before. With a record of the machine, `unlock` asks for the machine passphrase first, then for the passphrase of a named principal if a file of one exists. The window says which one it asks for. Until the machine passphrase is typed, the machine runs, the disk programs of principal 0 start with no grant, and a change of the table of principal 0 is refused. Enter with no passphrase skips it until the next start of `unlock`. After a lock, the root service tells `unlock` that it holds the key, and `unlock` does not ask again.
 
-The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store programs: 1 rows, with the tag of the machine key".
+The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store module_files: 1 rows, with the tag of the machine key".
 
 ### The machine passphrase with the TPM
 
@@ -491,7 +491,7 @@ unlock: the TPM service refuses the unseal: this TPM did not make the sealed obj
 ```
 tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal
 unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only
-root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key
+root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key
 ```
 
 **When the TPM refuses.** After an update of the system, on another machine, after a change of Secure Boot, or with no TPM service, the TPM does not release the key. The window of `unlock` asks for the recovery key; it takes upper or lower case, with or without `-`. Enter with nothing skips it: the machine runs, and the disk grants of principal 0 stay absent. A wrong recovery key opens nothing. The right one gives the key, and with Secure Boot on `unlock` seals it again to the system that runs, so the next start of this system needs no recovery key. With Secure Boot off it does not seal it again: an attacker who turns Secure Boot off makes the TPM refuse as an update does, and a new seal would bind the key to a boot program that nothing verified:
@@ -515,9 +515,9 @@ unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that r
 
 A named principal grants a disk program from its own session, and its grants last across a restart of the machine (`MODULE_CONTRACT.md`, "The grants of a disk program").
 
-**Who changes it.** A program of the session that acts for the principal: a console that the desktop starts during the session, from the menu of the programs. Its `allow`, `disallow`, `nickname_move` and `disk_persistence` change the table of principal 1. The console that the machine starts at boot changes the table of principal 0 only.
+**Who changes it.** A program of the session that acts for the principal: a console that the desktop starts during the session, from the start menu. Its `allow`, `disallow`, `nickname_move` and `disk_persistence` change the table of principal 1. The console that the machine starts at boot changes the table of principal 0 only.
 
-**Where it is.** The object `grant_table` of the store `programs.principal.1`: the store of the module files of the principal, which the disk programs of its session start from.
+**Where it is.** The object `grant_table` of the store `module_files.principal.1`: the store of the module files of the principal, which the disk programs of its session start from.
 
 **Its key.** When the passphrase opens the seal, `unlock` derives the key of the tag from the secret unlock key: keyed BLAKE2b over the text `modus disk grant table of a named principal`. It gives this key with `Principal_Unlock`, and erases the secret keys. The root service keeps the key until the machine stops; after a lock, the next unlock must give the same key.
 
@@ -529,7 +529,7 @@ A named principal grants a disk program from its own session, and its grants las
 - A write that fails is tried again at once, 3 tries at most.
 - While the read runs, or while the session is locked, a change is refused.
 
-The log says each step: "root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal", "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal".
+The log says each step: "root: read the disk grant table of principal 1 from the store module_files: 1 rows, with the tag of the key of the principal", "root: the disk grant table of principal 1 is written in the store module_files: 1 rows, with the tag of the key of the principal".
 
 ## 6. The store of a principal
 
@@ -545,7 +545,7 @@ The storage service names a store by the name that the root service gives to the
 | 1 | `console`, its line history | `console.history.principal.1` |
 | 0 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor` |
 | 1 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor.principal.1` |
-| 1 | The module files of its disk programs, and its disk grant table | `programs.principal.1` |
+| 1 | The module files of its disk programs, and its disk grant table | `module_files.principal.1` |
 
 So two principals that run one program have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 

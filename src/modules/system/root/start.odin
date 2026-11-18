@@ -257,7 +257,7 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	switch work.name {
 	case "unlock":
 		unlock_values_write(&work.values)
-	case "programs":
+	case "module_files":
 		// The module file service serves the callers of the principal of
 		// its store only, and learns that principal here.
 		system.value_put(&work.values, system.GRANT_VALUE_SERVICE_PRINCIPAL, work.principal)

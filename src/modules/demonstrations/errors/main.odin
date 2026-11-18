@@ -13,7 +13,7 @@
 // (docs/MODULE_CONTRACT.md, "8. Errors that diagnose"). There is no global
 // last error: the record comes back with the call.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("errors")` in the console. The window lists the cases on pages
 // (Tab shows the next page; a page holds the cases that fit in its height):
 // for each one, what the program does, the kind that it expects, and the

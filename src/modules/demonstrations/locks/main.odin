@@ -26,7 +26,7 @@
 // [word wait](term:word-wait) that loses no wake under load. The checks
 // are of counts and of order; the rates are measures.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("locks")` in the console. The window shows the kernel entries and
 // the page faults of the check with 1, 2 and 4 lockers, the wakes of the
 // word wait between two threads alone and under load, and, for each

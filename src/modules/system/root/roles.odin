@@ -235,7 +235,7 @@ program_roles := [?]Program_Role_Row {
 	{name = "server", grants = {.Network, .Serve, .Store}},
 	// A client grant of TCP to one web server, 10.0.2.100 port 80.
 	{name = "fetch", grants = {.Network}},
-	// The module file service: its private store is the store `programs`
+	// The module file service: its private store is the store `module_files`
 	// of its principal, as a private store has the name of its program,
 	// with the limit with which this service reads it and the tool writes
 	// it, so no grant differs from the limit on the disk; a client grant
@@ -243,7 +243,7 @@ program_roles := [?]Program_Role_Row {
 	// console. It starts nothing: this service checks the hash of each file
 	// that a principal starts (docs/MODULE_CONTRACT.md, "A program from a
 	// disk"). It starts when a principal connects to it.
-	{name = "programs", grants = {.Store, .Network, .Serve}, terms = {store_blocks = disk_program.STORE_BLOCKS_LIMIT, on_demand = true}},
+	{name = "module_files", grants = {.Store, .Network, .Serve}, terms = {store_blocks = disk_program.STORE_BLOCKS_LIMIT, on_demand = true}},
 	// A listen grant of UDP: QUIC in the program, the module cryptography
 	// through its imports.
 	{name = "quic_echo", grants = {.Network}},

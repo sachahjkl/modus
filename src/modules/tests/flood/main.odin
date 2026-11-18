@@ -15,7 +15,7 @@
 // terminal keeps up, and that the program waits with no processor use when
 // it has nothing to do.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("flood")` in the console. The root service starts its terminal
 // with it: a window whose lines scroll fast, with the count of lines in
 // its status. Space stops the lines and starts them again; the log gets

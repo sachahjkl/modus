@@ -3,7 +3,7 @@ package debugger
 // The debug object of the module of a disk program
 // (docs/MODULE_CONTRACT.md, "The debug object of a disk program"). That
 // module is not in the boot image, so the debug image has no object for
-// it. Its debug object is an object of the store `programs`, beside its
+// it. Its debug object is an object of the store `module_files`, beside its
 // module file, named by the 64 hexadecimal digits of the hash of the
 // module. At the attach, this service asks the root service for a
 // connection that reads only to that store (Root_Command.Debug_Store),
@@ -39,7 +39,7 @@ DISK_DEBUG_OBJECT_MILLISECONDS :: 1500
 // The debug object of the module of a disk program.
 Disk_Debug_Object :: struct {
 	module_hash: [32]u8, // The module of the disk program. Zero: the program is no disk program.
-	// The principal whose store `programs` gave the object. The check of
+	// The principal whose store `module_files` gave the object. The check of
 	// the object proves its hash only: the names and the paths are those
 	// that this store holds, so the object serves a caller of this
 	// principal only.
@@ -107,7 +107,7 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 }
 
 // store_debug_object_read asks the root service for the connection to the
-// store `programs`, reads there the debug object of the module
+// store `module_files`, reads there the debug object of the module
 // `into.module_hash`, checks it, and closes the connection. With `kept`,
 // the command asks for the stop report that the root service kept of the
 // disk program `name`: the report comes with the connection, is copied to

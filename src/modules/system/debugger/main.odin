@@ -24,7 +24,7 @@
 // and the variables in the debug object of each module, which it takes
 // from the debug image by the hash of the module. The module of a disk
 // program is not in the boot image: at the attach, the service reads its
-// debug object from the store `programs`, through a connection that reads
+// debug object from the store `module_files`, through a connection that reads
 // only and that the root service gives with the debug access
 // (disk_debug_object.odin). It writes no byte in the program: a breakpoint
 // is a debug register of a thread.

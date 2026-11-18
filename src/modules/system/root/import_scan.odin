@@ -1,7 +1,7 @@
 package root
 
 // The import scan of a disk program: the imports that the boot image does
-// not hold are found in the store `programs` of the principal by the hash
+// not hold are found in the store `module_files` of the principal by the hash
 // of their bytes (docs/MODULE_CONTRACT.md, "A program from a disk").
 //
 // The scan runs in the load of the program, after the check of its file

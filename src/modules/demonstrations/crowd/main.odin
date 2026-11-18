@@ -21,7 +21,7 @@
 // starts many threads at once. The queue with one lock gives the measure
 // to compare.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("crowd")` in the console. The window has one row for each run:
 // the writers, the readers, the records that were read. The log gets one
 // line for each run (`crowd: shared queue, 2 writers, 2 readers: ...`),

@@ -39,31 +39,31 @@ Site_Layout :: enum {
 // The groups of the modules, in the tree and on the index of the modules.
 Site_Module_Group :: enum {
 	Kernel,
-	Program,
+	Entry,
 	Module,
 }
 
 site_module_group_titles := [Site_Module_Group]string {
 	.Kernel  = "Kernel",
-	.Program = "Programs",
-	.Module  = "Modules",
+	.Entry   = "Modules with an entry",
+	.Module  = "Modules with no entry",
 }
 
 site_module_group_ids := [Site_Module_Group]string {
 	.Kernel  = "kernel",
-	.Program = "programs",
+	.Entry   = "entry",
 	.Module  = "modules",
 }
 
 // site_module_group gives the group of a module: a kernel runs in kernel
-// mode, a program is a row of the table of the modules marked program, each
+// mode, a module with an entry is a row of the table of the modules marked entry, each
 // other one is a module.
 site_module_group :: proc(item: Site_Module) -> Site_Module_Group {
 	if item.build.kernel {
 		return .Kernel
 	}
-	if item.kind == "program" {
-		return .Program
+	if item.kind == "entry" {
+		return .Entry
 	}
 	return .Module
 }

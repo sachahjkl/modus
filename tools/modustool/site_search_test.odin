@@ -156,7 +156,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 
 	// The JSON of the index: the title of the news entry is escaped.
 	index := site_search_index_json(&site, entries, site.pages[:])
-	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[[\"page\",\"file\"],[\"module\",\"module\"],[\"program\",\"module\"]"), index[:min(len(index), 120)])
+	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[[\"page\",\"file\"],[\"module\",\"module\"],[\"entry module\",\"module\"]"), index[:min(len(index), 120)])
 	testing.expect(t, strings.contains(index, "[\"news entry\",\"time\"]"))
 	testing.expect(t, strings.contains(index, "\"A \\\"thing\\\" \\u003c/script\\u003e\""))
 	testing.expect(t, !strings.contains(index, "</script"))

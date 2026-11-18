@@ -10,7 +10,7 @@ How a program opens a surface and presents a picture is in [`docs/INTERFACE.md`]
 - A program that moves a large form each frame, and a program that changes one number a second, follow the same rule with the same code.
 - The display must never read a frame of the compositor that the compositor writes at that time ("The screen: two screen pages and a page flip", below).
 
-The fault that made the rule: a surface had one picture. The window layer paints a damage rectangle with the background, then draws its records. The compositor read the rectangle between the two, and the screen showed the head of a form with no body ([features/heron_program.md](../features/heron_program.md)).
+The fault that made the rule: a surface had one picture. The window layer paints a damage rectangle with the background, then draws its records. The compositor read the rectangle between the two, and the screen showed the head of a form with no body ([features/heron_module.md](../features/heron_module.md)).
 
 ## The constraints
 

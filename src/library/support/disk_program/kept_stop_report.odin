@@ -7,7 +7,7 @@ import op "modus:contract/operation"
 // holds the only handle of a disk program and closes it at the reap, so
 // the stop report would leave the kernel with it. The root service keeps a
 // copy here, and gives it to the debugger service, which names its frames
-// with the debug object of the store `programs`.
+// with the debug object of the store `module_files`.
 
 // The reports that the root service keeps. A new fault of a nickname
 // replaces the report of that nickname. Else a principal that holds

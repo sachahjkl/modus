@@ -128,7 +128,7 @@ GRANT_VALUE_FILE_SIZE :: 2
 // The value 3 of a program with the grant Store: the size in bytes of the
 // file of the storage service, which its client reads (package storage).
 GRANT_VALUE_STORAGE_FILE_SIZE :: 3
-// The value 4 of the module file service `programs`: the principal of its
+// The value 4 of the module file service `module_files`: the principal of its
 // store (modus:support/disk_program).
 GRANT_VALUE_SERVICE_PRINCIPAL :: 4
 // The value 4 of a terminal: its columns.

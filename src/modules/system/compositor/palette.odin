@@ -21,7 +21,7 @@ import "base:intrinsics"
 // records are in src/library/private/compositor/palette, where the host tests run them.
 //
 // The panel holds no right. A program starts through the root service as
-// the menu of the programs starts it; a window comes to the front as a
+// the start menu starts it; a window comes to the front as a
 // press brings it; a close stops a program as the close button does.
 
 palette_panel: palette.Panel // The state of the panel. Its list is one of palette_lists.
@@ -951,7 +951,7 @@ palette_entry_send :: proc "contextless" (picked: ^palette.Entry) {
 	panel.state = .Running
 	palette_sent_setting = picked.kind == .Setting
 	sent := false
-	if picked.kind == .Program {
+	if picked.kind == .Module {
 		// The prefix of the manual: the provider gets the name of the
 		// program, as a typed value, and shows its page.
 		packed := system.name_pack(palette.entry_name(picked))
@@ -985,7 +985,7 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 	// that is closed then draws nothing.
 	palette_close("")
 	switch kind {
-	case .Program:
+	case .Module:
 		if number < len(bar.names) {
 			packed := system.name_pack(bar.names[number])
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
@@ -1265,7 +1265,7 @@ palette_scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part
 PALETTE_LOG_NAMES :: 4 // The first rows that the log names: the line stays one line of the log.
 
 // palette_list_log writes the list on the log: "compositor: the palette
-// lists 3 of 61 for "mon": monitor (window), monitor (program), close
+// lists 3 of 61 for "mon": monitor (window), monitor (module), close
 // monitor (close a window)". It names the first rows only.
 palette_list_log :: proc "contextless" () {
 	panel := &palette_panel

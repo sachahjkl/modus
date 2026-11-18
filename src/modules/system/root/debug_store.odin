@@ -3,10 +3,10 @@ package root
 // The connection through which the debugger service reads the debug object
 // of a disk program
 // (docs/MODULE_CONTRACT.md, "The debug object of a disk program").
-// The debug object is an object of the store `programs`, beside
+// The debug object is an object of the store `module_files`, beside
 // the module file, named by the hash of the module. The debugger service
 // holds no store: this service gives it a connection that reads only, to
-// the store `programs` of the principal of the program, as a part of the
+// the store `module_files` of the principal of the program, as a part of the
 // debug access to that program for one caller. The connection ends with
 // the debug access (debug_end).
 //
@@ -73,7 +73,7 @@ stop_report_keep :: proc "contextless" (item: ^Started) {
 }
 
 // debug_store_open runs the command Debug_Store of the debugger service
-// `holder`: a connection that reads only to the store `programs` of the
+// `holder`: a connection that reads only to the store `module_files` of the
 // principal of the disk program with a name, for the caller of the
 // connection with the call ring `connection_ring`. values is the
 // completion: the storage service, the call ring and the call region, each
@@ -150,7 +150,7 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 // debug object of its module. The rule is the rule of the report, not of
 // the debug access: the report holds no byte of the memory of the program,
 // and the caller, which acts for that principal, can read the store
-// `programs` anyway.
+// `module_files` anyway.
 //
 // Bad_Operation: the caller does not act for its principal. No_Right: the
 // grant `debug` of the caller was revoked. Bad_State: no kept report has
@@ -215,7 +215,7 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 }
 
 // debug_store_connection_give opens the connection that reads only to the
-// store `programs` of a principal, and gives its three handles to the
+// store `module_files` of a principal, and gives its three handles to the
 // debugger service `holder`. It ends a connection that the service had
 // before: one at a time.
 @(private = "file")

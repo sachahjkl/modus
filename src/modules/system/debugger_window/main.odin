@@ -8,7 +8,7 @@
 // and shows their rows in one window: a developer follows a thread with a
 // key or a click for each act.
 //
-// **Start**: the menu of the programs, or `start("debugger_window")`. Type
+// **Start**: the start menu, or `start("debugger_window")`. Type
 // the name of a program and press Enter: the window attaches to it.
 //
 // **Grants**: Connect, for a connection to the service `debugger` and to

@@ -188,7 +188,7 @@ chosen_of :: proc "contextless" (panel: ^Panel) -> Chosen {
 	}
 	// With the prefix of the manual, the choice of a program asks the
 	// provider for its page.
-	if prefix, _ := prefix_of(typed_text(panel)); prefix == .Manual && entry.kind == .Program {
+	if prefix, _ := prefix_of(typed_text(panel)); prefix == .Manual && entry.kind == .Module {
 		return .Sends
 	}
 	if .Needs_Arguments in entry.flags && form_can_open(given_of(panel.list, entry)) {

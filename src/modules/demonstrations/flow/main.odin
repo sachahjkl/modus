@@ -20,7 +20,7 @@
 // entry, and the count of kernel entries for one million records shows
 // how rarely a thread must wait.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("flow")` in the console. The window shows the four rings: the
 // records read in order, and the kernel entries for one million records.
 // The log gets one line for each ring (`flow: capacity 32, wait at once:

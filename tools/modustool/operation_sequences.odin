@@ -684,7 +684,7 @@ Operation_Wait_End :: enum u8 {
 // operation_execute_watched is operation_execute that also watches QEMU,
 // when process is not nil: a machine that stopped ends the wait at once,
 // not at the hang bound, with the state of its end.
-operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, process: ^os.Process) -> (end: Operation_Wait_End, ended: os.Process_State, problem: string) {
+operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, host_process: ^os.Process) -> (end: Operation_Wait_End, ended: os.Process_State, problem: string) {
 	if len(bytes) > operation_sequence.SEQUENCE_BYTES_MOST {
 		return .Tool_Error, {}, "the sequence is larger than its place in the mailbox"
 	}
@@ -707,9 +707,9 @@ operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, head
 		if header.executions != mailbox.executions {
 			return .Mailbox_Broken, {}, fmt.tprintf("the mailbox counts %d executions after %d, and the tool wrote %d sequences", header.executions, mailbox.executions, mailbox.written)
 		}
-		if process != nil {
+		if host_process != nil {
 			// A wait of 0 does not block: Timeout says that QEMU runs.
-			if state, wait_error := os.process_wait(process^, 0); wait_error == nil && state.exited {
+			if state, wait_error := os.process_wait(host_process^, 0); wait_error == nil && state.exited {
 				return .Machine_Ended, state, fmt.tprintf("QEMU ended with the status %d before the service counted the sequence", state.exit_code)
 			}
 		}

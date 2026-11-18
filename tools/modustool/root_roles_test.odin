@@ -143,12 +143,12 @@ the_layout_of_a_device_service_takes_each_slot_once :: proc(t: ^testing.T) {
 @(test)
 the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	builds := []Module_Build {
-		{name = "root", source = SYSTEM_MODULE_SOURCES + "root", program = true, image = true},
-		{name = "alpha", source = DEMONSTRATION_MODULE_SOURCES + "alpha", program = true, image = true},
-		{name = "beta", source = DEMONSTRATION_MODULE_SOURCES + "beta", program = true, image = true},
-		{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", program = true, image = true},
-		{name = "block", source = SYSTEM_MODULE_SOURCES + "block", program = true, image = true},
-		{name = "visitor", source = TEST_MODULE_SOURCES + "visitor", program = true, image = true, disk = true},
+		{name = "root", source = SYSTEM_MODULE_SOURCES + "root", entry = true, image = true},
+		{name = "alpha", source = DEMONSTRATION_MODULE_SOURCES + "alpha", entry = true, image = true},
+		{name = "beta", source = DEMONSTRATION_MODULE_SOURCES + "beta", entry = true, image = true},
+		{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", entry = true, image = true},
+		{name = "block", source = SYSTEM_MODULE_SOURCES + "block", entry = true, image = true},
+		{name = "visitor", source = TEST_MODULE_SOURCES + "visitor", entry = true, image = true, disk = true},
 		{name = "library", source = LIBRARY_MODULE_SOURCES + "library", image = true},
 	}
 	system_parts := []string{"root", "compositor", "block"}

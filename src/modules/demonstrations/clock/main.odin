@@ -18,7 +18,7 @@
 // load from memory, and one million reads make 0 kernel entries. The read
 // with a kernel entry is measured too, for comparison.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("clock")` in the console. The window shows the two ways: the
 // reads of the check and their kernel entries. The log gets one line for
 // each way (`clock: the check of the time page: 1000000 reads, 0 kernel

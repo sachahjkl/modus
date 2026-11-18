@@ -9,7 +9,7 @@
 // handler uses, against a real fault: 36 cases, each in a child program,
 // each with a result that the program checks.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("fault_ring")` in the console. The window has one row for each
 // case, which turns right or wrong as its child stops. The log has one
 // line for each child: `fault_ring: <case>: the child stopped with the

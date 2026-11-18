@@ -95,7 +95,7 @@ nicknames_that_a_grant_refuses :: proc(t: ^testing.T) {
 		{"console.history", .Bad_Byte, 7},
 		{"a b", .Bad_Byte, 1},
 		{"", .Empty, 0},
-		{"programs", .Store_Name, 0},
+		{"module_files", .Store_Name, 0},
 		{"grant_table", .Table_Name, 0},
 		{"twenty_four_bytes_long__", .Too_Long, 0},
 	}

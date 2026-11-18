@@ -149,7 +149,7 @@ Load_Source :: struct {
 }
 
 // A module file of a load source that is not in the image: the root
-// service gives the files of the store `programs` that an import scan kept
+// service gives the files of the store `module_files` that an import scan kept
 // (docs/MODULE_CONTRACT.md, "A program from a disk"). The loader checks the
 // hash and the tables of the bytes before it uses them, as for a file of
 // the image.

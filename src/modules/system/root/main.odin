@@ -39,7 +39,7 @@
 //
 // - `Start`, `Stop`: a program by name, in the session of the caller.
 // - `Start_From_Disk`: a disk program, by its name and the hash of its
-//   module file, which this service reads from the store `programs` of the
+//   module file, which this service reads from the store `module_files` of the
 //   storage service. Its completion comes when the load ends
 //   (disk_programs.odin; docs/MODULE_CONTRACT.md, "A program from a disk").
 // - `Disk_Grant`, `Nickname_Move`, `Disk_Grant_Persistence`: the disk
@@ -64,7 +64,7 @@
 //   debugger service, on behalf of a caller of that service that acts for
 //   the principal whose session runs that program (`debug`).
 // - `Debug_Store`: for that debugger service, a connection that reads only
-//   to the store `programs` of a disk program that it debugs, where the
+//   to the store `module_files` of a disk program that it debugs, where the
 //   debug object of the program is (debug_store.odin); or that connection
 //   and the stop report that this service kept of a disk program that
 //   stopped on a fault.

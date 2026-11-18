@@ -1,17 +1,17 @@
-// A disk program that imports a library module of the store `programs`:
+// A disk program that imports a library module of the store `module_files`:
 // the test of the import scan (docs/MODULE_CONTRACT.md, "A program from a
 // disk").
 //
 // **What it is for.** Its import names the hash of the module
 // `store_library`, which no boot image holds. The root service finds that
-// file in the store `programs` of the principal by the hash of its bytes,
+// file in the store `module_files` of the principal by the hash of its bytes,
 // and the loader binds the import slot to it. This program calls the
 // export and writes the result. It is also the disk program of the test
 // that has a window: the menu of the windows and the monitor show it by its
 // nickname, with the hash prefix of its file.
 //
 // **Start**: `start_from_disk("store_importer", hash)` in the console, on a
-// machine whose data disk holds the store `programs` with this file and the
+// machine whose data disk holds the store `module_files` with this file and the
 // file of `store_library`. The modus tool writes that disk for the test
 // part `disk_programs`, and prints the hashes.
 //
@@ -48,7 +48,7 @@ window_memory: interface.Window_Memory(8, 256)
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	result := triple(14)
 	if result == 42 {
-		system.log("store_importer: triple(14) of the module store_library of the store programs gives 42: as it must")
+		system.log("store_importer: triple(14) of the module store_library of the store module_files gives 42: as it must")
 	} else {
 		system.log("store_importer: triple(14) gives ", u64(result), ", and 42 is the answer: WRONG")
 	}

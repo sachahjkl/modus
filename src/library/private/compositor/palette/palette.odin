@@ -41,7 +41,7 @@ State :: enum u8 {
 // What an entry is. The list says it in words at the right of each row.
 Entry_Kind :: enum u8 {
 	Window       = 0, // A window: the choice brings it to the front.
-	Program      = 1, // A program of the table of the programs: the choice starts it.
+	Module       = 1, // A module of the table bar.names: the choice starts it.
 	Close_Window = 2, // The close of a window: the choice stops its program, after a second Enter.
 	Command      = 3, // A command of the palette provider: the provider runs it.
 	Export       = 4, // An export of a module or of a service, which the palette provider calls.
@@ -156,7 +156,7 @@ Row_Kind :: enum u8 {
 	Entry            = 0, // An entry: the input can choose it.
 	Heading_Recent   = 1, // The heading of the entries that the input chose lately.
 	Heading_Windows  = 2, // The heading of the windows.
-	Heading_Programs = 3, // The heading of the programs.
+	Heading_Modules  = 3, // The heading of the modules.
 }
 
 // One row of the list, in the order of the screen.
@@ -298,7 +298,7 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 				count += 1
 			}
 		}
-		entry_add(list, recents, {kind = .Program, mark = count > 0 ? Entry_Mark.Has_Window : Entry_Mark.No_Window, windows = u8(min(count, 255)), number = u32(index)}, name, "")
+		entry_add(list, recents, {kind = .Module, mark = count > 0 ? Entry_Mark.Has_Window : Entry_Mark.No_Window, windows = u8(min(count, 255)), number = u32(index)}, name, "")
 	}
 	for window in windows {
 		added := Entry{kind = .Close_Window, mark = .Destroys, flags = {.Destroys}, number = window.number}
@@ -554,7 +554,7 @@ kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 	switch kind {
 	case .Window:
 		return 0
-	case .Program:
+	case .Module:
 		return 1
 	case .Setting:
 		return 2
@@ -635,7 +635,7 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 	case .Settings:
 		return kind == .Setting
 	case .Manual:
-		return kind == .Program
+		return kind == .Module
 	}
 	return false
 }
@@ -716,14 +716,14 @@ rows_rank :: proc "contextless" (list: ^List, query: string) {
 				row_add(list, {kind = .Entry, entry = u16(index)})
 			}
 		}
-		for kind in ([2]Entry_Kind{.Window, .Program}) {
+		for kind in ([2]Entry_Kind{.Window, .Module}) {
 			heading_shown = false
 			for &entry, index in list.entries[:list.entry_count] {
 				if entry.kind != kind {
 					continue
 				}
 				if !heading_shown {
-					row_add(list, {kind = kind == .Window ? Row_Kind.Heading_Windows : Row_Kind.Heading_Programs})
+					row_add(list, {kind = kind == .Window ? Row_Kind.Heading_Windows : Row_Kind.Heading_Modules})
 					heading_shown = true
 				}
 				row_add(list, {kind = .Entry, entry = u16(index)})

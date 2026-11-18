@@ -10,12 +10,12 @@ import "modus:contract/glyph_cache"
 import "modus:support/mark"
 import "modus:support/text_shaping"
 
-// The programs that the menu of the programs offers, in its order.
+// The modules that the start menu offers, in its order.
 @(rodata)
 names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "hall_of_fame", "heron", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "debugger_window", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault", "fault_ring", "kernel_events"}
 
 // The bar is on the grid of docs/DESIGN.md: 8 pixels.
-LABEL :: "programs" // The text of the button that opens the menu of the programs.
+LABEL :: "start" // The text of the button that opens the start menu.
 CHARACTER_WIDTH :: 8 // The font of the cells.
 START :: 80 // After the mark of the system.
 PADDING :: 8 // Pixels on each side of the text of a button.
@@ -25,7 +25,7 @@ BUTTON_HEIGHT :: 24 // The height of a button.
 LINE_HEIGHT :: 24 // One line of a menu.
 BORDER :: 1 // The border of a menu, in pixels.
 TITLE :: 40 // The title of a menu, as the title of a card.
-COLUMNS :: 2 // The menu of the programs has two columns of names.
+COLUMNS :: 2 // The start menu has two columns of names.
 COLUMN_LEAST :: 120 // The title of the menu fits.
 
 // Layout: the widths of the texts of the bar, measured in the font that
@@ -76,7 +76,7 @@ MARK_CELL_SIZE :: 1 // One pixel for each cell of the heron.
 MARK_SIZE :: mark.HERON_GRID_SIZE * MARK_CELL_SIZE // The side of the mark: 24 pixels.
 #assert(MARK_X + MARK_SIZE <= START && MARK_Y + MARK_SIZE <= HEIGHT)
 
-// rows gives the lines of one column of the menu of the programs.
+// rows gives the lines of one column of the start menu.
 rows :: proc "contextless" () -> int {
 	return (len(names) + COLUMNS - 1) / COLUMNS
 }
@@ -87,14 +87,14 @@ button :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 	return START, BUTTON_Y, layout.label_width + 2 * PADDING, BUTTON_HEIGHT
 }
 
-// column_width gives the width of one column of the menu of the programs:
+// column_width gives the width of one column of the start menu:
 // the widest name and a padding on each side, on the grid.
 column_width :: proc "contextless" (layout: Layout) -> int {
 	longest := max(layout.longest_name_width, layout.label_width)
 	return max((longest + 2 * PADDING + 7) / 8 * 8, COLUMN_LEAST)
 }
 
-// menu gives the place of the menu of the programs, under its button.
+// menu gives the place of the start menu, under its button.
 menu :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 	return START, HEIGHT, COLUMNS * column_width(layout) + 2 * BORDER, TITLE + rows() * LINE_HEIGHT + 2 * BORDER
 }
@@ -198,7 +198,7 @@ windows_line_center :: proc "contextless" (layout: Layout, index: int) -> (cente
 // A button of the bar.
 Bar_Button :: enum u8 {
 	None, // No button: the pointer is elsewhere.
-	Programs, // The button that opens the menu of the programs.
+	Start, // The button that opens the start menu.
 	Windows, // The button that opens the menu of the windows.
 }
 
@@ -208,7 +208,7 @@ button_at :: proc "contextless" (layout: Layout, point_x, point_y: int) -> Bar_B
 		return point_x >= x && point_x < x + width && point_y >= y && point_y < y + height
 	}
 	if x, y, width, height := button(layout); inside(point_x, point_y, x, y, width, height) {
-		return .Programs
+		return .Start
 	}
 	if x, y, width, height := windows_button(layout); inside(point_x, point_y, x, y, width, height) {
 		return .Windows

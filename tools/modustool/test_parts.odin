@@ -64,7 +64,7 @@ test_parts := [?]Test_Part {
 	},
 	{
 		name = "disk_programs",
-		does = "The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock (\"The disk of the disk programs\")",
+		does = "The six machines of the disk programs: a program that the boot image does not hold starts from the store `module_files`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock (\"The disk of the disk programs\")",
 		run = disk_programs_tests_run,
 		procedures = {"disk_programs_tests_run", "disk_programs_named_principal_tests_run"},
 		volumes = {BOOT_VOLUME},

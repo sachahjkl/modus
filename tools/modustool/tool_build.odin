@@ -149,9 +149,9 @@ tool_build_current :: proc() {
 tool_build :: proc(root, binary, record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table) -> bool {
 	make_folder(join(root, "/", TOOL_BUILD_FOLDER)) or_return
 	_ = os.remove(record_path)
-	process_number := os.get_pid()
-	output := fmt.tprintf("%s.%d.next", TOOL_BINARY, process_number)
-	dependency_file := fmt.tprintf("%s.%d.%s", TOOL_BINARY, process_number, DEPENDENCY_FILE_NAME)
+	host_process_number := os.get_pid()
+	output := fmt.tprintf("%s.%d.next", TOOL_BINARY, host_process_number)
+	dependency_file := fmt.tprintf("%s.%d.%s", TOOL_BINARY, host_process_number, DEPENDENCY_FILE_NAME)
 	output_path := join(root, "/", output)
 	dependency_path := join(root, "/", dependency_file)
 	defer {
@@ -159,12 +159,12 @@ tool_build :: proc(root, binary, record_path: string, inputs: Build_Key_Inputs, 
 	}
 	command := tool_compile_command_of(output, dependency_file)
 	started := time.tick_now()
-	process, start_error := os.process_start({command = command, working_dir = root, stdin = os.stdin, stdout = os.stderr, stderr = os.stderr})
+	host_process, start_error := os.process_start({command = command, working_dir = root, stdin = os.stdin, stdout = os.stderr, stderr = os.stderr})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_error)
 		return false
 	}
-	state, wait_error := os.process_wait(process)
+	state, wait_error := os.process_wait(host_process)
 	// The compile time of the tool is a measure: nothing reads it.
 	fmt.eprintfln("modustool: measure: the compile of the tool: %.1f s", time.duration_seconds(time.tick_since(started)))
 	if wait_error != nil || !state.success {
@@ -189,12 +189,12 @@ tool_run_again :: proc(binary: string) -> int {
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, binary)
 	append(&command, ..os.args[1:])
-	process, start_error := os.process_start({command = command[:], stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
+	host_process, start_error := os.process_start({command = command[:], stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start %s: %v", binary, start_error)
 		return EXIT_FAILURE
 	}
-	state, wait_error := os.process_wait(process)
+	state, wait_error := os.process_wait(host_process)
 	if wait_error != nil || !state.exited {
 		return EXIT_FAILURE
 	}

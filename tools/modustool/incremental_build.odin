@@ -1230,7 +1230,7 @@ Build_Measure :: struct {
 	volumes_built:        int,
 	volumes_kept:         int,
 	volumes_not_needed:   int, // The volumes that the command does not boot: not checked, not built.
-	volume_processes:     int, // The volume processes at once.
+	volume_host_processes:     int, // The volume processes at once.
 	volume_times:         [dynamic]Build_Step_Time, // The whole time of the process of each built volume.
 	// The request of each module that has a table Budget, from its file,
 	// in the order of the table of the modules: a reader sees an amount
@@ -1294,7 +1294,7 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 		append(&lines, fmt.tprintf("the build: %8.2f s: %s", seconds(step.duration), step.name))
 	}
 	if measure.volumes_built + measure.volumes_kept + measure.volumes_not_needed > 0 {
-		append(&lines, fmt.tprintf("the build: the boot volumes: %d built, %d kept, %d not needed by this command; %d volume processes at once", measure.volumes_built, measure.volumes_kept, measure.volumes_not_needed, measure.volume_processes))
+		append(&lines, fmt.tprintf("the build: the boot volumes: %d built, %d kept, %d not needed by this command; %d volume processes at once", measure.volumes_built, measure.volumes_kept, measure.volumes_not_needed, measure.volume_host_processes))
 	}
 	for volume_time in measure.volume_times {
 		append(&lines, fmt.tprintf("the build: %8.2f s: the process of the boot volume %s", seconds(volume_time.duration), volume_time.name))

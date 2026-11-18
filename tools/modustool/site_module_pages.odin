@@ -248,7 +248,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		// What the root service gives a program.
 		sources := make([dynamic]string, context.temp_allocator)
 		append(&sources, SITE_MODULES_FILE, build.source)
-		if item.kind == "program" {
+		if item.kind == "entry" {
 			role, has_role := site_role_row_of(reference.program_roles, build.name)
 			budget := description.budget
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")

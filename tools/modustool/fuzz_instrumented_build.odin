@@ -182,13 +182,13 @@ fuzz_run_parallel :: proc(commands: [][]string) -> bool {
 		if len(running) >= limit && !fuzz_wait_oldest(&running, &names) {
 			all_passed = false
 		}
-		process, error := os.process_start({command = command, stdout = os.stdout, stderr = os.stderr})
+		host_process, error := os.process_start({command = command, stdout = os.stdout, stderr = os.stderr})
 		if error != nil {
 			fmt.eprintfln("modustool: cannot start %s: %v", command[0], error)
 			all_passed = false
 			continue
 		}
-		append(&running, process)
+		append(&running, host_process)
 		append(&names, strings.join(command[:min(len(command), 3)], " ", context.temp_allocator))
 	}
 	for len(running) > 0 {
@@ -200,11 +200,11 @@ fuzz_run_parallel :: proc(commands: [][]string) -> bool {
 }
 
 // fuzz_wait_oldest waits for the oldest process of a list, and removes it.
-fuzz_wait_oldest :: proc(processes: ^[dynamic]os.Process, process_names: ^[dynamic]string) -> bool {
-	state, error := os.process_wait(processes^[0])
-	name := process_names^[0]
-	ordered_remove(processes, 0)
-	ordered_remove(process_names, 0)
+fuzz_wait_oldest :: proc(host_processes: ^[dynamic]os.Process, host_process_names: ^[dynamic]string) -> bool {
+	state, error := os.process_wait(host_processes^[0])
+	name := host_process_names^[0]
+	ordered_remove(host_processes, 0)
+	ordered_remove(host_process_names, 0)
 	if error != nil || !state.success {
 		fmt.eprintfln("modustool: %s failed (code %d)", name, state.exit_code)
 		return false

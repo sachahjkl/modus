@@ -43,7 +43,7 @@
 // program checks that the counts are exact, that a rule that names
 // another program costs nothing, and that the right **Events** holds.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("kernel_events")` in the console. The window has one row for each
 // case. The log gets one line for each case, then `kernel_events: ok, 12
 // cases: each count of the rings was exact, ...`, or `kernel_events:

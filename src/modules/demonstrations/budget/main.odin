@@ -14,7 +14,7 @@
 // hidden allocation, when it cannot pay. It also shows that a program can
 // split its budget, and that a closed budget gives back what it held.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("budget")` in the console. The window has one row for each step,
 // with its answer: the pages of the budget from the root service; memory
 // objects of 64 pages until `No_Budget`, then all of them closed; threads

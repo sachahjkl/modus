@@ -16,7 +16,7 @@
 // [period](term:period), and a burst of log records past the limit is
 // refused with `No_Budget`, so no program fills the log of the others.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("limits")` in the console. The window has one bar for each of the
 // four budgets: the processor time that it used in the last second,
 // against its limit. The log gets a line of the times used, then

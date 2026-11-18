@@ -2,7 +2,7 @@ package disk_program
 
 // The import scan: how the root service finds an import of a disk program
 // that the boot image does not hold, by the hash of the bytes of a file of
-// the store `programs` (docs/MODULE_CONTRACT.md, "A program from a disk").
+// the store `module_files` (docs/MODULE_CONTRACT.md, "A program from a disk").
 //
 // This file keeps the account of a scan: the entries that the list gave,
 // the hashes that the imports want, and which entry to read next. The root

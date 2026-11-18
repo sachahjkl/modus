@@ -32,16 +32,16 @@ b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64
 // layouts (narrower and wider than the cells), and B612.
 @(private = "file")
 entries_round_trip :: proc(t: ^testing.T, layout: Layout, name: string) {
-	programs_x, programs_y := button_center(layout)
-	testing.expectf(t, button_at(layout, programs_x, programs_y) == .Programs, "%s: the middle of the button programs", name)
+	start_x, start_y := button_center(layout)
+	testing.expectf(t, button_at(layout, start_x, start_y) == .Start, "%s: the middle of the button start", name)
 	windows_x, windows_y := windows_button_center(layout)
 	testing.expectf(t, button_at(layout, windows_x, windows_y) == .Windows, "%s: the middle of the button windows", name)
 	x, y, width, height := button(layout)
-	testing.expectf(t, button_at(layout, x - 1, y) == .None && button_at(layout, x + width - 1, y + height - 1) == .Programs, "%s: the edges of the button programs", name)
+	testing.expectf(t, button_at(layout, x - 1, y) == .None && button_at(layout, x + width - 1, y + height - 1) == .Start, "%s: the edges of the button start", name)
 	// The gap between the two buttons is no button.
 	testing.expectf(t, button_at(layout, x + width, y) == .None && button_at(layout, x + width + WINDOWS_GAP - 1, y) == .None, "%s: the gap between the buttons", name)
 	windows_left, windows_top, windows_width, windows_height := windows_button(layout)
-	testing.expectf(t, windows_left == x + width + WINDOWS_GAP, "%s: the button windows follows the button programs", name)
+	testing.expectf(t, windows_left == x + width + WINDOWS_GAP, "%s: the button windows follows the button start", name)
 	testing.expectf(t, button_at(layout, windows_left + windows_width, windows_top) == .None && button_at(layout, windows_left, windows_top + windows_height) == .None, "%s: past the button windows", name)
 	for program, index in names {
 		center_x, center_y, found := center(layout, program)

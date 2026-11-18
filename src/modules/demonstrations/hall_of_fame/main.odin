@@ -8,7 +8,7 @@
 // author and its license. A person with no picture under a free license
 // has a card with no picture.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("hall_of_fame")` in the console. Three columns of cards, in whole
 // rows. The arrows, Home and End move the chosen card; a press of the
 // pointer on a card chooses it. The view moves by whole rows to keep the

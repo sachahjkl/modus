@@ -696,7 +696,7 @@ Do not use: docs theme, sidebar layout.
 
 The documentation tree is the list of the documentation pages of the docs, generated from the pages that exist, at the left of each documentation page.
 
-Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Programs, Modules) and the status. It is one `nav` on each page, in the site menu on a narrow screen. Tree lines show its levels.
+Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Modules with an entry, Modules with no entry) and the status. It is one `nav` on each page, in the site menu on a narrow screen. Tree lines show its levels.
 
 The design: `docs/SITE.md`, "The two layouts".
 
@@ -905,6 +905,16 @@ A full check is `nix flake check` and `modustool screenshots`, both passed.
 The design: `src/md/infrastructure/full_check.md`; `docs/TOOLS.md`, "What each tool reads".
 
 Do not use: CI run, test suite, full test.
+
+### Host process
+
+A host process is a process of the host system that the tool starts and waits for: a compiler, QEMU, the TPM emulator, a child of the fuzzer or the build of one boot volume.
+
+It is not a process of this system, and the system never sees it. The tool runs the host processes of a build or of the host tests in one pool, at most one for each processor of the host. In the code of the tool, each name of a host process holds the words `host_process`, as `Build_Host_Process_Pool` and `Tpm_Host_Process` do.
+
+The design: `docs/TOOLS.md`, "The host tests of the check".
+
+Do not use: subprocess, job.
 
 ### Incremental build
 

@@ -15,7 +15,7 @@ package root
 // a lock does not erase it, as a write that runs at the lock still needs it.
 //
 // With the key, this service reads the object `grant_table` of the store
-// `programs` of the principal, then writes it after each change. The key is
+// `module_files` of the principal, then writes it after each change. The key is
 // the only key that this service receives: it opens no seal, and it signs
 // nothing but a table.
 //
@@ -75,7 +75,7 @@ Persisted_Table :: struct {
 	write_again:    bool, // A change came while a write ran: one more write after it.
 	write_failures: int, // The failed tries of the write that runs.
 	// The caller record of the connection of this service for the table:
-	// its name is the name of the store `programs`, and its principal the
+	// its name is the name of the store `module_files`, and its principal the
 	// principal of the table, so the table is an object of the store of the
 	// module files of that principal. grant_for gives it the limit of that
 	// store and no grant to act for a principal.
@@ -358,9 +358,9 @@ persisted_table_refusal :: proc "contextless" (principal: u64) -> bool {
 	case .Record_Unreadable:
 		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal 0: the record of the machine passphrase cannot be read, so nothing is written over the table on the disk")
 	case .Reading:
-		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": its read from the store programs runs")
+		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": its read from the store module_files runs")
 	case .Unread:
-		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the store programs did not give it, so a write could lose it")
+		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the store module_files did not give it, so a write could lose it")
 	case .Refused:
 		if disk_program.table_problem_is_format(persisted_tables[principal].refused_problem) {
 			system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk has a format that this system does not read, and it is kept; do not restore a version of it, as no version has a format that this system reads")
@@ -453,7 +453,7 @@ persisted_table_revoked_keys_take :: proc "contextless" (table: ^Persisted_Table
 }
 
 // persisted_table_open opens the connection of this service to the store
-// `programs` of a principal. It gives the reason when the storage service
+// `module_files` of a principal. It gives the reason when the storage service
 // gives none.
 persisted_table_open :: proc "contextless" (principal: u64) -> (reason: string, opened: bool) {
 	table := &persisted_tables[principal]
@@ -663,26 +663,26 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		case .Write_Over:
 			table.state = .Kept
 			if absent {
-				system.log_in("programs", .Info, "root: the store programs holds no disk grant table of principal ", principal, ": the table of this machine is written there")
+				system.log_in("programs", .Info, "root: the store module_files holds no disk grant table of principal ", principal, ": the table of this machine is written there")
 			} else {
 				new_record := principal == principals.MACHINE ? "the new machine passphrase" : "the new principal"
-				system.log_in("programs", .Warning, "root: refused the disk grant table of principal ", principal, " from the store programs: ", disk_program.table_problem_sentences[problem], "; it gives no grant, and the table of ", new_record, " is written over it")
+				system.log_in("programs", .Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_program.table_problem_sentences[problem], "; it gives no grant, and the table of ", new_record, " is written over it")
 			}
 			persisted_table_write_begin(principal)
 			return
 		case .Keep:
 			table.state = .Refused
 			table.refused_problem = problem
-			system.log_in("programs", .Warning, "root: refused the disk grant table of principal ", principal, " from the store programs: ", disk_program.table_problem_sentences[problem], "; it gives no grant, and it is kept: no change is written over it")
+			system.log_in("programs", .Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_program.table_problem_sentences[problem], "; it gives no grant, and it is kept: no change is written over it")
 			return
 		case .Take:
 		}
 		table.state = .Kept
 		replaced := disk_grant_tables[principal].count
 		if replaced > 0 {
-			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store programs: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote; it replaces ", u64(replaced), " rows made before the key came")
+			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store module_files: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote; it replaces ", u64(replaced), " rows made before the key came")
 		} else {
-			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store programs: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote")
+			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store module_files: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote")
 		}
 		// A key revoked before the read stays revoked: the disk still held
 		// it, and it is written there no more.
@@ -708,7 +708,7 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		table.write_failures = 0
 		// The rows of the bytes that went to the disk: a row that lasts
 		// until the machine stops is not among them.
-		system.log_in("programs", .Info, "root: the disk grant table of principal ", principal, " is written in the store programs: ", u64(table.bytes[disk_program.TABLE_OFFSET_COUNT]), " rows, with the tag of ", key_words(principal), "; ", u64(table.bytes[disk_program.TABLE_OFFSET_CLIENT_KEY_COUNT]), " client keys of remote")
+		system.log_in("programs", .Info, "root: the disk grant table of principal ", principal, " is written in the store module_files: ", u64(table.bytes[disk_program.TABLE_OFFSET_COUNT]), " rows, with the tag of ", key_words(principal), "; ", u64(table.bytes[disk_program.TABLE_OFFSET_CLIENT_KEY_COUNT]), " client keys of remote")
 		if table.write_again {
 			table.write_again = false
 			persisted_table_write_begin(principal)

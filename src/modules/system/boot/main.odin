@@ -12,7 +12,7 @@
 // programs that run. A reader who looks for the cause of a slow or odd
 // start reads it here, after the start.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("boot")` in the console. The window is the boot display at its
 // full size (`bootscreen.WIDTH` by `bootscreen.HEIGHT`), with the message
 // "the desktop runs". It draws again each 500 ms, with the records of the

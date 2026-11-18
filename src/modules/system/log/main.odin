@@ -25,7 +25,7 @@
 // [value runs](term:value-run)). It shows that a log is data, not text to
 // parse again.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("log")` in the console. The window has:
 //
 // - a top line: the count of records read, the count gone before its

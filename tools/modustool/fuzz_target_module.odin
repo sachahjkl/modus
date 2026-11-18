@@ -5,7 +5,7 @@ import module "modus:contract/module"
 
 // The fuzz targets of the module file (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): a module comes from the network into
-// the store `programs`, and its package had no host test of its own. The
+// the store `module_files`, and its package had no host test of its own. The
 // invariant is the core of the flat tables: a file that `validate` accepts
 // gives no read out of bounds through any reader, for any index.
 
