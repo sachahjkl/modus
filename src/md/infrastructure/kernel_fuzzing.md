@@ -309,7 +309,7 @@ The design contradicts no property:
 - The machine has no added device (property 7).
 - The tool and the machine talk through shared memory that each side copies, then checks (property 6).
 
-One cost stays in the system that ships: the root service of the release has the role row of `operation_fuzzing` and its start, which gives the machine with Physical, as it has the rows of the other test processes. Both act only in a boot image that holds the module, and the release refuses such an image.
+One cost stays in the system that ships: the root service of the release has the role row of `operation_fuzzing` and its start, which gives the machine with Physical, as it has the rows of the other test modules. Both act only in a boot image that holds the module, and the release refuses such an image.
 
 ## State
 

@@ -8,7 +8,7 @@ The assembler of LLVM (`llvm-mc`) is in the environment of the flake, with `llc`
 
 ## The chosen form
 
-The assembly files stay in the syntax of `nasm`. `nasm` is a small process, and the flake fixes its version.
+The assembly files stay in the syntax of `nasm`. `nasm` is a small program, and the flake fixes its version.
 
 ## The refused form: the assembler of LLVM
 

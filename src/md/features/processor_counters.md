@@ -1,6 +1,6 @@
 # The counters of a thread
 
-A process counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The kernel holds the mechanism: it processes the performance counters of the processor for one thread, keeps the counts of that thread when it leaves a processor, and gives them back. The terms are in [`docs/glossary/running_code.md`](../../../docs/glossary/running_code.md), "Performance counter" and "Thread counters". The guide is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The counters of a thread".
+A process counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The kernel holds the mechanism: it programs the performance counters of the processor for one thread, keeps the counts of that thread when it leaves a processor, and gives them back. The terms are in [`docs/glossary/running_code.md`](../../../docs/glossary/running_code.md), "Performance counter" and "Thread counters". The guide is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The counters of a thread".
 
 ## Constraints
 
@@ -61,7 +61,7 @@ The three commands act only on the calling thread. The counts of a thread that r
 
 ### The grant: the right `Counters` of the machine handle
 
-For `Start_Counters` and `Read_Counters`, `thread` is the machine handle with the right `Counters`; `number` is not read. The root service gives the right to a process by its role (the start grant `Counters`), and a revocation of the grant `machine` takes it back. Today only the test process `counters` has it.
+For `Start_Counters` and `Read_Counters`, `thread` is the machine handle with the right `Counters`; `number` is not read. The root service gives the right to a process by its role (the start grant `Counters`), and a revocation of the grant `machine` takes it back. Today only the test module `counters` has it.
 
 `Stop_Counters` needs no handle and no right, and gives `Ok` on each machine. It only takes a capability away and gives nothing. With the right, a thread whose right was revoked would read no more counts but could not stop counting either, and each of its switches would keep paying the writes of the counter registers (an exit of each one under KVM).
 

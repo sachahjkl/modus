@@ -74,7 +74,7 @@ Do not use: dirty region, invalid area.
 
 The boot display is the picture of how the machine started, drawn from the boot record and the other records of the kernel.
 
-The boot display shows each stage of the start and its time, the memory, the firmware, the processors, the processes and the modules of the boot image. Three processes draw it with one package, `src/library/support/bootscreen`: the boot program, the root service while it starts the first processes, so that a failure stays on the screen with its cause, and the process `boot`. The boot display is not a splash screen and not a log of text: it is made of cards with measures.
+The boot display shows each stage of the start and its time, the memory, the firmware, the processors, the processes and the modules of the boot image. Three parts of the system draw it with one package, `src/library/support/bootscreen`: the boot program, the root service while it starts the first processes, so that a failure stays on the screen with its cause, and the process `boot`. The boot display is not a splash screen and not a log of text: it is made of cards with measures.
 
 The design: `docs/DESIGN.md`, "12. The card of the boot image".
 
@@ -272,9 +272,9 @@ Do not use: toolkit, widget library, UI framework.
 
 ### Library module
 
-A library module is a module that holds code that many processes import, in place of a package that each process compiles into its own file.
+A library module is a module that holds code that many modules import, in place of a package that each module compiles into its own file.
 
-A package that many processes compile in is many copies of the same code, with no record of what each process holds. A library module is one file with one hash: the import table of each process names it, and a change of its code builds one module. Its exports are coarse: a call passes whole tables of the caller, by address, with no copy. Example: the drawing module. A library module is not a second kind of import: the loader binds it as each import.
+A package that many modules compile in is many copies of the same code, with no record of what each module holds. A library module is one file with one hash: the import table of each importer names it, and a change of its code builds one module. Its exports are coarse: a call passes whole tables of the caller, by address, with no copy. Example: the drawing module. A library module is not a second kind of import: the loader binds it as each import.
 
 The design: `docs/MODULE_CONTRACT.md`, "A library as a module".
 

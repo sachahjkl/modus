@@ -19,7 +19,7 @@ The `Text` of the module contract is UTF-8 already ([`docs/MODULE_CONTRACT.md`](
 
 ## The chosen form
 
-**One rule, in one contract package.** `src/library/contract/text_encoding` holds the rule and the procedures. It is a contract package because the palette table, the store, the cut mark and the kernel check text with it, and none of them can import a support package. A support package or a process imports it as well.
+**One rule, in one contract package.** `src/library/contract/text_encoding` holds the rule and the procedures. It is a contract package because the palette table, the store, the cut mark and the kernel check text with it, and none of them can import a support package. A support package or a module imports it as well.
 
 **A text is UTF-8, as RFC 3629 defines it.** A character is one well-formed sequence:
 

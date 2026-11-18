@@ -73,7 +73,7 @@ Refused for this layer:
 
 ## The refused forms
 
-- **Pages move, bytes do not, on receive.** The service gives the page of a frame to the process. This is one change of a mapping for each frame: a kernel entry for each packet, or a new batch operation. The service also needs a handle on the process to map into it, an authority that it must not hold. Each unmap needs a message to each processor of the process. A copy of 1460 bytes costs less.
+- **Pages move, bytes do not, on receive.** The service gives the page of a frame to the process. This is one change of a mapping for each frame: a kernel entry for each packet, or a new batch operation. The service also needs a handle on the process to map into it, an authority that it must not hold. Each unmap needs a message to each processor that runs a thread of the process. A copy of 1460 bytes costs less.
 - **A shared pool of frames mapped read-only in each process.** Each process then reads the frames of the others.
 - **The frame service reads the headers and copies to the process.** It removes one wake, not the copy. The code that reads hostile frames then holds the right to physical memory. Today that right is in a process that reads no frame.
 - **A test machine with several queues.** The two network back ends of the test machine refuse several queues. The others need a right on the host that the tests do not have.
@@ -94,7 +94,7 @@ Refused for this layer:
 
 ## The condition under which the exception ends
 
-A network device with at least one receive queue for each endpoint, and an exact filter by destination port that only the frame service processes. For send, also a filter of the source in the device.
+A network device with at least one receive queue for each endpoint, and an exact filter by destination port that only the frame service programs. For send, also a filter of the source in the device.
 
 ## Not explained by this design
 

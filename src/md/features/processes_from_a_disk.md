@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A developer adds a process to a machine with no new boot image. The module file of the process is an object in a store of the storage service. The root service reads it, checks it, and starts it. Such a process is a disk process ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Disk process").
+A developer adds a module to a machine with no new boot image. The module file is an object in a store of the storage service. The root service reads it, checks it, and starts it as a process. Such a process is a disk process ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Disk process").
 
 The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A module from a disk".
 
@@ -61,7 +61,7 @@ One load runs at a time. A second command during a load is refused with `Busy`.
 
 ### The least right
 
-A process of the boot image has a row in the grant table: its name gives it its grants and the limit of its store. A disk process has no row, and gets:
+A module of the boot image has a row in the grant table: its name gives it its grants and the limit of its store. A disk process has no row, and gets:
 
 - the log, with the right Write only, and a window, as each process has;
 - the date page, the settings page and the glyph caches, read-only, as each process with a window has;
@@ -78,7 +78,7 @@ Nothing in the file gives a grant. The root service reads no table of the file t
 
 A disk process imports by hash, as each module does. Its load source is the boot image, the replacement table of the machine, and the module files of the store `module_files` of its principal that the root service found and checked for this load. A developer then adds a process and its library modules to a machine that runs, with no new boot image.
 
-**The import scan.** The root service finds an import that the boot image does not hold by an import scan ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Import scan"): it lists the root tree of the store `module_files`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the process, after the check of the hash of the process file and before the start:
+**The import scan.** The root service finds an import that the boot image does not hold by an import scan ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Import scan"): it lists the root tree of the store `module_files`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the process, after the check of the hash of the module file and before the start:
 
 | State | The root service waits for | Then |
 |---|---|---|
@@ -95,12 +95,12 @@ root: refused store_importer from the disk: store_importer imports 3a9c…, and 
 **The bounds.** The scan runs inside the load, so each rule of the load holds: one connection, the deadline of 30 seconds for the whole load, a progress at each answer, 4 MiB at most for each file. Three bounds are its own (`src/library/support/disk_process/import_scan.odin`):
 
 - **64 entries.** The scan notes the first 64 objects of the list. The line of a refusal says when the store has more.
-- **8 modules of the store, 4 levels.** The imports of the process are level 1, their imports level 2. A ninth hash, or a fifth level, refuses the start. A process has 16 modules at most anyway.
+- **8 modules of the store, 4 levels.** The imports of the module are level 1, their imports level 2. A ninth hash, or a fifth level, refuses the start. A process has 16 modules at most anyway.
 - **The reads.** 64 entries and two reads for each wanted hash at most: a storage service that changes the bytes at each read cannot make the scan last past this count.
 
 The store `module_files` holds 4096 blocks, 16 MiB: the first pass of a scan never reads more than that, and each wanted hash adds two reads of 4 MiB at most.
 
-**The walk.** The root service reads the import table of the process file, then of each file that it keeps. A hash that a module of the boot image has is not wanted. A replacement of the machine applies as in the loader: the root service wants the hash of the replacement too, and walks the imports of the module that the loader gives. The imports of a module of the boot image are not walked: the boot image holds them, or the loader refuses them at the stage Find.
+**The walk.** The root service reads the import table of the module file, then of each file that it keeps. A hash that a module of the boot image has is not wanted. A replacement of the machine applies as in the loader: the root service wants the hash of the replacement too, and walks the imports of the module that the loader gives. The imports of a module of the boot image are not walked: the boot image holds them, or the loader refuses them at the stage Find.
 
 **The memory.** The bytes of each file that the scan keeps are memory of the root service, paid by the one budget of all disk processes, as the process that imports them is. They stay mapped in the root service until the end of the load: the loader copies each module into the process, and the root service then frees them. A store that does not fit in that budget refuses the start with the status of the budget.
 
@@ -164,7 +164,7 @@ One file can have two nicknames. Each nickname has its own row, its own grants a
 
 **The store of a disk process.** The grant `store` gives an isolated store of its own, attached to the nickname, not to the hash. Its name is `disk-` and the nickname, with the ending of the principal (`disk-visitor`, `disk-visitor.principal.1`).
 
-- The store of a hash: a new version of a process has another hash, and loses its data. Refused.
+- The store of a hash: a new version of a module has another hash, and loses its data. Refused.
 - The store of the nickname: an update is the principal pointing the nickname to a new hash, and the store follows. A file under another nickname gets a new, empty store. No file chooses its store.
 - The prefix `disk-` keeps the stores of the disk processes apart from the stores of the boot image: the name of a module has no byte `-`. A nickname with a store has letters, digits, `-` and `_` only, so it cannot build the ending `.history` or `.principal.N` of another store.
 - A name of a store has 31 bytes at most. A nickname whose store name does not fit is refused at `allow`, not cut.

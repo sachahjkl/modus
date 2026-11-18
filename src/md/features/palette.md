@@ -31,7 +31,7 @@ Why this gives no process a new authority: the compositor already routes each ke
 - A compromised console can show an entry whose name lies. It needs no palette to do harm: it holds the grants. The compositor, not the provider, draws the confirmation of an entry that destroys.
 - A process without the grant gains nothing. The table and the ring are handles that the root service gives to two processes only.
 
-How a process adds its operations: it exports a described function and is a service. It writes no table and no code for the palette. The description of an export is the one source of each front end.
+How a module adds its operations: it exports a described function and is a service. It writes no table and no code for the palette. The description of an export is the one source of each front end.
 
 ## The refused forms
 
@@ -136,7 +136,7 @@ Refused forms:
 
 **Rule 2: the mode comes from the facts of the entry.** Three modes: run, destroy, go to. The input band names the mode of the chosen entry and its key, at its right: an entry with the flag `Destroys`, and the close of a window, is "enter enter: destroy", with its second Enter; each other entry is "enter: run". An entry whose act name an open window names adds "shift enter: go to". Enter runs by default. The words are measured against the room that the typed part leaves: the word of a prefix leaves first, then the mode. The footer keeps the act of Enter on the entry ("enter: close", "enter: start"): the mode is the kind of the act, the footer the act itself.
 
-**Rule 3: where to go comes from the window.** An element that a process builds with the interface package can name what it acts on: an act name, a text of at most 32 bytes, such as `settings.set:font`. The window layer sends the set of the act names of a frame to the compositor in one record of the ring of its window, only when the set changes. The compositor keeps the act names of each window. The provider writes the act name of each entry in the table, so the compositor reads it and never parses the name of an entry. An entry whose act name an open window names offers go to. On go to, the compositor raises the window, and sends it an event with the act name; the window layer puts the focus on the element, and the next frame shows it. A process writes no code for go to: it names an element when it builds it.
+**Rule 3: where to go comes from the window.** An element that a process builds with the interface package can name what it acts on: an act name, a text of at most 32 bytes, such as `settings.set:font`. The window layer sends the set of the act names of a frame to the compositor in one record of the ring of its window, only when the set changes. The compositor keeps the act names of each window. The provider writes the act name of each entry in the table, so the compositor reads it and never parses the name of an entry. An entry whose act name an open window names offers go to. On go to, the compositor raises the window, and sends it an event with the act name; the window layer puts the focus on the element, and the next frame shows it. A module writes no code for go to: it names an element when it builds it.
 
 **One record, so a hash.** A record of a ring holds 7 values of 8 bytes. The names of the settings already need more than 56 bytes. So the record holds a count and at most 6 hashes, the FNV-1a hash of each name (`display.act_name_hash`), and the event holds one hash. The panel hashes the act name of an entry when it collects the list, on its second thread. The window layer keeps the text of each name of its last frame, for its own line of the log. A second record for each name was refused: the set of a window then arrives in parts, and the compositor needs a state for a set that is not whole.
 
@@ -146,9 +146,9 @@ Refused forms:
 
 **Refused forms.**
 
-- **A form for each command**, written in the panel or in the provider: each new command and each process of another project needs code in the compositor.
+- **A form for each command**, written in the panel or in the provider: each new command and each module of another project needs code in the compositor.
 - **A mode "set" beside run.** A setting is a command whose field is a closed list: its row of buttons comes from rule 1, and it runs.
-- **Go to as an export of each process.** Each process writes the same code, and a process with no service cannot be called. The window layer of each process already holds its elements and its focus.
+- **Go to as an export of each module.** Each module writes the same code, and a module with no service cannot be called. The window layer of each process already holds its elements and its focus.
 - **A rectangle that the process gives, in place of a name.** A process can name a rectangle over another window, or one that moves after the next frame. A name, found by the window layer at the time of the event, cannot point outside its own window.
 
 **The subtle points.**

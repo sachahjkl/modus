@@ -6,7 +6,7 @@ The grant of a network endpoint (`datagram.Grant`) crosses two borders as one `u
 
 - A network grant is an authority: who a process may reach, and on which port it may answer.
 - A word of transport becomes its record at one place only, and that place refuses a value that names no member.
-- The decision of the network service is tested on the host. The service is a process, and a process is not built for a host test.
+- The decision of the network service is tested on the host. The service is a module with an entry, and such a module is not built for a host test.
 
 ## The chosen form
 
