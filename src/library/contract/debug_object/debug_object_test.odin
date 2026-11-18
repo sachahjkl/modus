@@ -6,7 +6,7 @@ import "core:testing"
 // The object of a small module: two procedures, one export with no
 // package, two files, and rows with a gap between the procedures.
 //   strings: "fault::three" (0, 12), "entry" (12, 5),
-//            "processes/fault/main.odin" (17, 24), "base:runtime/print.odin" (41, 23)
+//            "programs/fault/main.odin" (17, 24), "base:runtime/print.odin" (41, 23)
 @(private = "file")
 STRINGS :: "fault::threeentryprograms/fault/main.odinbase:runtime/print.odin"
 
@@ -52,7 +52,7 @@ a_procedure_and_its_line_are_found_by_offset :: proc(t: ^testing.T) {
 	testing.expect_value(t, place.procedure, "fault::three")
 	testing.expect_value(t, place.procedure[:place.package_count], "fault")
 	testing.expect_value(t, place.offset_in_procedure, u64(0xB))
-	testing.expect_value(t, place.file, "processes/fault/main.odin")
+	testing.expect_value(t, place.file, "programs/fault/main.odin")
 	testing.expect_value(t, place.line, u32(15))
 	// The first byte and the last byte of a procedure.
 	testing.expect_value(t, place_of(object, 0x1470).line, u32(14))
@@ -152,7 +152,7 @@ a_name_or_a_path_with_a_control_byte_is_refused :: proc(t: ^testing.T) {
 		{with_bytes(object, strings_at + 17 + 8, {'\n'}), .File_Path},
 		{with_bytes(object, strings_at + 41 + 4, {0x07}), .File_Path},
 		{with_bytes(object, strings_at + 17, {'.', '.', '/'}), .File_Path}, // "../grams/fault/main.odin"
-		{with_bytes(object, strings_at + 17 + 9, {'.', '.', '/', '.', '.', '/'}), .File_Path}, // "processes/../../main.odin"
+		{with_bytes(object, strings_at + 17 + 9, {'.', '.', '/', '.', '.', '/'}), .File_Path}, // "programs/../../main.odin"
 	}
 	for item, index in cases {
 		testing.expectf(t, check(item.object) == item.fault, "case %d: %v, not %v", index, check(item.object), item.fault)
@@ -161,5 +161,5 @@ a_name_or_a_path_with_a_control_byte_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, name_bytes_valid("module::record:proc\"contextless\"(file:[]u8,T:$module::Slot)->(value:module::Slot,ok:bool)"))
 	testing.expect(t, name_bytes_valid("__$equal$$struct{file_path:string,line:i32}"))
 	testing.expect(t, name_bytes_valid("sentence::[error.odin]::rights_text"))
-	testing.expect(t, !path_has_parent_part("processes/fault/main.odin") && !path_has_parent_part("a/..b/c") && path_has_parent_part(".."))
+	testing.expect(t, !path_has_parent_part("programs/fault/main.odin") && !path_has_parent_part("a/..b/c") && path_has_parent_part(".."))
 }
