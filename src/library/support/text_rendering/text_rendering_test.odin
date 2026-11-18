@@ -60,8 +60,34 @@ outlines_open :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input, demand_b
 	outlines: font_outlines.Outlines
 	outlines, words = resource_of(t, fonts)
 	state = {}
-	private_cache = {}
+	memory_reset_for_test()
 	return open(&outlines, demand_base), words
+}
+
+// The glyph memory of the tests: one for the package, as in a process,
+// all zero at each open, and given as a process gives it at its first
+// glyph past the glyph caches.
+test_glyph_memory: ^Glyph_Memory
+
+// memory_reset_for_test empties the cache and gives the package its glyph
+// memory again, all zero.
+memory_reset_for_test :: proc() {
+	if test_glyph_memory == nil {
+		test_glyph_memory = new(Glyph_Memory)
+	}
+	mem.zero(test_glyph_memory, size_of(Glyph_Memory))
+	cache_state = {}
+	memory_give(test_glyph_memory)
+}
+
+// test_cache gives the private glyph cache of the glyph memory of the tests.
+test_cache :: proc() -> ^Private_Cache {
+	return &cache_state.memory.cache
+}
+
+// test_words gives the words of the raster memory of the tests.
+test_words :: proc() -> []u32 {
+	return cache_state.memory.raster.words[:]
 }
 
 // The sizes at the edges of their range: 0, 1, one below the smallest
@@ -250,7 +276,7 @@ a_damaged_outline_table_is_refused_once :: proc(t: ^testing.T) {
 a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
 	test_state_take()
 	state = {}
-	private_cache = {}
+	memory_reset_for_test()
 	testing.expect_value(t, font_of(.Interface, 0x03B1), Outline_Font.None)
 	testing.expect_value(t, face_of_cache(nil), Face.None)
 	_, _, source := glyph(.Interface, 0x03B1, TEXT_SIZE_OF_SCALE_ONE, 0)
@@ -388,13 +414,14 @@ the_cache_at_its_bound_of_entries :: proc(t: ^testing.T) {
 	past_size := TEXT_SIZE_MINIMUM + SIZE_COUNT
 	before := new([ENTRY_CAPACITY]Private_Entry)
 	defer free(before)
-	before^ = private_cache.entries
+	cache := test_cache()
+	before^ = cache.entries
 	past, _, past_source := glyph(.Interface, STOP, past_size, 0)
 	testing.expect_value(t, past_source, Glyph_Source.Not_Kept)
 	testing.expect_value(t, counts().not_kept, u64(1))
 	testing.expect_value(t, counts().evicted, u64(0))
-	testing.expect_value(t, entry_find(&private_cache, key_of(.Interface, .B612, glyph_index_of(.B612, STOP), past_size, 0)), -1)
-	testing.expect(t, mem.compare(mem.ptr_to_bytes(before), mem.ptr_to_bytes(&private_cache.entries)) == 0)
+	testing.expect_value(t, entry_find(test_cache(), key_of(.Interface, .B612, glyph_index_of(.B612, STOP), past_size, 0)), -1)
+	testing.expect(t, mem.compare(mem.ptr_to_bytes(before), mem.ptr_to_bytes(&cache.entries)) == 0)
 	// Its box is the box of the glyph drawn whole.
 	box, problem := glyph_raster(.Interface, .B612, glyph_index_of(.B612, STOP), past_size, 0)
 	testing.expect_value(t, problem, Raster_Problem.None)
@@ -408,7 +435,7 @@ the_cache_at_its_bound_of_entries :: proc(t: ^testing.T) {
 	_, _, kept := glyph(.Interface, STOP, past_size, 0)
 	testing.expect_value(t, kept, Glyph_Source.Private_Cache)
 	testing.expect_value(t, counts().evicted, u64(1))
-	testing.expect_value(t, entry_find(&private_cache, key_of(.Interface, .B612, glyph_index_of(.B612, STOP), TEXT_SIZE_MINIMUM, 0)), -1)
+	testing.expect_value(t, entry_find(test_cache(), key_of(.Interface, .B612, glyph_index_of(.B612, STOP), TEXT_SIZE_MINIMUM, 0)), -1)
 }
 
 // glyph_index_of gives the glyph of a character in an opened font.
@@ -448,7 +475,7 @@ a_frame_larger_than_the_cache :: proc(t: ^testing.T) {
 			kept += 1
 		case .Not_Kept:
 			not_kept += 1
-		case .Missing, .Demand_Cache, .Too_Large:
+		case .Missing, .Demand_Cache, .Banded:
 			testing.expectf(t, false, "size %v: %v", BASE + index, source)
 		}
 	}
@@ -460,11 +487,11 @@ a_frame_larger_than_the_cache :: proc(t: ^testing.T) {
 	testing.expect(t, again_source == .Private_Cache && again == first)
 	testing.expect(t, mem.compare(mem.slice_to_bytes(saved), mem.slice_to_bytes(again_words[:first_count])) == 0)
 
-	// A glyph past the largest block: Too_Large, with no entry.
+	// A glyph past the largest block: Banded, with no entry.
 	LARGE :: TEXT_SIZE_LIMIT
 	_, _, large_source := glyph(.Cells, FULL_BLOCK, LARGE, 0)
-	testing.expect_value(t, large_source, Glyph_Source.Too_Large)
-	testing.expect_value(t, counts().too_large, u64(1))
+	testing.expect_value(t, large_source, Glyph_Source.Banded)
+	testing.expect_value(t, counts().banded, u64(1))
 	job, started := glyph_bands(.Cells, FULL_BLOCK, LARGE, 0)
 	testing.expect(t, started)
 	rows, ink := 0, 0
@@ -503,8 +530,8 @@ the_bands_are_the_glyph_drawn_whole :: proc(t: ^testing.T) {
 		font, index := font_glyph_of(each.face, each.character)
 		box, problem := glyph_raster(each.face, font, index, each.size, 0)
 		testing.expect_value(t, problem, Raster_Problem.None)
-		// The bands write render_memory.band and read the outline again:
-		// the words of the glyph drawn whole stay in render_memory.words.
+		// The bands write the band of the raster memory and read the outline again:
+		// the words of the glyph drawn whole stay in the words of that memory.
 		job, started := glyph_bands(each.face, each.character, each.size, 0)
 		testing.expect(t, started && job.columns == box.stride)
 		box_column := box.left + job.origin_column // The column of the box in the work row.
@@ -520,7 +547,7 @@ the_bands_are_the_glyph_drawn_whole :: proc(t: ^testing.T) {
 					inside := line >= box.first_row && line < box.first_row + box.row_count && column >= box_column && column < box_column + box.width
 					expected: u32
 					if inside {
-						expected = render_memory.words[box.first_word + (line - box.first_row) * box.stride + column - box_column]
+						expected = test_words()[box.first_word + (line - box.first_row) * box.stride + column - box_column]
 					}
 					differ += word != expected ? 1 : 0
 				}
@@ -621,7 +648,7 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 						continue
 					}
 					for row in 0 ..< box.row_count {
-						new_row := render_memory.words[box.first_word + row * box.stride:][:box.width]
+						new_row := test_words()[box.first_word + row * box.stride:][:box.width]
 						old_row := cache.words[int(built.word_offset) + row * box.width:][:box.width]
 						if mem.compare(mem.slice_to_bytes(new_row), mem.slice_to_bytes(old_row)) != 0 {
 							differ += 1

@@ -164,7 +164,7 @@ face_glyph_draw :: proc "contextless" (face: text_rendering.Face, character: run
 	case .Demand_Cache, .Private_Cache, .Not_Kept:
 		glyph_words_draw(entry, words, square_root, tables, order, canvas, x, y, color, alpha)
 		return true
-	case .Too_Large:
+	case .Banded:
 		job, started := text_rendering.glyph_bands(face, character, size, position)
 		if !started {
 			return false

@@ -65,10 +65,21 @@ Placement :: struct {
 
 // place_x and place_y give the subunits of a point of the font.
 place_x :: #force_inline proc "contextless" (placement: ^Placement, x: i32) -> i32 {
-	return i32(placement.origin_x + divide_rounded(i64(x) * placement.horizontal_numerator, placement.horizontal_denominator))
+	return i32(place_x_wide(placement, x))
 }
 
 place_y :: proc "contextless" (placement: ^Placement, y: i32) -> i32 {
+	return i32(place_y_wide(placement, y))
+}
+
+// place_x_wide and place_y_wide give the subunits of a point with no cut
+// to 32 bits: a caller that takes a hostile font checks them against its
+// bound before it draws (src/library/support/text_rendering).
+place_x_wide :: #force_inline proc "contextless" (placement: ^Placement, x: i32) -> i64 {
+	return placement.origin_x + divide_rounded(i64(x) * placement.horizontal_numerator, placement.horizontal_denominator)
+}
+
+place_y_wide :: proc "contextless" (placement: ^Placement, y: i32) -> i64 {
 	units := i64(y)
 	height: i64
 	switch {
@@ -81,7 +92,7 @@ place_y :: proc "contextless" (placement: ^Placement, y: i32) -> i32 {
 	case:
 		height = placement.cap_height_place + divide_rounded((units - placement.cap_height) * placement.vertical_numerator, placement.vertical_denominator)
 	}
-	return i32(placement.origin_y - height)
+	return placement.origin_y - height
 }
 
 // outline_add adds each contour of an outline, with the points between two

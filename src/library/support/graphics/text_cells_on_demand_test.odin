@@ -18,6 +18,9 @@ fallback_test_lock: sync.Mutex
 // fallback_open_for_test opens the four font files of the resource of the
 // boot image, and the demand cache at demand_base (0: none), in a fallback
 // state of all zero. The caller frees the words.
+@(private = "file")
+test_glyph_memory: ^text_rendering.Glyph_Memory
+
 fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: []u64) {
 	fonts := [4]font_outlines.Font_Input {
 		{"b612", #load("../../../../resources/fonts/b612.ttf")},
@@ -33,7 +36,14 @@ fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: [
 	outlines, problem := font_outlines.validate(bytes)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	text_rendering.state = {}
-	text_rendering.private_cache = {}
+	// The glyph memory that a process reserves at its first glyph past the
+	// glyph caches: memory of the test here, all zero at each open.
+	if test_glyph_memory == nil {
+		test_glyph_memory = new(text_rendering.Glyph_Memory)
+	}
+	mem.zero(test_glyph_memory, size_of(text_rendering.Glyph_Memory))
+	text_rendering.cache_state = {}
+	text_rendering.memory_give(test_glyph_memory)
 	missing := text_rendering.open(&outlines, demand_base)
 	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
 	return words

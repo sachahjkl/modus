@@ -142,6 +142,13 @@ fallback_lines_tell :: proc "contextless" () {
 		system.log_in("processes", .Warning, FAULT, "the glyph cache of B612 Regular has no face; the font outlines are not given")
 		return
 	}
+	// The glyphs below come from the private glyph cache of this process:
+	// its glyph memory first, which a process reserves at the first glyph
+	// that needs it.
+	if !display.text_memory_reserve() {
+		system.log_in("processes", .Warning, FAULT, "this process has no glyph memory: each glyph past its glyph caches is drawn band by band")
+		return
+	}
 	drawn, from_demand, missing: u64
 	for range in demand_cache.interface_subset_ranges {
 		for character in range.first ..= range.last {
@@ -152,10 +159,10 @@ fallback_lines_tell :: proc "contextless" () {
 				drawn += entry.row_count > 0 ? 1 : 0
 			case .Private_Cache, .Not_Kept:
 				drawn += entry.row_count > 0 ? 1 : 0
-			case .Missing, .Too_Large:
-				// A Greek letter at a line of 16 pixels is far below the
-				// largest block: Too_Large is a glyph that this window does
-				// not draw.
+			case .Missing, .Banded:
+				// The memory is given above, and a Greek letter at a line
+				// of 16 pixels is far below the largest block: Banded is a
+				// glyph that this window does not draw from its cache.
 				missing += 1
 			}
 		}

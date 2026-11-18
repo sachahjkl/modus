@@ -40,7 +40,7 @@ WORK_THIRDS_LIMIT :: 3 * WORK_COLUMN_LIMIT + 2 * STRIPE_MARGIN
 LINE_ROW_LIMIT :: TEXT_SIZE_LIMIT / SUBPIXEL // The rows of the line of the largest size.
 // The words of the largest glyph that is drawn whole: the largest block of
 // the private glyph cache, a glyph of 128 by 128 pixels. A larger glyph is
-// drawn band by band (Glyph_Source.Too_Large).
+// drawn band by band (Glyph_Source.Banded).
 GLYPH_WORDS_LIMIT :: 16 * 1024
 // The columns that the filter spreads ink past its third: two thirds.
 FILTER_SPREAD_THIRDS :: 2
@@ -49,24 +49,52 @@ FILTER_SPREAD_THIRDS :: 2
 WORK_ROOM_PIXELS :: 1
 SUBUNITS :: vector_font.SUBUNITS_PER_PIXEL
 CONTOUR_LIMIT :: 128 // The contours of one outline.
+// The largest place of a point, in subunits, either side of 0. A point of
+// a hostile font past it is refused before any cut to 32 bits: inside it,
+// each place fits an i32, and so does the sum of two places from which
+// vector_font.outline_add makes the point between two points off the
+// curve, with the few pixels of the origin of the work row.
+PLACE_LIMIT :: i64(1) << 29
+// The cells of the accumulation of one band: the widest work row, with the
+// cell after its last third, for each row of a band. accumulation_of then
+// never refuses a band, as a work row has at most WORK_COLUMN_LIMIT pixels.
+CELL_COUNT :: (WORK_THIRDS_LIMIT + 1) * BAND_ROWS
+#assert(CELL_COUNT >= (3 * WORK_COLUMN_LIMIT + 2 * STRIPE_MARGIN + 1) * BAND_ROWS)
 
-// The memory of the rasterizer of this copy, apart from the state: a copy
-// that only measures never names it, so its file does not carry it.
-Raster_Memory :: struct {
+// The memory of the points of one outline. open reads the measures of each
+// font with it, so a copy that only measures carries it: about 13 KiB.
+Outline_Memory :: struct {
 	points:   [vector_font.POINT_LIMIT]vector_font.Outline_Point,
 	contours: [CONTOUR_LIMIT]int,
-	cells:    [(WORK_THIRDS_LIMIT + 1) * BAND_ROWS]i32,
+}
+
+outline_memory: Outline_Memory
+
+// The memory of the rasterizer, about 150 KiB: part of the glyph memory
+// that a process gives (Glyph_Memory), never a global.
+Raster_Memory :: struct {
+	cells:    [CELL_COUNT]i32,
 	thirds:   [WORK_THIRDS_LIMIT * BAND_ROWS]u8,
 	filtered: [WORK_THIRDS_LIMIT]u8,
 	band:     [WORK_COLUMN_LIMIT * BAND_ROWS]u32, // The words of the rows of one band, a work row each.
 	words:    [GLYPH_WORDS_LIMIT]u32, // The words of a whole glyph, a work row each, before its box is cut.
 }
 
-render_memory: Raster_Memory
+// The small band: the memory of one row of the widest work row, about
+// 11 KiB, global. A copy draws through it, one row at a time, each glyph
+// before it has its glyph memory: slower, with the same words.
+Small_Band :: struct {
+	cells:    [WORK_THIRDS_LIMIT + 1]i32,
+	thirds:   [WORK_THIRDS_LIMIT]u8,
+	filtered: [WORK_THIRDS_LIMIT]u8,
+	band:     [WORK_COLUMN_LIMIT]u32,
+}
 
-// outline_memory gives an outline over the points of the render memory.
+small_band: Small_Band
+
+// outline_of gives an outline over the points of an outline memory.
 @(private)
-outline_memory :: proc "contextless" (memory: ^Raster_Memory) -> vector_font.Outline {
+outline_of :: proc "contextless" (memory: ^Outline_Memory) -> vector_font.Outline {
 	return {points = memory.points[:], contour_ends = memory.contours[:]}
 }
 
@@ -85,6 +113,7 @@ Raster_Job :: struct {
 	thirds:        int, // The thirds of the work row with its margins.
 	proportional:  bool, // The box of the glyph is the box of its ink; else its cell.
 	filter:        vector_font.Stripe_Filter,
+	failed:        bool, // A band found no memory for its accumulation: the glyph is refused, not drawn in part.
 }
 
 // Raster_Box: the box of the ink of a glyph drawn whole, in the words of
@@ -92,15 +121,16 @@ Raster_Job :: struct {
 Raster_Box :: struct {
 	first_row, row_count: int, // From the top of the line.
 	left, width:          int, // left: from the whole pixel of the origin.
-	first_word:           int, // In render_memory.words: the word of the top left corner of the box.
+	first_word:           int, // In the words of the raster memory: the word of the top left corner of the box.
 	stride:               int, // The words from one row to the next.
 }
 
 // Raster_Problem: why a glyph has no words.
 Raster_Problem :: enum u8 {
 	None,
-	Refused, // The renderer refused the outline, or the glyph is wider than WORK_COLUMN_LIMIT: a hostile font.
+	Refused, // The renderer refused the outline, a point is past PLACE_LIMIT, the glyph is wider than WORK_COLUMN_LIMIT or its columns pass an i16 from its origin: a hostile font.
 	Too_Large, // The glyph passes GLYPH_WORDS_LIMIT: it is drawn band by band.
+	No_Memory, // The copy has no glyph memory yet: a glyph is drawn whole only there.
 }
 
 @(private)
@@ -158,12 +188,20 @@ placement_at :: proc "contextless" (measures: vector_font.Font_Measures, baselin
 // face, and places it at a size and a position across a pixel. The caller
 // has checked the face, the size and the position.
 raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, problem: Raster_Problem) {
-	form := face_forms[face]
-	memory := &render_memory
-	job.outline = outline_memory(memory)
+	job.outline = outline_of(&outline_memory)
 	if vector_font.glyph_outline(&state.fonts[font].file, glyph_index, &job.outline) != .None {
 		return {}, .Refused
 	}
+	return raster_place(face, font, size, position, job.outline)
+}
+
+// raster_place places an outline that the outline memory holds, of a font
+// of the chain of a face, at a size and a position across a pixel. The
+// box of the points is computed in 64 bits from the placement, before any
+// cut to 32 bits, and a point past PLACE_LIMIT refuses the glyph.
+raster_place :: proc "contextless" (face: Face, font: Outline_Font, size, position: int, outline: vector_font.Outline) -> (job: Raster_Job, problem: Raster_Problem) {
+	form := face_forms[face]
+	job.outline = outline
 	first := &state.fonts[form.primary]
 	frame := form.proportional ? first.stated : first.own
 	job.baseline = baseline_of(frame, size)
@@ -172,12 +210,18 @@ raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 	job.filter = .Five_Taps
 	rows := line_rows(size)
 	// The rows and the columns that the points reach, in subunits from the
-	// origin of the glyph.
-	low_x, high_x := i64(max(i32)), i64(min(i32))
-	low_y, high_y := i64(max(i32)), i64(min(i32))
+	// origin of the glyph. The origin across is STRIPE_MARGIN thirds here,
+	// and at most a few pixels more after the move to the column of the
+	// glyph caches, so a bound on the places from the origin bounds the
+	// places that the accumulation sees.
+	low_x, high_x := max(i64), min(i64)
+	low_y, high_y := max(i64), min(i64)
 	for point in job.outline.points[:job.outline.point_count] {
-		x := i64(vector_font.place_x(&job.placement, point.x)) - job.placement.origin_x
-		y := i64(vector_font.place_y(&job.placement, point.y))
+		x := vector_font.place_x_wide(&job.placement, point.x) - job.placement.origin_x
+		y := vector_font.place_y_wide(&job.placement, point.y)
+		if !place_within(x) || !place_within(y) {
+			return {}, .Refused
+		}
 		low_x, high_x = min(low_x, x), max(high_x, x)
 		low_y, high_y = min(low_y, y), max(high_y, y)
 	}
@@ -196,15 +240,12 @@ raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 		job.origin_column = 0
 	} else {
 		shift := i64(position) * SUBUNITS // One third of a pixel for each position.
-		left_third := floor_divide(low_x + shift, SUBUNITS) - FILTER_SPREAD_THIRDS
-		right_third := ceiling_divide(high_x + shift, SUBUNITS) - 1 + FILTER_SPREAD_THIRDS
-		left_pixel := floor_divide(left_third, 3) - WORK_ROOM_PIXELS
-		right_pixel := floor_divide(right_third, 3) + WORK_ROOM_PIXELS
-		if right_pixel - left_pixel + 1 > WORK_COLUMN_LIMIT {
+		columns, origin_column, fits := work_columns(low_x, high_x, shift)
+		if !fits {
 			return {}, .Refused
 		}
-		job.columns = int(right_pixel - left_pixel + 1)
-		job.origin_column = int(-left_pixel)
+		job.columns = columns
+		job.origin_column = origin_column
 		// The placement of the rasterizer of the glyph caches, with its
 		// origin at the column PLACED_ORIGIN_COLUMN of its row; the move to
 		// the column of this row is added to each segment after its points
@@ -220,19 +261,63 @@ raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 	return job, .None
 }
 
-// band_next draws the next band of a job into render_memory.band: its rows
+// place_within says if a place in subunits is inside PLACE_LIMIT, either
+// side of 0, with no absolute value that wraps.
+place_within :: #force_inline proc "contextless" (place: i64) -> bool {
+	return place >= -PLACE_LIMIT && place <= PLACE_LIMIT
+}
+
+// work_columns gives the work row of a proportional glyph whose points
+// reach from low_x to high_x subunits across, from its origin moved by
+// shift: the ink with the spread of the filter and WORK_ROOM_PIXELS on
+// each side, and the column of the whole pixel of the origin in it. fits
+// is false for a row wider than WORK_COLUMN_LIMIT, and for a row whose
+// columns pass an i16 from the origin: the left side of a glyph entry and
+// the left side of a band are i16 (glyph_cache.Glyph_Entry). Each column
+// of the row is between left_pixel and right_pixel from the origin.
+work_columns :: proc "contextless" (low_x, high_x, shift: i64) -> (columns, origin_column: int, fits: bool) {
+	left_third := floor_divide(low_x + shift, SUBUNITS) - FILTER_SPREAD_THIRDS
+	right_third := ceiling_divide(high_x + shift, SUBUNITS) - 1 + FILTER_SPREAD_THIRDS
+	left_pixel := floor_divide(left_third, 3) - WORK_ROOM_PIXELS
+	right_pixel := floor_divide(right_third, 3) + WORK_ROOM_PIXELS
+	if right_pixel < left_pixel || right_pixel - left_pixel + 1 > WORK_COLUMN_LIMIT {
+		return 0, 0, false
+	}
+	if left_pixel < i64(min(i16)) || right_pixel > i64(max(i16)) {
+		return 0, 0, false
+	}
+	return int(right_pixel - left_pixel + 1), int(-left_pixel), true
+}
+
+// band_next draws the next band of a job into the band of its memory: its rows
 // from first_row, each job.columns words. row_count is 0 after the last
-// band.
+// band, and when the band finds no memory for its accumulation, which
+// CELL_COUNT rules out: job.failed then says it, and job_raster refuses the
+// glyph rather than give its first bands as the whole.
 band_next :: proc "contextless" (job: ^Raster_Job) -> (first_row, row_count: int, words: [^]u32) {
 	if job.next_row >= job.row_end {
 		return job.row_end, 0, nil
 	}
-	memory := &render_memory
+	// The memory of the band: the glyph memory, 8 rows at a time; before
+	// the copy has it, the small band, one row at a time.
+	cells: []i32
+	thirds_memory, filtered: []u8
+	band: []u32
+	rows_limit := 1
+	if cache_state.memory != nil {
+		raster := &cache_state.memory.raster
+		cells, thirds_memory, filtered, band = raster.cells[:], raster.thirds[:], raster.filtered[:], raster.band[:]
+		rows_limit = BAND_ROWS
+	} else {
+		cells, thirds_memory, filtered, band = small_band.cells[:], small_band.thirds[:], small_band.filtered[:], small_band.band[:]
+	}
 	first_row = job.next_row
-	row_count = min(BAND_ROWS, job.row_end - first_row)
+	row_count = min(rows_limit, job.row_end - first_row)
 	job.next_row += row_count
-	target, ok := vector_font.accumulation_of(memory.cells[:], job.thirds, row_count)
+	target, ok := vector_font.accumulation_of(cells, job.thirds, row_count)
 	if !ok {
+		job.failed = true
+		job.next_row = job.row_end
 		return first_row, 0, nil
 	}
 	// The outline keeps the placement of the whole line; the band moves
@@ -240,22 +325,22 @@ band_next :: proc "contextless" (job: ^Raster_Job) -> (first_row, row_count: int
 	target.move_x = job.move_x
 	target.move_y = -i64(first_row) * SUBUNITS
 	vector_font.outline_add(&target, &job.outline, &job.placement)
-	vector_font.coverage_finish(&target, memory.thirds[:])
+	vector_font.coverage_finish(&target, thirds_memory)
 	for row in 0 ..< row_count {
-		thirds := memory.thirds[row * job.thirds:][:job.thirds]
-		vector_font.stripes_filter(thirds, memory.filtered[:job.thirds], job.filter)
-		out := memory.band[row * job.columns:][:job.columns]
+		thirds := thirds_memory[row * job.thirds:][:job.thirds]
+		vector_font.stripes_filter(thirds, filtered[:job.thirds], job.filter)
+		out := band[row * job.columns:][:job.columns]
 		for column in 0 ..< job.columns {
 			at := STRIPE_MARGIN + 3 * column
-			red, green, blue := u32(memory.filtered[at]), u32(memory.filtered[at + 1]), u32(memory.filtered[at + 2])
+			red, green, blue := u32(filtered[at]), u32(filtered[at + 1]), u32(filtered[at + 2])
 			gray := (u32(thirds[at]) + u32(thirds[at + 1]) + u32(thirds[at + 2]) + 1) / 3
 			out[column] = gray << 24 | red << 16 | green << 8 | blue
 		}
 	}
-	return first_row, row_count, raw_data(memory.band[:])
+	return first_row, row_count, raw_data(band)
 }
 
-// glyph_raster draws one glyph whole into render_memory.words and gives
+// glyph_raster draws one glyph whole into the words of the raster memory and gives
 // the box of its ink: a proportional glyph as the box of its ink, a glyph
 // of cells cut to its cell with only its rows of ink. A glyph with no ink
 // has a box of no rows.
@@ -264,10 +349,13 @@ glyph_raster :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 	return job_raster(&job)
 }
 
-// job_raster draws the bands of a job into render_memory.words and cuts
+// job_raster draws the bands of a job into the words of the raster memory and cuts
 // the box of its ink.
 job_raster :: proc "contextless" (job: ^Raster_Job) -> (box: Raster_Box, problem: Raster_Problem) {
-	memory := &render_memory
+	if cache_state.memory == nil {
+		return {}, .No_Memory
+	}
+	memory := &cache_state.memory.raster
 	if job.columns * (job.row_end - job.row_first) > GLYPH_WORDS_LIMIT {
 		return {}, .Too_Large
 	}
@@ -292,6 +380,9 @@ job_raster :: proc "contextless" (job: ^Raster_Job) -> (box: Raster_Box, problem
 			}
 		}
 	}
+	if job.failed {
+		return {}, .Refused // Its first bands are not the glyph.
+	}
 	if last_row < 0 {
 		return {}, .None // No ink.
 	}
@@ -310,7 +401,7 @@ job_raster :: proc "contextless" (job: ^Raster_Job) -> (box: Raster_Box, problem
 }
 
 // glyph_bands starts the draw of a glyph band by band: a glyph that is too
-// large to be drawn whole (Glyph_Source.Too_Large). The caller blends the
+// large to be drawn whole, or with no glyph memory (Glyph_Source.Banded). The caller blends the
 // rows of each band_next at the column -job.origin_column from the whole
 // pixel of the origin, until a band has no rows. ok is false when glyph
 // gives no glyph for the same arguments.

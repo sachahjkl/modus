@@ -1687,9 +1687,10 @@ fallback_cells_tell :: proc "contextless" () {
 				fallback_cell_told = true
 				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", text_rendering.outline_font_name(found.font), " of its fallback chain")
 			}
-		case .Too_Large:
-			// Not reached: a cell of the terminal is far below the largest
-			// block of the private glyph cache.
+		case .Banded:
+			// Drawn band by band, before the process had its glyph memory
+			// (display.cell_fallback_of reserves it): told at a later
+			// frame, when the glyph is in the private glyph cache.
 		case .Missing:
 			if !missing_cell_told && found.font == .None {
 				missing_cell_told = true

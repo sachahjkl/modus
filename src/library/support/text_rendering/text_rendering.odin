@@ -250,7 +250,7 @@ Glyph_Source :: enum u8 {
 	Demand_Cache, // The words of the demand cache: the first font of the face, drawn by the font service.
 	Private_Cache, // The words of the private glyph cache of this process.
 	Not_Kept, // Drawn into the render memory of this copy and not kept: the glyphs of the frame in progress fill the cache. The words are valid until the next draw.
-	Too_Large, // Larger than the largest block of the cache: never kept, no entry and no words; the caller draws it band by band (glyph_bands).
+	Banded, // Not kept, no entry and no words: the caller draws it band by band (glyph_bands). A glyph larger than the largest block of the cache, and each glyph before the copy has its glyph memory (memory_give).
 }
 
 // One font file of the outlines, opened.
@@ -297,7 +297,7 @@ open :: proc "contextless" (outlines: ^font_outlines.Outlines, demand_base: uint
 			problem: vector_font.Font_Problem
 			opened.file, problem = vector_font.font_open(font_outlines.font_bytes(outlines, index))
 			if problem == .None {
-				outline := outline_memory(&render_memory)
+				outline := outline_of(&outline_memory)
 				opened.own, problem = vector_font.font_measures_of_outline(&opened.file, &outline)
 			}
 			if problem == .None {
@@ -359,7 +359,7 @@ face_of_cache :: proc "contextless" (cache: ^glyph_cache.Cache) -> Face {
 // the frame.
 frame_begin :: proc "contextless" () {
 	state.frame += 1
-	private_cache.frame_full = false
+	cache_state.frame_full = false
 	for &reader, face in state.demand_readers {
 		if state.demand_open[face] {
 			demand_cache.reader_frame_begin(&reader)

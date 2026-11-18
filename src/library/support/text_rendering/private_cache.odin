@@ -77,28 +77,62 @@ Private_Cache :: struct {
 	free_previous:  [BLOCK_COUNT]u16, // The free run before it, plus one.
 	free_heads:     [ORDER_COUNT]u16, // The first free run of each order, plus one.
 	words_ready:    bool, // The words are runs of the largest block: the first take makes them.
-	frame_full:     bool, // The glyphs of the frame in progress fill the cache: frame_begin clears it.
-	not_kept_told:  bool, // not_kept_report gave its one report.
-	counts:         Private_Counts,
+}
+
+// The glyph memory of a copy: the private glyph cache and the memory of the
+// rasterizer, about 1.4 MiB. It is no global: a process receives it at the
+// first glyph that needs it (memory_give), so a copy that never draws a
+// glyph past the glyph caches pays nothing for it. It starts all zero, as
+// the pages of a new memory object do.
+Glyph_Memory :: struct {
+	cache:  Private_Cache,
+	raster: Raster_Memory,
 }
 
 // The counts of a private glyph cache, since the start of the process.
 Private_Counts :: struct {
-	drawn:     u64, // The glyphs drawn into the cache.
-	refused:   u64, // The outlines that the renderer refused.
-	evicted:   u64, // The glyphs that left the cache: each of an older frame.
-	not_kept:  u64, // The glyphs drawn and not kept, because the glyphs of their frame filled the cache.
-	too_large: u64, // The glyphs larger than the largest block, drawn band by band.
+	drawn:    u64, // The glyphs drawn into the cache.
+	refused:  u64, // The outlines that the renderer refused.
+	evicted:  u64, // The glyphs that left the cache: each of an older frame.
+	not_kept: u64, // The glyphs drawn and not kept, because the glyphs of their frame filled the cache.
+	banded:   u64, // The glyphs drawn band by band: larger than the largest block, or before the copy had its glyph memory.
 }
 
-// The private glyph cache of this copy, apart from the state: a copy that
-// only measures never names it, so its file does not carry it.
-private_cache: Private_Cache
+// Cache_State: what stays global of the cache of this copy, 56 bytes: the
+// glyph memory once given, and the counts and the flags of the frames.
+Cache_State :: struct {
+	memory:        ^Glyph_Memory, // nil until memory_give.
+	wanted:        bool, // A glyph needed the glyph memory, and the copy had none.
+	frame_full:    bool, // The glyphs of the frame in progress fill the cache: frame_begin clears it.
+	not_kept_told: bool, // not_kept_report gave its one report.
+	counts:        Private_Counts,
+}
+
+cache_state: Cache_State
+
+// memory_give makes a memory of the caller the glyph memory of this copy:
+// on a machine, pages that display.text_memory_reserve takes from the
+// budget of the process; in a host test, memory of the test. The memory
+// must be all zero: the cache starts empty. A second give replaces the
+// first, which the caller then owns again.
+memory_give :: proc "contextless" (memory: ^Glyph_Memory) {
+	cache_state.memory = memory
+	cache_state.wanted = false
+	cache_state.frame_full = false
+}
+
+// memory_wanted says if a glyph needed the glyph memory, which the copy has
+// not received: the caller reserves it between two frames.
+memory_wanted :: proc "contextless" () -> bool {
+	return cache_state.wanted && cache_state.memory == nil
+}
 
 // key_of gives the key of a glyph. The caller has checked each field
 // against its bound: the face, the font and the position are enums or
 // below POSITION_LIMIT, the glyph index is a glyph of a font file (16
 // bits), the size passed size_check.
+GLYPH_INDEX_LIMIT :: 0xFFFF // The largest glyph index of a key.
+
 key_of :: #force_inline proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> u64 {
 	return u64(face) | u64(font) << KEY_FONT_SHIFT | (u64(glyph_index) & 0xFFFF) << KEY_GLYPH_SHIFT | (u64(size) & 0xFFFF) << KEY_SIZE_SHIFT | u64(position) << KEY_POSITION_SHIFT
 }
@@ -110,7 +144,7 @@ bucket_of :: #force_inline proc "contextless" (key: u64) -> int {
 
 // counts gives the counts of the private glyph cache of this copy.
 counts :: proc "contextless" () -> Private_Counts {
-	return private_cache.counts
+	return cache_state.counts
 }
 
 // not_kept_report gives the count of the glyphs drawn and not kept, once:
@@ -118,12 +152,11 @@ counts :: proc "contextless" () -> Private_Counts {
 // again. The caller writes its one line on the log: this package calls no
 // operation of the kernel, so the host tests run it.
 not_kept_report :: proc "contextless" () -> (count: u64, report: bool) {
-	cache := &private_cache
-	if cache.not_kept_told || cache.counts.not_kept == 0 {
-		return cache.counts.not_kept, false
+	if cache_state.not_kept_told || cache_state.counts.not_kept == 0 {
+		return cache_state.counts.not_kept, false
 	}
-	cache.not_kept_told = true
-	return cache.counts.not_kept, true
+	cache_state.not_kept_told = true
+	return cache_state.counts.not_kept, true
 }
 
 // ---- The runs of blocks.
@@ -302,7 +335,7 @@ evict_oldest :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> bool {
 	if entry.has_words {
 		run_give(cache, int(entry.first_block), int(entry.order))
 	}
-	cache.counts.evicted += 1
+	cache_state.counts.evicted += 1
 	entry^ = {next_in_bucket = cache.free_entry}
 	cache.free_entry = u16(index + 1)
 	return true
@@ -384,20 +417,34 @@ words_take :: proc "contextless" (cache: ^Private_Cache, count: int, frame: u64)
 // to move is written.
 @(private)
 not_kept_glyph :: proc "contextless" (box: Raster_Box) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
-	cache := &private_cache
-	cache.frame_full = true
-	cache.counts.not_kept += 1
+	raster := &cache_state.memory.raster
+	cache_state.frame_full = true
+	cache_state.counts.not_kept += 1
 	for row in 0 ..< box.row_count {
-		copy(render_memory.words[row * box.width:][:box.width], render_memory.words[box.first_word + row * box.stride:][:box.width])
+		copy(raster.words[row * box.width:][:box.width], raster.words[box.first_word + row * box.stride:][:box.width])
 	}
-	return {first_row = u16(box.first_row), row_count = u16(box.row_count), left = i16(box.left), width = u16(box.width)}, raw_data(render_memory.words[:]), .Not_Kept
+	return {first_row = u16(box.first_row), row_count = u16(box.row_count), left = i16(box.left), width = u16(box.width)}, raw_data(raster.words[:]), .Not_Kept
 }
 
 // private_glyph gives the glyph of a key from the private glyph cache, and
 // draws it there at its first use.
 @(private)
 private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
-	cache := &private_cache
+	// The key holds 16 bits of the glyph index: a larger index, which no
+	// font file of TrueType gives, would be the key of another glyph.
+	if glyph_index < 0 || glyph_index > GLYPH_INDEX_LIMIT {
+		return {}, nil, .Missing
+	}
+	// No glyph memory yet: the glyph is drawn band by band through the
+	// small band of the copy, with the right pixels, and the caller
+	// reserves the memory before the next frame.
+	if cache_state.memory == nil {
+		cache_state.wanted = true
+		cache_state.counts.banded += 1
+		return {}, nil, .Banded
+	}
+	cache := &cache_state.memory.cache
+	raster := &cache_state.memory.raster
 	key := key_of(face, font, glyph_index, size, position)
 	if index := entry_find(cache, key); index >= 0 {
 		entry_touch(cache, index, state.frame)
@@ -409,28 +456,28 @@ private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index
 	}
 	box, problem := glyph_raster(face, font, glyph_index, size, position)
 	switch problem {
-	case .Too_Large:
-		cache.counts.too_large += 1
-		return {}, nil, .Too_Large
+	case .Too_Large, .No_Memory:
+		cache_state.counts.banded += 1
+		return {}, nil, .Banded
 	case .Refused, .None:
 	}
 	drawn := problem == .None
 	count := box.row_count * box.width
 	// A frame whose glyphs fill the cache draws each other new glyph and
 	// keeps none: no search for room that cannot succeed.
-	if cache.frame_full && drawn && count > 0 {
+	if cache_state.frame_full && drawn && count > 0 {
 		return not_kept_glyph(box)
 	}
 	index, taken := entry_take(cache, state.frame)
 	if !taken {
 		if !drawn {
-			cache.counts.refused += 1
+			cache_state.counts.refused += 1
 			return {}, nil, .Missing
 		}
 		return not_kept_glyph(box)
 	}
 	if !drawn {
-		cache.counts.refused += 1
+		cache_state.counts.refused += 1
 	} else if count > 0 {
 		block, order, has_room := words_take(cache, count, state.frame)
 		if !has_room {
@@ -439,7 +486,7 @@ private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index
 		}
 		offset := block * BLOCK_WORDS
 		for row in 0 ..< box.row_count {
-			copy(cache.words[offset + row * box.width:][:box.width], render_memory.words[box.first_word + row * box.stride:][:box.width])
+			copy(cache.words[offset + row * box.width:][:box.width], raster.words[box.first_word + row * box.stride:][:box.width])
 		}
 		cache.entries[index].has_words = true
 		cache.entries[index].first_block = u16(block)
@@ -451,6 +498,6 @@ private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index
 	if !drawn {
 		return {}, nil, .Missing
 	}
-	cache.counts.drawn += 1
+	cache_state.counts.drawn += 1
 	return cache.entries[index].glyph, ([^]u32)(&cache.words[cache.entries[index].glyph.word_offset]), .Private_Cache
 }

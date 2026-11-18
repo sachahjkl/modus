@@ -557,7 +557,8 @@ Host: AMD Ryzen 7 5800X, one core (`taskset`), `-o:speed`, each time the least o
 
 | Measure | Value |
 |---|---|
-| The private glyph cache, in each copy of `text_rendering` that draws | 1 MiB of words, 4 096 entries of 48 bytes, a table of 8 192 places and the blocks, and about 150 KiB of render memory: about 1.4 MiB that the budget of the process reserves; a page gets its frame at its first use |
+| The private glyph cache, in each copy of `text_rendering` that draws a glyph past its glyph caches | 1 MiB of words, 4 096 entries of 48 bytes, a table of 8 192 places and the blocks, and about 150 KiB of render memory: about 1.4 MiB, one memory object that the process takes from its budget at the frame after its first such glyph (section 14.4) |
+| The globals of each copy of `text_rendering` | about 25 KiB: the memory of one outline (13 KiB), which the measure needs too, a band of one row (11 KiB), and the state; a copy that only measures carries the outline and the state |
 | The demand cache | 4 395 008 bytes: 1 073 pages that the root service pays once |
 | The words of the four faces | at most 997 504 of the 1 048 576 words within the limits that a reader checks (`demand_cache.WORD_BOUND`, checked by an `#assert`); at most 678 016 for the subsets of today, computed for a cell full at each scale (host test `each_face_of_the_subset_fits_the_demand_cache`, which checks that no character is refused) |
 | The font outlines | the four subsets: about 195 KB in the boot image |
@@ -589,7 +590,7 @@ A length of the font at a size is `units * size / (2 * units of a cell)` in 1/64
 
 The exact area in integers of section 4, with the filter of five taps, the words `0xGGRRGGBB` and the grid fit of section 2 at each size. Two changes from the rasterizer of the glyph caches, which change no word:
 
-- **The work row is as wide as the glyph.** The points of the outline give the columns that the ink can touch, with the spread of the filter and one pixel more on each side. A glyph wider than 512 pixels is refused: its font is hostile.
+- **The work row is as wide as the glyph.** The points of the outline give the columns that the ink can touch, with the spread of the filter and one pixel more on each side. The box is computed in 64 bits from the placement. A glyph is refused as hostile when it is wider than 512 pixels, when a point is placed past 2^29 subunits from its origin, or when its columns pass an i16 from its origin, the bound of the left side of a glyph entry.
 - **The rows are drawn in bands of 8 rows.** Each band adds the whole outline, moved up by whole rows, so the memory has a bound at any size.
 
 The outline keeps the placement of the glyph caches; each move is added to the ends of each segment after the points are computed (`vector_font.Accumulation`, `move_x` and `move_y`), because the point between two points off the curve rounds toward zero and would round the other way at a negative coordinate.
@@ -602,7 +603,8 @@ A proportional glyph is at the nearest third of a pixel at each size: three posi
 |---|---|
 | The words | 262 144 words (1 MiB), in runs of 32 to 16 384 words that split and join by halves |
 | The entries | 4 096, in a table of 8 192 places |
-| The key | 64 bits: the face (4 bits), the font of the chain (4), the glyph index in that font (16), the text size (16), the position (2) |
+| The key | 64 bits: the face (4 bits), the font of the chain (4), the glyph index in that font (16), the text size (16), the position (2); a glyph index past 0xFFFF has no key and no glyph |
+| The memory | The glyph memory: the cache and the render memory, about 1.4 MiB, no global. The first glyph of a copy that needs it is drawn band by band through a band of one row (`Glyph_Source.Banded`); the next `display.text_frame_begin` takes one memory object of those pages from the budget of the process and gives it (`text_rendering.memory_give`). A refused reservation is not tried again: each glyph is then drawn band by band, and a process writes one line on its log |
 
 A new glyph that finds no room evicts the glyphs of the oldest frames. A glyph of the frame in progress is never evicted: when the glyphs of one frame fill the cache, each other new glyph of that frame is drawn into the render memory, blended, and not kept (`Glyph_Source.Not_Kept`). Its pixels are right; the frame costs more time. The first such frame of a copy in a process writes one line on the log of the process, at the start of the next frame (`display.text_not_kept_tell`, which `interface.window_frame_begin` and the terminal call). The line:
 
@@ -610,7 +612,7 @@ A new glyph that finds no room evicts the glyphs of the oldest frames. A glyph o
 
 The copy in the drawing module counts its glyphs and writes no line: the parts of a line of the log hold the addresses of their texts, and a library module holds no table of addresses.
 
-A glyph larger than 16 384 words (a glyph of 128 by 128 pixels) is never kept (`Glyph_Source.Too_Large`): the draw takes its rows band by band (`glyph_bands`, `band_next`) and blends each band.
+A glyph larger than 16 384 words (a glyph of 128 by 128 pixels) is never kept (`Glyph_Source.Banded`): the draw takes its rows band by band (`glyph_bands`, `band_next`) and blends each band.
 
 ### 14.5 The proof of the pixels
 
