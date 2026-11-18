@@ -1,7 +1,9 @@
 .pre-commit-config.yaml
 result
 .direnv/
-build/
+# The output of the tool. Only the folder at the root: the package build of
+# the tool, tools/modustool/build, is a source.
+/build/
 # The files of a release, from `modustool release image`.
 /dist/
 # Odin writes the LLVM IR of a module in the folder where it runs; the tool moves it to build/ at once.

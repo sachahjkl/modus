@@ -194,19 +194,33 @@ source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: 
 	return list[:], true
 }
 
-// source_path_problems_of_the_repository reads each document of the
-// repository that the check reads, with the folders of the sources of the
-// tool.
-source_path_problems_of_the_repository :: proc() -> (problems: []string, span_count: int, document_count: int, ok: bool) {
-	documents := source_path_documents_read() or_return
-	list := make([dynamic]string, context.temp_allocator)
+// source_path_checked_folders gives the folders whose spans the check
+// reads: each folder of the sources, each folder that a move removed, and
+// the folder of the tool.
+source_path_checked_folders :: proc() -> []string {
 	folders := make([dynamic]string, context.temp_allocator)
 	present := SOURCE_FOLDERS
 	gone := SOURCE_FOLDERS_GONE
 	append(&folders, ..present[:])
 	append(&folders, ..gone[:])
+	append(&folders, TOOLS_FOLDER)
+	return folders[:]
+}
+
+// source_path_problems_of_the_repository reads each document of the
+// repository that the check reads, with the folders of
+// source_path_checked_folders.
+source_path_problems_of_the_repository :: proc() -> (problems: []string, span_count: int, document_count: int, ok: bool) {
+	return source_path_problems_of_the_documents(source_path_checked_folders())
+}
+
+// source_path_problems_of_the_documents reads each document of the
+// repository that the check reads, with the given folders.
+source_path_problems_of_the_documents :: proc(folders: []string) -> (problems: []string, span_count: int, document_count: int, ok: bool) {
+	documents := source_path_documents_read() or_return
+	list := make([dynamic]string, context.temp_allocator)
 	for document in documents {
-		document_problems, document_spans := source_path_problems(document.path, document.content, folders[:], intent_repository_path_exists)
+		document_problems, document_spans := source_path_problems(document.path, document.content, folders, intent_repository_path_exists)
 		append(&list, ..document_problems)
 		span_count += document_spans
 	}
@@ -226,6 +240,6 @@ source_paths_check :: proc() -> bool {
 	if len(problems) > 0 {
 		return false
 	}
-	test_passed_print("each of the %d code spans of the %d documents (the guides, the glossary, the documents of the root and the intent files) that starts as the path of a source names a file or a folder of the repository", span_count, document_count)
+	test_passed_print("each of the %d code spans of the %d documents (the guides, the glossary, the documents of the root and the intent files) that starts as the path of a source or of a file of the tool names a file or a folder of the repository", span_count, document_count)
 	return true
 }

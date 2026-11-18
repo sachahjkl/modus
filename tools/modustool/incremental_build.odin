@@ -757,9 +757,10 @@ path_without_dots :: proc(path: string) -> string {
 
 // imported_folders_of_source adds the folder of each package of the
 // repository that a source file imports: "modus:contract/x" is src/library/contract/x,
-// "modus:support/x" is src/library/support/x, and a path with no library is relative to the
-// folder of the file. A library of the compiler ("core:", "base:") is not
-// a folder of the repository: the compiler itself is an input.
+// "modus:support/x" is src/library/support/x, "modustool:x" is the package x of
+// the tool, and a path with no library is relative to the folder of the
+// file. A library of the compiler ("core:", "base:") is not a folder of the
+// repository: the compiler itself is an input.
 imported_folders_of_source :: proc(source: string, folder: string, folders: ^[dynamic]string) {
 	rest := source
 	for whole_line in strings.split_lines_iterator(&rest) {
@@ -783,6 +784,8 @@ imported_folders_of_source :: proc(source: string, folder: string, folders: ^[dy
 		colon := strings.index_byte(path, ':')
 		if package_folder, in_source_library := source_library_package_folder(path); in_source_library {
 			append(folders, package_folder)
+		} else if tool_folder, in_tool_library := tool_library_package_folder(path); in_tool_library {
+			append(folders, tool_folder)
 		} else if colon < 0 {
 			append(folders, path_without_dots(join(folder, "/", path)))
 		}
