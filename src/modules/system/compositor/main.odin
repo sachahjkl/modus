@@ -98,6 +98,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:private/compositor/bar"
 import "modus:support/mark"
+import "modus:support/screen_presence"
 import "modus:private/compositor/palette"
 import "modus:private/compositor/quality"
 import clipboard_rules "modus:private/compositor/clipboard"
@@ -577,8 +578,10 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 //    and count each `Present` that a process sent before the call.
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
-// **The stop.** With no framebuffer or no ring, the compositor writes
-// `compositor: no framebuffer` and stops with the code 1. Without the
+// **The stop.** With no framebuffer (modus:support/screen_presence), the
+// compositor writes `compositor: no framebuffer` and stops with the code 1;
+// with no input ring or no control ring, it writes `compositor: no input
+// ring or no control ring` and stops with the code 1. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -590,8 +593,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
-	if status != .Ok || input_status != .Ok || control_status != .Ok || width == 0 {
+	// The same test as the root service makes before it starts this
+	// process: the two never disagree on a screen.
+	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
 		system.log("compositor: no framebuffer")
+		system.stop(1)
+	}
+	if input_status != .Ok || control_status != .Ok {
+		system.log("compositor: no input ring or no control ring")
 		system.stop(1)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}

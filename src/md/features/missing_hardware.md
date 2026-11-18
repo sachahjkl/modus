@@ -24,15 +24,15 @@ The places, by the risk for a user:
 | Part | Today | The form |
 |---|---|---|
 | A disk that stops to answer | The storage service and each client of the store wait with no end | A deadline for each block request; the storage service holds the handle of the block service; past the deadline it is broken, writes its line and refuses changes |
-| No screen | The root service stops to serve its ring | Built. The root service tests the framebuffer as the compositor does; with none, or when the compositor stopped, it writes its line once and starts no input service, no compositor and no console. A later start gives no window, refuses the grant `Terminal`, and the root service starts `remote` |
+| No screen | The root service stops to serve its ring | Built. The root service and the compositor make one test of the framebuffer (`modus:support/screen_presence`). With no screen before the first start, the root service writes its line, starts no input service, no compositor and no console, and starts `remote` (see "The decision that waits"); `unlock` that needs typing writes one line and stops, and is not started again. A compositor that stops later gives one line and starts nothing. In both cases a later start gives no window and refuses the grant `Terminal` |
 | No PIT | The first processor hangs before its first line | The calibration wait is bounded; the TSC frequency of CPUID is used when the processor states it |
-| No PS/2 controller | The input service spins on one processor for ever | Built. A status of all ones, or a drain past `CONTROLLER_POLLS` bytes: the input service writes its line and stops; a device of the controller that the kernel refuses: the root service writes its line and starts no input service |
+| No PS/2 controller | The input service spins on one processor for ever | Built. A status of all ones, or a drain that reaches `CONTROLLER_POLLS` bytes: the input service writes its line and stops with the code 1. The root service does not track the input service, so the stop adds no line. A refusal of a device of the controller by the kernel is a refusal of rights or of a slot, never an absence: it stays a failure of the start |
 | A frame service that stops after it maps its ring | The network service waits with no end | The network service holds the handle of the frame service, writes its line and stops |
 | An IOMMU unit that does not finish its first invalidation | The machine stops | No device service holds memory yet, so the units go off and the machine runs as a machine with no IOMMU, with its line |
 | A stop of the boot program for memory or for the map of the firmware | A message on the firmware console, then a power off at once | The message stays on the boot display, the watchdog is off, and the boot program waits, as for a refusal of trust |
 | An xsave area that the processor does not read back | `Start_Failed` | One more proof with the form `fxsave`, with its line |
 | No table of the APIC | One processor, with no line | One processor, with its line |
-| An entropy read that never completes | The fresh bytes stop with no line | Built. A deadline of the hang bound from the ask; past it, the reads in flight count as refused, the root service stops the entropy service, and one line says both |
+| An entropy read that never completes | The fresh bytes stop with no line | Built. A deadline of the hang bound from the ask ([`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed of the system, and what is claimed"); past it, the reads in flight count as refused, the root service stops the entropy service, and one line says both |
 
 ## The tests
 
@@ -62,6 +62,16 @@ Each absence has a machine test that removes the part from QEMU, and checks its 
 - **The wait of a client is the hazard, not the fault of the device.** The device service already stops on a fault; the hang comes from the processes that wait for it. Each wait for another process holds its handle or has a deadline.
 - **The deadline of a device request** comes from the hang bound of the system, not from a measure of the speed of a device, so that a slow disk is not called absent.
 - **At the start, before a device service holds memory, the IOMMU can go off.** After it, it cannot: the reason of the stop is a page that a device can still reach.
-- **With no screen, `remote` is started by the root service.** No principal can start it from a desktop that does not exist. It acts only for a client key that a principal allowed, and a key that no disk grant table keeps gives no call: the machine with no screen gives no access that a machine with a screen does not give.
-- **The no-screen line is written once.** The start, a console that does not start and the reap of the compositor can each find the absence; the first writes the line, and each refusal after it adds none.
+- **The no-screen line is written once.** The start, a console that does not start and the reap of the compositor can each find the absence; the first writes the line, and each refusal after it adds none. The line of the start says that `remote` takes the calls; the line of a compositor that stopped says only that windows and terminals are refused, because nothing starts then.
+- **`unlock` with no screen.** The root service cannot know before `unlock` reads its store whether a key must be typed: a machine key sealed by the TPM alone needs no typing, and the machine with no screen of the test needs that release. So `unlock` starts at the boot; when it reaches the point where a key must be typed and has no window, it writes one line that names what cannot be typed (`unlock: no screen: ...`) and stops with the code 0, and the root service does not start it again while the screen is absent.
+- **A restart of the entropy service.** Nothing starts the entropy service again after the stop at its deadline. If a later form does, the device holds the read that it never ended: the root service must reset the device before it turns the bus master on again, so that no old descriptor of the queue writes into memory that the new service received.
+
+## The decision that waits
+
+With no screen before the first start, the root service starts `remote` itself, as the machine. This form is built and waits for a decision.
+
+- **What it gives.** A dedicated machine, layer 2 of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users": no login, the TPM releases the machine key at boot, and the calls of `remote` are its one interface.
+- **What it costs.** A client key that a principal allowed in an earlier run, and that the disk grant table keeps, gets calls with no act of a principal in this run. A machine with a screen gives that access only after a principal starts `remote` from the desktop.
+- **What bounds it.** Only a screen that is absent before the first start starts `remote`: a compositor that stops later, by a fault or by a holder of the right `Stop`, starts nothing. `remote` acts only for a key that a disk grant table keeps; with no machine key released, no table is read and no key acts.
+- **The other way open.** No `remote` with no screen: the machine then runs its services and takes no call, until a form of consent for a machine with no screen exists.
 - **A machine check or an NMI** still stops the machine. To read the error and stop only the process whose memory it touches is planned work.

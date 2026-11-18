@@ -58,7 +58,9 @@ An entropy service that stops after the reads of the start writes one line too:
 
 A read that the device takes and never ends would hold every later read, as the entropy service serves one at a time. Each read has a deadline of the hang bound from its ask; past it, the reads in flight count as refused, the root service stops the entropy service, and one line says both ([missing_hardware.md](missing_hardware.md)):
 
-`root: the entropy device did not answer a read in 60 seconds: <count> reads count as refused, and the entropy service stops: no more bytes of the device`
+`root: the entropy device did not answer a read in <seconds> seconds: <count> reads count as refused, and the entropy service stops: no more bytes of the device`
+
+The deadline and its number: [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed of the system, and what is claimed".
 
 **The process `randomness`** shows the mixes of its generator in its window, and writes one line at its first mix:
 
