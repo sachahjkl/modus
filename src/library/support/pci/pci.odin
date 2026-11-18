@@ -11,6 +11,7 @@
 // sets its message interrupt (MSI-X) before the start of the service.
 package pci
 
+import op "modus:contract/operation"
 import "modus:support/system"
 
 // The roles of the context of a device service of a PCI device.
@@ -26,6 +27,31 @@ BAR_COUNT :: 6 // The base address registers of a device of type 0.
 // that holds the registers of each of them. 0: not given.
 GRANT_BRIDGE_DEVICE :: GRANT_BAR + BAR_COUNT
 BRIDGE_DEVICE_COUNT :: 3 // The other devices behind one conventional bridge that a device service can hold.
+
+// service_context_trial writes a stand-in handle into each slot that the
+// context of a device service can take: the log, the machine, each other
+// device behind a bridge, the interrupt, each BAR, the configuration, the
+// queues, and the ring of its contract at ring_slot. The root service reads
+// its refusal before it arms the device, so a layout whose slots meet
+// stops the start while the device still makes no request. Each real start
+// takes a part of these slots, so a trial that passes is a start that
+// passes.
+service_context_trial :: proc "contextless" (ring_slot: int) -> (trial: system.Context_Grants) {
+	stand_in := system.Grant{handle = 1}
+	system.grant_put(&trial, op.CONTEXT_LOG, stand_in)
+	system.grant_put(&trial, GRANT_MACHINE, stand_in)
+	for index in 0 ..< BRIDGE_DEVICE_COUNT {
+		system.grant_put(&trial, GRANT_BRIDGE_DEVICE + index, stand_in)
+	}
+	system.grant_put(&trial, GRANT_INTERRUPT, stand_in)
+	for index in 0 ..< BAR_COUNT {
+		system.grant_put(&trial, GRANT_BAR + index, stand_in)
+	}
+	system.grant_put(&trial, GRANT_CONFIGURATION, stand_in)
+	system.grant_put(&trial, GRANT_QUEUES, stand_in)
+	system.grant_put(&trial, ring_slot, stand_in)
+	return trial
+}
 
 CONFIGURATION_SIZE :: 256 // The bytes of the configuration of a device that the copy holds: the space of PCI before PCI Express.
 QUEUE_PAGES :: 8 // The pages of the memory of the queues that the root service gives a device service.
@@ -174,7 +200,12 @@ NETWORK_DEVICE :: 0x12 // The network device of the frame service.
 // The entropy device of the entropy service, when the machine has one: a
 // machine with no such device still starts (src/md/features/entropy_device.md).
 ENTROPY_DEVICE :: 0x13
+// The sound device of the sound service, when the machine has one: its
+// service starts for the program with the grant Sound_Device
+// (src/md/features/timed_stream.md).
+SOUND_DEVICE :: 0x14
 VENDOR_VIRTIO :: 0x1AF4 // The vendor identifier of the virtio devices.
 DEVICE_VIRTIO_BLOCK :: 0x1042 // A virtio 1 block device with no older interface.
 DEVICE_VIRTIO_NETWORK :: 0x1041 // A virtio 1 network device with no older interface.
 DEVICE_VIRTIO_ENTROPY :: 0x1044 // A virtio 1 entropy device with no older interface.
+DEVICE_VIRTIO_SOUND :: 0x1059 // A virtio 1 sound device: 0x1040 and the device number 25; it has no older interface.

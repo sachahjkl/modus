@@ -487,7 +487,7 @@ Role_Handle :: enum u8 {
 	Service_Ring, // Serve.
 	Terminal_Ring, // Terminal.
 	Terminal_Text, // Terminal.
-	Device_Ring, // Data_Disk, Scratch_Disk or Network_Device: one device service.
+	Device_Ring, // Data_Disk, Scratch_Disk, Network_Device or Sound_Device: one device service.
 	Date_Page, // Clock.
 	Date_Ports, // Clock.
 	Storage_Ring, // Store, without Acts_For_Principal: its private store at its start.
@@ -528,7 +528,7 @@ role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handle
 	if .Serve in role {
 		handles += {.Service_Ring}
 	}
-	if role & {.Data_Disk, .Scratch_Disk, .Network_Device} != {} {
+	if role & {.Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device} != {} {
 		handles += {.Device_Ring}
 	}
 	if .Network_Device in role {
@@ -581,6 +581,91 @@ sender_allowed :: proc "contextless" (command: Root_Command, role: bit_set[start
 		return .Debugger in role
 	}
 	return false
+}
+
+// Who writes the error record of a refused command that runs.
+Refusal_Writer :: enum u8 {
+	// The dispatch of the root service, from the name in values[0..4] and
+	// the word of values[4], after the command refused.
+	Dispatch,
+	// The procedure of the command: its values hold a hash, a nickname or
+	// a key where a name would be, or its cause is a fact that only it
+	// knows (the grant that refuses a debug access, a refused signature).
+	Command,
+}
+
+// The writer of the error record of each command. The table is whole: a
+// new command does not compile until its row says who writes the record,
+// so no record of a command is written over.
+@(rodata)
+ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
+	.None                   = .Dispatch,
+	.Start                  = .Dispatch,
+	.Stop                   = .Dispatch,
+	.Connect                = .Command,
+	.Disconnect             = .Dispatch,
+	.Grants                 = .Dispatch,
+	.Revoke                 = .Dispatch,
+	.Replace                = .Command,
+	.Connect_History        = .Dispatch,
+	.Principal_Create       = .Dispatch,
+	.Principal_Lock         = .Dispatch,
+	.Principals             = .Dispatch,
+	.Principal_Record       = .Dispatch,
+	.Principal_Unlock       = .Command,
+	.Debug                  = .Command,
+	.Palette_Provide        = .Dispatch,
+	.Start_From_Disk        = .Command,
+	.Disk_Grant             = .Command,
+	.Nickname_Move          = .Command,
+	.Machine_Passphrase     = .Dispatch,
+	.Machine_Key            = .Command,
+	.Disk_Grant_Persistence = .Command,
+	.Debug_Store            = .Command,
+	.Machine_Seal           = .Dispatch,
+	.Principal_Change       = .Command,
+	.Principal_Change_End   = .Command,
+	.Remote_Client          = .Command,
+}
+
+// The step at which the dispatch of one record ends, in the order of the
+// steps: the border, the sender, the command.
+Dispatch_Step :: enum u8 {
+	Border  = 0, // The kind names no command, or None: Unsupported, and nothing runs.
+	Sender  = 1, // The sender cannot send the command: No_Grant, and nothing runs.
+	Command = 2, // The command runs.
+}
+
+// What the dispatch decides for one record before any command runs. A
+// refusal holds its status and its error record; a command that runs holds
+// Ok and no record.
+Dispatch_Decision :: struct {
+	step:    Dispatch_Step,
+	command: Root_Command, // None at the border.
+	status:  op.Status,
+	refusal: [7]u64,
+}
+
+// dispatch_decide is the decision of the dispatch of the root service for
+// one record: the border of its kind, then the table of the senders with
+// the start grants of the sender. service_listed says that the list of
+// the role of the sender names the service of values[0..4]: a Connect with
+// the grant Connect and not Root_Ring needs it. The decision reads the
+// role and never the name, and reads and changes no state: the root
+// service runs the command only when the step is Command.
+dispatch_decide :: proc "contextless" (kind: u32, role: bit_set[start_grant.Grant], service_listed: bool) -> Dispatch_Decision {
+	command, known := command_of_word(kind)
+	if !known {
+		return {step = .Border, command = .None, status = .Bad_Operation, refusal = command_refusal(kind)}
+	}
+	allowed := sender_allowed(command, role)
+	if command == .Connect && .Root_Ring not_in role && !service_listed {
+		allowed = false
+	}
+	if !allowed {
+		return {step = .Sender, command = command, status = .No_Right, refusal = sender_refusal(command)}
+	}
+	return {step = .Command, command = command, status = .Ok}
 }
 
 // sender_refusal is the error record of a command that its sender cannot

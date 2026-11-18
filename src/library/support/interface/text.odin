@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/display"
@@ -13,11 +14,9 @@ import "modus:support/text_shaping"
 // names, titles, labels, buttons and lists (B612), when the program has it
 // (Draw_Table.interface_font) and the setting is the vector font; else a
 // text of this kind is measured and drawn in the font of the cells. A text
-// is always measured in the font that will draw it.
-Font_Kind :: enum u8 {
-	Cells_8x16, // The font of the cells: each character is one cell wide.
-	Interface, // The proportional interface font.
-}
+// is always measured in the font that will draw it. The font is a field of
+// a text record: the type is the one of the contract.
+Font_Kind :: draw_record.Font_Kind
 
 // A font and a size. scale: 1, 2 or 3 times the native size (docs/DESIGN.md,
 // section 5); 0 means 1.
@@ -27,14 +26,12 @@ Font :: struct {
 	weight: Font_Weight, // Regular or bold.
 }
 
-// The weight of a text. Bold draws at scale 1 only (the titles of the
-// cards); at another scale, and with Spleen 8x16, it is the regular weight.
-// In the font of the cells the width does not change: the cells are the
-// same. In the interface font the bold weight has its own advances.
-Font_Weight :: enum u8 {
-	Regular, // The normal weight.
-	Bold, // The bold weight: at scale 1 only.
-}
+// The weight of a text, a field of a text record: Regular or Bold. Bold
+// draws at scale 1 only (the titles of the cards); at another scale, and
+// with Spleen 8x16, it is the regular weight. In the font of the cells the
+// width does not change: the cells are the same. In the interface font the
+// bold weight has its own advances.
+Font_Weight :: draw_record.Font_Weight
 
 FONT_BOLD :: Font{weight = .Bold} // The font of the cells, bold.
 
@@ -48,10 +45,10 @@ FONT_INTERFACE_BOLD :: Font{kind = .Interface, weight = .Bold}
 
 // The most bytes of one text in the interface font: the execution places
 // its glyphs on its stack. A longer text is drawn in the font of the cells.
-INTERFACE_TEXT_LIMIT :: 256
-// The largest ink margin that a record can name, in pixels: the margin of
-// the font at scale 3 is far smaller.
-INK_MARGIN_LIMIT :: 16
+INTERFACE_TEXT_LIMIT :: draw_record.INTERFACE_TEXT_LIMIT
+// The largest ink margin of a record, in pixels: the margin of the font at
+// scale 3 is far smaller.
+INK_MARGIN_LIMIT :: draw_record.INK_MARGIN_LIMIT
 
 // font_scale gives the scale of a font, from 1 to 3: 0 is 1, and a scale
 // above 3 is 3.

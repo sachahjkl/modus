@@ -12,7 +12,7 @@ import "core:strings"
 // `return` that give a failure with no record: a negative constant, a
 // negated status, or a helper of the same package that gives one.
 
-EXPORT_ERROR_RECORD_FOLDERS :: [?]string{SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES}
+EXPORT_ERROR_RECORD_FOLDERS :: [?]string{SOURCE_FOLDER_MODULES}
 
 // The name of the last parameter of an export that has an error record.
 EXPORT_ERROR_RECORD_PARAMETER :: "error"

@@ -1,14 +1,15 @@
 # Vector forms: SSE2
 
-This document says which procedures of the system compute with vectors, in which form, what stays scalar, and how to measure each one. The terms are in `docs/GLOSSARY.md`: scalar form, vector form, usable instruction set, extended state.
+This document says which procedures of the system compute with vectors, in which form, what stays scalar, and how to measure each one. The terms are in `docs/glossary/code.md` (scalar form, vector form) and `docs/glossary/running_code.md` (usable instruction set, extended state).
 
 **The idea in plain words.** A processor has registers that hold several numbers side by side, and instructions that compute on all of them at once. A procedure that works on many pixels or many words can use them: it does the work of four values with one instruction. That is its **vector form**. The same procedure written with one value for each instruction is its **scalar form**. In this system a procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
 
-**What has a vector form today.** Three procedures, all with the 128-bit registers of SSE2:
+**What has a vector form today.** Four procedures, all with the 128-bit registers of SSE2:
 
 | Procedure | Scalar form | Vector form | Values for each step |
 |---|---|---|---|
 | The blend of a glyph | `blend_coverage_row_in_order` (`src/library/support/graphics/blend.odin`) | `blend_coverage_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
+| The blend of colors with straight alpha: the colors of the draw records and the pictures with alpha | `blend_straight_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_straight_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The blend of a picture with premultiplied alpha | `blend_premultiplied_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_premultiplied_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The BLAKE3 hash of a subtree of four chunks | `chunk_value`, four times (`src/library/contract/blake3/blake3.odin`) | `four_chunk_values_side_by_side` (`src/library/contract/blake3/chunks_side_by_side_amd64.odin`) | 4 chunks |
 
@@ -46,7 +47,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -123,6 +124,8 @@ AVX-512 gives 512-bit registers (16 pixels, 16 chunks of BLAKE3 side by side), m
 
 The table is kept: 12 reads of one byte cost less than a square root computed in lanes (a search of 8 steps for each channel).
 
+**The blend of colors with straight alpha** is the same arithmetic, with the alpha of each color as the coverage of its three channels and the channels of each color in place of one color: `blend_straight_alpha_row_sse2`, 4 pixels at a time. A group of four colors with alpha 0 is not read; a group of four opaque colors is written whole, with the high byte 0. A draw record of one color with alpha (`graphics.blend_fill`) blends a row of that color, 64 pixels at a time; an opaque record is a fill and takes no blend. The host test `straight_alpha_forms_meet_each_channel_value` also checks that the scalar form gives the bytes of the blend of a glyph whose word covers the three channels with the alpha: one rule for both.
+
 **The flag of the scalar form.** The scalar form keeps the channels of the previous pixel, with a flag for "no previous pixel" (`previous_known`). The value `0xFFFFFFFF` cannot mean "no previous pixel": a first pixel `0xFFFFFFFF` is then blended as black. A canvas of the system holds `0x00RRGGBB` only, but the blend must be right for every word. The host test `coverage_scalar_form_reads_a_pixel_of_all_ones` keeps the flag.
 
 **The blend table is a third path, not a vector form.** For a text over one flat color, `graphics.blend_glyph_rows` reads the result of each channel from a blend table: three loads and a store for a pixel, with no arithmetic (`docs/FONTS.md`, "Where the time goes, and the fast blend"). The two paths meet in this way:
@@ -151,8 +154,9 @@ The compositor draws each frame of the screen. This table says, for each kind of
 | The copy of the background and of a surface into the frame, and of the frame into the screen | `copy_bytes_without_overlap` of `src/runtime/memory.asm`: already vector moves |
 | The swap of red and blue when the screen is blue-green-red | the compiler makes it a vector loop (`psrld $0x10`, `pand`, `por` on 16 bytes, in `entry` of the compositor) |
 | The blend of the pointer picture (`blend_premultiplied_alpha`) | SSE2 form, `blend_premultiplied_alpha_row_sse2` |
-| Rectangles (`Rectangle` records), vertical gradients (a fill for each line) | `graphics.fill`: a vector loop of the compiler |
-| Horizontal gradients (`graphics.gradient`: one row of colors, then a copy for each line) | scalar: one row for each record, then copies |
+| Opaque rectangles (`Rectangle` records), opaque vertical gradients (a fill for each line) | `graphics.fill`: a vector loop of the compiler |
+| Opaque horizontal gradients (`graphics.gradient`: one row of colors, then a copy for each line) | scalar: one row for each record, then copies |
+| Rectangles, gradients and pictures with alpha (`graphics.blend_fill`, `graphics.blend_copy`) | SSE2 form, `blend_straight_alpha_row_sse2`; the row of a gradient with alpha is scalar |
 
 **The blend of the pointer picture.** A pointer picture has one alpha for each pixel, premultiplied (`docs/POINTERS.md`, "3. The format of the system: one pointer theme file"). For each channel, with `d` the pixel and `a` the alpha of the source:
 

@@ -1,4 +1,4 @@
-// The news of the system (docs/GLOSSARY.md, "News entry"; docs/SITE.md,
+// The news of the system (docs/glossary/project.md, "News entry"; docs/SITE.md,
 // "The news"). The changelog is a technical list for each release; a news
 // entry is a dated report in prose, for a reader who is not a developer of
 // the system, of one thing that this reader can now see or use. Each entry is
@@ -142,8 +142,13 @@ news_guide_problem :: proc(guide: string) -> string {
 	if guide == NEWS_NONE {
 		return ""
 	}
+	// A file of the glossary is a page of the site too: the page of its
+	// group, or the index for the index of the folder.
+	if glossary_is_file(guide) {
+		return ""
+	}
 	if !strings.has_prefix(guide, "docs/") || !strings.has_suffix(guide, ".md") || strings.contains(guide[len("docs/"):], "/") {
-		return fmt.tprintf("the guide %q is not a document of docs/ (docs/<NAME>.md), or \"none\"", guide)
+		return fmt.tprintf("the guide %q is not a document of docs/ (docs/<NAME>.md, docs/glossary/<group>.md), or \"none\"", guide)
 	}
 	records := SITE_WORKING_RECORDS
 	for record in records {

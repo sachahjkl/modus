@@ -16,6 +16,7 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:os"
 import "core:strings"
+import "modus:contract/draw_record"
 import module "modus:contract/module"
 
 // A row of a diagram: 8 bytes, so that a 64-bit field of the format is one
@@ -25,6 +26,7 @@ BYTE_LAYOUT_ROW_BYTES :: 8
 // layouts; the names of the layouts follow it on the same line.
 BYTE_LAYOUT_FENCE_LANGUAGE :: "byte-layout"
 BYTE_LAYOUT_FORMAT_FILE :: SOURCE_FOLDER_CONTRACT + "/module/format.odin"
+BYTE_LAYOUT_DRAW_RECORD_FILE :: SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
 // The folder whose Markdown files the check and the command read: the
 // guides that the site shows.
 BYTE_LAYOUT_DOCUMENT_FOLDER :: "docs"
@@ -103,9 +105,28 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 	}
 }
 
+// byte_layout_draw_record_sources gives the layout of a draw record and of
+// the fields of each of its kinds (docs/INTERFACE.md, "2.1 Draw record").
+byte_layout_draw_record_sources :: proc() -> []Byte_Layout_Source {
+	file :: BYTE_LAYOUT_DRAW_RECORD_FILE
+	sources := [?]Byte_Layout_Source {
+		{key = "draw_record.Draw_Record", file = file, declaration = "Draw_Record", info = type_info_of(draw_record.Draw_Record), what = "one record of a draw table"},
+		{key = "draw_record.Rectangle_Fields", file = file, declaration = "Rectangle_Fields", info = type_info_of(draw_record.Rectangle_Fields), what = "the fields of a Rectangle"},
+		{key = "draw_record.Vertical_Gradient_Fields", file = file, declaration = "Vertical_Gradient_Fields", info = type_info_of(draw_record.Vertical_Gradient_Fields), what = "the fields of a Vertical_Gradient"},
+		{key = "draw_record.Horizontal_Gradient_Fields", file = file, declaration = "Horizontal_Gradient_Fields", info = type_info_of(draw_record.Horizontal_Gradient_Fields), what = "the fields of a Horizontal_Gradient"},
+		{key = "draw_record.Text_Fields", file = file, declaration = "Text_Fields", info = type_info_of(draw_record.Text_Fields), what = "the fields of a Text"},
+		{key = "draw_record.Picture_Fields", file = file, declaration = "Picture_Fields", info = type_info_of(draw_record.Picture_Fields), what = "the fields of a Picture"},
+		{key = "draw_record.Text_Grid_Fields", file = file, declaration = "Text_Grid_Fields", info = type_info_of(draw_record.Text_Grid_Fields), what = "the fields of a Text_Grid"},
+		{key = "draw_record.Line_Fields", file = file, declaration = "Line_Fields", info = type_info_of(draw_record.Line_Fields), what = "the fields of a Line"},
+	}
+	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
+	copy(list, sources[:])
+	return list
+}
+
 // byte_layout_sources gives every layout that a fence can name: the header
-// of a module file, the entry of its table directory, then the record of
-// each table kind, in the order of the file.
+// of a module file, the entry of its table directory, the record of each
+// table kind, in the order of the file, then the draw record.
 byte_layout_sources :: proc() -> []Byte_Layout_Source {
 	file :: BYTE_LAYOUT_FORMAT_FILE
 	list := make([dynamic]Byte_Layout_Source, context.temp_allocator)
@@ -116,6 +137,9 @@ byte_layout_sources :: proc() -> []Byte_Layout_Source {
 		if source.info != nil {
 			append(&list, source)
 		}
+	}
+	for source in byte_layout_draw_record_sources() {
+		append(&list, source)
 	}
 	return list[:]
 }

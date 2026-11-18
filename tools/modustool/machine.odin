@@ -2,8 +2,8 @@ package modustool
 
 import "modus:contract/glyph_cache"
 import "modus:contract/store"
-import tree "modus:support/storage_tree"
-import "modus:support/bar"
+import tree "modus:private/storage/storage_tree"
+import "modus:private/compositor/bar"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -51,7 +51,7 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 #assert(len(KEYS_HELD_LINE) == 100)
 
 // The places of the scroll bar of the window of the console, inside its
-// surface (src/programs/terminal/main.odin, layout; src/programs/root/main.odin,
+// surface (src/modules/system/terminal/main.odin, layout; src/modules/system/root/main.odin,
 // role_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
 // = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
 // over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
@@ -92,6 +92,11 @@ Step_Kind :: enum {
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
+	// Drag the bottom left corner of the window with the title text until
+	// its surface is to_x by to_y pixels. The tool reads the place and the
+	// size of the window in the log, then waits for the line of the
+	// compositor that the window took the new size (machine_resize.odin).
+	Resize,
 	Front, // Open the menu of the windows, and press the line of the last window with the title text: the window comes to the front. The tool reads the lines of the menu in the log.
 	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log, and brings the window to the front first when another window covers the button (machine_elements.odin).
 	// Press the middle of the element with the name `element` of the window
@@ -155,6 +160,11 @@ Step_Kind :: enum {
 	// A later step of the part, in this machine or the next, names it with
 	// {screen text} in its text.
 	Screen_Text,
+	// Run operation sequences through the mailbox of the program
+	// operation_fuzzing, whose address the log gives after the text of the
+	// last Wait, and check each oracle (operation_sequences.odin). text: ""
+	// for the seed sequences, or the file of one sequence to replay.
+	Operation_Sequences,
 }
 
 Step :: struct {
@@ -875,7 +885,7 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 }
 
 // tree_entry_find finds an entry of a tree on a disk file: the walk down
-// the B+ tree of the tree, as src/library/support/storage_tree does.
+// the B+ tree of the tree, as src/library/private/storage/storage_tree does.
 tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (found_entry: store.Entry, found: bool, ok: bool) {
 	key := store.entry_name(name)
 	pointer := root
@@ -988,10 +998,14 @@ self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return true
 }
 
-// The positions below come from src/programs/compositor/main.odin: the buttons
+// The positions below come from src/modules/system/compositor/main.odin: the buttons
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
+	// The kernel says if each processor registered its steal-time record,
+	// or why the machine has none: under KVM the line names the count of
+	// the processors, under TCG the absence (src/md/features/stolen_time.md).
+	{kind = .Wait, text = "kernel: steal time: "},
 	{kind = .Wait, text = "kernel: ok"},
 	// The kernel writes the time of each stage of the boot, on the channel
 	// boot. The serial port keeps each line, so this check reads them here:
@@ -1906,11 +1920,22 @@ scenario := [?]Step {
 
 	// The time is in a page that each program reads: no kernel entry.
 	{kind = .Launch, text = "clock"},
+	{kind = .Wait, text = "compositor: window clock is resizable from 816x336 to 1216x640", any_order = true},
 	{kind = .Wait, text = "clock: the check of the time page: 1000000 reads, 0 kernel entries"},
 	{kind = .Wait, text = "clock: the check of a kernel entry: 100000 reads, "},
 	{kind = .Wait, text = "clock: the time page and the cycle counter: in "},
 	{kind = .Wait, text = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
 	{kind = .Shot, text = "clock"},
+	// The pointer drags the corner of the window of clock: its program
+	// makes the surface of the new size and draws its next frame in it,
+	// and the compositor shows the window at that size from that frame
+	// (src/md/features/window_resize.md).
+	{kind = .Resize, text = "clock", to_x = 880, to_y = 384},
+	// The program can draw before the compositor writes its line of the
+	// request: the two lines come in either order.
+	{kind = .Wait, text = "compositor: window clock asked to draw at 880x384", any_order = true},
+	{kind = .Wait, text = "display: clock: the first picture of 880x384 after a resize"},
+	{kind = .Shot, text = "clock_resized"},
 
 	// Several processors: the kernel says that the four processors ran
 	// threads of one program at the same time. Then 1, 2 and 4 threads
@@ -2516,7 +2541,7 @@ scenario := [?]Step {
 	// records of each second from the budget of log_reader, which counts
 	// only its own, and each child gives them back at its stop.
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
@@ -2542,7 +2567,7 @@ scenario := [?]Step {
 	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
@@ -2562,6 +2587,15 @@ scenario := [?]Step {
 	{kind = .Record, program = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
+	// An arena grows one page at a time until its budget refuses the
+	// commit: the refusal is a value that the program reads, the arena
+	// keeps its state, a reset takes the same pages again with no commit,
+	// and the end gives every page back to the budget
+	// (src/md/features/memory_without_a_bound.md).
+	{kind = .Type, text = "start(\"arena\")"},
+	{kind = .Wait, text = "arena: grew to ", fails_on = "arena: WRONG"},
+	{kind = .Wait, text = "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must", fails_on = "arena: WRONG"},
+	{kind = .Wait, text = "root: arena stopped with code 0"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two
@@ -2793,7 +2827,9 @@ scenario := [?]Step {
 	// sends no answer there; it writes one line at the first word, and the
 	// count when the window closes.
 	{kind = .Wait, text = "compositor: a window sent the word 0, which names no command; the next ones are counted, and the count comes when the window closes", any_order = true},
-	{kind = .Wait, text = "disk: the window sent the command words 0, 6 and 4294967295: the compositor read the three: as it must"},
+	// The middle word is the first past the last display command, which
+	// grows with the commands: the wait names the rest of the line.
+	{kind = .Wait, text = "and 4294967295: the compositor read the three: as it must"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
 	// using memory.
@@ -2941,12 +2977,21 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},
 	{kind = .Wait, text = "errors: an accepted kernel command leaves its table of error details empty: as it must"},
 	{kind = .Wait, text = "errors: Log refuses a table of error details: as it must"},
+	// A full completion queue of the kernel ring loses no answer
+	// (src/md/api/kernel_ring_completion_room.md).
+	{kind = .Wait, text = "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must"},
+	{kind = .Wait, text = "errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must"},
+	{kind = .Wait, text = "errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must"},
+	{kind = .Wait, text = "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (one log record, 152
 	// bytes): its end is in the next row, and the tool joins the rows.
 	{kind = .Record, program = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
+	// The child of errors stops on a kernel ring that holds records
+	// (src/md/api/kernel_ring_completion_room.md, "The stop of a program").
+	{kind = .Wait, text = "errors: a stop on a kernel ring that holds records ends the program with its own stop code: as it must"},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel command and its table of error details: accepted with no table "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
@@ -3017,7 +3062,7 @@ scenario := [?]Step {
 	// A table from the host: rows of field values go into the call region
 	// of the monitor. A Change table is refused by the tool: its rows would
 	// not come back. The service sample is not reachable from the network
-	// (the row of remote in program_role_rows).
+	// (the row of remote in program_roles).
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
 	// The table of error details: each row that names nothing, not only the first.
@@ -3052,6 +3097,35 @@ scenario := [?]Step {
 	// Shift+Tab takes the focus back to the list, and Up on the list
 	// chooses the line before.
 	{kind = .Shot, text = "action_bar"},
+	// The clipboard (src/md/features/clipboard.md): Control+C copies the
+	// text "hello" of the field that has the focus in interface_elements,
+	// and Control+V puts it in the line of the console as typed
+	// characters. The compositor takes both keys: no program sees them.
+	// A program can write its line before the compositor writes its own:
+	// the first wait of each key leaves the place of the log as it was.
+	{kind = .Key, text = "ctrl-c"},
+	{kind = .Wait, text = "compositor: the copy key goes to interface_elements", any_order = true},
+	// The program sends its copy, then writes its line; the compositor can
+	// take the copy and write its own line between the two.
+	{kind = .Wait, text = "display: interface_elements: a copy of 5 bytes of text", any_order = true},
+	{kind = .Wait, text = "compositor: a copy of 5 bytes of text from interface_elements"},
+	{kind = .Front, text = "console"},
+	{kind = .Key, text = "ctrl-v"},
+	{kind = .Wait, text = "compositor: a paste of 5 bytes of text from interface_elements goes to console", any_order = true},
+	{kind = .Wait, text = "display: console: a paste of 5 bytes of text"},
+	{kind = .Wait, text = "terminal: a paste of 5 characters goes to console", any_order = true},
+	// The console gave the terminal its line with the paste: the terminal
+	// says that a picture is due, and the picture waits for it.
+	{kind = .Wait, text = "console: the line shows \"hello\" after a paste"},
+	{kind = .Shot, text = "clipboard_paste"},
+	// The pasted characters leave the line of the console for the steps
+	// that type in it later.
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "console: the line is empty again after a paste"},
 	{kind = .Click_Element, text = "interface_elements", element = "element before"},
 	{kind = .Click_Element, text = "interface_elements", element = "line before"},
 	{kind = .Wait, text = "interface_elements: the list chooses boot"},
@@ -3106,7 +3180,7 @@ scenario := [?]Step {
 	{kind = .Point, inside_window = "pointers", x = 100, y = 12, text = "move"}, // The title bar.
 	{kind = .Point, inside_window = "pointers", x = -14, y = 12, text = "pointing_hand"}, // The close button.
 	{kind = .Point, inside_window = "pointers", x = 1, y = 300, text = "arrow"}, // The left border.
-	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (src/programs/pointers, tile_area(6)): the request of the program.
+	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (src/modules/demonstrations/pointers, tile_area(6)): the request of the program.
 	{kind = .Wait, text = "compositor: pointers asks for the pointer shape wait over its surface"},
 	{kind = .Shot, text = "pointers"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 16 + 60, y = 24 + 216 + 60, text = "arrow"}, // The tile of arrow.
@@ -3155,7 +3229,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
@@ -3265,7 +3339,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; kept in the store"},
 	{kind = .Wait, text = "settings: the appearance in force is light: the setting light"},
 	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light"},
 	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button of the programs in the bar: the light form of the pointer.
 	{kind = .Front, text = "settings"},
@@ -3433,10 +3507,16 @@ scenario := [?]Step {
 scenario_measure := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
+	// The quality profile that the compositor chose at its start
+	// (quality_measure.odin).
+	{kind = .Wait, text = QUALITY_PROFILE_LINE, any_order = true},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "locks"},
+	// The start of its window: locks draws its first frame before its
+	// measures.
+	{kind = .Wait, text = QUALITY_WINDOW_START_LOCKS, any_order = true},
 	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
 	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
@@ -3458,6 +3538,21 @@ scenario_measure := [?]Step {
 	{kind = .Type, text = "measure_completion()"},
 	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
 	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
+	// A frame at 1920 x 1080 on the processor, in its three parts, after
+	// the other measures: no other program draws while it runs. The tool
+	// reads the form of its lines after the machine
+	// (processor_frame_measure.odin).
+	{kind = .Type, text = "start(\"processor_frame\")"},
+	// The 24 characters of that line are more than the keys of a line of
+	// the time of a key to the screen: the compositor wrote one, with the
+	// line of the frames, since the last wait (quality_measure.odin).
+	{kind = .Wait, text = QUALITY_FRAME, any_order = true},
+	{kind = .Wait, text = QUALITY_KEY, any_order = true},
+	{kind = .Wait, text = PROCESSOR_FRAME_CLEAR_AND_PRESENT, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_FULL_FRAME, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_FRAME_IN_ITS_DAMAGE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_DRAW_TABLE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_DONE, fails_on = PROCESSOR_FRAME_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -3593,6 +3688,7 @@ Machine :: struct {
 	clock_offset_seconds: i64, // The seconds that the real-time clock of the machine is ahead of the clock of the host (machine_clock.odin).
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
+	memory_file: string, // The file of the memory of the machine, or "" (Machine_Options).
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -4000,8 +4096,14 @@ Machine_Options :: struct {
 	vnc:            bool, // A display for a film (film.odin).
 	paused:         bool, // The machine waits for the step Monitor "cont".
 	entropy_device: bool,
+	// The sound device, whose output goes to the wave file beside the log
+	// (SOUND_OUTPUT_SUFFIX): the check of the tone reads it after the machine.
+	sound_device:   bool,
 	tpm_device:     bool, // A software TPM, on any firmware.
 	tpm_state:      string, // The state of the TPM that the machines of a part share, or "" for a new one.
+	// The memory of the machine in this file, and one processor: the
+	// machine of the operation sequences (operation_sequences.odin). "": none.
+	memory_file:    string,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4058,7 +4160,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "")
 		if !ok {
 			return false
 		}
@@ -4128,9 +4230,15 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		peer      = &peer,
 		forward   = forward,
 		disk_server = options.disk_server,
+		memory_file = options.memory_file,
 	}
 	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
+	// First after a failure, before any other act: the processors of a
+	// stall must not move on before the tool reads where they are.
+	if qmp_opened && !passed {
+		processors_report(&machine, output, volume, firmware)
+	}
 	// A scenario that failed between Film_Start and Film_Stop: its worker
 	// ends before the connections to QEMU close.
 	_ = film_stop(&machine)
@@ -4478,10 +4586,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 		case .Front:
 			window_front_bring(machine, step.text, index) or_return
+		case .Resize:
+			window_resize_step(machine, step, index) or_return // machine_resize.odin
 		case .Click_Element:
 			element_click(machine, step.text, step.element, index) or_return
 		case .Wheel:
 			element_wheel(machine, step.text, step.element, step.notches, index) or_return
+		case .Operation_Sequences:
+			operation_sequences_step(machine, index, step.text) or_return
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
 			if !step.shown_only {

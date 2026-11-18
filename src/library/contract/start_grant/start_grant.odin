@@ -2,7 +2,7 @@
 // its name, and the name of each one.
 //
 // The root service decides the start grants of a program
-// (`grants_of` in `src/programs/root/main.odin`). The list is a contract because
+// (`program_roles` in `src/modules/system/root/roles.odin`). The list is a contract because
 // a second party reads it: the root service puts the number of a start
 // grant in an error record when that grant refuses the debug access to a
 // program (errors.Unit.Debug_Access), and the reader of the record writes
@@ -47,14 +47,14 @@ Grant :: enum i64 {
 	Replace            = 12, // Change the replacement table of the machine (Root_Command.Replace).
 	Network            = 13, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
 	Network_Device     = 14, // The frame service of the network device and its frame ring, and a control ring from the root service.
-	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (program_role_rows in src/programs/root/roles.odin).
+	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (program_roles in src/modules/system/root/roles.odin).
 	Schedule           = 16, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings           = 17, // The settings page with Write (modus:contract/settings): the one writer of the settings of the machine.
 	Clock              = 18, // The date page with Write and the two ports of the real-time clock (modus:contract/date): the one writer of the date.
 	History_Store      = 19, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events             = 20, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 	Principals         = 21, // A ring to the root service for Principal_Record, Principal_Unlock and Machine_Key only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
-	Debug_Image        = 22, // The debug image, read-only: the names of the procedures and the source lines of a stop report (src/programs/root/debug_image.odin).
+	Debug_Image        = 22, // The debug image, read-only: the names of the procedures and the source lines of a stop report (src/modules/system/root/debug_image.odin).
 	Debugger           = 23, // A ring to the root service for Debug only: the service that debugs a program on behalf of a caller of its connections (Root_Command.Debug).
 	Palette            = 24, // The palette provider of the desktop: the entry table with Write and the ring to the compositor (Root_Command.Palette_Provide).
 	System_Part        = 25, // A part of the system that the root service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.
@@ -62,6 +62,7 @@ Grant :: enum i64 {
 	Versions_Erase     = 27, // End the versions of an object of its private store, with zeros over their blocks (isolated.CALLER_ERASES_VERSIONS): the program that keeps a secret that an earlier version must not keep (docs/STORAGE.md, "4.8 The erase of versions").
 	Counters           = 28, // The machine, with the right Counters: count the events of the processor for the code of its own threads (docs/ARCHITECTURE.md, "The counters of a thread").
 	Remote_Clients     = 29, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the program that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
+	Sound_Device       = 30, // The sound service of the sound device and its stream ring (modus:contract/timed_stream): the one program that plays sound (docs/SOUND.md).
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -98,6 +99,7 @@ GRANT_NAMES := [Grant]string {
 	.Versions_Erase     = "Versions_Erase",
 	.Counters           = "Counters",
 	.Remote_Clients     = "Remote_Clients",
+	.Sound_Device       = "Sound_Device",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

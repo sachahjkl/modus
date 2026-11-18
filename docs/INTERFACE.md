@@ -2,7 +2,7 @@
 
 The interface package (`src/library/support/interface`) is the shared logic of the interface of the programs: the draw records, the damage, the layout, the input and focus, and the text. The system draws in software, and this logic is still a foundation of its own. The package takes ideas from `gui_toolkit` and none of its code (section 11).
 
-The terms of this document are in `GLOSSARY.md`, section "Desktop": interface package, draw record, draw table, element, element identity, damage by difference, interface state, action bar, keycap.
+The terms of this document are in `glossary/desktop.md`: interface package, draw record, draw table, element, element identity, damage by difference, interface state, action bar, keycap.
 
 **The idea in plain words.** A program describes its window again at each frame, as a table of draw records of one size. The package compares that table with the table of the frame before, record by record, and draws only the rectangles that changed. So a program keeps no tree of widgets, and a tool can read, compare or record the table of any frame.
 
@@ -18,7 +18,7 @@ The terms of this document are in `GLOSSARY.md`, section "Desktop": interface pa
 
 Before the package, each program drew its window by hand with `src/library/support/graphics`, and repeated the same cards, bars and tables. This section counts that repetition: it is the reason for the package. The counts are those of the day before the package; section 12 gives the state after the conversions.
 
-Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over `src/programs/*/` and `src/library/support/`:
+Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over the folders of the programs (then one folder, now in the module groups of `src/modules/`) and `src/library/support/`:
 
 | Fact | Count |
 |---|---|
@@ -48,32 +48,120 @@ Why, against a retained tree of widgets:
 - The output is data: a table of records of one size, in the memory of the caller (P14). A table can be compared, measured, sent to another rasterizer, or written to a file to test it.
 - A retained tree gives damage for free: a node that changed knows its rectangle. Immediate mode loses that. Section 2.2 gives it back without a tree.
 
-### 2.1 Draw record (format version 10)
+### 2.1 Draw record
 
-A draw record is 40 bytes. The fields are little-endian, in this order:
+The draw table is the one 2D interface of the system (`PROPERTIES.md`, "18. One 2D interface: the draw table"). The form of a record is the contract package `src/library/contract/draw_record`: the interface package writes the records, and the drawing module and the compositor read them. The design and the forms that come next are in `src/md/api/draw_table.md`.
 
-| Offset | Field | Type | Meaning |
-|---|---|---|---|
-| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3), `Line` 10 (version 4), `Interface_Text` 11 (version 7) |
-| 1 | `text_scale` | u8 | Text, Interface_Text: 1, 2 or 3 (`DESIGN.md`, section 5) |
-| 2 | `text_origin_thirds` | u8 | Interface_Text: the origin of the text after `x` + the ink margin, in thirds of a pixel: 0, 1 or 2 (version 7; it was `text_subpixel_x`, which no reader used). 0 for the other kinds |
-| 3 | `kind_detail` | u8 | Line: the thickness in pixels, 1 to 32 (version 4; it was `reserved`). Text, Interface_Text: the weight, 0 regular, 1 bold (version 6: the titles of the cards; bold draws at scale 1 only). Picture: the number of its picture memory in `Draw_Table.picture_memories` (version 8). 0 for the other kinds |
-| 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers. For an Interface_Text, the box of its measure grown by its ink margin on each side: every pixel of its ink is in it. For a line, the first end, and the second end minus the first: `width` and `height` can be negative |
-| 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
-| 24 | `second_color` | u32 | The bottom or the right color of a gradient. Interface_Text: the ink margin in pixels, at most `INK_MARGIN_LIMIT` (16). Picture: its stride, the pixels from one line to the next (version 8). Text grid: its columns (version 9) |
-| 28 | `text_start`, `text_count` | 2 x u32 | Text, Interface_Text: the bytes of the run in the text table of the draw table. Picture: the index of its first pixel in its picture memory (version 8; it was an index in a list of canvases) and its generation. Text grid: the bytes of its cells in the text table, at a place that is a multiple of 4 (version 9; it was the index of the grid in a list of grids), each cell 16 bytes with a code point (version 10) |
-| 36 | `element` | u32 | The low 32 bits of the element identity that wrote the record, 0 for none: a tool can say which element changed |
+A draw record is 48 bytes, little-endian: a header of 24 bytes, then 24 bytes that belong to its kind. The header holds the word of the kind, three reserved bytes, the element identity and the box. The box is four edges in 1/64 pixel (`draw_record.UNITS_PER_PIXEL`): left, top, right and bottom, where the right column and the bottom line are not in the box. The record draws no pixel outside its box, and the box is its damage. The 24 bytes of the fields are one of the layouts below; each byte that the kind does not name is 0.
 
-- `Clip` sets the rectangle that the next records are cut to, until the next `Clip`; a `Clip` of width 0 ends the cut.
-- **No stack of clips**: a `Clip` replaces the cut, and a `Clip` of width 0 removes each cut. An element that clips inside an area that is already clipped removes the outer clip. A caller that nests clips writes the intersection itself, and ends with the outer clip again.
-- **Places and sizes**: each edge of a record is cut to 2^30 pixels from the corner of the surface (`COORDINATE_LIMIT`), then the size is the difference of the two edges. A rectangle that covers the surface with places past the `i32` still covers it.
+| Kind | Value | Fields |
+|---|---|---|
+| `None` | 0 | None: the record draws nothing. The record of zeros is a `None` |
+| `Rectangle` | 1 | The color of the box, with alpha; or a pattern of that color: one cell placed on the surface, its size and the steps across and down, cut to the box |
+| `Vertical_Gradient` | 2 | The color of the top line and of the bottom line, each with alpha |
+| `Horizontal_Gradient` | 3 | The color of the left column and of the right column, each with alpha |
+| `Text` | 4 | A run of text in one font: its range in the text table, its opaque color, its origin in 1/64 pixel at the top of the box, its font (`Font_Kind`: `Cells_8x16` 0, `Interface` 1), its scale (1 to 3) and its weight. In the font of the cells the origin is the left edge of the box, on a whole pixel; in the interface font it is on a third of a pixel, the ink margin right of the left edge, and the text has at most 256 bytes |
+| `Clip` | 5 | None: the next records are cut to the box; a box of no width ends the cut |
+| `Picture` | 8 | Its picture memory, its format (`Picture_Format`: `Opaque` 0, each pixel `0x00RRGGBB` copied; `Straight_Alpha` 1, each pixel `0xAARRGGBB` blended), its first pixel, its stride and its generation; its size is the size of the box |
+| `Text_Grid` | 9 | The range of its cells in the text table and its columns |
+| `Line` | 10 | Its two ends on whole pixels, its opaque color, and its thickness (1 to 32) |
+
+A color of a record is a `Draw_Color`: `0xAARRGGBB` with straight alpha. Alpha 255 is opaque, and the color 0 is transparent. A writer makes one from a color token: `draw_record.opaque(token)`, or `draw_record.with_alpha(token, alpha)`.
+
+- **One blending rule.** At each pixel that a record reaches, its color goes over the pixel by source over, in linear light with a gamma of 2: for each channel, `result = sqrt((d * d * (255 - a) + c * c * a) / 255)`, with `d` the pixel, `c` the color and `a` its alpha. It is the blend of the glyphs (`FONTS.md`, "The blend in linear light"), with the alpha as the coverage of the three channels. Alpha 255 writes the color, so an opaque record draws the pixels of a fill. `graphics.blend_fill` and `graphics.blend_copy` draw by this rule, in an SSE2 form and a scalar form that give the same bytes (`SIMD.md`).
+- **A gradient mixes in encoded values**, alpha too, as `graphics.mix` mixes the channels; then each pixel blends by the rule. The channels of an end with alpha 0 color the mix, so a fade from a color to the same color with alpha 0 keeps its color.
+- **The text and the line are opaque in this version**: the glyphs blend their own coverage, and the squares of a thick line overlap, so a translucent one would blend twice. The border refuses another alpha.
+- **The pixels of a surface stay opaque**: each damage rectangle is painted with the background before the records draw, so a translucent record gives the same pixels in each cut.
+
+```byte-layout draw_record.Draw_Record draw_record.Rectangle_Fields draw_record.Vertical_Gradient_Fields draw_record.Horizontal_Gradient_Fields draw_record.Text_Fields draw_record.Picture_Fields draw_record.Text_Grid_Fields draw_record.Line_Fields
+draw_record.Draw_Record, 48 bytes: one record of a draw table
+offset  size  field     type
+     0     1  kind      u8
+     1     3  reserved  [3]u8
+     4     4  element   u32
+     8     4  left      i32
+    12     4  top       i32
+    16     4  right     i32
+    20     4  bottom    i32
+    24    24  fields    [24]u8
+
+draw_record.Rectangle_Fields, 24 bytes: the fields of a Rectangle
+offset  size  field        type
+     0     4  color        u32
+     4     4  cell_x       i32
+     8     4  cell_y       i32
+    12     2  cell_width   u16
+    14     2  cell_height  u16
+    16     2  step_x       u16
+    18     2  step_y       u16
+    20     4  reserved     [4]u8
+
+draw_record.Vertical_Gradient_Fields, 24 bytes: the fields of a Vertical_Gradient
+offset  size  field         type
+     0     4  top_color     u32
+     4     4  bottom_color  u32
+     8    16  reserved      [16]u8
+
+draw_record.Horizontal_Gradient_Fields, 24 bytes: the fields of a Horizontal_Gradient
+offset  size  field        type
+     0     4  left_color   u32
+     4     4  right_color  u32
+     8    16  reserved     [16]u8
+
+draw_record.Text_Fields, 24 bytes: the fields of a Text
+offset  size  field     type
+     0     4  first     u32
+     4     4  count     u32
+     8     4  color     u32
+    12     4  origin_x  i32
+    16     1  font      u8
+    17     1  scale     u8
+    18     1  weight    u8
+    19     5  reserved  [5]u8
+
+draw_record.Picture_Fields, 24 bytes: the fields of a Picture
+offset  size  field            type
+     0     1  memory           u8
+     1     1  format           u8
+     2     2  memory_reserved  [2]u8
+     4     4  first            u32
+     8     4  stride           u32
+    12     4  generation       u32
+    16     8  reserved         [8]u8
+
+draw_record.Text_Grid_Fields, 24 bytes: the fields of a Text_Grid
+offset  size  field     type
+     0     4  first     u32
+     4     4  count     u32
+     8     4  columns   u32
+    12    12  reserved  [12]u8
+
+draw_record.Line_Fields, 24 bytes: the fields of a Line
+offset  size  field      type
+     0     4  start_x    i32
+     4     4  start_y    i32
+     8     4  end_x      i32
+    12     4  end_y      i32
+    16     4  color      u32
+    20     1  thickness  u8
+    21     3  reserved   [3]u8
+```
+
+- **One border.** `draw_record.read` takes the one copy of a record that the reader made, and gives a `Draw_Primitive`, a union with one record type for each kind, or the problem that refuses the record. Past it, each reader switches on the primitive, whole. `draw_record.record_of` writes the record of a primitive, so the kind of a record always matches its fields. The execution and the difference read each record through the border.
+- **What the border refuses**, with its `Problem`: a word of a kind that names no member (`Unknown_Kind`); a reserved byte, or a byte that the kind does not name, that is not 0 (`Reserved_Not_Zero`); a box whose right is left of its left or whose bottom is above its top (`Box_Inverted`); an edge past `COORDINATE_LIMIT` (`Box_Past_Coordinate_Limit`); an edge that is not a whole pixel (`Box_Not_On_Whole_Pixels`); and a field out of its range (`Field_Past_Bound`): a color with alpha 0 that is not 0, two ends of a gradient with alpha 0 that are not both 0, a color of a text or a line that is not opaque, a format of a picture that names no member, a scale out of 1 to 3, a weight or a font that names no member, a thickness out of 1 to 32, an end of a line that is not a whole pixel or is past 32 768 pixels (`LINE_COORDINATE_LIMIT`), a text with an origin left of its box or more than `INK_MARGIN_LIMIT` (16) pixels inside it, a text in the font of the cells with an origin off a whole pixel, a text in the interface font of more than 256 bytes (`INTERFACE_TEXT_LIMIT`) or with an origin off a third of a pixel, and a pattern of a rectangle out of its bounds (below). The words 6 and 7, of the grid of points and the folded gap that left the format, and 11, of the kind `Interface_Text` that became a `Text` in the interface font, name no kind. The checks run in that order: a record with two faults gives the problem of the first. A refused record draws nothing, and a refused `Clip` leaves the cut as it was. A record that the border reads is canonical: each unused byte is 0, and a color that draws nothing is 0. So two records with the same bytes draw the same pixels, and the difference compares bytes. Two records with other bytes can still draw the same pixels: a gradient of one line whose second end has alpha 0, which is never drawn; two rectangles of the color 0 with other patterns; a rectangle of the color 0 against a `None`. The difference then damages their boxes: the damage is too large, never too small.
+- **What the border does not check**: what a record names in the tables of its frame. The range of a text and of a grid in the text table, and the pixels of a picture in its picture memory, are checked where the table is (`text_of_record`, `grid_of`, `picture_of`), in 64 bits with each factor below 2^32.
+- **Whole pixels in this version.** Places are in 1/64 pixel, and no kind of this version draws inside a pixel: the edges of a box and the ends of a line are whole pixels. The one place inside a pixel is the origin of a text in the interface font, on a third of a pixel, the positions of the glyph cache.
+- **A rectangle that repeats.** A `Rectangle` with both steps at 0 is its box, and its other fields are 0. With both steps above 0 it is a pattern: a cell of `cell_width` by `cell_height` at (`cell_x` + n × `step_x`, `cell_y` + m × `step_y`) of the surface for each integers n and m, cut to the box. The border refuses one step at 0 and not the other, a size or a place that is not a whole pixel, a cell of no size or larger than its step, a place past `COORDINATE_LIMIT`, and fields of a pattern with both steps at 0. So a pattern reaches each pixel of its box at most once. Cells that touch across or down are one fill, so a pattern whose cell is its step costs one fill, as a solid rectangle; the most calls come from a cell of 1 pixel each 2 pixels, one call for each cell. The pattern is placed on the surface and not on the box: two boxes of one surface, and two damage rectangles, show one pattern, and an element needs no clip to draw a part of it.
+- **The look of the system is elements.** The format holds primitives only. `draw_point_grid` (and `background`) writes one `Rectangle` with the pattern `POINT_GRID_PATTERN`: a point of 2 pixels at 12 + 24 n of the surface (`DESIGN.md`, "3. Surfaces"), cut to the area. `draw_folded_gap` writes three records, each with the box of the gap: the track as a `Rectangle`, then two `Line` records of 1 pixel, from the bottom left up to the right, cut to the box as the lines of the gap always were. A gap with an end of a line past `LINE_COORDINATE_LIMIT` has its track and not that line.
+- `Clip` sets the rectangle that the next records are cut to, until the next `Clip`; a `Clip` whose box has no width ends the cut.
+- **No stack of clips**: a `Clip` replaces the cut, and a `Clip` of no width removes each cut. An element that clips inside an area that is already clipped removes the outer clip. A caller that nests clips writes the intersection itself, and ends with the outer clip again.
+- **Places and sizes**: each edge of a record is cut to 2^23 pixels from the corner of the surface (`COORDINATE_LIMIT`), then the size is the difference of the two edges. In 1/64 pixel an edge is then inside 2^29, so the difference of two edges, at most 2^30, fits an `i32`, and so does an edge plus the largest ink margin. A rectangle that covers the surface with places past the `i32` still covers it. A text whose box would start past the limit has no record, in either font: no surface reaches it.
 - **`full` and `refused`**: `full` says that a record, a text or the cells of a grid did not fit in the table. The table is not the frame, so the next frame of that picture is drawn whole. `refused` says that a record could not be made: a picture with a pixel outside each picture memory of the table, a grid whose cells are fewer than its rows, a grid of more than 2^24 cells, or a grid in a text table that does not start at an address that is a multiple of 4. That record is missing, and each other record is in the table, so the difference stays exact.
 - **Grids with large numbers**: `grid_valid` divides in place of a product, so a count of rows or a stride near the largest `int` cannot wrap and pass the check.
-- A version number (`DRAW_RECORD_VERSION`, 9) is beside the format, as for the contracts. A new kind or a new field is a new version: 5 added the fill of a grid cell, 6 the weight of a text, 7 the kind `Interface_Text` and its byte `text_origin_thirds`, 8 the values that name the pixels of a picture, 9 the cells of a grid in the text table.
-- **An `Interface_Text` record of a hostile caller** draws nothing when its range is outside the text table, its third is 3 or more, its ink margin passes `INK_MARGIN_LIMIT`, its scale is not 1 to 3, or it has more than `INTERFACE_TEXT_LIMIT` (256) bytes. The checks are on the one copy of the record that the execution reads; the sums are in 64 bits, so no margin or range wraps. A program with no interface font draws such a record in the font of the cells at its origin, cut to its rectangle.
-- The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
+- **The version** (`DRAW_RECORD_VERSION`, 14) is in the contract, and in the names of the exports of the drawing module. A change of a kind, of a field, or of a bound that changes what a record draws is a new version. The format changes in place: the package, the drawing module and each writer move together.
+- The text of a run is in the text table of the draw table, not in the record: a record keeps its size, and two runs with the same bytes compare equal.
 - A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, the portraits of `hall_of_fame` and the surfaces of the windows in the compositor are pictures.
-- **A picture names its pixels by values.** The draw table holds a list of picture memories (`Draw_Table.picture_memories`): each is one run of pixels of the program. `draw_picture(table, x, y, canvas, generation)` finds the first picture memory that holds each pixel of the canvas, and writes its number, the index of its first pixel and its stride in the record. A canvas with a pixel outside each picture memory is refused. The execution checks a record against its memory (`picture_of`), in 64 bits with each factor below 2^32: a first pixel, a stride or a size that a hostile caller wrote draws nothing when a pixel is past the memory. A record holds no address, so the drawing module draws it (section 7; the design: `src/md/api/picture.md`).
+- **A picture names its pixels by values.** The draw table holds a list of picture memories (`Draw_Table.picture_memories`): each is one run of pixels of the program. `draw_picture(table, x, y, canvas, generation)` finds the first picture memory that holds each pixel of the canvas, and writes its number, the index of its first pixel and its stride in the record. A canvas with a pixel outside each picture memory is refused. `draw_picture_with_alpha` writes the same record with the format `Straight_Alpha`: each pixel of the canvas is `0xAARRGGBB`, and blends. In the same way, `draw_rectangle_with_alpha`, `draw_vertical_gradient_with_alpha` and `draw_horizontal_gradient_with_alpha` take draw colors; `draw_rectangle` and the two gradients take tokens, which are opaque. The execution checks a record against its memory (`picture_of`), in 64 bits with each factor below 2^32: a first pixel, a stride or a size that a hostile caller wrote draws nothing when a pixel is past the memory. A record holds no address, so the drawing module draws it (section 7; the design: `src/md/api/picture.md`).
 - **A picture in tiles**: a Picture record damages its whole rectangle when its generation changes. A program whose picture changes in one part cuts it in tiles: each tile is a picture of its own over the same pixels (`graphics.view`), with its own record and its own generation, and the program raises the generation of the tiles that it drew in. The difference then damages those tiles only. The program `heron` cuts its stage of 640 by 384 pixels in 240 tiles of 32 by 32, and writes the mean damage of a picture on its log.
 - **A frame is shown whole or not at all.** Every surface has two pictures. The program draws the picture that the compositor does not read, `Present` names the picture that is complete, and the next frame is drawn in the other one. A damage rectangle is painted with the background, then its records are drawn: the compositor never reads between the two. The window layer does this for each program, with no code in the program:
   - `window_frame_end` waits until the compositor took the picture before (`display.canvas_wait`), then draws. The wait is on the count of the records that the compositor read from the ring of the window. Its bound is the hang bound, 60 s: after it the frame is left out, with one line on the log, and the window waits no more until the compositor reads again.
@@ -83,27 +171,29 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
   - A program that paces its pictures sends `Picture_Due` with 1 before it waits with a change that it did not draw, and the window layer sends it with 0 after a frame that changed nothing; a `Present` ends it too (`display.picture_due_set`). The compositor gives it as `due` in `compositor.windows()`. A machine test takes no picture while a window has `due` 1 (`TOOLS.md`, "When the tool takes a picture"). The terminal sends it: it draws at most one picture in each 16 ms, and it sends the due state before each wait of its loop, also for a record that came while it drew its last picture.
   - In one turn of its loop the compositor takes from the ring of a window the records that the ring holds at the start of the turn, at most the capacity of the ring (`system.records_of_turn`): a program that writes records with no end does not hold the compositor.
   - One thread of a program owns a window: `display.canvas_wait` and `display.wait_events` of one window are called from one thread.
-- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, as a code point, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 16 bytes for each cell). `draw_text_grid` copies the cells into the text table. Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
+- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, as a code point, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 16 bytes for each cell). `draw_text_grid` copies the cells into the text table. Its 48 bytes do not change when its cells change: the difference compares the cells (section 2.4).
 
 ### 2.2 Damage by difference
 
 The program keeps the draw table of the last frame that it presented (a second table, its own memory). After it builds the table of this frame, `damage_by_difference` compares the two tables, record by record, at the same index:
 
-- Two records at one index are equal if their 40 bytes are equal and the bytes of their texts are equal. Nothing is damaged.
+- Two records at one index are equal if their 48 bytes are equal, except the first byte of the range of a text or a grid, and the bytes of their texts are equal. Nothing is damaged. The equal case is one comparison of the 48 bytes, and of the bytes of a text, with no read through the border: two records with the same bytes draw the same thing, also two refused records, which draw nothing in both frames. Two records whose bytes differ are read through the border: as it keeps each other byte canonical, two records that it reads are then equal only when the first byte of a range moved. A refused record is equal to no record whose bytes differ: both boxes are damaged. A refused line damages its box; in version 10 it damaged nothing.
 - If they differ, the rectangle of the old record and the rectangle of the new one are damaged: the old one must be painted over, the new one painted.
 - The records after the end of the shorter table are damaged.
 - The rectangles merge as in the compositor: rectangles that touch become one; with no room left (`DAMAGE_CAPACITY` 8), a new rectangle joins the first one.
 
 Then `execute_in_rectangles` draws again, in each damage rectangle, each record of the new table that touches it, cut to the rectangle. The program never tracks damage by hand.
 
-- **The limit of the index rule**: a record added in the middle of the table moves all the records after it, and they all compare as different: the damage is too large, never too small. It is right, and it costs only time. An element identity in each record (offset 36) allows a later rule that matches records by identity; the package does not use it.
+- **The limit of the index rule**: a record added in the middle of the table moves all the records after it, and they all compare as different: the damage is too large, never too small. It is right, and it costs only time. An element identity in each record (offset 4) allows a later rule that matches records by identity; the package does not use it.
 - **Two pictures**: the picture that the program draws now holds the frame of two frames before. The window layer keeps one table, the table of the last frame that it presented, and for each picture its debt: the rectangles where the picture differs from that table (`Picture_Debts`). A frame draws the changed rectangles and the debt of its picture, and presents the changed rectangles and the debt of the picture on the screen (`damage_of_picture`). After the `Present`, the drawn picture has no debt, and the changed rectangles join the debt of the other one (`picture_debts_after`). The caller gives no table for the second picture. A frame equal to the last table draws and presents nothing. Host test `two_pictures_screen_is_each_frame`: 400 frames of a terminal, with frames that repeat, lost presents and new fonts; after each one the screen is the frame drawn whole.
 - **A picture that is not known** (the first frame of each picture, no last table, a last table that was full) is drawn whole. When the picture on the screen is not known, the screen can show records of an older frame where the frame now draws nothing: the present is the whole surface (host test `two_pictures_unknown_shown_picture_presents_all`).
 - **A new font**: on `Settings_Changed`, each record stays the same and each pixel of text changes. `window_events` calls `draw_whole_window_next`, which makes the next frame of each picture whole. The terminal and the manual read their events by themselves and call it.
+- **A new size**: on `Resized`, `window_events` makes the surface of the new size (`display.surface_resize`) and calls `draw_whole_window_next`: no picture of the new surface is known.
 - **A present that is lost**: `display.present_rectangle` gives false when the command ring is full. The canvas stays the same picture, which is then not the last table: its next frame is whole.
 - **A frame that is left out**: the compositor did not take the picture before within the bound. Nothing is drawn and no state changes: the next frame is compared with the last frame that was presented. `window_events` then says that an event came when the canvas is free again.
 - **Present with a rectangle**: `display.present_rectangle` gives the compositor the union of the damage: the compositor draws again only that part of the window. A full rectangle stays the default of `display.present`.
-- **The cost**, measured by the program `interface_elements` on its window of 68 records, the mean of 100 rounds: nothing changed, 0 rectangles in 0.8 us; one number changed, 3 rectangles in 0.8 us; everything moved, 1 rectangle in 1.8 us: about 13 ns for each record. The whole frame is drawn in 366 to 411 us, a frame in its damage in 89 to 120 us. `clock` draws one picture in 11.6 us against 109.2 us by hand.
+- **The key that a picture shows**: the compositor gives each key with a character a serial (`Event.key_serial`). A program whose picture shows the key calls `display.key_shown` with it, and each `Present` names the newest such serial; the compositor then measures the time from the input service to the flip of that picture. The console names the keys of its line, through its terminal (`terminal.edit`); a program that names none is never measured (`src/md/features/desktop_to_browser.md`, "The three measures on the path of the system").
+- **The cost**, measured by the program `interface_elements` on its window of 121 records, the mean of 100 rounds, on a test machine whose host was loaded: nothing changed, 0 rectangles in 2.4 us; one number changed, 3 rectangles in 2.9 us; everything moved, 1 rectangle in 4.4 us. On the host, on one core, with a table of 121 records, the difference takes 1.7 us when nothing changed and 3.6 us when everything moved, against 2.2 us and 4.4 us with the record of version 10: the one copy of a record is six loads of 64 bits (`draw_record.copy_once`), and two records are compared as words. The whole frame is drawn in about 500 us on the same loaded machine. `clock` draws one picture in 93.6 us there.
 
 ### 2.3 Memory of the caller, errors as values
 
@@ -138,11 +228,11 @@ A `Line` record draws a straight line between two points, with a thickness, in o
 
 - **The pixels**: the path of `graphics.line` (the line of Bresenham, integers only), with a square of the thickness at each point of the path. An even thickness starts one pixel before the point. The pixels are the same at each build and on each part of the surface: the execution in a damage rectangle walks the same path and cuts the squares.
 - **One order**: `draw_line` writes the left end first, or the top end when the two ends have one x. A line and its reverse are one record, so they draw the same pixels and compare equal.
-- **The damage**: the rectangle that holds each square of the path (`line_rectangle`). Pieces of the path would be tighter on a diagonal, but the damage list joins rectangles that touch (section 2.2), and the pieces of one line touch: the list would make them one rectangle again. A diagonal across a window damages its whole bounding rectangle.
+- **The damage**: the box of the record, which `draw_line` makes the rectangle that holds each square of the path (`line_rectangle`). The execution cuts the line to its box, as each record. Pieces of the path would be tighter on a diagonal, but the damage list joins rectangles that touch (section 2.2), and the pieces of one line touch: the list would make them one rectangle again. A diagonal across a window damages its whole bounding rectangle.
 - **Hostile values**:
   - A thickness of 0 or less gives no record. A thickness past 32 (`LINE_THICKNESS_LIMIT`) is cut to 32.
   - An end past 32 768 pixels from the corner (`LINE_COORDINATE_LIMIT`) gives no record. A cut end would change the slope, so the record would be another line. The bound exists because the execution walks each point of the path.
-  - A record written by hand with a thickness of 0, a thickness past 32, or an end past the bound covers nothing: no pixel, no damage.
+  - A record written by hand with a thickness of 0, a thickness past 32, or an end past the bound or inside a pixel is refused by the border: no pixel, and its box is its damage.
   - A line of length 0 is one square of its thickness. A line fully outside the area is cut away like each record.
 - **The cost bound**: one execution walks at most 65 537 points and fills at most 32 x 32 pixels for each point inside the area.
 - **Limits**: no rounded ends, no antialiasing, no dashes. Lines at an angle are allowed, sparingly (`DESIGN.md`, section 2).
@@ -151,14 +241,16 @@ A `Line` record draws a straight line between two points, with a thickness, in o
 
 ### 2.6 Window places
 
-The compositor puts each window on the grid of 8 pixels (`src/library/support/bar/window_place.odin`, procedures with no state and their host test).
+The compositor puts each window on the grid of 8 pixels (`src/library/private/compositor/bar/window_place.odin`, procedures with no state and their host test).
 
 - A window that the pointer drags goes to the nearest point of the grid, then stays where 8 pixels of its title are on the screen, under the bar. At the left, the end of the title is at 8 or more, so the close button is on the screen too. Without that bound, a window dragged past an edge could not come back: the menu of the windows only brings a window to the front.
 - A new window that fits stays at the place that the compositor chose, moved up and left until it fits. A window wider than the screen puts its close button at the right of the screen; a drag shows its left part. A window higher than the screen starts under the bar.
 
 ## 3. Layout
 
-Layout places the elements of a window. The package has no solver: a program takes rows from a column and splits a row into columns, in one pass, with sizes that it states before it draws. The windows of the system have fixed sizes, so this one pass covers them.
+Layout places the elements of a window. The package has no solver: a program takes rows from a column and splits a row into columns, in one pass, with sizes that it states before it draws. Most windows of the system have fixed sizes, so this one pass covers them.
+
+- **A resizable window** (`src/md/features/window_resize.md`) reads its size from `window.canvas` at each frame, not from constants: a `Share` column takes the width that the window gains. `window_events` takes the event `Resized`: it makes the surface of the new size (`display.surface_resize`) and draws the next frame whole. A refused surface (`No_Budget`) keeps the old one, with one line. The least size that the program states is the size at which each of its texts fits, so a smaller window never cuts a text. `clock` is resizable.
 
 - The unit is the grid of 8 pixels (`DESIGN.md`, section 6). An `Area` is a rectangle of the surface.
 - **A column** gives areas from the top of its area to the bottom: `column_take(&column, height)`. The height of a line of text is 16, a line of a table 24.
@@ -180,7 +272,8 @@ An example from `interface_elements`: `identity("list")` names its list in each 
 - **The place of a press**: the input keeps where the left button went down (`Input.press_x`, `press_y`) beside the place of the pointer. One frame can hold a press and the moves after it; an element that follows a drag reads the press at its own place.
 - **The clock of a frame**: `frame_begin` takes the time of the system in milliseconds (`Frame.time`), and `window_frame_begin` gives it. A held arrow button of a scroll bar repeats by it. A frame with the time 0 has no clock: nothing repeats.
 - **The keyboard is a first path**: Tab and Shift+Tab move the focus in the order of the elements of the last frame; Enter and Space press the button that has the focus; up and down move the choice of a list that has the focus; a text input that has the focus takes the characters and Backspace. The palette of the compositor is the model: each thing that the pointer does, a key does.
-- **Elements that take no input**: `list_of_rows` and `text_input_line` only draw. Their caller owns the choice, the typed text and the caret, and decides what each key does in a pure procedure of its own (`src/library/support/palette`, `key_action`): a host test then runs each state with each key, with no frame. `list_of_rows` gets only the rows that its area shows, with the place of the first one in the whole list, so its work is the rows on the screen. A row can have a mark that is the outline of a square, a name in the font of the cells with its own color, and a quiet detail after the name. `text_input_line` draws a line that `src/library/support/line_editor` edits: a caret at any place, at a scale of 1 to 3, and a field with no border, whose fill reaches each edge of its area.
+- **The clipboard** (`src/md/features/clipboard.md`): `window_events` keeps the events `Copy_Asked` and `Pasted` in the `Input` of the next frame (`copy_asked`, `paste`). The `text_input` that has the focus gives its whole text to a copy, and reads a paste at the end of its text with `display.paste_read`, which copies the bytes, then checks them: a refused paste leaves the text as it was. After the frame, `window_frame_end` answers the compositor: `display.copy_send` with the text, `display.copy_decline` when no element took the copy, and `display.paste_refuse` when no element took the paste. A program that reads its events itself answers them itself, as the terminal does.
+- **Elements that take no input**: `list_of_rows` and `text_input_line` only draw. Their caller owns the choice, the typed text and the caret, and decides what each key does in a pure procedure of its own (`src/library/private/compositor/palette`, `key_action`): a host test then runs each state with each key, with no frame. `list_of_rows` gets only the rows that its area shows, with the place of the first one in the whole list, so its work is the rows on the screen. A row can have a mark that is the outline of a square, a name in the font of the cells with its own color, and a quiet detail after the name. `text_input_line` draws a line that `src/library/support/line_editor` edits: a caret at any place, at a scale of 1 to 3, and a field with no border, whose fill reaches each edge of its area.
 - **The pointer**: an element under the pointer is "under the pointer" (the close button of a window is brighter); a press and a release on one element press it. A press on an element gives it the focus.
 
 ### 4.1 The scroll bar
@@ -223,7 +316,7 @@ if moved.changed {
 
 ### 4.2 Act names
 
-An element can name what it acts on: its act name (`GLOSSARY.md`), a text of at most 32 bytes such as `settings.set:font`. A palette entry that does the same thing has the same act name, so the palette offers to go to the element (`DESIGN.md`, "Palette"). A program writes no code for go to: it names an element when it builds it.
+An element can name what it acts on: its act name (`glossary/desktop.md`), a text of at most 32 bytes such as `settings.set:font`. A palette entry that does the same thing has the same act name, so the palette offers to go to the element (`DESIGN.md`, "Palette"). A program writes no code for go to: it names an element when it builds it.
 
 - **The call**: `element_act_name(frame, element, "settings.set:font")`, in each frame that draws the element, with its element identity. The first element of a frame with one act name keeps it: the program names the element that go to must reach. `settings` names the button of the value in use of each setting, `scheduler` the tile of the strategy in use (`strategy`).
 - **The bounds**: a frame keeps 6 act names (`display.ACT_NAME_SET_CAPACITY`). An empty name, a name of more than 32 bytes and a name past the six are counted in `Frame.act_names_dropped`; the window layer writes one line for the life of the window.
@@ -233,7 +326,7 @@ An element can name what it acts on: its act name (`GLOSSARY.md`), a text of at 
 
 ### 4.3 Element names
 
-An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes such as `frame 0`: a machine test presses the element by it, not at a place that the scenario computes (`TOOLS.md`, "How a step presses an element").
+An element can have an element name (`glossary/desktop.md`), a text of at most 32 bytes such as `frame 0`: a machine test presses the element by it, not at a place that the scenario computes (`TOOLS.md`, "How a step presses an element").
 
 - **The names that come alone**: a button is named by its label, a text input by its placeholder. A scroll bar that the caller names (the last argument of `scroll_bar`, or `List_Rows_Options.scroll_bar_name`) names its arrow buttons "<name> arrow up" and "<name> arrow down", or "arrow left" and "arrow right"; its thumb has no name, because it moves each time the content grows.
 - **The call**: `element_name(frame, area, "frame 0")`, in each frame that draws the element, with the area where it takes a press. The first element of a frame with a name keeps it.
@@ -243,7 +336,7 @@ An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes 
 
 ### 4.4 The action bar
 
-The action bar (`GLOSSARY.md`) is the band at the bottom of a window that names its keys: `action_bar` (`src/library/support/interface/action_bar.odin`). Each window that lists its keys uses it. Its look is in `DESIGN.md`, "The action bar"; the design and the refused forms are in `src/md/features/action_bar.md`.
+The action bar (`glossary/desktop.md`) is the band at the bottom of a window that names its keys: `action_bar` (`src/library/support/interface/action_bar.odin`). Each window that lists its keys uses it. Its look is in `DESIGN.md`, "The action bar"; the design and the refused forms are in `src/md/features/action_bar.md`.
 
 ```odin
 // A procedure: an item is made by a call, and a freestanding program runs
@@ -289,7 +382,7 @@ if result.ran {
 
 A program asks for a font and a scale, measures a text, and writes a text record; the package and `src/library/support/graphics` draw it. Two fonts exist: the font of the cells (monospace, 8 x 16) for values, and the interface font (proportional) for the words that name and explain (`docs/FONTS.md`).
 
-- **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the records `Text` and `Interface_Text` of section 2.1, with `text_scale` (1, 2 or 3) and, for an `Interface_Text`, `text_origin_thirds`.
+- **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the record `Text` of section 2.1, with its font, a scale (1, 2 or 3) and an origin in 1/64 pixel: a whole pixel in the font of the cells, a third of a pixel in the interface font.
 - **The font of the system** (`docs/FONTS.md`): the vector font by default, from the glyph cache that the root service maps, with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font`. Both are monospace on cells of 8 x 16, so `text_width` and the layout do not change with the setting, and a `Text` record of the cells stays on whole pixels. `execute` draws a text record with `graphics.text_scaled`: the package does not know which font draws.
 - **A change of the setting** comes as the display event `Settings_Changed`: `window_events` marks the window as not drawn, and the next frame draws it whole (each draw record is the same, each pixel of text is not).
 - **The interface font** (`docs/FONTS.md`, section 12): the second `kind`, `Interface`, beside `Cells_8x16`. A `Draw_Table` names the interface font of its program (`interface_font`: the caches that `display` validated at `open`; `nil`: none); `window_frame_begin` sets it, so a program that draws its window with the package takes it with no change of its code. A table that a program builds itself (the compositor, the measures) has none unless the program names it.
@@ -336,7 +429,8 @@ The draw table is the whole output of a frame. Execution turns it into pixels in
 
 - `execute(table, canvas)` draws each record into a canvas of the program (its surface), in order: `Rectangle` is a `fill`, `Vertical_Gradient` is the `block` of the rules, `Horizontal_Gradient` is the `gradient` row of the title bar, `Text` is the font of the system.
 - `execute_in_rectangles(table, canvas, rectangles)` draws, for each rectangle, the records that touch it, cut to it.
-- **A later back end** (property 18, WebGPU): the same table is the input of a GPU pass: one instance for each record, the gradients in the vertex colors, the text from an atlas or from outlines (section 9). The format has no pointer and no field that only the processor can read.
+- **The one 2D interface** (`PROPERTIES.md`, "18. One 2D interface: the draw table"): the draw table is the 2D interface of the system, for the windows and the compositor. Its rationalised form (a header and the fields of one kind, 1/64 pixel, colors with alpha and one blending rule, paths, a clip stack) is designed in `src/md/api/draw_table.md`, and its steps are in `ROADMAP.md`.
+- **A later back end** (WebGPU, when a GPU exists): the same table is the input of a GPU pass: one instance for each record, the text from the glyph caches, the clip as a scissor rectangle (`src/md/api/draw_table.md`, "The execution"). The format has no pointer and no field that only the processor can read.
 
 ## 7. Where it lives: the elements in each program, the drawing in a module
 
@@ -357,26 +451,26 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 | Part | Calls for one frame | Where it is | Why |
 |---|---|---|---|
-| The difference of two draw tables, the execution of a draw table, the pictures, the text of the cells and of the interface font, the blends | 1 for the difference, then 1 for the draw of all the damage rectangles: 2 | The drawing module, `src/modules/drawing` | Three procedures hold most of the bytes (the execution with the blends and the glyphs inlined in it, the draw of a glyph, the difference): about 20 KiB in each program. A border crossed 2 times for a frame costs nothing that a frame can show |
+| The difference of two draw tables, the execution of a draw table, the pictures, the text of the cells and of the interface font, the blends | 1 for the difference, then 1 for the draw of all the damage rectangles: 2 | The drawing module, `src/modules/libraries/drawing` | Three procedures hold most of the bytes (the execution with the blends and the glyphs inlined in it, the draw of a glyph, the difference): about 20 KiB in each program. A border crossed 2 times for a frame costs nothing that a frame can show |
 | The elements, the layout, the input, the measure of a text, the draw table | 30 to 200 | Each program, compiled in | They take a `^Frame` (three addresses) and slices, which a description cannot carry, and they are small and often inlined. One element call through an adapter costs about 100 ns more (below) |
 
-**The drawing module** (`GLOSSARY.md`, "Drawing module"; `MODULE_CONTRACT.md`, "A library as a module"). Two exports, each with an error record:
+**The drawing module** (`glossary/desktop.md`, "Drawing module"; `MODULE_CONTRACT.md`, "A library as a module"). Two exports, each with an error record:
 
 | Export | Parameters | Result |
 |---|---|---|
-| `damage_of_draw_table_10` | `before: Table(Draw_Record, Read)`, `before_text: Bytes(Read)`, `now: Table(Draw_Record, Read)`, `now_text: Bytes(Read)` | `Table(Damage_Rectangle)`: at most 8 rectangles |
-| `execute_draw_table_in_rectangles_10` | `now: Table(Draw_Record, Read)`, `now_text: Bytes(Read)`, `picture_memory: Bytes(Read)`, `pixels: Bytes(Change)`, `canvas: Canvas_Shape`, `rectangles: Table(Damage_Rectangle, Read)` | Integer: 0 |
+| `damage_of_draw_table_14` | `before: Table(Draw_Record, Read)`, `before_text: Bytes(Read)`, `now: Table(Draw_Record, Read)`, `now_text: Bytes(Read)` | `Table(Damage_Rectangle)`: at most 8 rectangles |
+| `execute_draw_table_in_rectangles_14` | `now: Table(Draw_Record, Read)`, `now_text: Bytes(Read)`, `picture_memory: Bytes(Read)`, `pixels: Bytes(Change)`, `canvas: Canvas_Shape`, `rectangles: Table(Damage_Rectangle, Read)` | Integer: 0 |
 
 - **No copy.** In a direct call each parameter is one word of the call form (a register, or a word of the stack past the sixth) with an address of memory of the program. The two draw tables and their texts are table places over the memory that the program gave to its `Window_Drawing`. The rectangles of the damage are written by the module into the `Damage` of the program: a `Rectangle` of the package and a `Damage_Rectangle` of the module have one layout, four integers of 64 bits. The pixels are `Bytes(Change)` over the surface memory of the window, which the compositor maps too: the module writes them in place. The picture memory is `Bytes(Read)` over the one picture memory of the draw table, empty when the table has none: a Picture record of memory 0 reads its pixels there, in place.
 - **The rectangles of a frame in one call.** `Canvas_Shape` is a record of five integers: the width, the height and the stride of the canvas, whether each rectangle is painted with a background first, and the color of that background. `rectangles` is a table of at most 8 rectangles, the most that the damage of a frame has: the module copies the count and the rectangles before it draws, and refuses more with `Too_Long`. For each rectangle in the order of the table, the module paints the background when the shape asks for it, then draws the records that touch the rectangle, cut to it: the pixels are those of one call for each rectangle, also where two rectangles overlap. The window layer calls the draw one time for a frame, with its damage rectangles; with no rectangle, the call draws nothing (the design: `src/md/api/picture.md`).
 - **Why bytes and not a handle for the surface.** A lent handle makes the callee map the memory object at each call. The program has the surface mapped already, and a direct call runs in its address space: the address is enough. An isolated caller still has a form: `Bytes(Change)` in a lent memory object (`MODULE_CONTRACT.md`, "Tables and bytes as parameters", form (iii)).
 - **The frame before** is the table `before` of the window, which the window layer keeps and copies after each present. The module keeps nothing from one call to the next.
-- **The version in the names.** The 10 is `DRAW_RECORD_VERSION`. The name of the draw export also says its form, "in rectangles": a change of the parameters changes the name, so a module with the old form fails the load by name, before the check of the descriptions. The check of a replacement compares descriptions, and two versions of the draw record can have the same fields with another meaning of a value. With the version in the name of each export, a module for another version has no export with the name that the importer binds, and the load fails. A constant check in the module and in the package stops the build when the version changes and the names do not.
+- **The version in the names.** The 14 is `DRAW_RECORD_VERSION`. The name of the draw export also says its form, "in rectangles": a change of the parameters changes the name, so a module with the old form fails the load by name, before the check of the descriptions. The check of a replacement compares descriptions, and two versions of the draw record can have the same fields with another meaning of a value. With the version in the name of each export, a module for another version has no export with the name that the importer binds, and the load fails. A constant check in the module and in the package stops the build when the version changes and the names do not.
 - **The errors.** An export fails with -1 and its error record: `Too_Long` of a table over 2^40 records or bytes, `Too_Long` of a table of more than 8 rectangles, `Bad_Value` of a canvas shape with a width or a height below 1 or a stride below the width, `Too_Small` of pixels that do not hold the shape of the canvas, `Bad_Address` of pixels or of a picture memory at an address that is not a multiple of 4. A refused draw draws nothing. A record that is wrong draws nothing and makes no fault, as in the package. The window layer draws the next frame whole after a refused call, and keeps the record in `Window_Drawing.module_error`.
 - **Memory (property 14).** The module allocates nothing and keeps no address of the caller after a call. Its own data is a cache of a fixed size, 29 KiB, one copy for each program (the loader gives each program its own copy of the writable data of a module): the choice of the font, the glyph caches of the program as validated records, the interface font, the table of square roots and the blend tables. The glyph caches themselves are resources of the boot image that the starter maps read-only: the module holds their validated headers, not their bytes.
 - **The settings.** The module loads the text settings at its first draw, from the context of the program, with the code of `src/library/support/display` (`text_settings_load`), and writes no line on the log: the program validated the same caches when it opened its window. It reads the choice of the settings page again at each draw, so a change of the font or of the order of the stripes reaches the next frame with no message. The program still draws that frame whole (`Settings_Changed`). A draw reads the choice one time for all its rectangles, so a window draws all the rectangles of one frame in one font. The compositor makes one call for each part of its screen, so a change between two calls can draw two parts of one frame in two fonts; the next frame is whole.
-- **One thread of a program draws at a time.** One thread at a time calls `execute_draw_table_in_rectangles_10`: it is the rule of the text state of `src/library/support/graphics`, which changes between two frames, and each window has one loop that draws. The module takes no lock and waits for no thread: the load at the first draw, the choice of the settings at each draw, and the blend tables are written with no guard. A program that draws from two threads at once can show a text in the wrong font or with wrong colors, and can fault when a setting changes at that moment; all of it stays inside that program, which has its own copy of the data of the module. `damage_of_draw_table_10` reads no text state: any thread can call it. The threads of `processors`, `threads` and `workers` write the pixels of their pictures with the graphics package compiled in, and only the thread of the window calls the module.
-- **A refused call is on the log one time.** When the module refuses a difference or a draw, the window layer writes one line for the life of the window, in the channel `programs`, as a warning: the export, the cause in words and the kind and the argument of the error record, for example "interface: the drawing module refused execute_draw_table_in_rectangles_10: the frame has pictures in more than one picture memory, and one call of the module draws one". A refused difference draws each frame whole; a refused draw presents nothing.
+- **One thread of a program draws at a time.** One thread at a time calls `execute_draw_table_in_rectangles_14`: it is the rule of the text state of `src/library/support/graphics`, which changes between two frames, and each window has one loop that draws. The module takes no lock and waits for no thread: the load at the first draw, the choice of the settings at each draw, and the blend tables are written with no guard. A program that draws from two threads at once can show a text in the wrong font or with wrong colors, and can fault when a setting changes at that moment; all of it stays inside that program, which has its own copy of the data of the module. `damage_of_draw_table_14` reads no text state: any thread can call it. The threads of `processors`, `threads` and `workers` write the pixels of their pictures with the graphics package compiled in, and only the thread of the window calls the module.
+- **A refused call is on the log one time.** When the module refuses a difference or a draw, the window layer writes one line for the life of the window, in the channel `programs`, as a warning: the export, the cause in words and the kind and the argument of the error record, for example "interface: the drawing module refused execute_draw_table_in_rectangles_14: the frame has pictures in more than one picture memory, and one call of the module draws one". A refused difference draws each frame whole; a refused draw presents nothing.
 - **The first frame of a new appearance is on the log.** When the window layer presents a frame in another appearance than the frame before, it writes one line in the channel `programs`, for example "interface: monitor: a frame in the light appearance". The first frame of a window writes none. A machine test waits for this line before it takes a picture of the window in the new appearance (`src/md/features/appearance.md`).
 - **A direct call is not a border of trust.** The checks of the module and of the package protect a correct caller from a wrong count or a wrong record: no fault and no write outside the pixels. The area, the counts and the rectangles are read one time. A draw record and a pixel of a picture are plain reads. A caller that changes its tables during the call reaches only its own memory: the module runs in its address space, with the rights of that program.
 - **Grids.** A Text_Grid record names its cells by values in the text table, so the two exports read them in the text that they take already: no new parameter (section 2.4; the design: `src/md/api/text_grid.md`). A full terminal is 3,328 cells and up to 3,328 runs of one color in one frame; through the text table it crosses the border 2 times for a frame, whatever the count of runs.
@@ -398,7 +492,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 **The proof of the same pixels.** A picture of the whole screen cannot prove it: the hash of each converted program changes, and the screen shows hashes and times. The proof compares the bytes of a canvas:
 
-- The host test `the_exports_draw_the_same_bytes_as_the_package` (`src/modules/drawing`) builds 24 pairs of frames with a record of each kind that the module draws, two pictures of one picture memory among them, in 7 font states (Spleen, the vector font and the interface font, each order of the stripes). It draws each frame with the package as a window drew it before the module (the clear and the execution of the whole frame, then the difference and the draw of the damage) and through the two exports with the argument forms of a caller. The damage rectangles are equal, and the two canvases are the same bytes after the whole frame and after the damage. In a host test the two ways share one text state: the test proves the border, the fill and the rectangles.
+- The host test `the_exports_draw_the_same_bytes_as_the_package` (`src/modules/libraries/drawing`) builds 24 pairs of frames with a record of each kind that the module draws, two pictures of one picture memory among them, in 7 font states (Spleen, the vector font and the interface font, each order of the stripes). It draws each frame with the package as a window drew it before the module (the clear and the execution of the whole frame, then the difference and the draw of the damage) and through the two exports with the argument forms of a caller. The damage rectangles are equal, and the two canvases are the same bytes after the whole frame and after the damage. In a host test the two ways share one text state: the test proves the border, the fill and the rectangles.
 - The host test `the_exports_draw_a_text_grid_as_the_package` builds 24 pairs of frames of a terminal of 40 x 12 cells, in the font of the cells and in the vector font: runs of one color, empty cells at the end of a line, reverse cells, a completion list of filled cells with its border drawn after the grid. The frame now changes some cells, and a status of another length moves the cells in the text table. The damage rectangles and the bytes are equal, as above.
 - The host test `a_scrolling_grid_in_two_pictures_is_each_frame` draws 600 frames of a terminal that scrolls by no line, a few lines, more than its rows and many thousand lines, through the two exports into the two pictures of a surface, as the window layer does: the difference with the last table that was presented, the draw of the changed rectangles and of the debt of the picture, a screen that takes each presented rectangle. One Present in 16 is lost, one frame in 50 has a new font, the bars of the head move the grid record in the table, and a thumb moves at places that are not on the rows. After each frame the picture and the screen are the frame drawn whole.
 - The host test `the_parts_of_a_screen_draw_the_same_bytes_as_the_package` builds 24 screens of 4 windows that overlap, each with its surface in a memory of its own, and a bar with a heron in one more memory, over a background. The package draws the whole table with the list of all the memories in each of 6 rectangles; the export draws one part for each call, with the one memory of the part, as the compositor does. The two canvases are the same bytes after each rectangle.
@@ -438,7 +532,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 
 ### What it means for this system
 
-- This system draws with the processor (the first stage of property 18). Slug is a GPU method: the bands and the root solvers save work for thousands of pixels in parallel. On the processor, the same exact coverage comes cheaper from a scanline rasterizer: each line segment of the outline adds its signed area to an accumulation row, and one prefix sum gives the coverage of each pixel (the method of font-rs and of stb_truetype 2). The quadratic curves are cut into line segments within a tolerance.
+- This system draws with the processor (property 18: the draw table, drawn on the processor). Slug is a GPU method: the bands and the root solvers save work for thousands of pixels in parallel. On the processor, the same exact coverage comes cheaper from a scanline rasterizer: each line segment of the outline adds its signed area to an accumulation row, and one prefix sum gives the coverage of each pixel (the method of font-rs and of stb_truetype 2). The quadratic curves are cut into line segments within a tolerance.
 - **The prototype** (`src/library/support/vector_font`, the program `vector_glyphs`): a parser of a subset of TrueType (`head`, `hhea`, `maxp`, `cmap` format 4, `hmtx`, `loca`, `glyf` with simple glyphs) that checks each offset and each count against the length of the file (a font is hostile input); a rasterizer with exact area coverage, a horizontal position in 1/64 of a pixel, and an option of coverage per color stripe (three samples per pixel, then the 5-tap filter 8, 77, 86, 77, 8 / 256 against color fringes).
 - **The measures**: one glyph of Spleen 8x16, 32 ns; one glyph of 13 pixels from its outline, 2939 ns in grayscale, 2396 ns on a whole pixel, 5502 ns with color stripes: about 90 times more, with no cache of the coverage of a glyph. The program `vector_glyphs` showed the same text in the two fonts, and one glyph enlarged 8 times in grayscale and with color stripes; it draws the candidate fonts now (the picture `font_candidates`).
 - **What the picture shows**: at 13 pixels the outline font has the shapes of its design and even spaces (an advance of 7.8 pixels), and its stems are softer than the stems of Spleen, which sit on whole pixels; the color stripes give sharper sides with faint colors at the edges. Spleen is sharper at its one size.
@@ -482,15 +576,15 @@ Most programs now draw their window with the package. This section lists the inv
 | Invariant | Where | What holds it |
 |---|---|---|
 | `line_add` of the vector font writes no cell past its row, also for a vertical segment on the last column and a coverage of width 1 | `src/library/support/vector_font/raster.odin:34`: `if start_y == end_y \|\| target.width < 2 { return }`; line 60: `if left_index < 0 \|\| left_index + 1 >= target.width \|\| right_index >= target.width` before the clamp | Host test `segments_at_the_edges_stay_in_their_rows` |
-| A `Present` for the whole surface with a place of its own damages nothing past the window | `src/programs/compositor/main.odin:317-318`: `changed_width, changed_height := client.surface.width - left, client.surface.height - top` | The compositor does not run on the host: no host test. The rectangle stays inside the surface in each case by its two lines; the machine test draws each window |
+| A `Present` for the whole surface with a place of its own damages nothing past the window | `src/modules/system/compositor/main.odin:317-318`: `changed_width, changed_height := client.surface.width - left, client.surface.height - top` | The compositor does not run on the host: no host test. The rectangle stays inside the surface in each case by its two lines; the machine test draws each window |
 | A text input takes Enter in the order of its keys, not before the characters of the same frame, and stops there | `element_interact` takes no Enter for a text input | Host test `text_input_keys_in_their_order` (keys `l s Enter x` give "ls", activated, `x` not taken) |
 | A key past 16 in one frame is not dropped | `window_events` stops when the input has 16 keys; the other events wait in the ring | Host test `a_full_input_says_so` (the reading itself needs a ring: no host test of it) |
-| A frame drawn in its damage rectangles equals the same frame drawn whole, for each kind | The partial-frame test covers a clip that changes, horizontal gradients, text at the scales 1 to 3, records outside the surface, records of one line, more than 8 rectangles (the merge), a full table, pictures | Host tests `damage_is_never_too_small_for_each_kind`, `picture_and_folded_gap` |
+| A frame drawn in its damage rectangles equals the same frame drawn whole, for each kind | The partial-frame test covers a clip that changes, horizontal gradients, text at the scales 1 to 3, records outside the surface, records of one line, more than 8 rectangles (the merge), a full table, pictures | Host tests `damage_is_never_too_small_for_each_kind`, `picture_and_folded_gap`, `the_grid_of_points_is_a_pattern_with_the_same_pixels`, `the_folded_gap_is_three_records_with_the_same_pixels` |
 | A number with more than 20 digits indexes no place before `digits` | `min(minimum_digits, 20)` | Host test `number_with_many_digits` |
 | A negative height of a column does not make `used` smaller | `top + max(height, 0)` | Host test `column_negative_height` |
 | `row_split` checks its sizes | Negative sizes are 0, fixed sizes are cut, each column stays in the row, no overflow | Host test `row_split_checks_its_sizes` |
 | A press under the last line or on the bar of a list chooses no line; a cut choice is reported | The list | Host test `list_press_and_cut_choice` |
-| Tab in the palette does not move the focus | `palette.key_action` gives no action for Tab | Host test `each_key_in_each_state` of `src/library/support/palette` |
+| Tab in the palette does not move the focus | `palette.key_action` gives no action for Tab | Host test `each_key_in_each_state` of `src/library/private/compositor/palette` |
 | Two elements with one text get two identities; elements past 64 are counted | `identity_in` and `identity_with`; `Frame.identity_collisions` and `Frame.focus_overflow` count them; section 4 says the limit | Host test `identity_collision` |
 | `draw_text_right` keeps the element; an `int` is not cut to `i32` with no check | The element passes; each place and size is clamped to `i32` | Host test `coordinates_are_cut_to_i32` |
 | The core files make no kernel call | `draw_table.odin` and the other core files; `window_drawing.odin` reads events and presents (section 2.3) | Read |

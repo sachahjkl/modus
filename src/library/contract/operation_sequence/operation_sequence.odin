@@ -115,7 +115,7 @@ Argument_Source :: enum u64 {
 	Value        = 0, // The word `value`, as it is.
 	Budget       = 1, // The start handle of the budget of the sequence.
 	Log          = 2, // The start handle of the log.
-	Machine      = 3, // The start handle of the machine, with Inspect and Counters only.
+	Machine      = 3, // The start handle of the machine: 0 while the service holds the machine with Physical only, which it cannot give, so the kernel refuses each step that needs it.
 	Area_Handle  = 4, // The start handle of the memory object of the area `area`.
 	Area_Address = 5, // The address of the area `area`, plus `offset`: at most the area and its page with no access.
 	Thread_Entry = 6, // The address of a thread entry of the runner: the only code that a sequence names.

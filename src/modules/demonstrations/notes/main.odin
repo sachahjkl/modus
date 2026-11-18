@@ -1,0 +1,418 @@
+// A program that keeps its state when it stops and when the machine stops: a note and a count, in its private store.
+//
+// Each change goes to the storage service when it happens: the program has no save action. The note is the object "note". The count is the object "count": three blocks that each hold the count in each of their 512 numbers, so that a part of one commit with a part of another would show.
+//
+// Keys: a character adds to the note, Backspace removes the last one, Enter writes the note on the log. Tab counts 1000 more, one commit for each step.
+//
+// Versions: each key is one commit, and the storage service keeps the state before it as a version, so the program has undo to any earlier version with no code of its own to keep them. Up shows the version before the one shown, Down the one after; Enter restores the version shown (a new commit: nothing is lost); Escape goes back to the current note. The bar under the note has one mark for each version.
+//
+// **What it is for.** It is the smallest program that shows persistence as a property of the system and not of
+// the program: no file, no path, no save action, and undo with no code of its own. The test of a loss of power
+// stops the machine during the run of Tab, then checks at the next start that the three blocks of the count agree.
+//
+// **Start**: `start("notes")` in the console, or the bar of the desktop. The note holds 60 characters at most.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Store**: its private store in the storage service, with a limit of 4500 blocks: the versions of a run of
+//   1000 commits of the count, then thinning at the limit. The root service starts the storage service first.
+//
+// **What a reader sees**: the note, the count, the generation of the last commit and a bar with one mark for each
+// version. The log has, at the start, one of:
+//
+// - `notes: a new store: no note, the count 0`;
+// - `notes: restored the note "..." and the count N, its 3 blocks agree`;
+// - `notes: WRONG: ...` when an object is damaged or the 3 blocks do not agree;
+// - `notes: no store` when the program has no store: it then keeps nothing.
+//
+// **What it does not prove**: one writer only. Two programs never share the note: each private store belongs to
+// one program.
+//
+// The design: (docs/STORAGE.md, "Versions, thinning and the limit") and (docs/STORAGE.md, "A loss of power").
+package notes
+
+import "modus:contract/errors"
+import "modus:contract/text_encoding"
+import "modus:support/calendar"
+import "modus:support/display"
+import "modus:support/graphics"
+import "modus:support/interface"
+import "modus:support/storage"
+import "modus:support/system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+window_memory: interface.Window_Memory(512, 8192)
+
+NOTE_CAPACITY :: 60
+MARGIN :: 12
+VERSION_LABEL :: "version  "
+// The window has the width of its widest line: an older version of the
+// note at its full length, after its label. Each other line of the window
+// is a text of this program, placed in this width with
+// interface.draw_text_wrapped: a line that the window cannot hold goes on
+// two lines, it is never cut at the edge.
+TEXT_ROOM :: (len(VERSION_LABEL) + NOTE_CAPACITY) * graphics.CELL_WIDTH
+WIDTH :: 2 * MARGIN + TEXT_ROOM
+KEYS_Y :: 276 // The action bar, at the bottom.
+// The action bar wraps: the window is narrow, and its reader learns the
+// keys there, so each one shows at once on two rows.
+HEIGHT :: KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). A printable character writes the note: the caret after
+// the note says it.
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("older version", 4, "Up"),
+		interface.action_bar_item("newer version", 3, "Down"),
+		interface.action_bar_item("restore the version shown", 4, "Enter"),
+		interface.action_bar_item("the current note", 2, "Esc"),
+		interface.action_bar_item("count 1000", 1, "Tab"),
+	}
+}
+bar: interface.Action_Bar_State
+HISTORY_CAPACITY :: 512 // The versions of the note that the window shows.
+COUNT_BLOCKS :: 3
+COUNT_WORDS :: COUNT_BLOCKS * 512
+RUN_STEPS :: 1000
+
+client: storage.Client
+note: [NOTE_CAPACITY]u8
+note_count: int
+count: u64
+generation: i64
+words: [COUNT_WORDS]u64 // The object "count".
+restored: string // What the start found in the store.
+restored_good: bool
+gone: bool // The grant of the store ended.
+
+// The versions of the note, the oldest first, the current version last.
+history: [HISTORY_CAPACITY]storage.Version
+history_total: i64 // All the states: more than history can hold when the note has more versions.
+shown: int = -1 // The place in history of the version that the window shows; -1: the current note.
+shown_text: [NOTE_CAPACITY]u8
+shown_count: int
+
+// The measures: the commits of the note (one key each) and the restores.
+commit_time_total, commit_count: u64 // In microseconds.
+restore_time_last: u64
+
+history_read :: proc "contextless" () {
+	rows, total, status := storage.versions(&client, storage.ROOT, "note", history[:])
+	if status == .Ok {
+		history_total = total
+		shown_count = 0
+		_ = rows
+	}
+}
+
+history_count :: proc "contextless" () -> int {
+	return int(min(history_total, HISTORY_CAPACITY))
+}
+
+// show reads the version at a place of history.
+show :: proc "contextless" (place: int) {
+	if place < 0 || place >= history_count() - 1 {
+		shown = -1
+		return
+	}
+	shown = place
+	bytes, status := storage.version(&client, storage.ROOT, "note", history[place].generation, shown_text[:])
+	shown_count = status == .Ok ? len(bytes) : 0
+	date_text: [24]u8
+	system.log("notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, history[place].date != 0 ? ", " : "", history[place].date != 0 ? calendar.iso_text(date_text[:], history[place].date) : "", ": \"", string(shown_text[:shown_count]), "\"")
+}
+
+// keep writes one object. It gives false when the store is gone or refuses.
+keep :: proc "contextless" (name: string, data: []u8) -> bool {
+	error: errors.Error_Record
+	started := system.nanoseconds()
+	result, status := storage.write(&client, storage.ROOT, name, data, &error)
+	if name == "note" {
+		commit_time_total += (system.nanoseconds() - started) / 1000
+		commit_count += 1
+	}
+	if status != .Ok || result < 0 {
+		gone = status == .Gone || result == -1
+		if !gone {
+			buffer: [256]u8
+			writer := system.Writer{buffer = buffer[:]}
+			storage.error_text(&writer, &client, &error)
+			system.log("notes: the storage service refused the object ", name, ": ", system.written(&writer))
+		}
+		return false
+	}
+	generation = result
+	return true
+}
+
+keep_count :: proc "contextless" () -> bool {
+	for &word in words {
+		word = count
+	}
+	return keep("count", ([^]u8)(&words)[:size_of(words)])
+}
+
+count_versions: [1200]storage.Version // The measure of a list of versions of the count.
+
+// restore reads the note and the count, and checks that the three blocks
+// of the count hold one count. An object that the storage service has and
+// cannot give is not an empty object: the window says it.
+restore :: proc "contextless" () {
+	text, found, status := storage.read(&client, storage.ROOT, "note", note[:])
+	note_damaged := status == .Damaged
+	if status != .Ok && !note_damaged {
+		restored, gone = "no store: the program keeps nothing", true
+		system.log("notes: no store")
+		return
+	}
+	if found {
+		note_count = len(text)
+	}
+	bytes, has_count, count_status := storage.read(&client, storage.ROOT, "count", ([^]u8)(&words)[:size_of(words)])
+	if !found && !has_count && !note_damaged && count_status == .Ok {
+		restored, restored_good = "a new store: no note, the count 0", true
+		system.log("notes: a new store: no note, the count 0")
+		return
+	}
+	agree := has_count && len(bytes) == size_of(words)
+	if agree {
+		count = words[0]
+		for word in words {
+			if word != count {
+				agree = false
+			}
+		}
+	}
+	restored_good = agree && !note_damaged
+	switch {
+	case count_status == .Damaged:
+		restored = "WRONG: the count is damaged on the disk: tab writes a new count"
+		system.log("notes: WRONG: the storage service cannot give the count: the object is damaged")
+	case !agree:
+		restored = "WRONG: the 3 blocks of the count do not agree"
+		system.log("notes: WRONG: the 3 blocks of the count do not agree")
+	case note_damaged:
+		restored = "WRONG: the note is damaged on the disk: a key writes a new note"
+		system.log("notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree")
+	case:
+		restored = "restored at the start: the note and the count, 3 blocks agree"
+		system.log("notes: restored the note \"", string(note[:note_count]), "\" and the count ", count, ", its 3 blocks agree", count % RUN_STEPS != 0 ? ", the last run stopped before its end" : "")
+	}
+}
+
+draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
+	frame := interface.window_frame_start(&window_memory, window)
+	interface.action_bar_input_take(&frame, &bar)
+	table := frame.table
+	buffer: [32]u8
+	x := interface.draw_text(table, 12, 12, "note  ", graphics.colors.dim)
+	x = interface.draw_text(table, x, 12, string(note[:note_count]), graphics.colors.text)
+	// The caret of a text input (docs/DESIGN.md, "10. Elements").
+	interface.draw_rectangle(table, x + 1, 12, 2, 16, graphics.colors.title)
+	// The count is a number, and the generations are versions: each in the
+	// color of its value kind (docs/DESIGN.md, "The colors of values"),
+	// which is the token of its accent in both appearances.
+	x = interface.draw_text(table, 12, 40, "count ", graphics.colors.dim)
+	x = interface.draw_text(table, x, 40, system.format(buffer[:], count), graphics.colors.memory)
+	if generation > 0 { // The generation of the last commit of this program, after its first change.
+		x = interface.draw_text(table, x + 24, 40, "generation ", graphics.colors.dim)
+		interface.draw_text(table, x, 40, system.format(buffer[:], generation), graphics.colors.text)
+	}
+	// The drawing: one cell for each step of the count, 400 cells.
+	for cell in 0 ..< 400 {
+		cell_x := 12 + cell % 50 * 10
+		cell_y := 68 + cell / 50 * 10
+		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? graphics.colors.memory : graphics.colors.track)
+	}
+	// The status of the start, then, when the store is gone, what that
+	// means for the keys: each in the width of the window.
+	status_y := 156
+	status_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, restored, restored_good ? graphics.colors.program : graphics.colors.failed)
+	if gone {
+		interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, "the grant of the store ended: the program keeps nothing", graphics.colors.failed)
+	}
+	// The versions of the note: one mark for each state, the shown one lit.
+	// The count is on one line; the generation and the date of the version
+	// that the window shows are on the line under it, so the two never meet.
+	count := history_count()
+	x = interface.draw_text(table, MARGIN, 196, "versions of the note ", graphics.colors.dim)
+	interface.draw_text(table, x, 196, system.format(buffer[:], max(history_total - 1, 0)), graphics.colors.text)
+	if shown >= 0 {
+		x = interface.draw_text(table, MARGIN, 212, "showing generation ", graphics.colors.dim)
+		x = interface.draw_text(table, x, 212, system.format(buffer[:], history[shown].generation), graphics.colors.boot_program)
+		if history[shown].date != 0 {
+			interface.draw_text(table, x + 16, 212, calendar.iso_text(buffer[:], history[shown].date), graphics.colors.text)
+		}
+	}
+	track := TEXT_ROOM
+	interface.draw_rectangle(table, MARGIN, 238, track, 4, graphics.colors.track)
+	if count > 0 {
+		for place in 0 ..< count {
+			mark_x := MARGIN + (count == 1 ? track - 4 : place * (track - 4) / (count - 1))
+			lit := place == shown || shown < 0 && place == count - 1
+			interface.draw_rectangle(table, mark_x, lit ? 232 : 234, lit ? 4 : 2, lit ? 16 : 12, lit ? graphics.colors.boot_program : graphics.colors.dim)
+		}
+	}
+	if shown >= 0 {
+		x = interface.draw_text(table, MARGIN, 254, VERSION_LABEL, graphics.colors.dim)
+		interface.draw_text(table, x, 254, string(shown_text[:shown_count]), graphics.colors.text)
+	}
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, items[:], &bar, {overflow = .Wrap})
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
+	return bar_result
+}
+
+// The entry of notes: it restores the note and the count from its store, then commits each key until the
+// principal closes the window.
+//
+// With no window it stops with the code 1. With no store it runs, and keeps nothing. With a store it reads the
+// note, the count and the list of the versions of the note (`restore`, `history_read`), and writes the line of
+// the start on the log.
+//
+// Then one loop waits for keys and draws after each one:
+//
+// - a printable character or Backspace: one commit of the object "note";
+// - Tab: 1000 commits of the object "count", one for each step, with a log line every 100 steps, then the time
+//   of the run and the time to list the versions of the count;
+// - Enter: the note, its generation, its count of versions and the mean time of one commit, on the log;
+// - Up, Down: show an older or a newer version of the note; Enter then restores it in one commit, and Escape
+//   goes back to the current note.
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "notes")
+	if !ok {
+		system.stop(1)
+	}
+	if client, ok = storage.open(ctx); !ok {
+		restored, gone = "no store: the program keeps nothing", true
+		system.log("notes: no store")
+	} else {
+		restore()
+		history_read()
+	}
+	first_picture := true
+	for {
+		bar_result := draw(&window)
+		// The window is open before the store is read: a reader of the log
+		// knows from this line that the window shows the note.
+		if first_picture {
+			first_picture = false
+			system.log("notes: ok, the first picture is presented")
+		}
+		// A press on an item of the action bar runs its key, as the key
+		// does; the next turn draws what it changed.
+		if bar_result.ran {
+			key_run(&window, bar_result.run)
+			continue
+		}
+		wait: system.Wait
+		display.wait_events(&wait, &window)
+		system.wait_end(&wait)
+		for event in display.next_event(&window) {
+			switch event.kind {
+			case .Pointer:
+				// The pointer reaches the action bar only: the next turn
+				// draws a frame with it.
+				interface.input_add(&window_memory.drawing.input, event)
+			case .Key:
+				if !event.pressed {
+					continue
+				}
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(&window, outcome.run)
+				}
+				if !outcome.taken {
+					key_run(&window, press)
+				}
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
+				// next_event never gives None, and this window does nothing for the other events.
+			}
+		}
+	}
+}
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Press) {
+	switch press.code {
+	case display.KEY_UP:
+		if shown < 0 {
+			history_read()
+			show(history_count() - 2)
+		} else if shown > 0 {
+			show(shown - 1)
+		}
+		return
+	case display.KEY_DOWN:
+		if shown >= 0 {
+			show(shown + 1)
+		}
+		return
+	case display.KEY_ESCAPE:
+		shown = -1
+		return
+	}
+	if shown >= 0 && press.character == '\n' {
+		// Restore the version shown: one commit, and the note before it
+		// becomes a version.
+		generation_shown := history[shown].generation
+		started := system.nanoseconds()
+		commit, status := storage.restore(&client, storage.ROOT, "note", generation_shown)
+		restore_time_last = (system.nanoseconds() - started) / 1000
+		if status == .Ok && commit > 0 {
+			generation = commit
+			note_count = copy(note[:], shown_text[:shown_count])
+			system.log("notes: restored the version of generation ", generation_shown, ": \"", string(note[:note_count]), "\", in the commit of generation ", commit, " in ", restore_time_last, " us; the note before it is a version")
+		}
+		shown = -1
+		history_read()
+		return
+	}
+	shown = -1
+	switch press.character {
+	case '\t':
+		started := system.time()
+		for step in 1 ..= RUN_STEPS {
+			count += 1
+			if !keep_count() {
+				break
+			}
+			if step == RUN_STEPS {
+				system.log("notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
+				measure_started := system.nanoseconds()
+				_, total, status := storage.versions(&client, storage.ROOT, "count", count_versions[:])
+				if status == .Ok {
+					system.log("notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
+				}
+			} else if step % 100 == 0 {
+				system.log("notes: count ", count)
+				draw(window)
+			}
+		}
+	case '\n':
+		history_read()
+		system.log("notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
+	case 8:
+		// The note is UTF-8: Backspace removes its last whole
+		// character.
+		if note_count > 0 {
+			note_count = text_encoding.complete_characters(note[:note_count - 1])
+			keep("note", note[:note_count])
+			history_read()
+		}
+	case:
+		// A character whose bytes do not fit is not typed.
+		if length := text_encoding.character_encode(press.character, note[note_count:NOTE_CAPACITY]); length > 0 {
+			note_count += length
+			keep("note", note[:note_count])
+			history_read()
+		}
+	}
+}

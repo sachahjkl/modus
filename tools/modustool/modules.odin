@@ -19,6 +19,11 @@ MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: BUILD_FOLDER + "/modules_withou
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
+// The boot image of the operation sequences: the modules of the boot image,
+// and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
+BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.image"
+OPERATION_FUZZING_MODULE :: "operation_fuzzing"
+OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 // The boot image of a measure run: the usual one, with one resource more,
 // which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
 BOOT_IMAGE_MEASURE :: BUILD_FOLDER + "/boot_measure.image"
@@ -55,6 +60,12 @@ Module_Build :: struct {
 	source:  string,
 	imports: []string,
 	kernel:  bool,
+	// A program: a module with an entry function that the root service
+	// starts. The roles of the root service name each program of the boot
+	// image, the site shows it as a program, and a host test checks that
+	// its source has the entry. A module of any group can be one: a module
+	// group says what a module is for, not whether it starts.
+	program: bool,
 	image:   bool,
 	// Settings of the compiler for this module only (-define): a kernel
 	// for one machine of the test, and each program that draws its window
@@ -69,11 +80,22 @@ Module_Build :: struct {
 	// A program that a disk holds: it is built as each program, with the
 	// system library, and no boot image gets its file (disk_programs.odin).
 	disk:    bool,
+	// The one boot image of a test that holds the module, and no other
+	// image: the modules of the operation sequences. "": the module is in
+	// each boot image of the build. A release refuses an image that holds
+	// such a module (release_test_module_problem).
+	only_in_image: string,
 }
 
 // module_in_boot_image says if the boot image holds the file of a module.
 module_in_boot_image :: proc(build: Module_Build) -> bool {
-	return build.image && !build.disk
+	return build.image && !build.disk && build.only_in_image == ""
+}
+
+// module_in_a_boot_image says if some boot image of the build holds the
+// file of a module: the boot image, or the one image of a test.
+module_in_a_boot_image :: proc(build: Module_Build) -> bool {
+	return module_in_boot_image(build) || build.image && !build.disk && build.only_in_image != ""
 }
 
 // The drawing module, and the setting of a program that draws its window
@@ -83,132 +105,137 @@ module_in_boot_image :: proc(build: Module_Build) -> bool {
 DRAWING_MODULE :: "drawing"
 DRAWING_THROUGH_MODULE :: "DRAWING_THROUGH_MODULE=true"
 
-// The start of the source of a row of the table below: the folder of the
-// programs, or of the modules that are not programs, and the "/" before
-// the name of the folder of the row.
-PROGRAM_SOURCES :: SOURCE_FOLDER_PROGRAMS + "/"
-MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/"
-
+// The source of a row starts with the constant of its group
+// (source_folders.odin): module_group_of_source reads the group from it.
 module_builds := [?]Module_Build {
-	{name = "test_callee", source = MODULE_SOURCES + "test_callee"},
-	{name = "test_caller", source = MODULE_SOURCES + "test_caller", imports = {"test_callee"}},
+	{name = "test_callee", source = TEST_MODULE_SOURCES + "test_callee"},
+	{name = "test_caller", source = TEST_MODULE_SOURCES + "test_caller", imports = {"test_callee"}},
 	{name = "kernel", source = SOURCE_FOLDER_KERNEL, kernel = true},
 	// The same kernel with the check of the instruction address before a
 	// return to a program skipped, for one machine of `test return_fault`
 	// only: its boot volume is BOOT_VOLUME_WITHOUT_RETURN_CHECK, and
 	// machine_test refuses the line of this kernel in every other machine.
 	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
-	{name = "root", source = PROGRAM_SOURCES + "root", image = true},
-	{name = "input", source = PROGRAM_SOURCES + "input", image = true},
+	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", program = true, image = true},
+	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", program = true, image = true},
 	// The drawing of a window, for each program below that imports it.
-	{name = DRAWING_MODULE, source = MODULE_SOURCES + "drawing", image = true, library = true},
+	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", image = true, library = true},
 	// It draws its screen in parts, one call of the drawing module for each
 	// part (src/md/api/picture.md).
-	{name = "compositor", source = PROGRAM_SOURCES + "compositor", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "console", source = PROGRAM_SOURCES + "console", image = true},
-	{name = "monitor", source = PROGRAM_SOURCES + "monitor", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "plasma", source = PROGRAM_SOURCES + "plasma", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "life", source = PROGRAM_SOURCES + "life", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "paint", source = PROGRAM_SOURCES + "paint", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "fault", source = PROGRAM_SOURCES + "fault", image = true},
-	{name = "hall_of_fame", source = PROGRAM_SOURCES + "hall_of_fame", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "heron", source = PROGRAM_SOURCES + "heron", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "node", source = PROGRAM_SOURCES + "node", image = true},
-	{name = "rings", source = PROGRAM_SOURCES + "rings", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "threads", source = PROGRAM_SOURCES + "threads", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "workers", source = PROGRAM_SOURCES + "workers", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "rights", source = PROGRAM_SOURCES + "rights", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "origin", source = PROGRAM_SOURCES + "origin", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "limits", source = PROGRAM_SOURCES + "limits", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "budget", source = PROGRAM_SOURCES + "budget", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "flow", source = PROGRAM_SOURCES + "flow", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "crowd", source = PROGRAM_SOURCES + "crowd", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "tally", source = PROGRAM_SOURCES + "tally", image = true},
-	{name = "manual", source = PROGRAM_SOURCES + "manual", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "clock", source = PROGRAM_SOURCES + "clock", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "randomness", source = PROGRAM_SOURCES + "randomness", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "extended_state", source = PROGRAM_SOURCES + "extended_state", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "return_fault", source = PROGRAM_SOURCES + "return_fault", image = true},
-	{name = "fault_ring", source = PROGRAM_SOURCES + "fault_ring", image = true},
-	{name = "debugged", source = PROGRAM_SOURCES + "debugged", image = true},
-	{name = "debugger", source = PROGRAM_SOURCES + "debugger", image = true},
-	{name = "debug_target", source = PROGRAM_SOURCES + "debug_target", image = true},
-	{name = "kernel_events", source = PROGRAM_SOURCES + "kernel_events", image = true},
-	{name = "guest_demo", source = PROGRAM_SOURCES + "guest_demo", image = true},
-	{name = "counters", source = PROGRAM_SOURCES + "counters", image = true},
-	{name = "terminal", source = PROGRAM_SOURCES + "terminal", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "flood", source = PROGRAM_SOURCES + "flood", image = true},
-	{name = "hostile_terminal", source = PROGRAM_SOURCES + "hostile_terminal", image = true},
-	{name = "processors", source = PROGRAM_SOURCES + "processors", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "boot", source = PROGRAM_SOURCES + "boot", image = true},
-	{name = "pages", source = PROGRAM_SOURCES + "pages", image = true},
-	{name = "frames", source = PROGRAM_SOURCES + "frames", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "twin", source = PROGRAM_SOURCES + "twin", image = true},
-	{name = "locks", source = PROGRAM_SOURCES + "locks", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "shortage", source = PROGRAM_SOURCES + "shortage", image = true},
-	{name = "scheduler", source = PROGRAM_SOURCES + "scheduler", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "address_space", source = PROGRAM_SOURCES + "address_space", image = true},
-	{name = "locker", source = PROGRAM_SOURCES + "locker", image = true},
-	{name = "log", source = PROGRAM_SOURCES + "log", image = true},
-	{name = "log_reader", source = PROGRAM_SOURCES + "log_reader", image = true},
-	{name = "block", source = PROGRAM_SOURCES + "block", image = true},
-	{name = "frame", source = PROGRAM_SOURCES + "frame", image = true},
-	{name = "iommu_device", source = PROGRAM_SOURCES + "iommu_device", image = true},
-	{name = "tpm", source = PROGRAM_SOURCES + "tpm", image = true},
-	{name = "entropy", source = PROGRAM_SOURCES + "entropy", image = true},
-	{name = "iommu", source = PROGRAM_SOURCES + "iommu", image = true},
-	{name = "network", source = PROGRAM_SOURCES + "network", image = true},
-	{name = "net", source = PROGRAM_SOURCES + "net", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "server", source = PROGRAM_SOURCES + "server", image = true},
-	{name = "fetch", source = PROGRAM_SOURCES + "fetch", image = true},
-	{name = "programs", source = PROGRAM_SOURCES + "programs", image = true},
-	{name = "inspect", source = PROGRAM_SOURCES + "inspect", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "debugger_window", source = PROGRAM_SOURCES + "debugger_window", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "disk", source = PROGRAM_SOURCES + "disk", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "storage", source = PROGRAM_SOURCES + "storage", image = true},
-	{name = "notes", source = PROGRAM_SOURCES + "notes", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "hierarchy", source = PROGRAM_SOURCES + "hierarchy", image = true},
-	{name = "ranges", source = PROGRAM_SOURCES + "ranges", image = true},
-	{name = "host", source = PROGRAM_SOURCES + "host", image = true},
-	{name = "probe", source = MODULE_SOURCES + "probe", image = true},
-	{name = "math", source = MODULE_SOURCES + "math", image = true},
-	{name = "cryptography", source = MODULE_SOURCES + "cryptography", image = true},
-	{name = "cryptography_vectors", source = PROGRAM_SOURCES + "cryptography_vectors", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "quic_echo", source = PROGRAM_SOURCES + "quic_echo", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "remote", source = PROGRAM_SOURCES + "remote", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "unlock", source = PROGRAM_SOURCES + "unlock", imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "sample", source = MODULE_SOURCES + "sample", image = true},
-	{name = "hostile_exports", source = MODULE_SOURCES + "hostile_exports", image = true},
-	{name = "calendar", source = MODULE_SOURCES + "calendar", image = true},
-	{name = "calendar_fixed", source = MODULE_SOURCES + "calendar_fixed", image = true},
-	{name = "calendar_changed", source = MODULE_SOURCES + "calendar_changed", image = true},
-	{name = "agenda", source = MODULE_SOURCES + "agenda", imports = {"calendar"}, image = true},
+	{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "console", source = SYSTEM_MODULE_SOURCES + "console", program = true, image = true},
+	{name = "monitor", source = SYSTEM_MODULE_SOURCES + "monitor", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "plasma", source = DEMONSTRATION_MODULE_SOURCES + "plasma", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "life", source = DEMONSTRATION_MODULE_SOURCES + "life", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "paint", source = DEMONSTRATION_MODULE_SOURCES + "paint", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "fault", source = DEMONSTRATION_MODULE_SOURCES + "fault", program = true, image = true},
+	{name = "hall_of_fame", source = DEMONSTRATION_MODULE_SOURCES + "hall_of_fame", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "heron", source = DEMONSTRATION_MODULE_SOURCES + "heron", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "node", source = DEMONSTRATION_MODULE_SOURCES + "node", program = true, image = true},
+	{name = "rings", source = DEMONSTRATION_MODULE_SOURCES + "rings", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "threads", source = DEMONSTRATION_MODULE_SOURCES + "threads", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "workers", source = DEMONSTRATION_MODULE_SOURCES + "workers", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "rights", source = DEMONSTRATION_MODULE_SOURCES + "rights", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "origin", source = DEMONSTRATION_MODULE_SOURCES + "origin", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "limits", source = DEMONSTRATION_MODULE_SOURCES + "limits", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "budget", source = DEMONSTRATION_MODULE_SOURCES + "budget", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "flow", source = DEMONSTRATION_MODULE_SOURCES + "flow", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "crowd", source = DEMONSTRATION_MODULE_SOURCES + "crowd", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", program = true, image = true},
+	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "extended_state", source = DEMONSTRATION_MODULE_SOURCES + "extended_state", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", program = true, image = true},
+	{name = "fault_ring", source = DEMONSTRATION_MODULE_SOURCES + "fault_ring", program = true, image = true},
+	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", program = true, image = true},
+	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", program = true, image = true},
+	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", program = true, image = true},
+	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", program = true, image = true},
+	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", program = true, image = true},
+	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", program = true, image = true},
+	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "flood", source = TEST_MODULE_SOURCES + "flood", program = true, image = true},
+	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", program = true, image = true},
+	{name = "arena", source = TEST_MODULE_SOURCES + "arena", program = true, image = true},
+	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", program = true, image = true},
+	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", program = true, image = true},
+	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", program = true, image = true},
+	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", program = true, image = true},
+	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", program = true, image = true},
+	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", program = true, image = true},
+	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", program = true, image = true},
+	{name = "log_reader", source = TEST_MODULE_SOURCES + "log_reader", program = true, image = true},
+	{name = "block", source = SYSTEM_MODULE_SOURCES + "block", program = true, image = true},
+	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", program = true, image = true},
+	{name = "iommu_device", source = TEST_MODULE_SOURCES + "iommu_device", program = true, image = true},
+	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", program = true, image = true},
+	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", program = true, image = true},
+	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", program = true, image = true},
+	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", program = true, image = true},
+	{name = "iommu", source = TEST_MODULE_SOURCES + "iommu", program = true, image = true},
+	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", program = true, image = true},
+	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "server", source = DEMONSTRATION_MODULE_SOURCES + "server", program = true, image = true},
+	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", program = true, image = true},
+	{name = "programs", source = SYSTEM_MODULE_SOURCES + "programs", program = true, image = true},
+	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "disk", source = DEMONSTRATION_MODULE_SOURCES + "disk", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "storage", source = SYSTEM_MODULE_SOURCES + "storage", program = true, image = true},
+	{name = "notes", source = DEMONSTRATION_MODULE_SOURCES + "notes", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "hierarchy", source = TEST_MODULE_SOURCES + "hierarchy", program = true, image = true},
+	{name = "ranges", source = TEST_MODULE_SOURCES + "ranges", program = true, image = true},
+	{name = "host", source = SYSTEM_MODULE_SOURCES + "host", program = true, image = true},
+	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
+	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
+	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
+	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", program = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", program = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", program = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", program = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "sample", source = DEMONSTRATION_MODULE_SOURCES + "sample", image = true},
+	{name = "hostile_exports", source = TEST_MODULE_SOURCES + "hostile_exports", image = true},
+	{name = "calendar", source = LIBRARY_MODULE_SOURCES + "calendar", image = true},
+	{name = "calendar_fixed", source = TEST_MODULE_SOURCES + "calendar_fixed", image = true},
+	{name = "calendar_changed", source = TEST_MODULE_SOURCES + "calendar_changed", image = true},
+	{name = "agenda", source = DEMONSTRATION_MODULE_SOURCES + "agenda", imports = {"calendar"}, image = true},
 	// Its import is not in the boot image: a loader refuses it.
-	{name = "lonely", source = MODULE_SOURCES + "lonely", imports = {"test_callee"}, image = true},
-	{name = "imports", source = PROGRAM_SOURCES + "imports", imports = {"calendar"}, image = true},
-	{name = "errors", source = PROGRAM_SOURCES + "errors", image = true},
-	{name = "interface_elements", source = PROGRAM_SOURCES + "interface_elements", image = true},
-	{name = "tables", source = PROGRAM_SOURCES + "tables", image = true},
-	{name = "interface_module", source = MODULE_SOURCES + "interface_module", image = true},
+	{name = "lonely", source = TEST_MODULE_SOURCES + "lonely", imports = {"test_callee"}, image = true},
+	{name = "imports", source = DEMONSTRATION_MODULE_SOURCES + "imports", program = true, imports = {"calendar"}, image = true},
+	{name = "errors", source = DEMONSTRATION_MODULE_SOURCES + "errors", program = true, image = true},
+	{name = "interface_elements", source = DEMONSTRATION_MODULE_SOURCES + "interface_elements", program = true, image = true},
+	{name = "tables", source = DEMONSTRATION_MODULE_SOURCES + "tables", program = true, image = true},
+	{name = "interface_module", source = LIBRARY_MODULE_SOURCES + "interface_module", image = true},
 	// It compares the package compiled in with the two modules, so it has
 	// no setting: its window layer is its own code.
-	{name = "interface_through_module", source = PROGRAM_SOURCES + "interface_through_module", imports = {"interface_module", DRAWING_MODULE}, image = true},
-	{name = "text_shaping", source = MODULE_SOURCES + "text_shaping", image = true},
-	{name = "vector_glyphs", source = PROGRAM_SOURCES + "vector_glyphs", image = true},
-	{name = "interface_font", source = PROGRAM_SOURCES + "interface_font", image = true},
-	{name = "glyphs", source = PROGRAM_SOURCES + "glyphs", image = true},
-	{name = "pointers", source = PROGRAM_SOURCES + "pointers", image = true},
-	{name = "settings", source = PROGRAM_SOURCES + "settings", image = true},
-	{name = "date", source = PROGRAM_SOURCES + "date", image = true},
+	{name = "interface_through_module", source = DEMONSTRATION_MODULE_SOURCES + "interface_through_module", program = true, imports = {"interface_module", DRAWING_MODULE}, image = true},
+	{name = "text_shaping", source = LIBRARY_MODULE_SOURCES + "text_shaping", image = true},
+	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", program = true, image = true},
+	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", program = true, image = true},
+	{name = "glyphs", source = SYSTEM_MODULE_SOURCES + "glyphs", program = true, image = true},
+	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", program = true, image = true},
+	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", program = true, image = true},
+	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", program = true, image = true},
+	// The program of the operation sequences and its runner: only the boot
+	// image of the operation sequences holds them, and the root service
+	// starts nothing else there.
+	{name = OPERATION_SEQUENCE_RUNNER_MODULE, source = TEST_MODULE_SOURCES + OPERATION_SEQUENCE_RUNNER_MODULE, program = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
+	{name = OPERATION_FUZZING_MODULE, source = TEST_MODULE_SOURCES + OPERATION_FUZZING_MODULE, program = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
 	// It is not in the boot image: the tool writes its file in the store
 	// `programs` of a data disk, and the root service starts it from there
 	// (disk_programs.odin).
-	{name = DISK_PROGRAM_MODULE, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, image = true, disk = true},
+	{name = DISK_PROGRAM_MODULE, source = TEST_MODULE_SOURCES + DISK_PROGRAM_MODULE, program = true, image = true, disk = true},
 	// A library module and a program that imports it, both in the store
 	// `programs` only: the root service finds the import by the hash of
 	// its bytes (disk_programs.odin).
-	{name = STORE_LIBRARY_MODULE, source = MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
-	{name = STORE_IMPORTER_MODULE, source = PROGRAM_SOURCES + STORE_IMPORTER_MODULE, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
+	{name = STORE_LIBRARY_MODULE, source = TEST_MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
+	{name = STORE_IMPORTER_MODULE, source = TEST_MODULE_SOURCES + STORE_IMPORTER_MODULE, program = true, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
 }
 
 // The folder of the modules of this build, and whether the compiler writes
@@ -282,7 +309,9 @@ build_modules :: proc() -> bool {
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
-	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
+	// The fifth holds the program of the operation sequences, which no
+	// other image holds.
+	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
 	if images_built {
 		// The fourth is the image of a measure run: the same modules and one
 		// resource more, so a measure runs the code that a test checked.
@@ -294,7 +323,7 @@ build_modules :: proc() -> bool {
 		append(&all_resources, Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
 		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
 	}
-	build_measure_step("the four boot images", step_started)
+	build_measure_step("the five boot images", step_started)
 	return images_built
 }
 
@@ -642,7 +671,8 @@ module_convert :: proc(build: Module_Build) -> bool {
 build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in module_builds {
-		if !module_in_boot_image(build) || build.name == without {
+		in_this_image := module_in_boot_image(build) && build.name != without || module_in_a_boot_image(build) && build.only_in_image == path
+		if !in_this_image {
 			continue
 		}
 		append(&files, Image_File{name = build.name, file = read_file(module_path(build.name)) or_return})

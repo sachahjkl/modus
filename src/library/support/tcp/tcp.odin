@@ -5,7 +5,7 @@
 // step, reads a batch of segments, runs the timers and writes the segments
 // to send. docs/NETWORK.md has the rules and their sources.
 //
-// Who uses it: the HTTP server (`src/programs/server`), the program `fetch`
+// Who uses it: the HTTP server (`src/modules/demonstrations/server`), the program `fetch`
 // and the tests of TCP. The program gets its segments from a segment
 // endpoint of the network service and gives `step` the time of its clock;
 // the library holds no time and no thread of its own. The network service

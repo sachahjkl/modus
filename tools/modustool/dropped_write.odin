@@ -4,7 +4,7 @@ import format "modus:contract/store"
 import "core:fmt"
 import "core:os"
 import "core:sync"
-import "modus:support/storage_mount"
+import "modus:private/storage/storage_mount"
 
 // The dropped write (src/md/features/dropped_write.md). The disk that the
 // tool serves drops three writes of the console to one object, each found
@@ -40,7 +40,7 @@ TEST_DROPPED_WRITE_DISK :: BUILD_FOLDER + "/test_dropped_write_disk.img"
 TEST_OUTPUT_DROPPED_WRITE :: BUILD_FOLDER + "/test_output_dropped_write_%d.txt"
 
 // The line of the open when the newest root names a wrong block and the
-// root before it names none (src/programs/storage/main.odin).
+// root before it names none (src/modules/system/storage/main.odin).
 DROPPED_WRITE_FALLBACK_LINE :: "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used"
 
 // The first machine. Each line of the console commits the line history

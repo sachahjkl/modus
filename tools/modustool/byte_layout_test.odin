@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "core:testing"
+import draw_record "modus:contract/draw_record"
 import module "modus:contract/module"
 
 // One field as the compiler places it, written with offset_of and size_of,
@@ -29,6 +30,14 @@ expected_fields :: proc() -> []Expected_Field {
 	field: module.Field
 	documentation: module.Documentation
 	budget: module.Budget_Request
+	draw: draw_record.Draw_Record
+	rectangle: draw_record.Rectangle_Fields
+	vertical: draw_record.Vertical_Gradient_Fields
+	horizontal: draw_record.Horizontal_Gradient_Fields
+	text: draw_record.Text_Fields
+	picture: draw_record.Picture_Fields
+	grid: draw_record.Text_Grid_Fields
+	line: draw_record.Line_Fields
 	rows := [?]Expected_Field {
 		{"module.Header", "magic", offset_of(module.Header, magic), size_of(header.magic)},
 		{"module.Header", "version", offset_of(module.Header, version), size_of(header.version)},
@@ -93,6 +102,54 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Budget_Request", "pages", offset_of(module.Budget_Request, pages), size_of(budget.pages)},
 		{"module.Budget_Request", "programs", offset_of(module.Budget_Request, programs), size_of(budget.programs)},
 		{"module.Budget_Request", "threads", offset_of(module.Budget_Request, threads), size_of(budget.threads)},
+		{"draw_record.Draw_Record", "kind", offset_of(draw_record.Draw_Record, kind), size_of(draw.kind)},
+		{"draw_record.Draw_Record", "reserved", offset_of(draw_record.Draw_Record, reserved), size_of(draw.reserved)},
+		{"draw_record.Draw_Record", "element", offset_of(draw_record.Draw_Record, element), size_of(draw.element)},
+		{"draw_record.Draw_Record", "left", offset_of(draw_record.Draw_Record, left), size_of(draw.left)},
+		{"draw_record.Draw_Record", "top", offset_of(draw_record.Draw_Record, top), size_of(draw.top)},
+		{"draw_record.Draw_Record", "right", offset_of(draw_record.Draw_Record, right), size_of(draw.right)},
+		{"draw_record.Draw_Record", "bottom", offset_of(draw_record.Draw_Record, bottom), size_of(draw.bottom)},
+		{"draw_record.Draw_Record", "fields", offset_of(draw_record.Draw_Record, fields), size_of(draw.fields)},
+		{"draw_record.Rectangle_Fields", "color", offset_of(draw_record.Rectangle_Fields, color), size_of(rectangle.color)},
+		{"draw_record.Rectangle_Fields", "cell_x", offset_of(draw_record.Rectangle_Fields, cell_x), size_of(rectangle.cell_x)},
+		{"draw_record.Rectangle_Fields", "cell_y", offset_of(draw_record.Rectangle_Fields, cell_y), size_of(rectangle.cell_y)},
+		{"draw_record.Rectangle_Fields", "cell_width", offset_of(draw_record.Rectangle_Fields, cell_width), size_of(rectangle.cell_width)},
+		{"draw_record.Rectangle_Fields", "cell_height", offset_of(draw_record.Rectangle_Fields, cell_height), size_of(rectangle.cell_height)},
+		{"draw_record.Rectangle_Fields", "step_x", offset_of(draw_record.Rectangle_Fields, step_x), size_of(rectangle.step_x)},
+		{"draw_record.Rectangle_Fields", "step_y", offset_of(draw_record.Rectangle_Fields, step_y), size_of(rectangle.step_y)},
+		{"draw_record.Rectangle_Fields", "reserved", offset_of(draw_record.Rectangle_Fields, reserved), size_of(rectangle.reserved)},
+		{"draw_record.Vertical_Gradient_Fields", "top_color", offset_of(draw_record.Vertical_Gradient_Fields, top_color), size_of(vertical.top_color)},
+		{"draw_record.Vertical_Gradient_Fields", "bottom_color", offset_of(draw_record.Vertical_Gradient_Fields, bottom_color), size_of(vertical.bottom_color)},
+		{"draw_record.Vertical_Gradient_Fields", "reserved", offset_of(draw_record.Vertical_Gradient_Fields, reserved), size_of(vertical.reserved)},
+		{"draw_record.Horizontal_Gradient_Fields", "left_color", offset_of(draw_record.Horizontal_Gradient_Fields, left_color), size_of(horizontal.left_color)},
+		{"draw_record.Horizontal_Gradient_Fields", "right_color", offset_of(draw_record.Horizontal_Gradient_Fields, right_color), size_of(horizontal.right_color)},
+		{"draw_record.Horizontal_Gradient_Fields", "reserved", offset_of(draw_record.Horizontal_Gradient_Fields, reserved), size_of(horizontal.reserved)},
+		{"draw_record.Text_Fields", "first", offset_of(draw_record.Text_Fields, first), size_of(text.first)},
+		{"draw_record.Text_Fields", "count", offset_of(draw_record.Text_Fields, count), size_of(text.count)},
+		{"draw_record.Text_Fields", "color", offset_of(draw_record.Text_Fields, color), size_of(text.color)},
+		{"draw_record.Text_Fields", "origin_x", offset_of(draw_record.Text_Fields, origin_x), size_of(text.origin_x)},
+		{"draw_record.Text_Fields", "font", offset_of(draw_record.Text_Fields, font), size_of(text.font)},
+		{"draw_record.Text_Fields", "scale", offset_of(draw_record.Text_Fields, scale), size_of(text.scale)},
+		{"draw_record.Text_Fields", "weight", offset_of(draw_record.Text_Fields, weight), size_of(text.weight)},
+		{"draw_record.Text_Fields", "reserved", offset_of(draw_record.Text_Fields, reserved), size_of(text.reserved)},
+		{"draw_record.Picture_Fields", "memory", offset_of(draw_record.Picture_Fields, memory), size_of(picture.memory)},
+		{"draw_record.Picture_Fields", "format", offset_of(draw_record.Picture_Fields, format), size_of(picture.format)},
+		{"draw_record.Picture_Fields", "memory_reserved", offset_of(draw_record.Picture_Fields, memory_reserved), size_of(picture.memory_reserved)},
+		{"draw_record.Picture_Fields", "first", offset_of(draw_record.Picture_Fields, first), size_of(picture.first)},
+		{"draw_record.Picture_Fields", "stride", offset_of(draw_record.Picture_Fields, stride), size_of(picture.stride)},
+		{"draw_record.Picture_Fields", "generation", offset_of(draw_record.Picture_Fields, generation), size_of(picture.generation)},
+		{"draw_record.Picture_Fields", "reserved", offset_of(draw_record.Picture_Fields, reserved), size_of(picture.reserved)},
+		{"draw_record.Text_Grid_Fields", "first", offset_of(draw_record.Text_Grid_Fields, first), size_of(grid.first)},
+		{"draw_record.Text_Grid_Fields", "count", offset_of(draw_record.Text_Grid_Fields, count), size_of(grid.count)},
+		{"draw_record.Text_Grid_Fields", "columns", offset_of(draw_record.Text_Grid_Fields, columns), size_of(grid.columns)},
+		{"draw_record.Text_Grid_Fields", "reserved", offset_of(draw_record.Text_Grid_Fields, reserved), size_of(grid.reserved)},
+		{"draw_record.Line_Fields", "start_x", offset_of(draw_record.Line_Fields, start_x), size_of(line.start_x)},
+		{"draw_record.Line_Fields", "start_y", offset_of(draw_record.Line_Fields, start_y), size_of(line.start_y)},
+		{"draw_record.Line_Fields", "end_x", offset_of(draw_record.Line_Fields, end_x), size_of(line.end_x)},
+		{"draw_record.Line_Fields", "end_y", offset_of(draw_record.Line_Fields, end_y), size_of(line.end_y)},
+		{"draw_record.Line_Fields", "color", offset_of(draw_record.Line_Fields, color), size_of(line.color)},
+		{"draw_record.Line_Fields", "thickness", offset_of(draw_record.Line_Fields, thickness), size_of(line.thickness)},
+		{"draw_record.Line_Fields", "reserved", offset_of(draw_record.Line_Fields, reserved), size_of(line.reserved)},
 	}
 	list := make([]Expected_Field, len(rows), context.temp_allocator)
 	copy(list, rows[:])

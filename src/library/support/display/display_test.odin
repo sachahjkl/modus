@@ -1,7 +1,9 @@
 #+build !freestanding
 package display
 
+import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/text_encoding"
 import "modus:support/key_path"
 import "core:testing"
 
@@ -66,6 +68,29 @@ event_of_record_refuses_a_kind_that_names_no_event :: proc(t: ^testing.T) {
 	}
 }
 
+// The serial of a key reaches its event, the largest word too: it is a
+// number of the compositor that the program only names back. key_shown
+// keeps the newest serial: 0 and an older serial change nothing.
+@(test)
+key_serial_reaches_the_event_and_key_shown_keeps_the_newest :: proc(t: ^testing.T) {
+	key := ring.Record{kind = u32(Event_Kind.Key)}
+	key.values = {KEY_TAB, 'a', 1, 0, 0, 0, 0}
+	key.values[KEY_EVENT_SERIAL] = max(u64)
+	event, ok := event_of_record(key)
+	testing.expect(t, ok)
+	testing.expect_value(t, event.key_serial, max(u64))
+
+	window: Window
+	key_shown(&window, 0)
+	testing.expect_value(t, window.key_shown_serial, 0)
+	key_shown(&window, 5)
+	key_shown(&window, 3)
+	key_shown(&window, 0)
+	testing.expect_value(t, window.key_shown_serial, 5)
+	key_shown(&window, 6)
+	testing.expect_value(t, window.key_shown_serial, 6)
+}
+
 // The notches of the wheel are cut at the limit, on both sides: the edges
 // are the limit, one past it and the largest counts of the word.
 @(test)
@@ -107,6 +132,338 @@ event_of_record_refuses_a_character_past_the_last_code_point :: proc(t: ^testing
 	event, ok = event_of_record(record)
 	testing.expect(t, ok)
 	testing.expect_value(t, event.character, rune(0))
+}
+
+// A Resized whose size is 0, one past the limit, or the largest word, is
+// refused: the program never makes a surface of that size. The words that
+// read as negative numbers are refused as the large words that they are.
+@(test)
+event_of_record_refuses_a_resize_out_of_its_range :: proc(t: ^testing.T) {
+	refused := [?][2]u64{
+		{0, 100},
+		{100, 0},
+		{0, 0},
+		{SURFACE_LIMIT + 1, 100},
+		{100, SURFACE_LIMIT + 1},
+		{max(u64), 100},
+		{100, max(u64)},
+		{1 << 63, 1 << 63},
+	}
+	for size in refused {
+		record := ring.Record{kind = u32(Event_Kind.Resized)}
+		record.values[0], record.values[1] = size[0], size[1]
+		event, ok := event_of_record(record)
+		testing.expectf(t, !ok, "a resize to %d x %d is taken", size[0], size[1])
+		testing.expect_value(t, event, Event{})
+	}
+	// The edges that are taken: 1, and the limit.
+	taken := [?][2]u64{{1, 1}, {SURFACE_LIMIT, SURFACE_LIMIT}, {976, 400}}
+	for size in taken {
+		record := ring.Record{kind = u32(Event_Kind.Resized)}
+		record.values[0], record.values[1] = size[0], size[1]
+		event, ok := event_of_record(record)
+		testing.expect(t, ok)
+		testing.expect_value(t, event, Event{kind = .Resized, width = int(size[0]), height = int(size[1])})
+	}
+}
+
+// The border of the record Resizable refuses each rule that the words
+// break, from the edges: a least size of 0 and one below the floor, a
+// largest size one past the limit and the largest word, a least size past
+// its largest one, and a surface outside the limits. A refusal gives the
+// zero limits. The limits that hold come last.
+@(test)
+size_limits_of_words_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	WIDTH :: 816
+	HEIGHT :: 336
+	cases := [?]struct {
+		words:   [4]u64,
+		problem: Size_Limits_Problem,
+	}{
+		{{0, 0, 0, 0}, .Least_Below_Floor},
+		{{0, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT}, .Least_Below_Floor},
+		{{RESIZABLE_LEAST_WIDTH - 1, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT}, .Least_Below_Floor},
+		{{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT - 1, SURFACE_LIMIT, SURFACE_LIMIT}, .Least_Below_Floor},
+		{{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT + 1, SURFACE_LIMIT}, .Largest_Past_Limit},
+		{{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT + 1}, .Largest_Past_Limit},
+		{{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, max(u64), max(u64)}, .Largest_Past_Limit},
+		// A word that reads as a negative int: refused as a large word.
+		{{1 << 63, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT}, .Least_Past_Largest},
+		{{WIDTH + 1, HEIGHT, WIDTH, SURFACE_LIMIT}, .Least_Past_Largest},
+		{{WIDTH, HEIGHT + 1, SURFACE_LIMIT, HEIGHT}, .Least_Past_Largest},
+		{{WIDTH + 8, HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT}, .Size_Outside},
+		{{WIDTH, HEIGHT, WIDTH - 8, SURFACE_LIMIT}, .Least_Past_Largest},
+		{{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, WIDTH - 1, SURFACE_LIMIT}, .Size_Outside},
+		{{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, HEIGHT - 1}, .Size_Outside},
+	}
+	for each in cases {
+		limits, problem := size_limits_of_words(each.words, WIDTH, HEIGHT)
+		testing.expectf(t, problem == each.problem, "the words %v give %v, not %v", each.words, problem, each.problem)
+		testing.expect_value(t, limits, Size_Limits{})
+	}
+	// The edges that hold: the floor, the limit, and the size of the
+	// surface as both bounds.
+	limits, problem := size_limits_of_words({RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT}, WIDTH, HEIGHT)
+	testing.expect_value(t, problem, Size_Limits_Problem.None)
+	testing.expect_value(t, limits, Size_Limits{RESIZABLE_LEAST_WIDTH, RESIZABLE_LEAST_HEIGHT, SURFACE_LIMIT, SURFACE_LIMIT})
+	limits, problem = size_limits_of_words({WIDTH, HEIGHT, WIDTH, HEIGHT}, WIDTH, HEIGHT)
+	testing.expect_value(t, problem, Size_Limits_Problem.None)
+	testing.expect_value(t, limits, Size_Limits{WIDTH, HEIGHT, WIDTH, HEIGHT})
+}
+
+// size_inside at each edge of the limits: one before and one past each
+// bound is outside, each bound is inside.
+@(test)
+size_inside_at_each_edge :: proc(t: ^testing.T) {
+	limits := Size_Limits{least_width = 200, least_height = 100, largest_width = 400, largest_height = 300}
+	outside := [?][2]int{{199, 150}, {401, 150}, {300, 99}, {300, 301}, {0, 0}, {-1, 150}, {300, -1}, {max(int), 150}, {min(int), 150}}
+	for size in outside {
+		testing.expectf(t, !size_inside(limits, size[0], size[1]), "%v is inside", size)
+	}
+	inside := [?][2]int{{200, 100}, {400, 300}, {300, 150}}
+	for size in inside {
+		testing.expectf(t, size_inside(limits, size[0], size[1]), "%v is outside", size)
+	}
+}
+
+// A window of 816 x 336 whose limits go to 1216 x 640, with a ring in plain
+// memory: the refusals of surface_resize come before any kernel operation,
+// so a host test runs them.
+@(private = "file")
+resizable_window_of_test :: proc(ring_memory: []u8) -> Window {
+	window: Window
+	opened, ok := ring.open(raw_data(ring_memory), ring.PAGE_COUNT)
+	assert(ok)
+	window.ring = opened
+	window.pictures[0] = {width = 816, height = 336, stride = 816}
+	window.pictures[1] = window.pictures[0]
+	window.canvas = window.pictures[0]
+	window.resizable = true
+	window.size_limits = {least_width = 816, least_height = 336, largest_width = 1216, largest_height = 640}
+	window.resize_asked = true
+	window.resize_asked_width, window.resize_asked_height = 880, 384
+	return window
+}
+
+// surface_resize refuses, with no change of the window: a fixed window; no
+// Resized to answer; another size than the asked one, by one pixel, 0 and
+// a negative size; a size outside the limits that a Resizable narrowed
+// after the request; and a full command ring, with No_Slot. No_Budget comes
+// from the kernel, which a host test does not have: the machine test of a
+// window whose budget refuses is not written.
+@(test)
+surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	Case :: struct {
+		width, height: int,
+		change:        proc(window: ^Window),
+		status:        op.Status,
+	}
+	cases := [?]Case{
+		{880, 384, proc(window: ^Window) {window.resizable = false}, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {window.resize_asked = false}, .Bad_Operation},
+		{881, 384, nil, .Bad_Operation},
+		{880, 383, nil, .Bad_Operation},
+		{0, 0, nil, .Bad_Operation},
+		{-880, -384, nil, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {window.size_limits.largest_width = 872}, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {
+			for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Picture_Due)}) {}
+		}, .No_Slot},
+	}
+	for each, index in cases {
+		for &value in ring_memory {
+			value = 0
+		}
+		window := resizable_window_of_test(ring_memory)
+		if each.change != nil {
+			each.change(&window)
+		}
+		before := window
+		status := surface_resize(&window, each.width, each.height)
+		testing.expectf(t, status == each.status, "case %d gives %v, not %v", index, status, each.status)
+		testing.expectf(t, window == before, "case %d changed the window", index)
+	}
+}
+
+// The border of a text of the clipboard, refusals first: no byte, one byte
+// past the limit, one byte past the room of a field, a byte that starts no
+// sequence, a cut sequence, a surrogate, and each control character that a
+// paste could carry into a line (Enter, Tab, Escape, the deletion and a C1
+// character). Then the texts that hold: one byte, the limit, and a text of
+// several bytes for each character.
+@(test)
+clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T) {
+	limit_and_one: [CLIPBOARD_TEXT_LIMIT + 1]u8
+	for &value in limit_and_one {
+		value = 'a'
+	}
+	refused := [?]struct {
+		text:    []u8,
+		room:    int,
+		problem: Clipboard_Problem,
+	}{
+		{nil, CLIPBOARD_TEXT_LIMIT, .Empty},
+		{limit_and_one[:], CLIPBOARD_TEXT_LIMIT + 1, .Too_Large},
+		{limit_and_one[:8], 7, .Too_Large},
+		{limit_and_one[:1], 0, .Too_Large},
+		{{0xFF}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xC3}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xED, 0xA0, 0x80}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'l', 's', '\r'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'l', 's', '\n'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'\t'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x1B, '['}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x7F}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xC2, 0x85}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+	}
+	for each, index in refused {
+		problem := clipboard_text_problem(each.text, each.room)
+		testing.expectf(t, problem == each.problem, "case %d gives %v, not %v", index, problem, each.problem)
+	}
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT), Clipboard_Problem.None)
+	euro := [?]u8{0xE2, 0x82, 0xAC, 'h', 0xC3, 0xA9}
+	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro)), Clipboard_Problem.None)
+}
+
+// Each character that a reader does not see, or that changes the order of
+// a text, is refused: each range at its first and its last code point, and
+// each single one. The code points just outside each range are taken.
+@(test)
+clipboard_text_problem_refuses_each_hidden_character :: proc(t: ^testing.T) {
+	hidden := [?]rune{0x200B, 0x200F, 0x202A, 0x202E, 0x2066, 0x2069, 0x2028, 0x2029, 0xFEFF}
+	for character in hidden {
+		text: [8]u8
+		text[0] = 'a'
+		length := 1 + text_encoding.character_encode(character, text[1:])
+		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
+		testing.expectf(t, problem == .Hidden_Character, "U+%X gives %v", character, problem)
+		testing.expectf(t, character_hidden(character), "U+%X is not hidden", character)
+	}
+	shown := [?]rune{0x200A, 0x2010, 0x2027, 0x202F, 0x2065, 0x206A, 0xFEFE, 0xFF00}
+	for character in shown {
+		text: [8]u8
+		length := text_encoding.character_encode(character, text[:])
+		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
+		testing.expectf(t, problem == .None, "U+%X gives %v", character, problem)
+	}
+}
+
+// A Pasted whose words are out of their range is refused, and gives the
+// zero event: a handle of 0 and past 32 bits, a kind of None, past the last
+// member and the largest word, a count of 0, one past the limit and the
+// largest word, a serial of 0. A Copy_Asked with the serial 0 too. Then a
+// paste and a copy that hold.
+@(test)
+event_of_record_refuses_a_paste_out_of_its_range :: proc(t: ^testing.T) {
+	TEXT :: u64(Clipboard_Kind.Text)
+	refused := [?][4]u64{
+		{0, TEXT, 5, 1},
+		{u64(max(u32)) + 1, TEXT, 5, 1},
+		{max(u64), TEXT, 5, 1},
+		{7, u64(Clipboard_Kind.None), 5, 1},
+		{7, u64(max(Clipboard_Kind)) + 1, 5, 1},
+		{7, max(u64), 5, 1},
+		{7, TEXT, 0, 1},
+		{7, TEXT, CLIPBOARD_TEXT_LIMIT + 1, 1},
+		{7, TEXT, max(u64), 1},
+		{7, TEXT, 5, 0},
+	}
+	for words in refused {
+		record := ring.Record{kind = u32(Event_Kind.Pasted)}
+		record.values[0], record.values[1], record.values[2], record.values[3] = words[0], words[1], words[2], words[3]
+		event, ok := event_of_record(record)
+		testing.expectf(t, !ok, "the paste %v is taken", words)
+		testing.expect_value(t, event, Event{})
+	}
+	event, ok := event_of_record(ring.Record{kind = u32(Event_Kind.Copy_Asked)})
+	testing.expect(t, !ok)
+	testing.expect_value(t, event, Event{})
+	record := ring.Record{kind = u32(Event_Kind.Pasted)}
+	record.values[0], record.values[1], record.values[2], record.values[3] = u64(max(u32)), TEXT, CLIPBOARD_TEXT_LIMIT, max(u64)
+	event, ok = event_of_record(record)
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Pasted, paste_handle = op.Handle(max(u32)), clipboard_kind = .Text, byte_count = CLIPBOARD_TEXT_LIMIT, clipboard_serial = max(u64)})
+	asked := ring.Record{kind = u32(Event_Kind.Copy_Asked)}
+	asked.values[0] = 1
+	event, ok = event_of_record(asked)
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Copy_Asked, clipboard_serial = 1})
+}
+
+// The facts of a paste that holds: 5 bytes of text in one page that the
+// compositor gave, for a field of 16 bytes of room.
+@(private = "file")
+paste_of_test :: proc() -> Paste_Facts {
+	return {event = {kind = .Pasted, paste_handle = 7, clipboard_kind = .Text, byte_count = 5, clipboard_serial = 1}, is_memory = true, readable = true, through = true, memory_bytes = 4096, room = 16}
+}
+
+// Each refusal of a paste before any byte is read, from the edges: an event
+// that is no paste, a kind that is not text, a handle that is no memory,
+// with no Read, or that the compositor did not give through the ring, a
+// count of 0, a negative count, one byte past the room of the field, past
+// the limit, memory one byte too small and of 0 bytes. The pastes that hold
+// come last: a count that fills the room, and the memory just large enough.
+@(test)
+paste_problem_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		facts:   Paste_Facts,
+		problem: Clipboard_Problem,
+	}
+	cases: [12]Case
+	for &each in cases {
+		each.facts = paste_of_test()
+	}
+	cases[0].facts.event.kind, cases[0].problem = .Key, .Unknown_Kind
+	cases[1].facts.event.clipboard_kind, cases[1].problem = .None, .Unknown_Kind
+	cases[2].facts.is_memory, cases[2].problem = false, .Not_Given
+	cases[3].facts.readable, cases[3].problem = false, .Not_Given
+	cases[4].facts.through, cases[4].problem = false, .Not_Given
+	cases[5].facts.event.byte_count, cases[5].problem = 0, .Empty
+	cases[6].facts.event.byte_count, cases[6].problem = -1, .Empty
+	cases[7].facts.event.byte_count, cases[7].problem = 17, .Too_Large
+	cases[8].facts.event.byte_count, cases[8].facts.room, cases[8].problem = CLIPBOARD_TEXT_LIMIT + 1, CLIPBOARD_TEXT_LIMIT * 2, .Too_Large
+	cases[9].facts.memory_bytes, cases[9].problem = 4, .Too_Small
+	cases[10].facts.memory_bytes, cases[10].problem = 0, .Too_Small
+	cases[11].facts.room, cases[11].problem = 0, .Too_Large
+	for each, index in cases {
+		problem := paste_problem(each.facts)
+		testing.expectf(t, problem == each.problem, "case %d gives %v, not %v", index, problem, each.problem)
+	}
+	facts := paste_of_test()
+	facts.event.byte_count = 16
+	testing.expect_value(t, paste_problem(facts), Clipboard_Problem.None)
+	facts.memory_bytes = 16
+	testing.expect_value(t, paste_problem(facts), Clipboard_Problem.None)
+}
+
+// The kind of a content refuses None, one past the last member and the
+// largest word; Text comes back.
+@(test)
+clipboard_kind_of_word_refuses_a_word_that_names_no_kind :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(Clipboard_Kind.None), u64(max(Clipboard_Kind)) + 1, max(u64)}) {
+		kind, ok := clipboard_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d is taken", word)
+		testing.expect_value(t, kind, Clipboard_Kind.None)
+	}
+	kind, ok := clipboard_kind_of_word(u64(Clipboard_Kind.Text))
+	testing.expect(t, ok && kind == .Text)
+}
+
+// copy_send refuses with no request, and changes nothing: a copy that no
+// key of the principal asked for makes no memory and sends no record.
+@(test)
+copy_send_refuses_a_copy_that_no_key_asked_for :: proc(t: ^testing.T) {
+	window: Window
+	text := [?]u8{'h', 'i'}
+	problem, status := copy_send(&window, text[:])
+	testing.expect_value(t, problem, Clipboard_Problem.Not_Asked)
+	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect_value(t, window, Window{})
+	testing.expect(t, !copy_decline(&window))
 }
 
 // Each member that is an event comes back from its own kind, with its

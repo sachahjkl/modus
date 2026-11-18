@@ -354,6 +354,10 @@ span.search-kind.value-icon::before { margin-right: 4px; }
 .text .prose { max-width: none; }
 .text :is(p, li, dt, dd, blockquote, h1, h2, h3, h4) { max-width: 80ch; }
 .text :is(td, th) :is(p, li) { max-width: none; }
+/* A picture of a guide keeps its width and height attributes, so the page
+   does not move while it loads; the column can be narrower than the
+   picture, so the picture shrinks to the column and keeps its shape. */
+.text img { max-width: 100%; height: auto; }
 .tree { font-size: 14px; line-height: 20px; }
 .tree ul { list-style: none; margin: 0; padding: 0; }
 .tree li { margin: 0; }
@@ -1011,6 +1015,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The byte layouts of the guides: their colors are the tokens above,
 	// so they follow the light form with no rule of their own.
 	strings.write_string(&builder, byte_layout_rules())
+	// The diagrams of the guides: the same tokens, and the font of their
+	// text.
+	strings.write_string(&builder, site_diagram_rules())
 	// The colors of the states of a control, in the dark form.
 	site_control_variables(&builder, false)
 	// The colors and the widths of the tiles of the boot image: they come

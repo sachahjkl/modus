@@ -1,6 +1,6 @@
 # Trusted boot
 
-This guide says what verifies what at the start of the machine, with which key, and at which moment. It also says what each part does not protect. The terms are in `docs/GLOSSARY.md`, section "Trusted boot".
+This guide says what verifies what at the start of the machine, with which key, and at which moment. It also says what each part does not protect. The terms are in `docs/glossary/trusted_boot.md`.
 
 **The idea in plain words.** The system is one list of hashes: the hash of the kernel and of each module and resource. The principal that signs the system signs that list, the system description. Before the kernel starts, the boot program checks the signature and compares each file with its hash, so a changed file stops the start with a picture that names it. The firmware then records the hash of the list in the TPM, and with Secure Boot on, the firmware checks the boot program itself before it runs it.
 
@@ -273,7 +273,7 @@ The machines with this firmware run with four processors, as every other machine
 | The format, its reader and its checks | `src/library/contract/system_description/system_description.odin` |
 | The trust record | `src/library/contract/boot_info/boot_info.odin` (`Boot_Trust`) |
 | The checks and the measure of the boot program | `src/boot/trust.odin` |
-| The check of the root service | `src/programs/root/trust.odin` |
+| The check of the root service | `src/modules/system/root/trust.odin` |
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
 | The signature, the keys, the key numbers, the command `key` | `tools/modustool/system_description.odin`, `resources/keys/key_numbers` |
@@ -283,7 +283,7 @@ The machines with this firmware run with four processors, as every other machine
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/secure_boot.odin` |
 | The release volume, the GPT disk, the release signature, `release`, `verify`, `key write` | `tools/modustool/release_image.odin` |
 | The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
-| The TPM service, after the start | `src/programs/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |
+| The TPM service, after the start | `src/modules/system/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |
 
 ## 10. The TPM floors
 

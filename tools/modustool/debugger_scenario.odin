@@ -104,7 +104,7 @@ scenario_debugger := [?]Step {
 TEST_OUTPUT_DEBUGGER_COMMANDS :: BUILD_FOLDER + "/test_output_debugger_commands.txt"
 
 // The source file of the program debug_target, as its debug object names it.
-DEBUG_TARGET_SOURCE_FILE :: PROGRAM_SOURCES + "debug_target/main.odin"
+DEBUG_TARGET_SOURCE_FILE :: TEST_MODULE_SOURCES + "debug_target/main.odin"
 
 // The line of the second statement of the procedure add_step of that
 // file, a volatile store. The compiler gives
@@ -121,7 +121,7 @@ DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + ste
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
 
 // The element names that the scenario presses in the window of the
-// debugger (src/programs/debugger_window/main.odin): the debug place field
+// debugger (src/modules/system/debugger_window/main.odin): the debug place field
 // is named by its placeholder, a button by its label, a row by its card and
 // its number.
 DEBUGGER_WINDOW_PLACE_FIELD :: "the debug place"

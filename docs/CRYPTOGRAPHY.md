@@ -121,7 +121,9 @@ Programs reach the primitives through one module, `cryptography`, so the code is
 
 A call from `src/library/support/quic`, through its procedure table `quic.Cryptography`: the seal of a 1-RTT packet is one call of `seal_with_chacha20_poly1305` with the key, the nonce, the header as additional data, the frames, and the place of the result.
 
-`src/modules/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
+`src/modules/libraries/cryptography` is one module of code with exports, a description and a hash. A program imports it through its import slots, as `agenda` imports `calendar`; the console can call it.
+
+The code of each export but `argon2id` is the private part `src/library/private/cryptography/cryptography_primitives`, with the same names and signatures; each export of the module calls it. A host program cannot load a module, so the QUIC peers of the tool and the host tests of `quic` fill `quic.Cryptography` from that part, and run the code that the module ships. The hash of the module names that code too, because the module compiles the part in.
 
 | Export | Parameters | Result |
 |---|---|---|
@@ -184,7 +186,7 @@ The boot program verifies the description signature (`docs/TRUSTED_BOOT.md`) wit
 
 ## 6b. Ed25519 in the root service
 
-The root service verifies the signature of a replacement row (`docs/MODULE_CONTRACT.md`, "Who may replace a module") with the same `src/library/support/cryptography/ed25519`, compiled in through `src/library/support/replacement_signature`. The root service imports no module, so it cannot call the module `cryptography`. It links the same packages as the boot program, runs the code with a zero `context`, and verifies only: it holds no private key. The tool signs the rows on the host, with the same package.
+The root service verifies the signature of a replacement row (`docs/MODULE_CONTRACT.md`, "Who may replace a module") with the same `src/library/support/cryptography/ed25519`, compiled in through `src/library/private/root/replacement_signature`. The root service imports no module, so it cannot call the module `cryptography`. It links the same packages as the boot program, runs the code with a zero `context`, and verifies only: it holds no private key. The tool signs the rows on the host, with the same package.
 
 ## 7. What is not done
 

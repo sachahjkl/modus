@@ -96,9 +96,9 @@ Refused: a view that leaves its choice behind (above); a scroll bar that the pan
 
 ## The form of an entry, from its descriptions
 
-The panel shows each entry in the form that its act asks for, and offers to go where the act lives. Nothing is written for one command: three rules derive the form. What an element or an entry acts on is its act name (`docs/GLOSSARY.md`): the word "action" is already what a key asks of the panel (`palette.Action`), and "place" is a term of the storage service.
+The panel shows each entry in the form that its act asks for, and offers to go where the act lives. Nothing is written for one command: three rules derive the form. What an element or an entry acts on is its act name (`docs/glossary/desktop.md`): the word "action" is already what a key asks of the panel (`palette.Action`), and "place" is a term of the storage service.
 
-**Rule 1: the control comes from the field.** One table of the support package of the palette gives a control for a field, from what the field is:
+**Rule 1: the control comes from the field.** One table of the private part `palette` of the compositor gives a control for a field, from what the field is:
 
 | The field | The control |
 |---|---|
@@ -113,7 +113,7 @@ A closed list is a fact of the candidates: the provider says, in the answer `Can
 
 **A field with a few closed values.** In a form, a field whose candidates are closed and at most 6 shows them as a row of buttons, in the band at the right of the call when they fit there, else on the first row under the band. Left and Right choose, Tab takes the chosen value, and Enter takes it before it goes on, so one key sets a strategy. A press and a release on one button take its value, as Tab does: the pointer reaches each button that a key reaches.
 
-**A number with its unit.** A command says what an Integer parameter counts: an integer unit (`docs/GLOSSARY.md`), a value kind Size or Time with one unit of that kind, `pages` or `milliseconds`. The provider writes the integer unit of each parameter in the entry, beside its kind. The band of the form shows the unit after the number, in the color of its value kind, also while the field is empty: `buffer(count: 4 pages)`. The prompt under the band says it in words: "an Integer, in pages". The principal types the number in the unit that the command reads, and the panel sends the number as it is: the panel converts nothing.
+**A number with its unit.** A command says what an Integer parameter counts: an integer unit (`docs/glossary/running_code.md`), a value kind Size or Time with one unit of that kind, `pages` or `milliseconds`. The provider writes the integer unit of each parameter in the entry, beside its kind. The band of the form shows the unit after the number, in the color of its value kind, also while the field is empty: `buffer(count: 4 pages)`. The prompt under the band says it in words: "an Integer, in pages". The principal types the number in the unit that the command reads, and the panel sends the number as it is: the panel converts nothing.
 
 - **Why the unit is data of the entry, and the text is the contract.** The entry carries a value kind and a unit number; the panel takes the text of the unit from the tables of `value_kinds`, the ones that the log uses. A text from the provider could say anything in the band. A table of command names in the panel is the form for each command that rule 1 refuses.
 - **Why the unit belongs to the command.** The console states the integer unit of each of its built-in commands that take a size or a time where it states the command. An export states it in its description, so the console copies it into the command when it adds the export, and the provider writes it as it writes the unit of a built-in command. The panel cannot tell the two apart, and needs no new code.

@@ -68,7 +68,7 @@ source_path_name_byte :: proc(character: u8) -> bool {
 //     semicolon, a parenthesis or a quote: the path before it is whole;
 //   - each other byte ("*" of a pattern, "<" of a name that is not written
 //     out): the last name is not whole, and the path is the folder before
-//     it: "src/programs/*/main.odin" names the folder programs.
+//     it: "src/modules/*/main.odin" names the folder modules.
 source_path_of_span :: proc(span: string, starts: []string) -> (path: string, is_source_path: bool) {
 	for start in starts {
 		if strings.has_prefix(span, start) {
@@ -162,12 +162,15 @@ source_path_problems :: proc(file, content: string, folders: []string, exists: p
 }
 
 // source_path_documents_read gives each document that the check reads:
-// the documents of docs/, the documents of the root, and the intent files.
+// the documents of docs/, the files of the glossary, the documents of the
+// root, and the intent files.
 source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: bool) {
 	list := make([dynamic]Source_Path_Document, context.temp_allocator)
 	paths := make([dynamic]string, context.temp_allocator)
 	guides := files_with_suffix(DOCUMENT_FOLDER, ".md") or_return
 	append(&paths, ..guides)
+	glossary_files := files_with_suffix(GLOSSARY_FOLDER, ".md") or_return
+	append(&paths, ..glossary_files)
 	roots := SOURCE_PATH_ROOT_DOCUMENTS
 	for root in roots {
 		append(&paths, root)
@@ -197,7 +200,11 @@ source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: 
 source_path_problems_of_the_repository :: proc() -> (problems: []string, span_count: int, document_count: int, ok: bool) {
 	documents := source_path_documents_read() or_return
 	list := make([dynamic]string, context.temp_allocator)
-	folders := SOURCE_FOLDERS
+	folders := make([dynamic]string, context.temp_allocator)
+	present := SOURCE_FOLDERS
+	gone := SOURCE_FOLDERS_GONE
+	append(&folders, ..present[:])
+	append(&folders, ..gone[:])
 	for document in documents {
 		document_problems, document_spans := source_path_problems(document.path, document.content, folders[:], intent_repository_path_exists)
 		append(&list, ..document_problems)

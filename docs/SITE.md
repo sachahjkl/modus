@@ -1,6 +1,6 @@
 # The site
 
-The site (`GLOSSARY.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. The docs (`GLOSSARY.md`) are the documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it), under one section with a home of its own, the docs home (`GLOSSARY.md`). The status, the news and the releases are sections of their own. The site is documentation first; the home is the one page that presents the system.
+The site (`glossary/project.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. The docs (`glossary/project.md`) are the documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it), under one section with a home of its own, the docs home (`glossary/project.md`). The status, the news and the releases are sections of their own. The site is documentation first; the home is the one page that presents the system.
 
 No page holds a text that a person must remember to update: each page is generated from files of the repository and from the logs of the last machine tests. The news entries are the one text that a person writes for the site: each one is written once, in the step that made its thing, and is not updated after (see "The news").
 
@@ -14,8 +14,8 @@ No page holds a text that a person must remember to update: each page is generat
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
   - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder, and the query of a file version is ignored), and its anchor is an `id` of that page;
   - a link to a page has the form of the build (see "The addresses of the pages"): with a site address it names the folder, with none the `index.html`;
-  - each redirect page (`GLOSSARY.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes, never another redirect page; no two pages have one old path;
-  - each page has exactly one search field (`GLOSSARY.md`): in the bar, but on the docs home, where it is in the page and the bar has none (`site_search_field_problem`);
+  - each redirect page (`glossary/project.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes, never another redirect page; no two pages have one old path;
+  - each page has exactly one search field (`glossary/project.md`): in the bar, but on the docs home, where it is in the page and the bar has none (`site_search_field_problem`);
   - each `srcset` candidate names a file that the command wrote;
   - a page of the documentation layout has one documentation tree and one list "On this page", and each link of the list names an id of the page; a page of the presentation layout has neither (see "The two layouts");
   - each list under an item of a list, inside a `nav` element, is a list of tree lines (see "The tree lines");
@@ -38,10 +38,10 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `pictures/thumbnails/<name>.png` | The thumbnail of each picture of the gallery; see "The thumbnails" |
 | `docs/`, the docs home | See "The docs home" |
 | `docs/guides/` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
-| `docs/guides/<name>/` | Each document of `docs/` but the working record `SITE.md` (`SITE_WORKING_RECORDS`), which stays out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The intent files of `src/md` are not in `docs/` and are not pages either. The glossary is a page of the reference |
+| `docs/guides/<name>/` | Each document of `docs/` but the working record `SITE.md` (`SITE_WORKING_RECORDS`), which stays out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The intent files of `src/md` are not in `docs/` and are not pages either. The folder `docs/glossary/` is the glossary, pages of the reference |
 | `docs/reference/` | The list of the reference tables below |
-| `docs/reference/glossary/` | The index of `docs/GLOSSARY.md`: every term from A to Z, each row with the anchor `term-<name>` (see "The glossary") |
-| `docs/reference/glossary/<group>/` | One group of `docs/GLOSSARY.md`, by the slug of its heading: each term of the group is an entry with the anchor `term-<name>` |
+| `docs/reference/glossary/` | `docs/glossary/README.md` and every term of the folder from A to Z, each row with the anchor `term-<name>` (see "The glossary") |
+| `docs/reference/glossary/<group>/` | One file of `docs/glossary/`, by the slug of the heading of its group: each term of the group is an entry with the anchor `term-<name>` |
 | `docs/reference/commands/` | `COMMANDS` in `tools/modustool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `modustool help` prints |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it, and the measure history `docs/measures/releases/` (see "The measure history") |
 | `docs/reference/licenses/` | See "The licenses" |
@@ -80,7 +80,7 @@ An address names a folder, not a file: `/docs/reference/licenses/`, not `license
 
 ### The sections
 
-The bar names the six sections under the home (`site_section_parents`): Docs, Gallery and News as buttons, and Status, Releases and Roadmap as the lines of the project menu (see "The buttons and the menu of the bar"). Releases and Roadmap stand side by side in the menu: the work that is done, then the work that is planned. The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`GLOSSARY.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
+The bar names the six sections under the home (`site_section_parents`): Docs, Gallery and News as buttons, and Status, Releases and Roadmap as the lines of the project menu (see "The buttons and the menu of the bar"). Releases and Roadmap stand side by side in the menu: the work that is done, then the work that is planned. The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`glossary/project.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
 
 The status page stays at `status/`, a section of its own, in the project menu of the bar: it reports the state of the properties, not how the system works. The planned work is on the page of the roadmap. The tree of the reference still lists it, as before.
 
@@ -88,7 +88,7 @@ The gallery is a section under the home, and a button of the bar; the home has i
 
 ### The redirect pages
 
-The old addresses were public. Two generations of them exist, and each old address of each page keeps a redirect page (`GLOSSARY.md`) straight to the address of today:
+The old addresses were public. Two generations of them exist, and each old address of each page keeps a redirect page (`glossary/project.md`) straight to the address of today:
 
 | Generation | Example | Public | Which pages |
 |---|---|---|---|
@@ -114,7 +114,7 @@ The renderer (`tools/modustool/site_render.odin`) knows the Markdown that the do
 - ordered items with their own label, as the documents write them (`12.`, `34b.`): a top-level item has the id `<id of the heading of level 2 above it>-<label>`, so that a page can link to a numbered item of a guide;
 - tables with a line of dashes, `\|` for a `|` in a cell;
 - block quotes `>`;
-- fenced code, with or without a language; a fence with the language `byte-layout` is the place of byte layouts (see "The byte layouts");
+- fenced code, with or without a language; a fence with the language `byte-layout` is the place of byte layouts (see "The byte layouts"), and a fence `mermaid` of a guide is a diagram (see "The diagrams");
 - code spans, bold, italics (`*words*`: a star with a space after it, or between two letters, is a star), links and pictures.
 
 Links:
@@ -127,7 +127,7 @@ Links:
 - A code span that names a declaration of the sources (`blend_coverage_row_in_order`, `graphics.mix`, `layout_place()`) is a link to it, with a declaration card; a code span that is a fragment of Odin (`square_root[(d * d) >> 12]`) is colored as a block of code. A document, a row and a file come first. See "The declarations of the sources".
 - The first use of each term of the glossary on a page links to the term, with its short definition as the tooltip of the link. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page. The link names the entry on the page of the group of the term, never the index of the glossary. On the page of a group the rule holds inside each entry, and an entry never links its own term. The index of the glossary links no term in its text: each row is the link to its term.
 
-What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
+What it does not render, shown as text and listed by the command: a mermaid diagram in a source comment (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A `_` is text.
 
 The same renderer writes the source comments, in its mode for comments (see "The Markdown of a source comment").
 
@@ -135,18 +135,34 @@ Each guide has the documentation layout (see "The two layouts"): its headings of
 
 ## The glossary
 
-The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_read` (`tools/modustool/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term and the check of the tool all take the terms that it gives.
+The glossary (`docs/glossary/`) is one folder, read by one reader: `glossary_read` (`tools/modustool/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term, the link pages of the manual and the check of the tool all take the terms that it gives.
+
+### The files of the folder
+
+Each group is one file, so a reader of one part reads only its group, and two branches that add terms to two groups change two files.
+
+- `README.md` is the index of the folder: the title of the glossary, its introduction, then the heading "The groups" and one line for each group, `- [<group>](<file>)`, with words after ": " if the line explains the group. The order of the lines is the order of the groups on the site.
+- The file of a group has the slug of the heading of the group, with `_` for `-`: the group "Running code" is `running_code.md`, and its page is `docs/reference/glossary/running-code/`.
+- The file of a group starts with the heading of its group, of level 2, and holds no other group.
+- A pointer to a term names the file of its group: (`docs/glossary/storage.md`, "Commit read back"). A pointer to the glossary as a whole names `docs/glossary/README.md`. A quoted label finds a term of that file only.
 
 ### The form of an entry
 
-- A group is a heading of level 2. The text under it, before its first term, is its introduction.
+- A group is a heading of level 2, the first line of its file. The text under it, before its first term, is its introduction.
 - A term is a heading of level 3 in its group. Its name is the text of the heading, with no code marks. Its anchor is `term-<name>`, the name as the rule of the ids gives it; a second term of the same name gets `-2`, as a heading does.
 - The first paragraph under the heading is the short definition: one sentence that stands alone, with no document reference. The site shows it alone: as the tooltip (`title`) of each link to the term on another page, in a result of the search, and as the `description` of the term in the page graph.
 - The paragraphs after it are the explanation, in the Markdown of the guides: what the term is for, how a program gets and uses it, its neighbours, what it is not, an example from the system, and a document reference to its full design.
 - The explanation has at most 100 words, its document reference included. That is about five sentences of 20 words: one for each part above. A longer explanation repeats its guide, and then one fact has two places to keep true. The mechanism in detail, the refused forms and the numbers that the code decides go in the guide or the intent file that the reference names.
 - The last paragraph starts with "Do not use: " and lists the words that the term replaces. It is optional.
 
-`glossary_read` refuses a table of terms (the form before this one), two groups whose headings have one slug (each group is a page, named by its slug), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `modustool check` and `modustool site` stop on each of them, with the line.
+`glossary_read` refuses:
+
+- in the index: no title, a text before the title, no heading "The groups", another heading, a line of the list that is not a link to a file of the folder, a file whose name is not the slug of its group, a file named twice;
+- for the set of the files: a listed file that is not in the folder, a file of the folder that the list does not name, a heading of a group that is not its name in the list, two groups whose headings have one slug (each group is a page, named by its slug);
+- in the file of a group: a text before the heading of the group, a first heading that is not of level 2, a second group, a table of terms (the form before this one);
+- in an entry: a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more, a line "Do not use" that is not the last paragraph, and an explanation of more than 100 words (`GLOSSARY_EXPLANATION_WORD_LIMIT`).
+
+A word is a run of bytes between spaces, tabs and ends of lines: a mark of a list and a document reference count. The count takes the explanation only, so neither the short definition nor the line "Do not use" counts. `modustool check` and `modustool site` stop on each fault, with its file and its line; the fault of a long explanation gives the term and its count of words.
 
 ### The terms with no explanation
 
@@ -162,15 +178,15 @@ The page of a group, `docs/reference/glossary/<group>/` (the slug of the heading
 - Each term is a `<div class="term-entry">`: its heading `<h2 id="term-<name>">`, its short definition in `<p class="term-definition">` (a rule at its left, in bold), its explanation, then `<p class="term-avoided">` with the label "Do not use" and the words, dim. A word in code marks stays code; no word links.
 - Inside an entry, the first use of each other term links to its entry: `#term-<name>` for a term of the same group, the page of its group for another. The short definition links too. The words to avoid never link.
 - The list "On this page" holds each term of the group.
-- At its end, the links to the groups before and after it, in the order of the file.
+- At its end, the links to the groups before and after it, in the order of the index of the folder.
 - Its title is "Glossary: <group>". Its breadcrumbs pass through the index of the glossary.
 
 The index, `docs/reference/glossary/`, keeps the address of the single page of before:
 
-- The title and the introduction of the file, then a paragraph that says how to find a term: its word in the list from A to Z, or the search.
+- The title and the introduction of `docs/glossary/README.md`, then a paragraph that says how to find a term: its word in the list from A to Z, or the search.
 - "The groups": each group as a link to its page, with the count of its terms.
-- "The terms from A to Z": a line of the letters, then a heading `h3` for each letter (`letter-<letter>`; `letter-signs` for a name that does not start with a letter) and a `<dl class="glossary-index">`. A reader looks for a word, so the order is the order of the words, with no regard to case; two terms of one name keep the order of the file.
-- Each term is one row: `<div id="term-<name>" data-group-page="<the page of its group>">`, then the name as a link to its entry, its group as a dim label, and its short definition. Every term of the file has its row, a name of two letters too, which no other page links.
+- "The terms from A to Z": a line of the letters, then a heading `h3` for each letter (`letter-<letter>`; `letter-signs` for a name that does not start with a letter) and a `<dl class="glossary-index">`. A reader looks for a word, so the order is the order of the words, with no regard to case; two terms of one name keep the order of the groups.
+- Each term is one row: `<div id="term-<name>" data-group-page="<the page of its group>">`, then the name as a link to its entry, its group as a dim label, and its short definition. Every term of the folder has its row, a name of two letters too, which no other page links.
 
 The anchors of the old addresses: a link `…/glossary/#term-<name>`, from another site, a page in a cache or a search engine, named the single page. The site has no rules of a server, so the index keeps each anchor:
 
@@ -178,7 +194,9 @@ The anchors of the old addresses: a link `…/glossary/#term-<name>`, from anoth
 - The script of the index (`glossary.js`, a file of the site: no script is in a page) reads the anchor `#term-<name>` of the address, at the load and at each change of the anchor. It finds the row of that id and goes to the page that its attribute `data-group-page` names, with the same anchor. It replaces the address in the history, so "back" does not come again to the index. The table of the term to its page is the rows of the page itself: the script needs no second file.
 - The entry on the page of the group has the same id as the row of the index: one fragment works on both pages. Two terms of one name in two groups keep their two anchors (`term-frame`, `term-frame-2`), each on the page of its group and both at the index.
 
-Every link to a term goes straight to the page of its group, never through the index: the term links of the pages, the links `term:` of the comments, the references to a term of the glossary, the results of the search and the ids of the page graph. A link `docs/GLOSSARY.md#<id>` of a comment names the page of the group that holds the id.
+Every link to a term goes straight to the page of its group, never through the index: the term links of the pages, the links `term:` of the comments, the references to a term of the glossary, the results of the search and the ids of the page graph. A link `docs/glossary/<group>.md#<id>` of a comment names the page of that group, and an id that is not a term or the heading of that group names nothing.
+
+The anchor of a term counts the terms of the groups before it, in the order of the index, as the anchor of a second heading of one page does.
 
 The check of the command (`site_glossary_problems`), on the pages that it writes: each page of the glossary is written and has at most 1 MB; the index has each id of a term once, in a row that names the page of the group of the term; the page of each group has the entry of each of its terms once. The host tests `site_glossary_pages_split_by_group` and `site_glossary_pages_of_the_repository` run the check on a small glossary, on damaged pages and on the glossary of the repository.
 
@@ -188,7 +206,7 @@ The documentation tree lists the groups under the glossary, each with the count 
 
 A text that says what runs today must be kept true by hand at each change. The news is a parallel changelog in its place: the changelog is a technical list, and a news entry is a short report that is written once and never updated.
 
-A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` in an entry that has a film, an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
+A news entry (`glossary/project.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` in an entry that has a film, an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
 
 | Kind | What the entry reports | Its mark |
 |---|---|---|
@@ -258,7 +276,7 @@ Not done: the page graph of the news names no `VideoObject` for a film.
 
 The roadmap is a page of the site, beside the page of the releases: the work that is planned, beside the work that is done.
 
-`roadmap/` shows `ROADMAP.md`, the planned work of the system (`GLOSSARY.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/modustool/site_roadmap.odin`.
+`roadmap/` shows `ROADMAP.md`, the planned work of the system (`glossary/project.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/modustool/site_roadmap.odin`.
 
 - `modustool site` reads the file with the reader of `modustool roadmap check` (`roadmap_read`), before it writes a page. A fault of form stops the command with the line of the fault, and no page is written. The site does not apply the rule of the changelog summaries: that rule is for a commit, not for a page.
 - The page adds no sentence to an entry. Its first paragraphs say what the four sections are and where the work that is done is; a line names the file.
@@ -318,7 +336,7 @@ The documentation is generated, and a reader searches all of it. The search need
 
 The box and the list are those of the console (the picture `docs/screenshots/console_completion.png`):
 
-- A page has one search field (`GLOSSARY.md`), in one of two places (`Site_Search_Place`): at the right of the bar, in the place of the clock of the bar of the desktop, on every page but one; in the middle of the docs home, as a large field, on that page, whose bar has none: two fields on one page say the same thing twice.
+- A page has one search field (`glossary/project.md`), in one of two places (`Site_Search_Place`): at the right of the bar, in the place of the clock of the bar of the desktop, on every page but one; in the middle of the docs home, as a large field, on that page, whose bar has none: two fields on one page say the same thing twice.
 - One markup for both places (`site_search_field_html`): the same ids, so the script finds the field of the page by its id; the class of its box and its placeholder differ. One script serves both: it opens the site menu for the field only when the menu holds it.
 - `/` puts the focus in the field of the page when the focus is not in a field.
 - Under the box, a line says how many entries match and how many are not shown, and the keys; then at most 8 rows, the best first; then the text of the chosen row. A row is the title with the matched characters in the accent color (`colors.boot_program`, at half its light in the light form) and, at its right in the dim color, its kind, after the icon of its kind in the color of its kind, and the title of its page. The chosen row has the band of the track and the blue line at its left.
@@ -385,7 +403,7 @@ The content of a card starts at its top, and a card has no empty room between tw
 
 ### The line of time of the start
 
-The line of time of the start (`GLOSSARY.md`) shows the stages that the kernel logged, from the start of the machine to the first program. It replaces seven boxes of one size, which said nothing of the times.
+The line of time of the start (`glossary/project.md`) shows the stages that the kernel logged, from the start of the machine to the first program. It replaces seven boxes of one size, which said nothing of the times.
 
 **Two bars, each on one scale that the page states.** The firmware takes 1516.6 of 1662.0 ms in the run of the measure record: on one scale the six stages of the system are 8.8 % of the bar, 26 pixels on a phone.
 
@@ -421,7 +439,7 @@ Refused: a logarithmic scale. Its axis has no zero, and the length of a segment 
 
 The rule: **a chart or nothing**. The home shows a measure only as a chart whose bars have one unit and one scale from zero. A measure that is not such a chart is not on the home: it is a row of the page of the measured numbers, where a number is a record.
 
-A measure chart (`GLOSSARY.md`) is an entry of `site_measure_charts`: the pattern of its measure in `site_measures`, a title, its one unit, the value kind of its numbers, one or two sentences, and at most 5 bars, each with its label and the words of the line of the log that come just before its number.
+A measure chart (`glossary/project.md`) is an entry of `site_measure_charts`: the pattern of its measure in `site_measures`, a title, its one unit, the value kind of its numbers, one or two sentences, and at most 5 bars, each with its label and the words of the line of the log that come just before its number.
 
 | Chart | Bars | Unit |
 |---|---|---|
@@ -473,7 +491,7 @@ Before it, the home showed 20 pictures in 7 groups, from a list of its own, and 
 
 ### The gallery table
 
-The gallery table (`GLOSSARY.md`) is the one source of the pictures of the screen that the site shows: `site_gallery_rows`. A row is:
+The gallery table (`glossary/project.md`) is the one source of the pictures of the screen that the site shows: `site_gallery_rows`. A row is:
 
 | Field | What it holds |
 |---|---|
@@ -514,7 +532,7 @@ A picture of the table has the size of the screen of the system, 1024 by 768 pix
 
 ### The page of the gallery
 
-`gallery/` is the gallery (`GLOSSARY.md`): every picture of the table, in its groups. It has the presentation layout.
+`gallery/` is the gallery (`glossary/project.md`): every picture of the table, in its groups. It has the presentation layout.
 
 - From the top: the heading, the count of the pictures and of the groups, one paragraph, then the links to the groups (the squares of the doors of the home, `.doors`), then each group.
 - A group is a `<section>` with its heading (`group-<slug of its title>`), its sentence with the count of its pictures, and its pictures in two columns from 720 pixels, one under it.
@@ -547,7 +565,7 @@ The tool writes a thumbnail for each picture, `pictures/thumbnails/<name>.png` (
 
 ### The carousel of the home
 
-The home shows a carousel (`GLOSSARY.md`) in the place of its 20 pictures: the rows of the table with `home`, at most 8 (`SITE_HOME_PICTURE_LIMIT`), in the order of the table. Today: the desktop, the palette, the completion list of the console, the program `heron`, the rights, the developer tool, the HTTP server and the boot display. The code is `site_carousel_write`.
+The home shows a carousel (`glossary/project.md`) in the place of its 20 pictures: the rows of the table with `home`, at most 8 (`SITE_HOME_PICTURE_LIMIT`), in the order of the table. Today: the desktop, the palette, the completion list of the console, the program `heron`, the rights, the developer tool, the HTTP server and the boot display. The code is `site_carousel_write`.
 
 The form works with no script:
 
@@ -605,14 +623,14 @@ Not done: the page graph names no `ImageGallery` for the page; the script has no
 
 The site gives a search engine a sitemap and a page graph in JSON-LD. The code is `tools/modustool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
 
-A canonical address, an address of Open Graph and an `@id` of JSON-LD must be absolute: a relative one is wrong for the program that receives it. So each part that needs one is written only with a site address (`GLOSSARY.md`), and the command lists the parts that it did not write.
+A canonical address, an address of Open Graph and an `@id` of JSON-LD must be absolute: a relative one is wrong for the program that receives it. So each part that needs one is written only with a site address (`glossary/project.md`), and the command lists the parts that it did not write.
 
 | Part | With no site address | With a site address |
 |---|---|---|
 | `lang`, the viewport, the title, the description, a theme color for each color scheme, the icons (`favicon.ico`, the SVG icon and the icon of a phone; see "The icons"), the manifest, the links to the two feeds, `rel=prev` and `rel=next` between guides (the reading order of the page of the guides) | Written | Written |
-| The canonical address (`GLOSSARY.md`) | No | `<site address>/<folder of the page>/`, as `<site address>/docs/reference/licenses/`; the home is `<site address>/` |
+| The canonical address (`glossary/project.md`) | No | `<site address>/<folder of the page>/`, as `<site address>/docs/reference/licenses/`; the home is `<site address>/` |
 | Open Graph: `og:type` (`article` for a guide, else `website`), `og:site_name`, `og:title`, `og:description`, `og:url`, `og:image` with its type, width, height and alt; `twitter:card` `summary_large_image`, which reads the rest from Open Graph | No | Written; the picture is `pictures/mark_card.png` |
-| The page graph (`GLOSSARY.md`) | No | One `<script type="application/ld+json">` in the head |
+| The page graph (`glossary/project.md`) | No | One `<script type="application/ld+json">` in the head |
 | `sitemap.xml`, `robots.txt` | Not written | Written |
 | `news.xml`, `releases.xml`, `llms.txt` | Relative links, no link `self` | Absolute links, a link `self` in each feed |
 
@@ -680,6 +698,13 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | Wakes in one second under EEVDF | `test_output_scheduler_1.txt` | `scheduler: EEVDF: two threads that wake each other` | yes |
 | One glyph of the vector font | `test_output.txt` | `vector_glyphs: one glyph from its outline` | yes |
 | A full frame of the compositor (the last line) | `test_output.txt` | `compositor: a full frame of` | no |
+| A clear and a present at 1920 × 1080 on the processor | `test_output_measure.txt` | `processor_frame: measure: a clear and a present of 1920x1080` | yes |
+| A full frame of the compositor at 1920 × 1080 with 4 windows, on the processor | `test_output_measure.txt` | `processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows` | yes |
+| A frame of the compositor at 1920 × 1080 in its damage, on the processor | `test_output_measure.txt` | `processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage` | yes |
+| The execution of a draw table of a desktop at 1920 × 1080, on the processor | `test_output_measure.txt` | `processor_frame: measure: the execution of a draw table of 1920x1080 with ` | yes |
+| The time of a frame of the compositor, from its first record to the flip (the last line) | `test_output_measure.txt` | `compositor: measure: the time of a frame, from the first record that the compositor reads to the flip` | yes |
+| The time of a key to the screen, through the console (the last line) | `test_output_measure.txt` | `compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it` | yes |
+| The start of the window of `locks` | `test_output_measure.txt` | `compositor: measure: the start of the window locks, from Program_Start to its first frame: ` | yes |
 | Blocks read in one second, 32 in flight | `test_output_measure_disk.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
 | 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` | yes |
 | The header and the checksum of a UDP datagram, in the program that sends it | `test_output_network.txt` | `net: the header and the checksum of a datagram` | yes |
@@ -745,7 +770,7 @@ How the site chooses, for each number and for the stages of the start:
 
 ## The measure history
 
-The measure history (`GLOSSARY.md`) is the folder `docs/measures/releases/`: one copy of the measure record for each release that a full check measured, named `<release number>.txt`, in the form of the measure record. The intent is `src/md/features/measure_history.md`.
+The measure history (`glossary/project.md`) is the folder `docs/measures/releases/`: one copy of the measure record for each release that a full check measured, named `<release number>.txt`, in the form of the measure record. The intent is `src/md/features/measure_history.md`.
 
 - `modustool changelog release <number>` copies `docs/measures/measures.txt` to `docs/measures/releases/<number>.txt`, and `ship` commits it with the release. When the record holds the run of the copy of the release before (the same `time` and the same `commit`), no full check ran between the two releases: the release gets no copy, and the command says so.
 - `modustool measure-history` gives a copy to each release tag whose tree holds a measure record, with the same rule, and changes no file that exists (`TOOLS.md`, "The release").
@@ -777,7 +802,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 | Spleen | `src/library/support/graphics/FONT_LICENSE`: line 1 `... comes from Spleen 8x16 <version>`, line 2 `(<address>).`, a line `SPDX-License-Identifier: <identifier>`, a line `Copyright ...` |
 | The pointer themes | `resources/pointers/system.manifest` and `posy.manifest`: the lines `theme <name>`, `license <SPDX identifier>`, `attribution <text>` |
 | The cryptography | `src/library/support/cryptography/LICENSE.odin.txt` (`(zlib)`, `tag <release>`, `(https://...)`), `LICENSE.fiat-crypto.txt` (`(BSD-1-Clause)`), the count of the lines of `origin.manifest` |
-| The portraits of `hall_of_fame` | `resources/hall_of_fame/CREDITS.md`: one row of a table for each picture, with five cells: the PNG file in backquotes, the person, the source with its address `https://...`, the author and the license. One row of the page for each picture; its place is the file of pixels in `src/programs/hall_of_fame/portraits/`. The license words `CC BY 3.0`, `CC BY 4.0`, `CC BY-SA 4.0` and `CC0` show as their SPDX identifiers |
+| The portraits of `hall_of_fame` | `resources/hall_of_fame/CREDITS.md`: one row of a table for each picture, with five cells: the PNG file in backquotes, the person, the source with its address `https://...`, the author and the license. One row of the page for each picture; its place is the file of pixels in `src/modules/demonstrations/hall_of_fame/portraits/`. The license words `CC BY 3.0`, `CC BY 4.0`, `CC BY-SA 4.0` and `CC0` show as their SPDX identifiers |
 | Versions and pins | `flake.nix`: `odinRelease = "<release>";` then `owner`, `repo`, `hash`; `buildTools = [...];`; `config.allowUnfreePredicate = ... == "<name>";`; a fetcher `<name> = name: hash:` and its line `url = "https://raw.githubusercontent.com/<owner>/<repository>/<commit>/..."`; the font sources `"<font>=${<fetcher> "<file>" "<hash>"}"` or `"<font>=${pkgs.<package>}/..."`; `OVMF_CODE = "${pkgs.<package>.fd}/..."`; `FONT_SOURCE = "${pkgs.<package>}/..."`. `flake.lock`: the first `"rev": "<commit>"` after the line `"nixpkgs": {` |
 | In the boot image | The table of `build/boot.image` of the last build; "not recorded" when the image is not built |
 
@@ -863,7 +888,7 @@ The bar is one line of 41 pixels, and the parts under it are placed by that heig
 | Part | Sections | Table |
 |---|---|---|
 | Buttons | Docs, Gallery, News | `site_bar_buttons` |
-| The project menu (`GLOSSARY.md`): a button "Project" and a panel under it | Status, Releases, Roadmap | `site_project_menu_sections` |
+| The project menu (`glossary/project.md`): a button "Project" and a panel under it | Status, Releases, Roadmap | `site_project_menu_sections` |
 
 **The rule that decides what is a button.** A button is what a first reader looks for: what the system is and how it works (Docs), what it looks like (Gallery), what is new (News). The project menu holds the pages that report how the project goes: what is built and what is missing, what each release brought, what is planned. The pictures are one click from each page; the roadmap is two clicks. The word of the button is the name of the group "Project" of the glossary. A section under the home is in one of the two tables: a host test fails for a section in neither or in both.
 
@@ -900,7 +925,7 @@ Refused: a second line of the bar; smaller text; icons with no word; one menu bu
 
 The code is `tools/modustool/site_subscribe.odin`; its host tests are `site_subscribe_test.odin`; the intent is `src/md/features/site_subscribe.md`.
 
-The subscribe menu (`GLOSSARY.md`) is on the two pages that show the changes: `releases/` and `news/`. It stands under the heading of the page, at the left edge of the text column.
+The subscribe menu (`glossary/project.md`) is on the two pages that show the changes: `releases/` and `news/`. It stands under the heading of the page, at the left edge of the text column.
 
 | Line of the panel | Target |
 |---|---|
@@ -922,7 +947,7 @@ The label of the feed is "Atom feed": the two feeds are Atom, and the site write
 
 A button shows when the pointer is over it and when it is pressed. The code is `tools/modustool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
 
-A site control (`GLOSSARY.md`) is a part of a page that a reader presses. Before this rule a button had no sign of the pointer: a link under the pointer takes the track color, and a button is already a rectangle of the track.
+A site control (`glossary/project.md`) is a part of a page that a reader presses. Before this rule a button had no sign of the pointer: a link under the pointer takes the track color, and a button is already a rectangle of the track.
 
 One table, `site_controls`, names every control with its selector and its form. One procedure writes the rules of its states (`site_control_rules`), at the end of the style sheet, so a state wins over the look at rest. No control has rules of states of its own.
 
@@ -960,11 +985,11 @@ The writer of each page states its layout (`Site_Page.layout`); the tool does no
 | Layout | Pages | Form |
 |---|---|---|
 | Presentation | The home, the docs home, the news, the releases, the roadmap, the gallery | One centred column of at most 1152 pixels |
-| Documentation (`GLOSSARY.md`) | Each guide, each reference page, the index and the page of each group of the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
+| Documentation (`glossary/communication.md`) | Each guide, each reference page, the index and the page of each group of the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
 
-The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a heading for each group (Kernel, Programs, Modules) and the modules of the group under it, and "Status". The tree is whole: it has no `details`, and no part of it is folded. Each list under an item is a list of tree lines (see "The tree lines"). The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
+The documentation tree (`glossary/project.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index (under the glossary, each of its groups with the count of its terms), "Modules" with a heading for each group (Kernel, Programs, Modules) and the modules of the group under it, and "Status". The tree is whole: it has no `details`, and no part of it is folded. Each list under an item is a list of tree lines (see "The tree lines"). The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
 
-"On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, and each element that states a symbol with `data-outline`, in the order of the page. It is a tree of two levels: the title and each heading h2 are the items of its first list; a heading h3 or a symbol is a branch of the item before it, in a list of tree lines (see "The tree lines"), so a symbol with no heading h2 before it is a branch of the title. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
+"On this page" (`glossary/project.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, and each element that states a symbol with `data-outline`, in the order of the page. It is a tree of two levels: the title and each heading h2 are the items of its first list; a heading h3 or a symbol is a branch of the item before it, in a list of tree lines (see "The tree lines"), so a symbol with no heading h2 before it is a branch of the title. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
 
 The text keeps a measure of 80 characters (`80ch`) for paragraphs, items, headings and quotes; a table, a block of code and a figure take the whole middle column, and a table still scrolls in its own box.
 
@@ -980,7 +1005,7 @@ Print shows the middle column only: the bar, the tree, "On this page", the bread
 
 ### The tree lines
 
-A navigation of the site that is a tree shows its levels by tree lines (`GLOSSARY.md`), as a file tree does, not by its indentation alone. The rule is one for every tree: each list under an item of another list, inside a `nav` element, has the class `tree-lines` (`SITE_TREE_LINES_LIST_OPEN` in `tools/modustool/site_documentation.odin`), and the style sheet draws the lines of each item of such a list. No tree has a rule of its own for the indentation of a level.
+A navigation of the site that is a tree shows its levels by tree lines (`glossary/project.md`), as a file tree does, not by its indentation alone. The rule is one for every tree: each list under an item of another list, inside a `nav` element, has the class `tree-lines` (`SITE_TREE_LINES_LIST_OPEN` in `tools/modustool/site_documentation.odin`), and the style sheet draws the lines of each item of such a list. No tree has a rule of its own for the indentation of a level.
 
 The trees of the site:
 
@@ -1027,7 +1052,7 @@ The host tests: `site_documentation_tree_has_tree_lines` (each list under an ite
 
 A technical value, such as a handle or a number, is in the monospace font, with a color and an icon. The rule of the two fonts of the desktop holds (`DESIGN.md`, "5. Text"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/modustool/site_values.odin`.
 
-The value kinds (`GLOSSARY.md`) are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/contract/value_kinds`), with the name of each kind (`VALUE_KIND_NAMES`, the class `value-<name>`): a log record of the system keeps the same kinds. The color of each kind is one table of the system, `src/library/support/graphics/value_colors.odin`: an accent of `src/library/support/graphics/rules.odin` with a `graphics.shade` for each color scheme (`DESIGN.md`, "The colors of values"); the program `log` reads the same table. The icon of each kind is its kind icon (`GLOSSARY.md`), one table of the system too, `src/library/support/kind_icons` (12 by 12 cells, `#` a cell; `DESIGN.md`, "The icons of the kinds"): the palette of the desktop draws the same cells. The table of the site, `site_value_kinds`, gives each kind what only the site shows: its title and its meaning. The contrast is that of the text of a value on the two surfaces of a table: the background and the band of every second row (dark: `0x0B1018`, `0x17212E`; light: `0xF4F6F8`, white). A host test computes each one.
+The value kinds (`glossary/project.md`) are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/contract/value_kinds`), with the name of each kind (`VALUE_KIND_NAMES`, the class `value-<name>`): a log record of the system keeps the same kinds. The color of each kind is one table of the system, `src/library/support/graphics/value_colors.odin`: an accent of `src/library/support/graphics/rules.odin` with a `graphics.shade` for each color scheme (`DESIGN.md`, "The colors of values"); the program `log` reads the same table. The icon of each kind is its kind icon (`glossary/desktop.md`), one table of the system too, `src/library/support/kind_icons` (12 by 12 cells, `#` a cell; `DESIGN.md`, "The icons of the kinds"): the palette of the desktop draws the same cells. The table of the site, `site_value_kinds`, gives each kind what only the site shows: its title and its meaning. The contrast is that of the text of a value on the two surfaces of a table: the background and the band of every second row (dark: `0x0B1018`, `0x17212E`; light: `0xF4F6F8`, white). A host test computes each one.
 
 | Kind | Icon | Accent | Dark: color, contrast | Light: shade, color, contrast |
 |---|---|---|---|---|
@@ -1082,7 +1107,7 @@ The legend: the reference index ends with the section "The kinds of values", a t
 
 ### The versions of the files
 
-The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`src/library/contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js`, `carousel.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely. One exception: the sprite sheets of the animations of the mark change with each new frame, and `mark_animation.js` cuts them by the places of its own table, so the script names each sheet with the version of its bytes.
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`glossary/project.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`src/library/contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js`, `glossary.js`, `carousel.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons, the pictures and the font of the name of the mark carry no version: their bytes come from the mark and the repository and change rarely. One exception: the sprite sheets of the animations of the mark change with each new frame, and `mark_animation.js` cuts them by the places of its own table, so the script names each sheet with the version of its bytes.
 
 ### A page of an older build
 
@@ -1140,7 +1165,7 @@ The alt text of the heron of the home is the description of the mark of `README.
 
 ### The name of the mark
 
-Where the site shows the name of the system as the mark, the name is text in the font of the name of the mark (`GLOSSARY.md`; `DESIGN.md`, "The font of the name"). The code is `tools/modustool/site_mark_name.odin`.
+Where the site shows the name of the system as the mark, the name is text in the font of the name of the mark (`glossary/project.md`; `DESIGN.md`, "The font of the name"). The code is `tools/modustool/site_mark_name.odin`.
 
 - The places: the bar (after the heron), the foot (before "· by"), and the title of the home (the `h1`, beside the heron). The name in a sentence stays in the reading font: "the documentation of modus" is prose, not the mark.
 - The markup, one constant (`SITE_MARK_NAME_HTML`): `<span class="mark-name">modus</span>`. The text is `SITE_SYSTEM_NAME`. It is real text: a reader selects it, a search of the page finds it, and a screen reader says "modus".
@@ -1283,13 +1308,13 @@ Each table is read from the text of the file that defines the thing (`tools/modu
 | Kernel operations | `Operation` and `Status` in `src/library/contract/operation/operation.odin` | An enumeration: a line `<Name> :: enum <type> {`, one member a line (`<Name> = <decimal>,` or `<Name>,`, with a comment `// ...` or not), a line `}`. A line that is only a comment continues the comment of the member above it. The comment of an operation is `(<parameters>) -> <result>. <text>` or `(<parameters>): <text>`: the parameters and the result exist only as these words, and the table shows them |
 | The context of a program | The constants `CONTEXT_...` and `ROOT_...` of `src/library/contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `src/library/support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle. Three tables: the roles that the system fixes for each program, the roles of the first program (`ROOT_...`), and the roles of a program that the root service starts. The page starts with the comment above `CONTEXT_HANDLES` (what the context is, and why a program finds each thing at a fixed place); the comment above `CONTEXT_VALUES` (how the values are numbered) heads the first table |
 | Error kinds and units | `Kind`, `Unit` and `UNIT_NAMES` in `src/library/contract/errors/errors.odin` | Enumerations; a table `UNIT_NAMES := [Unit]string {` of lines `.<Name> = "<text>",` |
-| Grants of the root service | `Grant` in `src/library/contract/start_grant/start_grant.odin` (each member has its number: `<Name> = <number>,`); the procedure `grants_of` in `src/programs/root/main.odin`; `Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin` | Enumerations and a table of names. `grants_of` is read by the parser of Odin (`site_name_switch_read`): the body is a switch on the name, then one `return`, the value of each other program; each case names programs by strings, and its body is one `return` of a literal with no type: a set of members (`{.Inspect, .Image}`). The comment of a case is the comment of each of its lines. Any other form (a constant, a typed literal, an expression, a default case, a case with no return) stops the command with its line, and so does a member of a set that `Grant` does not have |
+| Grants of the root service | `Grant` in `src/library/contract/start_grant/start_grant.odin` (each member has its number: `<Name> = <number>,`); the table `program_roles` in `src/modules/system/root/roles.odin`; `Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin` | Enumerations and a table of names. `program_roles` is read by the parser of Odin (`site_role_table_read`): each row is a record literal with no type, with the fields `name` (a string), `grants` (a set of members with no type: `{.Inspect, .Image}`) and `terms` (a record with no type and no comment inside it), each at most once. The comment of a row is the comment lines above it and the comment of its own lines. The table of the page has one row for each program: its grants, its other terms as the source writes them, and the comment. Any other form (a constant, a typed literal, an expression, another field, a field twice, a row with no name) stops the command with its line, and so does each fault that stops the build (`docs/TOOLS.md`, "The table of the roles of the root service"): a program of the boot image with no row, a row of no program, a program with two rows, a grant that `Grant` does not have |
 | Fixed ranges | `Fixed_Range` in `src/library/contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract. The page starts with the comment of the package (why an address is fixed, and the band), then the start of the band and the size of a slot from the compiled contract |
-| Commands of the console | `src/programs/console/commands.odin`, `src/programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter. The comment lines just above a line `command(` are the documentation of the command: the text of its symbol, and the first sentence of it is the cell "What it does"; the help is a fact of the symbol, "What help() prints". The page starts with the comment above `Command :: struct` (what a command is, and how commands compose), and the section "The commands of tables" with the comment above `tables_start` |
+| Commands of the console | `src/modules/system/console/commands.odin`, `src/modules/system/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter. The comment lines just above a line `command(` are the documentation of the command: the text of its symbol, and the first sentence of it is the cell "What it does"; the help is a fact of the symbol, "What help() prints". The page starts with the comment above `Command :: struct` (what a command is, and how commands compose), and the section "The commands of tables" with the comment above `tables_start` |
 
 Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file, with its document references (see "The references to documents"). Then the table. A cell that holds a comment of the source (a member of an enumeration, a role, a grant, a range, the comment of a case of the root service) has its document references too.
 
-The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`GLOSSARY.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
+The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`glossary/project.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
 
 - its name, as a heading with its id (`operation-<name>`, `command-<name>`, `tool-command-<name>`, `export-<name>`), which "On this page" lists; the name in the table is a link to it;
 - its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c modustool <name>`, an export as the console prints it;
@@ -1303,19 +1328,19 @@ What the tables cannot show:
 
 - The values 13 and 15 of the context (the settings page and the date page) have a comment in `src/library/contract/operation` and no constant: they are not in the table.
 - A heading comment inside an enumeration shows under the member before it: the form cannot tell it from a comment that continues. The kernel operations have none: the text of each operation is under its own member.
-- The limits of processor time and of log records of a program come from `budget_of` in `src/programs/root/budgets.odin`, a computation: the page names it and does not show its values.
+- The limits of processor time and of log records of a program come from `budget_of` in `src/modules/system/root/budgets.odin`, a computation: the page names it and does not show its values.
 
 ## The module pages
 
-`docs/reference/modules/` lists each module of `module_builds` (`tools/modustool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `src/programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
+`docs/reference/modules/` lists each module of `module_builds` (`tools/modustool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (a row marked `program`: a module with an entry function that the root service starts), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
 
 - its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/modustool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
 - for a module that is a build of the source of another module with settings of its own (`defines` of its row of `module_builds`), a first paragraph before the documentation: "The module `kernel` built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true`", then the comment above its row in `module_builds`, which says why it exists. The documentation after it is the comment of the shared source, which describes the other module. Its description for other sites names its source and its settings;
 - its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
 - its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
-- for a program, its grants from `grants_of` of the root service with the comment of its case, and the budget that it asks for from the constant `MODULE_BUDGET` of its source, read by `describe_package`, with the comment of the constant and a link to its line: each grant a link to its row on the page of the grants; the parts of the budget in this order: the working memory pages, the pages of its threads and the pages of the pictures of its window that the tool counts from the source, the pages of the module and its imports named as counted from the files of the build, then the programs and the threads, each with its value, or "the least" for a programs or threads part that the source does not state; both lists of values; a program with no constant shows "the least budget";
-- its identity card (`GLOSSARY.md`), after its documentation: the same markup as on the page of the module graph (see "The module graph");
+- for a program, its grants and the other terms of its role from its row of `program_roles` of the root service, with the comment of the row (the root service and a disk program have no row, and the page says why), and the budget that it asks for from the constant `MODULE_BUDGET` of its source, read by `describe_package`, with the comment of the constant and a link to its line: each grant a link to its row on the page of the grants; the parts of the budget in this order: the working memory pages, the pages of its threads and the pages of the pictures of its window that the tool counts from the source, the pages of the module and its imports named as counted from the files of the build, then the programs and the threads, each with its value, or "the least" for a programs or threads part that the source does not state; both lists of values; a program with no constant shows "the least budget";
+- its identity card (`glossary/project.md`), after its documentation: the same markup as on the page of the module graph (see "The module graph");
 - its neighbours, after its facts: a figure of the module, the modules that it imports at its left and the modules that import it at its right, drawn by the layout of the module graph on that part of the graph. The module itself is not a link. A module with no edge has one sentence, with a link to its row on the page of the graph.
 
 The index of the modules links to the page of the module graph.
@@ -1324,7 +1349,7 @@ The index of the modules links to the page of the module graph.
 
 The module graph shows the imports of each module, to debug a module and to see its dependencies. The code is `tools/modustool/site_module_graph.odin`; its host tests are `site_module_graph_test.odin`. The same facts for what runs now are `manual.edges()` (`MODULE_CONTRACT.md`, "Replacement of an import").
 
-`docs/reference/module-graph/` draws the module graph (`GLOSSARY.md`) of the build. The reference index, the card of the reference of the docs home and the tree list it after the modules, and the index of the modules links to it.
+`docs/reference/module-graph/` draws the module graph (`glossary/code.md`) of the build. The reference index, the card of the reference of the docs home and the tree list it after the modules, and the index of the modules links to it.
 
 ### What a node and an edge are
 
@@ -1368,13 +1393,13 @@ With the script (`module_graph.js`, loaded with `defer` by this page only, `Site
 
 ### The identity card
 
-The identity card (`GLOSSARY.md`) of a module: its name (a link to its page, but on its own page), its kind, its hash (64 hexadecimal digits), its size, the count of its exports (the entry is not counted), of its imports and of the modules that import it, its license, and the first sentence of its documentation with no reference. Its license: the license of the system, then each row of the licenses whose place is in the source folder of the module (the portraits of `hall_of_fame`), each a link to its row on the page of the licenses. One procedure writes it on the page of the graph and on the page of the module (`site_module_card_write`); one procedure gathers its facts (`site_module_card_of`).
+The identity card (`glossary/project.md`) of a module: its name (a link to its page, but on its own page), its kind, its hash (64 hexadecimal digits), its size, the count of its exports (the entry is not counted), of its imports and of the modules that import it, its license, and the first sentence of its documentation with no reference. Its license: the license of the system, then each row of the licenses whose place is in the source folder of the module (the portraits of `hall_of_fame`), each a link to its row on the page of the licenses. One procedure writes it on the page of the graph and on the page of the module (`site_module_card_write`); one procedure gathers its facts (`site_module_card_of`).
 
 ## The references to documents
 
 A reference to a document in a text, such as "docs/ARCHITECTURE.md, systems K1 to K5", is a link with a style of its own, not bare text that a reader cannot follow. The code is `tools/modustool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
 
-A comment of the source names a document for a person who reads the code: a document pointer (`GLOSSARY.md`). The rule of the comments allows it. On a page, the path and a label such as "U3" or "section 8" mean nothing: the site writes a document reference (`GLOSSARY.md`) in its place.
+A comment of the source names a document for a person who reads the code: a document pointer (`glossary/project.md`). The rule of the comments allows it. On a page, the path and a label such as "U3" or "section 8" mean nothing: the site writes a document reference (`glossary/project.md`) in its place.
 
 ### The forms of a pointer
 
@@ -1401,11 +1426,11 @@ A comment of the source names a document for a person who reads the code: a docu
 - `item <n>`: the one top-level item of an ordered list with that number. The reference shows its words in bold, else its first sentence.
 - A quoted label that no heading has, as the last label: the words in bold at the start of a line (`- **The frame caches** ...`) of the part. The reference shows them and links to the heading above them.
 - `sections 4 and 5`: two references.
-- The glossary: a quoted label is first a term: its entry, at the anchor `term-<name>` on the page of its group; else the heading of a group: the page of the group.
+- The file of a group of the glossary: a quoted label is first a term of that group: its entry, at the anchor `term-<name>` on the page of its group; else the heading of the group: the page of the group. A term of another group does not resolve. The index of the folder, `docs/glossary/README.md`, has its title only.
 
-A pointer whose labels do not all find their place names the document alone: the reference shows the title, never the label, and the command counts the pointer as not resolved. A path that names no document of `docs/` is not a pointer: its text stays.
+A pointer whose labels do not all find their place names the document alone: the reference shows the title, never the label, and the command counts the pointer as not resolved. A path that names no document of `docs/` is not a pointer: its text stays. A document is `docs/<NAME>.md`, or a file of the glossary, `docs/glossary/<name>.md`; in a guide, a code span names a file of the glossary by its folder (`glossary/text.md`), because its name alone is the name of other files.
 
-The headings of a guide are those of its rendered page, with their ids: `site_guides_add` renders every guide once for its headings and its items before it writes any page, so a guide refers to a guide after it. A working record (`SITE_WORKING_RECORDS`) is not a page: its reference links to the line of the heading or the item in the file at the commit, and says "in the repository". An intent file (`GLOSSARY.md`, "Intent file") is a working record by its path: a pointer names it by its whole path from the root, `src/md/features/palette.md`, because its file name alone can be the name of another file. A pointer to an intent file that the folder does not have stops the command.
+The headings of a guide are those of its rendered page, with their ids: `site_guides_add` renders every guide once for its headings and its items before it writes any page, so a guide refers to a guide after it. A working record (`SITE_WORKING_RECORDS`) is not a page: its reference links to the line of the heading or the item in the file at the commit, and says "in the repository". An intent file (`glossary/project.md`, "Intent file") is a working record by its path: a pointer names it by its whole path from the root, `src/md/features/palette.md`, because its file name alone can be the name of another file. A pointer to an intent file that the folder does not have stops the command.
 
 ### The markup, and where the references go
 
@@ -1421,13 +1446,13 @@ A code span of a guide, of the glossary or of a news entry that names a document
 
 The command prints "N document references, M with no heading found: <the first three>": N is the count of the different pointers of the pages and of the code spans of the guides that name a document, M those whose labels found no place.
 
-Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `src/kernel`, `src/programs`, `src/modules`, `src/library/support`, `src/library/contract`, `src/runtime` and `src/boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and the intent files. In an intent file, a link to a guide with the heading of a place after it is a pointer too (`TOOLS.md`, "The intent folder"). A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. The target of a link `[text](docs/X.md#id)` is not a pointer; the same pass checks each link of the comments (see "The links of a comment"). A guide names no working record of `docs/` and no decision; it can name an intent file, which holds the reasons of a design. The one working record is `docs/SITE.md`: it is not a page of the site, and a link to it names the file in the repository.
+Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `src/kernel`, `src/modules`, `src/library/support`, `src/library/private`, `src/library/contract`, `src/runtime` and `src/boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and the intent files. In an intent file, a link to a guide with the heading of a place after it is a pointer too (`TOOLS.md`, "The intent folder"). A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. The target of a link `[text](docs/X.md#id)` is not a pointer; the same pass checks each link of the comments (see "The links of a comment"). A guide names no working record of `docs/` and no decision; it can name an intent file, which holds the reasons of a design. The one working record is `docs/SITE.md`: it is not a page of the site, and a link to it names the file in the repository.
 
 A name of a document on a page is a reference to a real place, or a link, or it is not there. Before it writes a page, the command reads the text of each page, outside a link, a code element, a block of code, a script and a style, and stops on a name of a document there (`site_document_name_problem`), with the page and the words around the name. A name of a document is `docs/<NAME>.md` (by its form, also when no such file exists), or `<NAME>.md` for a guide, a working record, `README.md`, `CHANGELOG.md` or `AGENTS.md` (`site_document_names`), as a whole word: a `/` can come before it (`news/README.md`), a letter, a digit or a period cannot. An attribute is not text. No text is an exception: a document that a page names is a reference, a link or code. The form of each source: in a guide, a code span (`` `DESIGN.md`, section 5 ``), also in a cell of a table, which the renderer writes as prose; in a source comment, the pointer `(docs/DESIGN.md, section 5)`; in the text of a command of the tool, a code span, which the page of the commands writes as code in its table and as a link to the file under it. The host test `site_document_names_are_never_bare` holds the cases.
 
 ## The Markdown of a source comment
 
-A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/private/manual/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -1455,6 +1480,7 @@ A code span that names a thing links to it by itself: it stays the usual form of
 | An address of another host | `https://www.rfc-editor.org/rfc/rfc8439` | That address |
 | `term:` and a term | `term:handle` | The entry of the term on the page of its group of the glossary, by its name with no regard to case, from the terms that the reader of the glossary gives: a link of the class `term`, with its short definition as its `title`, as a term that a guide links |
 | A guide, or its heading by the id of the heading | `docs/ARCHITECTURE.md#the-fault-ring` | The page of the guide, at that heading. A working record is not a page: it is refused |
+| A file of the glossary, or a term or the group of the file by its id | `docs/glossary/access.md#term-handle` | The page of the group, at that entry. An id of another group is refused |
 | A name of a row | `Memory_Map`, `No_Grant`, `math`, `load()` | The row, by the rule of the code spans |
 | A module and its export | `manual.edges` | The export on the page of its module |
 | A declaration | `fault_deliver`, `operation.Fault_Record`, `system.word_wait` | The declaration, with its card; a type of the contract opens its type card. A name that several packages declare, or a common word, takes its package |
@@ -1469,9 +1495,9 @@ The documentation of a module is the same comments (`describe_package`). The mod
 
 ### The reader of the system
 
-The part of Markdown of a comment has two readers, and one rule: the table of this section. The site has the renderer of the guides in its mode for comments. The programs of the system have `src/library/support/source_comment_markdown`: a library with no allocator, which the program `manual` uses for the documentation text of a module.
+The part of Markdown of a comment has two readers, and one rule: the table of this section. The site has the renderer of the guides in its mode for comments. The programs of the system have `src/library/private/manual/source_comment_markdown`: a library with no allocator, which the program `manual` uses for the documentation text of a module.
 
-The library reads the text once and gives it in order, as Markdown blocks and Markdown spans (`GLOSSARY.md`), to two procedures of its caller (`read`) or into two tables of its caller (`read_into_table`). A block and a span are ranges of bytes of the text: nothing is copied.
+The library reads the text once and gives it in order, as Markdown blocks and Markdown spans (`glossary/text.md`), to two procedures of its caller (`read`) or into two tables of its caller (`read_into_table`). A block and a span are ranges of bytes of the text: nothing is copied.
 
 | Part | What the library gives |
 |---|---|
@@ -1510,7 +1536,7 @@ Each data type has a card: its kind, its size, its alignment and its fields. The
 
 ### What a type card holds
 
-Each type has a type card (`GLOSSARY.md`). The facts come from the compiler, never from a number typed by hand: the tool imports the contract packages, and `type_info_of(T)` gives the size, the alignment, each field with its name, type and offset, each member of an enum with its value, the element and the underlying type of a bit set, the base of a distinct type, and the variants of a union. The declaration (its source text), its comment and its line come from the parser of Odin (`core:odin/parser`), as the descriptions of the modules do.
+Each type has a type card (`glossary/project.md`). The facts come from the compiler, never from a number typed by hand: the tool imports the contract packages, and `type_info_of(T)` gives the size, the alignment, each field with its name, type and offset, each member of an enum with its value, the element and the underlying type of a bit set, the base of a distinct type, and the variants of a union. The declaration (its source text), its comment and its line come from the parser of Odin (`core:odin/parser`), as the descriptions of the modules do.
 
 | Kind | Rows | The card |
 |---|---|---|
@@ -1518,7 +1544,7 @@ Each type has a type card (`GLOSSARY.md`). The facts come from the compiler, nev
 | Enum | The same packages | Its base type; a table of the members, with each value in decimal and in hexadecimal (a negative value as the bytes of its base hold it) |
 | Bit set | The same packages; each one of the contract is an alias | Its enum, its underlying type, the type that the alias names; a table of the bits and their masks |
 | Distinct | The same packages | Its base |
-| Wire form (`GLOSSARY.md`) | The members of `Type` of `src/library/contract/module` but None | The comment of the member in `src/library/contract/module/format.odin`; one word of a call, a register or a word of the stack (`PARAMETER_CAPACITY`); the types of the module contract that the comment names (`Table_Place`, `Function`); for Handle, the size of `Handle` in a record; a link to the guide of the module contract. A fact that only the guide states is not copied |
+| Wire form (`glossary/project.md`) | The members of `Type` of `src/library/contract/module` but None | The comment of the member in `src/library/contract/module/format.odin`; one word of a call, a register or a word of the stack (`PARAMETER_CAPACITY`); the types of the module contract that the comment names (`Table_Place`, `Function`); for Handle, the size of `Handle` in a record; a link to the guide of the module contract. A fact that only the guide states is not copied |
 | Record of a module | Each record of `Module_Description.records` of each module | The size and the offsets of the description that the build writes; the size of a field from its wire form (an Integer of its detail, 8 for 0; a Handle of `size_of(Handle)`; a Text of its detail); the alignment is the largest of its fields |
 | Basic | `u8` to `i64`, `int`, `bool`, `rawptr`, `uintptr`, `string`, `[]u8` (`site_basic_types`) | Its size and alignment, and one line of what it is |
 
@@ -1571,7 +1597,7 @@ A code span of a guide, of a news entry or of a source comment that names a type
 
 ## The byte layouts
 
-A byte layout (`GLOSSARY.md`) draws one record of a format as the header diagrams of the RFCs do: where each byte is. The code is `tools/modustool/byte_layout.odin`; its host tests are `byte_layout_test.odin`. The design and the refused forms are in `src/md/features/byte_layout.md`.
+A byte layout (`glossary/project.md`) draws one record of a format as the header diagrams of the RFCs do: where each byte is. The code is `tools/modustool/byte_layout.odin`; its host tests are `byte_layout_test.odin`. The design and the refused forms are in `src/md/features/byte_layout.md`.
 
 ### The table of sources
 
@@ -1623,6 +1649,60 @@ The id of a diagram is `byte-layout-<key>`, as the rule of the ids gives it (`by
 - `byte_layout_guides_hold_the_text_of_the_code`: the fences of the guides hold the text that the code gives.
 - `byte_layout_fence_on_a_page`: a fence becomes a diagram with no style attribute, and a wrong body is a fault.
 
+## The diagrams
+
+A fence `mermaid` of a guide is a diagram. The tool draws it as a picture in SVG inside the page when it builds the site: no script, no library of another host, no fetch. The code is `tools/modustool/site_diagram_source.odin` (the reader), `site_diagram_layout.odin` (the layout) and `site_diagram.odin` (the markup and the rules of the style sheet); its host tests are `site_diagram_test.odin`. The design and the refused forms are in `src/md/features/site_diagrams.md`.
+
+### What the tool reads
+
+The subset of mermaid that the guides use, and no more:
+
+- `flowchart LR` or `flowchart TB`;
+- a node `id["label"]`, alone on its line or at an end of an edge; an id has letters, digits and `_`;
+- an edge `a --> b`, `a -- "label" --> b` (a line) or `a -. "label" .-> b` (a dashed line);
+- `subgraph id["label"]`, its nodes, then `end`; an edge can name a subgraph, and ends at its box;
+- `sequenceDiagram`, with `participant id` or `participant id as name`, then the messages `a->>b: text`, also `a->>a: text`.
+
+Each other line is a fault: another kind or direction, another arrow, another shape, a node with no label, an id declared twice, an edge that names nothing or stays inside one box, a subgraph inside a subgraph, an edge inside a subgraph, a subgraph with no node or no end, a participant that no line above declares, a message with no text, a note, a loop, a style, a comment. A label with `<`, `>`, `#`, `;` or a backtick is a fault too: mermaid reads these as markup or as the end of a statement. A cycle of edges is a fault: a flowchart is drawn in ranks, each target after its sources. An empty diagram, a flowchart with no node and a sequence diagram with no participant are faults.
+
+`modustool site` stops on a fault with the file and the line: "docs/ARCHITECTURE.md, line 47: the edge names hw2, which is no node and no subgraph", then "N diagrams cannot be drawn; no page is written". The line of the fence itself names an empty diagram.
+
+### The text
+
+The text of a diagram is in B612, the interface font of the system, at 14 pixels, with lines of 20 pixels. The site serves the subset of the repository as `fonts/b612.ttf`. The text of the pages is in the font of the system of the reader, whose advances no build can know; the tool reads the advances and the pairs of B612 and measures each line. Each line carries its measured width in the SVG, so it keeps that width in any font. A character that the font lacks is a fault.
+
+A label wraps at its spaces onto more lines: a node at 176 pixels, the label of a subgraph at 160, the label of an edge at 160, a participant at 160, a message at 320 or at the width between its two lifelines when that is less, a message to the same participant at 240. A line is wider than its bound only when it is one word that is wider than the bound by itself: that word is a line of its own, and its box grows to hold it. No text is cut, and a host test checks each line of each picture against its bound.
+
+### The layout of a flowchart
+
+- The subgraphs and the nodes outside each subgraph are the units. A unit that no edge enters has the rank 0; another has two more than the rank of each source.
+- Each edge has a unit in each rank between its ends: its label in the first one, a lane in the others. A label is a box of the layout.
+- Eight passes of the barycenter order each rank, and the order with the fewest crossings is kept. Four passes then move each unit toward its neighbours, 24 pixels apart.
+- In `TB` the ranks are rows, from the top; in `LR` they are columns, from the left. An edge leaves its source and enters its target along that axis, with a straight part of 12 pixels under its arrow head, and is one straight line between two ranks. The ends of the edges on one side of a box are spread along it.
+- A subgraph is a box around its nodes, with its label at the left in `TB` (its nodes in a row) and at the top in `LR` (its nodes in a column), where no edge passes.
+
+### The layout of a sequence diagram
+
+The participants are columns in their order, a box at the top with a lifeline under it. The columns are apart by their boxes, 24 pixels, and the text of each message between them with 8 pixels at each lifeline. The messages are rows in their order: the text, then the arrow. A message to the same participant is a loop at the right of its lifeline, its text at the right of the loop and before the next lifeline.
+
+### The markup
+
+- A `figure` with the class `diagram` and the id `diagram`, `diagram-2`... of the page.
+- An `svg` with its width, its height and its `viewBox`, `role="img"`, and a `title`: the heading above the diagram and what it shows ("Boot: a sequence diagram of 5 participants and 9 messages"). The style sheet holds the picture to the width of the column, with its shape.
+- Under it, a `details` element "The text of the diagram" with the text of the fence: a screen reader and the search read the labels there.
+- The colors are the tokens of the style sheet: a box on the card color with a dim border, a subgraph on the lower card color with the line color, the lines and the arrow heads in the dim color, a label on the background color. A diagram follows the light and the dark form with no rule of its own. A page has no style attribute.
+
+### The host tests
+
+- `site_diagram_refuses_each_syntax_outside_the_subset`: each refused form gives its fault and its line, and no picture.
+- `site_diagram_refuses_a_cycle`: a cycle of three nodes with an edge into it, and a cycle of two subgraphs, give the line of the first edge of the cycle; two edges in one direction are no cycle.
+- `site_diagram_wraps_a_long_label`: labels of 200 characters wrap; a word of 200 characters makes its box grow.
+- `site_diagram_lays_out_thirty_nodes`: 30 nodes in `TB` and in `LR`, alone and in three subgraphs.
+- `site_diagram_draws_the_diagrams_of_the_guide`: the five diagrams of `ARCHITECTURE.md`, and their markup.
+- `site_diagram_draws_a_sequence_in_rows` and `site_diagram_measures_with_the_font`.
+
+For each picture the tests check that no two boxes overlap (a node lies inside its subgraph, away from its label), each text is inside its box and as wide as the font gives, each edge starts at the border of its source and ends at the border of its target, no line passes over a box but its own, each label of an edge is on its edge, and each message joins its two lifelines.
+
 ## The colors of the code
 
 The code on a page is colored by the tool, with no library of another project. The code is `tools/modustool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
@@ -1657,7 +1737,7 @@ Where it applies: only a block that the tool knows to be Odin.
 - The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
 - A code span of a text that is a fragment of Odin by the test of "The declarations of the sources": a span is short, and the test refuses each form of a command, a path and a log, so a span is colored only when it can be nothing but code.
 
-The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block stays plain. A block of Odin is colored.
+The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block is a diagram (see "The diagrams"). A block of Odin is colored.
 
 The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
 
@@ -1667,7 +1747,7 @@ A code span in a guide that names a procedure links to its declaration, and a co
 
 ### The declaration index
 
-`modustool site` reads the declaration index (`GLOSSARY.md`) before it renders any guide (`site_declarations_read`): each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (`SITE_DECLARATION_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
+`modustool site` reads the declaration index (`glossary/project.md`) before it renders any guide (`site_declarations_read`): each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/library/private` and `src/modules` (`SITE_DECLARATION_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
 
 - its name, its package (the name after `package`), its folder, its file and its line;
 - its kind, from its value: a mutable declaration is a global variable; a procedure literal or a group of procedures is a procedure; a type expression (`struct`, `enum`, `union`, `bit_set`, `distinct`, an array, a pointer...) is a type; a name with a capital and lowercase letters given another name is an alias of a type; any other value is a constant;
@@ -1701,7 +1781,7 @@ What stays plain: commands of the shell and of the tool, paths and file names, s
 - A declaration that is a type of the contract is the reference to its type card (see "The types"), as a value of the kind Type.
 - Another declaration: `<a class="declaration-reference" href="..." data-declaration-card="declaration-<n>" aria-describedby="declaration-<n>-summary"><code class="value value-procedure value-icon">name</code></a>`: a link in the color and with the icon of its value kind (procedure, type, constant, global variable; see "The kinds of values"). The link goes to the page of its module when it is an export of a module of the build (`#export-<name>`), else to its line in the repository at the commit of the build.
 - A name inside a fragment: `<a class="declaration-link" href="...">`, in the class of its token.
-- The declaration card (`GLOSSARY.md`): `<div class="declaration-card" id="declaration-<n>" popover>`: the name as the link, with the icon of its kind; its kind and its package; its one line of Odin, colored; the first sentence of its comment (`id="declaration-<n>-summary"`), or "A procedure with no comment in its source."; its file and line as a link. A page holds the card of each declaration that it links to once, at the end of its text, in the order of the first link (`site_declaration_cards_html`); the type cards come after the declaration cards are known, because a one line of Odin can name a type of the contract (`site_cards_html`).
+- The declaration card (`glossary/project.md`): `<div class="declaration-card" id="declaration-<n>" popover>`: the name as the link, with the icon of its kind; its kind and its package; its one line of Odin, colored; the first sentence of its comment (`id="declaration-<n>-summary"`), or "A procedure with no comment in its source."; its file and line as a link. A page holds the card of each declaration that it links to once, at the end of its text, in the order of the first link (`site_declaration_cards_html`); the type cards come after the declaration cards are known, because a one line of Odin can name a type of the contract (`site_cards_html`).
 - The script opens a card as it opens a type card: a mouse that rests 400 ms on the link, or the focus of the keyboard; it closes 300 ms after the pointer leaves the link and the card. With no script the link works and no card opens; a browser with no popover shows the cards as a list at the end of the text.
 
 ### The size
@@ -1778,7 +1858,7 @@ The home shows one tile for each module of `build/boot.image`: the width from th
 
 A GitHub workflow publishes the site. The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/modustool/site_frame.odin`). `modustool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
 
-The site workflow (`GLOSSARY.md`), `.github/workflows/site.yml`, runs at each push to `master` and by hand (`workflow_dispatch`). It holds no logic: each step calls the tool or an action, and each action is pinned by a version tag.
+The site workflow (`glossary/project.md`), `.github/workflows/site.yml`, runs at each push to `master` and by hand (`workflow_dispatch`). It holds no logic: each step calls the tool or an action, and each action is pinned by a version tag.
 
 | Job | Step | What it does |
 |---|---|---|
@@ -1818,7 +1898,7 @@ The headers: GitHub Pages sends no header that a site chooses. The proxy of Clou
 
 | Header | Value | Why |
 |---|---|---|
-| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the films of the news (`media-src`), the font of the name of the mark (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
+| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), the films of the news (`media-src`), the font of the name of the mark and the font of the diagrams (`font-src`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
 | `X-Content-Type-Options` | `nosniff` | A file is read as its type only |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Another host sees the host of the site, not the page |
 | `X-Frame-Options` | `DENY` | `frame-ancestors` for a browser that does not read it |

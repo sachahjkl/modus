@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A module record says which module is at which addresses of a program ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Module record"). The readers of the records are the stop report, `inspect.modules()`, `manual.running()`, `manual.edges()`, `program_modules()` of the console and the debugger. Each of them names the code of a program by these records.
+A module record says which module is at which addresses of a program ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Module record"). The readers of the records are the stop report, `inspect.modules()`, `manual.running()`, `manual.edges()`, `program_modules()` of the console and the debugger. Each of them names the code of a program by these records.
 
 Before this design, the program itself could replace or remove each of its records with `Program_Module`. A record of the starter was then a claim of the program: a program could remove the record of its own module and write a record with the hash of another module. A reader could not tell which records its starter wrote.
 

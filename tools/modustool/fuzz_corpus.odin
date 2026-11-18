@@ -6,7 +6,7 @@ import "core:slice"
 import "core:strings"
 import "modus:contract/blake3"
 
-// The corpus of the fuzz targets (docs/GLOSSARY.md, "Corpus";
+// The corpus of the fuzz targets (docs/glossary/project.md, "Corpus";
 // src/md/infrastructure/fuzzing.md, "Fuzz findings, minimization and the
 // corpus"): one folder for each target, with its regression inputs and its
 // reach inputs, one file for each input, named by the BLAKE3 hash of its
@@ -105,10 +105,20 @@ fuzz_corpus_problems :: proc(root: string, targets: []Fuzz_Target) -> []string {
 	}
 	total := 0
 	for folder in target_folders {
+		// The corpus of the kernel operations has the form of the corpus
+		// of a target, the bound of its own inputs, and the checks of their
+		// content (operation_corpus.odin).
+		is_operations := folder.name == OPERATION_CORPUS_NAME
 		target, found := fuzz_target_find(targets, folder.name)
-		if !found || folder.type != .Directory {
+		if (!found && !is_operations) || folder.type != .Directory {
 			append(&problems, fmt.tprintf("%s/%s names no fuzz target", root, folder.name))
 			continue
+		}
+		input_limit := OPERATION_REGRESSION_BYTES_MOST
+		if !is_operations {
+			input_limit = target.input_limit
+		} else {
+			operation_corpus_problems(folder.fullpath, &problems)
 		}
 		parts, _ := os.read_all_directory_by_path(folder.fullpath, context.temp_allocator)
 		target_inputs, target_bytes := 0, 0
@@ -122,8 +132,8 @@ fuzz_corpus_problems :: proc(root: string, targets: []Fuzz_Target) -> []string {
 				if input.name != fuzz_input_name(input.bytes) {
 					append(&problems, fmt.tprintf("%s/%s is not named by the BLAKE3 hash of its bytes", part.fullpath, input.name))
 				}
-				if len(input.bytes) > target.input_limit {
-					append(&problems, fmt.tprintf("%s/%s has %d bytes, over the limit %d of its target", part.fullpath, input.name, len(input.bytes), target.input_limit))
+				if len(input.bytes) > input_limit {
+					append(&problems, fmt.tprintf("%s/%s has %d bytes, over the limit %d of its target", part.fullpath, input.name, len(input.bytes), input_limit))
 				}
 				target_inputs += 1
 				target_bytes += len(input.bytes)

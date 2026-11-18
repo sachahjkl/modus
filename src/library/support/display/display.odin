@@ -33,7 +33,13 @@
 // }
 // ```
 //
-// See [surface](term:surface), [whole frame](term:whole-frame) and
+// A window is fixed unless its program calls `resizable_set`: the
+// principal can then drag its edges, the program gets the event `Resized`
+// and calls `surface_resize`, which makes the surface of the new size
+// (src/md/features/window_resize.md).
+//
+// See [surface](term:surface), [whole frame](term:whole-frame),
+// [resizable window](term:resizable-window) and
 // [compositor](term:compositor).
 package display
 
@@ -45,6 +51,7 @@ import "modus:contract/ring"
 import "modus:support/key_path"
 import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
+import op "modus:contract/operation"
 import "modus:contract/glyph_cache"
 import "modus:support/fallback_glyphs"
 import "modus:contract/pointer_pictures"
@@ -56,7 +63,11 @@ import "modus:support/system"
 Command :: enum u32 {
 	None           = 0, // Not a command.
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
-	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1), then the rectangle that changed: x, y, width, height (width 0: the whole surface)
+	// The pixels of the surface changed. values: the picture to show (0 or
+	// 1), then the rectangle that changed: x, y, width, height (width 0: the
+	// whole surface), then at PRESENT_KEY_SERIAL the serial of the newest
+	// key that the picture shows, or 0 (key_shown).
+	Present        = 2,
 	Pointer_Shape  = 3, // The pointer shape over this surface (docs/POINTERS.md). values: a number of pointer_pictures.Pointer_Shape
 	// The act names of the window: what its elements act on, so that the
 	// palette offers to go there (docs/INTERFACE.md, "4.2 Act names").
@@ -71,6 +82,127 @@ Command :: enum u32 {
 	// a reader of the screen knows that the window is not its last picture
 	// while the program waits (picture_due_set).
 	Picture_Due    = 5,
+	// The window is resizable within its size limits; with no such record
+	// it is fixed (src/md/features/window_resize.md). values: the least
+	// width, the least height, the largest width and the largest height of
+	// the surface. The record replaces the limits before. The compositor
+	// refuses limits that size_limits_of_words refuses, and the window stays
+	// as it was (resizable_set).
+	Resizable      = 6,
+	// The surface of a new size, the answer to the event Resized: the
+	// compositor shows it from the next Present, and the old surface until
+	// then. Its size is the size of the event; the compositor takes one
+	// answer for each event, and refuses any other. values: memory handle
+	// (in the compositor), width, height (surface_resize).
+	Surface_Resize = 7,
+	// The other answer to the event Resized: the window keeps its size,
+	// after a refused budget, or because the program does not take the
+	// event (present_rectangle sends it then). No values.
+	Resize_Declined = 8,
+	// The answer to the event Copy_Asked: the content of the copy, a
+	// memory object of this program that the compositor reads with Read
+	// and lends with Give (src/md/features/clipboard.md). values: memory
+	// handle (in the compositor), the Clipboard_Kind, the count of bytes,
+	// the serial of the Copy_Asked that it answers (copy_send).
+	Copy            = 9,
+	// The other answer to Copy_Asked: the window has nothing to copy, or
+	// refused its text or its budget. values: the serial of the Copy_Asked
+	// (copy_decline).
+	Copy_Declined   = 10,
+	// The answer to the event Pasted: the program copied the content, and
+	// closed the handle. The compositor revokes the lent handle. values:
+	// the serial of the Pasted (paste_read, paste_refuse).
+	Paste_Taken     = 11,
+}
+
+// The kind of a content of the clipboard. A word of a record becomes a
+// member at one place only (clipboard_kind_of_word).
+Clipboard_Kind :: enum u32 {
+	None = 0, // No content.
+	Text = 1, // UTF-8 with no control character.
+}
+
+// The most bytes of a text on the clipboard: one page, a field or a line
+// of the console.
+CLIPBOARD_TEXT_LIMIT :: 4096
+
+// clipboard_kind_of_word is the border of the kind of a content: the
+// member, or false for a word that names no member, None included.
+clipboard_kind_of_word :: proc "contextless" (word: u64) -> (kind: Clipboard_Kind, ok: bool) {
+	member := enum_word.member_of_word(Clipboard_Kind, word) or_return
+	return member, member != .None
+}
+
+// The rule that a text to copy, or the copy of a paste, breaks. None: it
+// holds.
+Clipboard_Problem :: enum {
+	None,
+	Not_Asked, // No Copy_Asked waits for an answer.
+	Empty, // No byte.
+	Too_Large, // Past CLIPBOARD_TEXT_LIMIT, or past the room of the field that pastes.
+	Not_Text, // A byte that starts no well-formed sequence of UTF-8, or a control character.
+	Hidden_Character, // A character that a reader does not see, or that changes the order of the text (character_hidden).
+	Unknown_Kind, // A kind that this program does not read.
+	Not_Given, // The handle of a paste is not memory with Read that the compositor gave through the ring.
+	Too_Small, // The memory of a paste does not hold its count of bytes.
+	Ring_Full, // The command ring of the window is full: nothing was made.
+	Kernel_Refused, // A kernel operation refused: the status says which (No_Budget for a budget that cannot pay).
+}
+
+// The words of each problem, for a line of the log.
+@(rodata)
+CLIPBOARD_PROBLEM_SENTENCES := [Clipboard_Problem]string {
+	.None           = "the text holds",
+	.Not_Asked      = "no copy of the principal waits",
+	.Empty          = "the text is empty",
+	.Too_Large      = "the text is larger than the room",
+	.Not_Text       = "the bytes are not UTF-8 with no control character",
+	.Hidden_Character = "the text has a character that a reader does not see, or that changes the order of the text",
+	.Unknown_Kind   = "the kind is not text",
+	.Not_Given      = "the handle is not memory that the compositor gave",
+	.Too_Small      = "the memory does not hold the count of bytes",
+	.Ring_Full      = "the command ring of the window is full",
+	.Kernel_Refused = "the kernel refused",
+}
+
+// clipboard_text_problem checks a text at a border of the clipboard: the
+// text to copy before it is made, and the copy of a paste after it is
+// copied. room is the most bytes that the place takes. It reads and
+// changes no state, so a host test gives it each refused text.
+clipboard_text_problem :: proc "contextless" (text: []u8, room: int) -> Clipboard_Problem {
+	switch {
+	case len(text) == 0:
+		return .Empty
+	case len(text) > CLIPBOARD_TEXT_LIMIT || len(text) > room:
+		return .Too_Large
+	case !text_encoding.text_valid(text):
+		return .Not_Text
+	}
+	for place := 0; place < len(text); {
+		character, length, _ := text_encoding.character_decode(text, place)
+		if length == 0 {
+			break
+		}
+		if character_hidden(character) {
+			return .Hidden_Character
+		}
+		place += length
+	}
+	return .None
+}
+
+// character_hidden says if a character is one that a reader does not see,
+// or one that changes the order in which a text shows: the spaces and the
+// joiners of no width, the marks and the embeddings of direction, the
+// isolates, the separators of lines and of paragraphs, and the mark of the
+// byte order. A pasted text with one of them could show as another text,
+// in a line of the console that the principal then runs.
+character_hidden :: proc "contextless" (character: rune) -> bool {
+	switch character {
+	case 0x200B ..= 0x200F, 0x202A ..= 0x202E, 0x2066 ..= 0x2069, 0x2028, 0x2029, 0xFEFF:
+		return true
+	}
+	return false
 }
 
 ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.
@@ -105,7 +237,7 @@ act_names_send :: proc "contextless" (window: ^Window, hashes: []u64) -> bool {
 // its ring, and as the kind of an `Event`.
 Event_Kind :: enum u32 {
 	None             = 0, // No event.
-	Key              = 1, // values: code, character, 1 when pressed, modifiers
+	Key              = 1, // values: code, character, 1 when pressed, modifiers, then at KEY_EVENT_SERIAL the serial of the key (0: the compositor does not measure it)
 	Pointer          = 2, // values: x, y in the surface (signed), buttons, wheel notches (signed: WHEEL_TOWARD_THE_END for each notch toward the end of the content)
 	// The settings of the owner changed (modus:contract/settings): next_event
 	// already gave the new font to src/library/support/graphics; the program draws its
@@ -116,6 +248,20 @@ Event_Kind :: enum u32 {
 	// puts the focus on the element that names it
 	// (src/library/support/interface, window_events).
 	Go_To            = 4,
+	// The principal dragged an edge of the window to a new size: the
+	// program makes its surface of that size (surface_resize), or ignores
+	// the event and keeps its size. Only a resizable window gets it.
+	// values: the width, the height of the surface.
+	Resized          = 5,
+	// The principal pressed the key of a copy: the program answers once,
+	// with copy_send or copy_decline. A newer Copy_Asked replaces it.
+	// values: the serial of the key, never 0.
+	Copy_Asked       = 6,
+	// The principal pressed the key of a paste: a handle with Read to the
+	// content, lent until the program answers (paste_read). values: the
+	// handle (in this program), the Clipboard_Kind, the count of bytes,
+	// the serial of the key, never 0.
+	Pasted           = 7,
 }
 
 // The ring between the root service and the compositor.
@@ -135,14 +281,27 @@ Control :: enum u32 {
 	// (modus:contract/palette_table), both in the compositor.
 	Palette_Provider_Add    = 5,
 	Palette_Provider_Remove = 6, // root to compositor: the palette provider ended. values: the same two handles.
+	// root to compositor: the program of a window started. values: the
+	// handle of Client_Add, then the time of the system, in nanoseconds,
+	// when the root service called system.program_start: the start of the
+	// measure of the start of a window
+	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
+	Client_Started          = 7,
 }
 
 // The ring from the input service to the compositor.
 Input :: enum u32 {
 	None    = 0, // Not a command.
-	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers
+	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers, then at INPUT_KEY_READ_AT the time of the system, in nanoseconds, when the input service read the key
 	Pointer = 2, // values: x motion, y motion (signed), buttons, wheel notches (signed)
 }
+
+// The places of the values of the measure of a key to the screen, in the
+// records that carry it: the input record Key, the event Key and the
+// command Present. The values before them are the values of each record.
+INPUT_KEY_READ_AT :: 4
+KEY_EVENT_SERIAL :: 4
+PRESENT_KEY_SERIAL :: 5
 
 // The sign of the wheel notches of a pointer record and of an `Event`: a
 // notch toward the principal (the wheel turned down) moves a view toward
@@ -176,6 +335,63 @@ BUTTON_RIGHT :: 2 // The bit set while the right button is down.
 
 SURFACE_LIMIT :: 2048 // The largest width and height.
 
+// The least size of a resizable surface: the title bar holds the close
+// button and a part of the title.
+RESIZABLE_LEAST_WIDTH :: 160
+RESIZABLE_LEAST_HEIGHT :: 64
+
+// The sizes between which the principal can resize a window: its program
+// states them (resizable_set), the compositor keeps the drag inside them.
+Size_Limits :: struct {
+	least_width, least_height:     int,
+	largest_width, largest_height: int,
+}
+
+// The rule that size limits break. None: they hold.
+Size_Limits_Problem :: enum {
+	None,
+	Largest_Past_Limit, // A largest size is past SURFACE_LIMIT.
+	Least_Below_Floor, // A least size is below RESIZABLE_LEAST_WIDTH or RESIZABLE_LEAST_HEIGHT.
+	Least_Past_Largest, // A least size is past its largest size.
+	Size_Outside, // The size of the surface now is outside the limits.
+}
+
+// The words of each problem, for a line of the log.
+@(rodata)
+SIZE_LIMITS_PROBLEM_SENTENCES := [Size_Limits_Problem]string {
+	.None               = "the limits hold",
+	.Largest_Past_Limit = "a largest size is past the largest surface",
+	.Least_Below_Floor  = "a least size is below the least size of a resizable surface",
+	.Least_Past_Largest = "a least size is past its largest size",
+	.Size_Outside       = "the size of the surface is outside the limits",
+}
+
+// size_limits_of_words is the border of the record Resizable: the four
+// words of the limits, checked as words before any of them becomes an int,
+// so that a word past the limit never reads as a negative size. width and
+// height are the size of the surface now. It reads and changes no state,
+// so a host test gives it each refused word.
+size_limits_of_words :: proc "contextless" (words: [4]u64, width, height: int) -> (limits: Size_Limits, problem: Size_Limits_Problem) {
+	switch {
+	case words[2] > SURFACE_LIMIT || words[3] > SURFACE_LIMIT:
+		return {}, .Largest_Past_Limit
+	case words[0] < RESIZABLE_LEAST_WIDTH || words[1] < RESIZABLE_LEAST_HEIGHT:
+		return {}, .Least_Below_Floor
+	case words[0] > words[2] || words[1] > words[3]:
+		return {}, .Least_Past_Largest
+	}
+	limits = {least_width = int(words[0]), least_height = int(words[1]), largest_width = int(words[2]), largest_height = int(words[3])}
+	if !size_inside(limits, width, height) {
+		return {}, .Size_Outside
+	}
+	return limits, .None
+}
+
+// size_inside says if a size is inside the limits.
+size_inside :: proc "contextless" (limits: Size_Limits, width, height: int) -> bool {
+	return width >= limits.least_width && width <= limits.largest_width && height >= limits.least_height && height <= limits.largest_height
+}
+
 // One event of a window, as `next_event` gives it. A key event fills
 // `code`, `character`, `pressed` and `modifiers`; a pointer event fills
 // `x`, `y`, `buttons` and `wheel`.
@@ -189,6 +405,12 @@ Event :: struct {
 	buttons:   u32, // The pointer: the `BUTTON_` bits.
 	wheel:     int, // The pointer: the notches that the wheel turned since the event before, signed (WHEEL_TOWARD_THE_END).
 	act:       u64, // Go_To: the act_name_hash of the act name.
+	width, height: int, // Resized: the size that the principal asks for the surface, 1 to SURFACE_LIMIT.
+	paste_handle:   system.Handle, // Pasted: the lent handle of the content.
+	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
+	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
+	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
+	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A program that shows the key names it (key_shown).
 }
 
 // One window of a program: its ring to the compositor and its surface.
@@ -204,6 +426,16 @@ Window :: struct {
 	wake_when_free: bool, // canvas_free said no: wait_events also ends when the compositor has read the ring.
 	compositor_late: bool, // The compositor did not take a picture within the bound: canvas_wait waits no more until it does.
 	picture_due_sent: bool, // The compositor has a Picture_Due of 1 and no Present or Picture_Due of 0 after it.
+	size_limits: Size_Limits, // The limits of the last Resizable that went to the compositor.
+	resizable:   bool, // A Resizable went to the compositor: the window can get Resized.
+	resized_picture_due: bool, // surface_resize made a new surface, and no Present of it went yet: the first one writes a line.
+	// The last event Resized that next_event gave, with no answer sent yet:
+	// surface_resize answers it, or the next present declines it.
+	resize_asked: bool,
+	resize_asked_width, resize_asked_height: int,
+	copy_asked: bool, // A Copy_Asked came, and no answer went: copy_send or copy_decline answers it.
+	copy_serial: u64, // The serial of the newest Copy_Asked, which the answer names.
+	key_shown_serial: u64, // The newest key that the pictures of the window show (key_shown): each Present names it.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
@@ -331,8 +563,14 @@ present :: proc "contextless" (window: ^Window) -> bool {
 // command ring was full: the compositor did not get the present, and the
 // canvas stays the same.
 present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) -> bool {
+	// A program that presents with a request that it did not answer keeps
+	// its size: the answer goes before the picture, so that the compositor
+	// takes a drag of the window again.
+	if window.resize_asked && !resize_decline(window) {
+		return false
+	}
 	picture_end(window)
-	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
+	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0)), PRESENT_KEY_SERIAL = window.key_shown_serial}}
 	if !system.send(&window.ring.commands, record) {
 		return false
 	}
@@ -341,6 +579,136 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	window.canvas = window.pictures[window.picture]
 	// The compositor ends the due picture at the Present.
 	window.picture_due_sent = false
+	// The compositor shows the new surface from this Present: a machine
+	// test waits for this line before a picture of the new size.
+	if window.resized_picture_due {
+		window.resized_picture_due = false
+		system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
+	}
+	return true
+}
+
+// key_shown says that the next picture of the window shows the key of a
+// serial (Event.key_serial) and each key before it: the program calls it
+// when the key changed what it draws, as the console when a character goes
+// into its line. Each Present names the newest serial, and the compositor
+// measures the time of those keys to the screen at the flip of that
+// picture. A serial of 0, or one older than the newest, changes nothing.
+key_shown :: proc "contextless" (window: ^Window, serial: u64) {
+	window.key_shown_serial = max(window.key_shown_serial, serial)
+}
+
+// resizable_set makes the window resizable within limits: the principal
+// can then drag its edges, and the program gets the event Resized. With no
+// call the window is fixed. A program that draws with constant sizes stays
+// fixed; one whose texts need a width states that width as its least.
+//
+// The limits must hold for the size of the surface now
+// (size_limits_of_words): problem says which rule they break, and nothing
+// goes to the compositor. sent is false when the command ring was full:
+// the window stays as it was, and the caller tries again later.
+resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (problem: Size_Limits_Problem, sent: bool) {
+	words := [4]u64{u64(max(limits.least_width, 0)), u64(max(limits.least_height, 0)), u64(max(limits.largest_width, 0)), u64(max(limits.largest_height, 0))}
+	checked, refused := size_limits_of_words(words, window.pictures[0].width, window.pictures[0].height)
+	if refused != .None {
+		return refused, false
+	}
+	record := ring.Record{kind = u32(Command.Resizable), values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3]}}
+	if !system.send(&window.ring.commands, record) {
+		return .None, false
+	}
+	window.size_limits, window.resizable = checked, true
+	return .None, true
+}
+
+// surface_resize gives the window a surface of a new size, after the event
+// Resized: the program calls it, then draws its next frame in
+// window.canvas, which the compositor does not read yet. The compositor
+// shows the old surface until the first Present of the new one.
+//
+// The new surface is memory of this program, paid by its budget. This
+// procedure unmaps and closes the old one, which the compositor still maps
+// until that Present: the budget pays for both until then, and the old
+// memory ends when the compositor unmaps it.
+//
+// It answers the last Resized that next_event gave, with its size only:
+// the compositor takes no other size, and no surface that the principal
+// did not ask for.
+//
+// The statuses: Ok; Bad_Operation for a window that is not resizable, with
+// no Resized to answer, for another size than the asked one, or for a size
+// outside its limits (nothing changes); No_Slot when the command ring is
+// full (nothing was made: call again later, or the next present declines
+// the request); No_Budget, or another status of Memory_Create, Memory_Map
+// or Handle_Give, with its error record: the window keeps its size, writes
+// one line, and declines the request (Resize_Declined), so that the
+// principal can drag it again.
+surface_resize :: proc "contextless" (window: ^Window, width, height: int, error: ^errors.Error_Record = nil) -> system.Status {
+	title := string(window.title[:window.title_count])
+	switch {
+	case !window.resizable:
+		errors.fail(error, 0, .State, .None, 1)
+		return .Bad_Operation
+	case !window.resize_asked || width != window.resize_asked_width || height != window.resize_asked_height:
+		errors.fail(error, 0, .State, .None, 2, i64(width), i64(window.resize_asked_width), i64(height))
+		return .Bad_Operation
+	case !size_inside(window.size_limits, width, height):
+		errors.fail(error, 0, .Out_Of_Range, .None, width < window.size_limits.least_width || width > window.size_limits.largest_width ? 2 : 3, i64(width), i64(window.size_limits.largest_width), i64(height))
+		return .Bad_Operation
+	case ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands):
+		// The ring has one writer, this thread: the room seen here stays.
+		// Without it, the handle given below would wait in the table of the
+		// compositor with no record that names it.
+		errors.fail(error, 0, .Full, .None, 0)
+		return .No_Slot
+	}
+	pages := (u64(width * height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory, status := system.memory_create(pages, error = error)
+	address: rawptr
+	if status == .Ok {
+		address, status = system.memory_map(memory, error = error)
+		if status != .Ok {
+			system.close(memory)
+		}
+	}
+	granted: system.Handle
+	if status == .Ok {
+		granted, status = system.give(window.ring_memory, memory, {.Read}, error)
+		if status != .Ok {
+			system.memory_unmap(address)
+			system.close(memory)
+		}
+	}
+	if status != .Ok {
+		system.log_in("programs", .Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
+		// A full ring keeps the request: the next present declines it.
+		resize_decline(window)
+		return status
+	}
+	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Resize), values = {0 = u64(granted), 1 = u64(width), 2 = u64(height)}})
+	window.resize_asked = false
+	system.memory_unmap(rawptr(window.pictures[0].pixels))
+	system.close(window.surface)
+	window.surface = memory
+	for &picture, index in window.pictures {
+		picture = {pixels = ([^]graphics.Color)(address)[index * width * height:], width = width, height = height, stride = width}
+	}
+	window.picture = 0
+	window.canvas = window.pictures[0]
+	window.resized_picture_due = true
+	return .Ok
+}
+
+// resize_decline answers the last Resized with Resize_Declined: the window
+// keeps its size, and the compositor takes a drag of it again. It gives
+// false when the command ring was full: the request stays, and the next
+// present declines it.
+resize_decline :: proc "contextless" (window: ^Window) -> bool {
+	if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Resize_Declined)}) {
+		return false
+	}
+	window.resize_asked = false
+	system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
 	return true
 }
 
@@ -503,11 +871,20 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		record := system.receive(&window.ring.completions) or_return
 		read, read_ok := event_of_record(record)
 		if !read_ok {
-			system.log_in("programs", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event: it is refused")
+			system.log_in("programs", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
 			continue
 		}
 		if read.kind == .Settings_Changed {
 			text_settings_apply()
+		}
+		if read.kind == .Resized {
+			window.resize_asked = true
+			window.resize_asked_width, window.resize_asked_height = read.width, read.height
+		}
+		if read.kind == .Copy_Asked {
+			// The newest request replaces the one before: the compositor
+			// takes only an answer to it.
+			window.copy_asked, window.copy_serial = true, read.clipboard_serial
 		}
 		return read, true
 	}
@@ -535,7 +912,9 @@ command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok:
 }
 
 // event_of_record is the border of an input record of the compositor: the
-// event, or false for a kind that names no event, None included. It reads
+// event, or false for a kind that names no event, None included, and for a
+// Resized whose size is 0 or past SURFACE_LIMIT, and for a Copy_Asked or a
+// Pasted whose words are out of their range. It reads
 // and changes no state, so a host test gives it each refused kind.
 event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok: bool) {
 	kind := enum_word.member_of_word(Event_Kind, u64(record.kind)) or_return
@@ -548,6 +927,7 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		event.character = key_character_of(record.values[1])
 		event.pressed = record.values[2] != 0
 		event.modifiers = u32(record.values[3])
+		event.key_serial = record.values[KEY_EVENT_SERIAL]
 	case .Pointer:
 		event.x = int(i64(record.values[key_path.POINTER_RECORD_X]))
 		event.y = int(i64(record.values[key_path.POINTER_RECORD_Y]))
@@ -558,12 +938,40 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 	case .Settings_Changed:
 	case .Go_To:
 		event.act = record.values[0]
+	case .Resized:
+		// The words are read as words: one past the limit never becomes a
+		// negative size.
+		width, height := record.values[0], record.values[1]
+		if width == 0 || height == 0 || width > SURFACE_LIMIT || height > SURFACE_LIMIT {
+			return {}, false
+		}
+		event.width, event.height = int(width), int(height)
+	case .Copy_Asked:
+		if record.values[0] == 0 {
+			return {}, false
+		}
+		event.clipboard_serial = record.values[0]
+	case .Pasted:
+		// A handle is 32 bits, a kind a member, a count 1 to the limit, a
+		// serial not 0: each is checked as the word that the compositor
+		// wrote.
+		handle, count, serial := record.values[0], record.values[2], record.values[3]
+		kind, kind_ok := clipboard_kind_of_word(record.values[1])
+		if handle == 0 || handle > u64(max(u32)) || !kind_ok || count == 0 || count > CLIPBOARD_TEXT_LIMIT || serial == 0 {
+			return {}, false
+		}
+		event.paste_handle, event.clipboard_kind, event.byte_count, event.clipboard_serial = system.Handle(handle), kind, int(count), serial
 	}
 	return event, true
 }
 
 // The settings page of this program (modus:contract/settings), or nil.
 settings_page: ^settings.Page
+
+// The text state of the graphics package has its table of the blend: the
+// first text_settings_load filled it.
+@(private)
+text_state_started: bool
 
 // The two glyph caches of this program, each validated once: with the grid fit
 // and without it (the setting "grid_fit").
@@ -638,6 +1046,12 @@ Text_Settings_Problems :: struct {
 // table of texts has addresses that the loader writes
 // (docs/MODULE_CONTRACT.md, "A library as a module").
 text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Text_Settings_Problems, loaded: bool) {
+	// The table of the blend once, at the start of the program, also with
+	// no settings page: the draw records with alpha blend with it.
+	if !text_state_started {
+		graphics.text_state_start()
+		text_state_started = true
+	}
 	if .Settings_Page not_in fixed_addresses.ranges_mapped(&ctx.values) || settings_page != nil {
 		return {}, false
 	}

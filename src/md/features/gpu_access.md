@@ -1,8 +1,8 @@
 # The access to a GPU for acceleration
 
-Programs of the system see one graphics interface, and the system writes its implementation from nothing: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One graphics interface: WebGPU with WGSL". This file records how that interface reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
+Programs of the system draw in 2D through the draw table, and WebGPU is the later interface of the GPU: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". When a GPU exists, the drawing module draws the draw table through WebGPU ([../api/draw_table.md](../api/draw_table.md), "The execution"). This file records how WebGPU reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
 
-The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Driver domain".
+The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Driver domain".
 
 ## The constraints
 
@@ -23,9 +23,19 @@ The library of the system emits Vulkan commands in one serialization, the one th
 
 Why this works in the reversed direction: the serialization is not a transport. The renderer that reads it also takes it over a socket with no guest at all, so it runs over any byte channel. In the usual use the renderer is in the host and the client in the guest. Here the programs of the system are the clients and the guest is the renderer. This direction is the safer one: the renderer sees only the memory that the system granted to the guest.
 
-What the system writes: the graphics interface and its back end in the shape of Vulkan, the encoder, a path from the shader language to the intermediate form of Vulkan, a ring service, and the program that runs the guest. The encoder runs in each client and is not trusted: a wrong stream harms only its own context.
+What the system writes: the graphics interface and its back end in the shape of Vulkan, the encoder, a ring service, and the program that runs the guest. The shaders go from WGSL to SPIR-V, the intermediate form of Vulkan, at build time ("The WebGPU of the system"). The encoder runs in each client and is not trusted: a wrong stream harms only its own context.
 
 What the kernel must provide is already in the order of the work: the IOMMU with interrupt remapping, guest support, the assignment of a device to a guest, a reset of the device, and shared memory of hundreds of megabytes between the guest and a client.
+
+## The WebGPU of the system
+
+The graphics interface is WebGPU, in a subset that the system writes: only what the draw table, the compositor and 3D need. The subset grows with a need, as the kinds of the draw table do.
+
+- **The shaders are compiled before the run.** The build compiles each shader of WGSL to SPIR-V with a compiler of the host, and the module carries the SPIR-V. The system holds no compiler of shaders, and no program compiles one at run time.
+- **The subset has two back ends.** The GPU back end emits Vulkan through the serialization above. The processor back end runs the same objects (buffers, pipelines, command lists, draw calls) on the processor, with a small fixed set of shaders written in Odin with SIMD ([desktop_to_browser.md](desktop_to_browser.md), "F. 3D"). A program writes the same code for both, and only the back end changes.
+- **A port of wgpu or Dawn stays open** for a program of a third party, as its own module over the WebGPU of the system ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table"). The code of the system never uses one.
+
+Why a subset of its own first: wgpu and Dawn each carry back ends for Vulkan, Metal and Direct3D and a compiler of shaders inside. The system needs one back end and a few pipelines, and the compilers of the host already turn WGSL into SPIR-V.
 
 ## The refused forms
 
@@ -37,7 +47,8 @@ What the kernel must provide is already in the order of the work: the IOMMU with
 | The kernel interface of one vendor's driver carried to the client ("native context") | Faster: within a few percent of native. But each client then holds the user-space driver of that vendor, of 100 000 lines and more. Not the first form: it comes after the measure, for one vendor |
 | The older protocol of the virtual GPU, which carries OpenGL state | The wrong shape for the one graphics interface |
 | A stream of the graphics interface itself sent to an implementation in the guest | It removes the Vulkan back end from the system, but it puts in the guest an implementation that the project did not write, and the virtual GPU of QEMU does not carry it. One mechanism on both transports is preferred |
-| An existing implementation of the graphics interface, ported | The property forbids it |
+| An existing implementation of the graphics interface, ported into the code of the system | The property forbids it in the code of the system. For a program of a third party it stays open, over the WebGPU of the system |
+| A compiler of WGSL in the system, for the GPU or for the processor | The build compiles the shaders; a compiler for the processor is larger than the whole 2D drawing |
 
 ## The numbers behind the choice
 
@@ -49,8 +60,8 @@ The chosen form is the most modular one: any GPU with a Linux Vulkan driver work
 
 ## The order
 
-1. The graphics interface in software. It fixes the interface that each later step keeps.
-2. The service of the virtual GPU under QEMU, in 2D, then with the serialization. It needs one new thing of the kernel: a device mapping with the cache type that the device gives. It brings the encoder and the back end, which the next steps reuse with no change.
+1. The draw table on the processor. It fixes the 2D interface that each later step keeps. A software WebGPU is refused: it needs a compiler of WGSL for the processor, larger than the whole 2D drawing.
+2. The service of the virtual GPU under QEMU, in three steps: the 2D scanout of the compositor, then Vulkan to the host through Venus, then the WebGPU subset on it. It needs one new thing of the kernel: a device mapping with the cache type that the device gives. It brings the encoder and the back end, which the next steps reuse with no change.
 3. The IOMMU, then guest support.
 4. The driver domain over a ring, on one GPU, as an opt-in test. The machine is a laptop with an integrated GPU of Intel.
 5. The measure against the same GPU under Linux with the same program.

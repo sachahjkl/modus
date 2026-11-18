@@ -7,7 +7,7 @@ import "core:net"
 import "core:strings"
 import "core:sync"
 import "core:thread"
-import block_tree "modus:support/storage_object"
+import block_tree "modus:private/storage/storage_object"
 
 // A disk that the modus tool serves to QEMU with the Network Block Device
 // protocol (NBD, "fixed newstyle" handshake, simple replies), so that the

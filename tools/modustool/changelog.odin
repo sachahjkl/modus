@@ -1,4 +1,4 @@
-// The changelog of the system (docs/GLOSSARY.md, "Changelog", "Release",
+// The changelog of the system (docs/glossary/project.md, "Changelog", "Release",
 // "Fragment"). CHANGELOG.md holds the releases, newest first, in the format
 // of Keep a Changelog 1.1.0. A branch never edits it: it adds fragments in
 // changelog.d/, one file for each change that a reader notices, so two

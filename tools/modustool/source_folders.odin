@@ -11,32 +11,78 @@ import "core:strings"
 SOURCE_FOLDER_KERNEL :: "src/kernel" // The kernel.
 SOURCE_FOLDER_BOOT :: "src/boot" // The boot program.
 SOURCE_FOLDER_RUNTIME :: "src/runtime" // The memory procedures in assembly.
-SOURCE_FOLDER_PROGRAMS :: "src/programs" // The programs of the system: one folder for each.
-SOURCE_FOLDER_MODULES :: "src/modules" // The modules that are not programs: one folder for each.
-SOURCE_FOLDER_LIBRARY :: "src/library" // The source library of the system: the two folders below, and nothing else.
+SOURCE_FOLDER_MODULES :: "src/modules" // Each module of the system: one folder for each, in the folder of its module group.
+SOURCE_FOLDER_LIBRARY :: "src/library" // The source library of the system: the three folders below, and nothing else.
 SOURCE_FOLDER_CONTRACT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_CONTRACT // The contract packages.
 SOURCE_FOLDER_SUPPORT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_SUPPORT // The support packages.
+SOURCE_FOLDER_PRIVATE :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_PRIVATE // The private parts: one folder for each module that has one, named by the module.
 
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:
 // the order of a list can be the order of an output.
-SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
+SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE}
+
+// The folders of the sources that a move removed. The check of the source
+// paths in the documents reads a code span that starts with one of them,
+// and refuses it: a document that still names the old place is stale.
+SOURCE_FOLDERS_GONE :: [?]string{"src/programs"}
+
+// The module groups (src/md/infrastructure/repository_layout.md, "The
+// module groups"): the folder of src/modules that holds a module says what
+// it is for. The group is not in the module file, and no loader reads it:
+// it says where a source lives, and whether a release ships it.
+Module_Group :: enum {
+	System, // The root service, the services, the desktop, the tools of a principal.
+	Libraries, // The modules that export functions and have no entry, which other modules import.
+	Demonstrations, // The programs that each show a property to a principal.
+	Tests, // The test modules, which only a machine test starts or imports.
+}
+
+// The start of the source of a row of the table of the modules, one for
+// each group: a row names its folder as SYSTEM_MODULE_SOURCES + "root".
+SYSTEM_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/system/"
+LIBRARY_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/libraries/"
+DEMONSTRATION_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/demonstrations/"
+TEST_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/tests/"
+
+// The start of the source of each group, as the procedure below reads it.
+MODULE_GROUP_SOURCES :: [Module_Group]string {
+	.System         = SYSTEM_MODULE_SOURCES,
+	.Libraries      = LIBRARY_MODULE_SOURCES,
+	.Demonstrations = DEMONSTRATION_MODULE_SOURCES,
+	.Tests          = TEST_MODULE_SOURCES,
+}
+
+// module_group_of_source gives the group of the source folder of a module,
+// from the folder that holds it. found is false for a folder in no group:
+// the kernel, and a folder outside src/modules.
+module_group_of_source :: proc(source: string) -> (group: Module_Group, found: bool) {
+	starts := MODULE_GROUP_SOURCES
+	for start, candidate in starts {
+		if len(source) > len(start) && strings.has_prefix(source, start) {
+			return candidate, true
+		}
+	}
+	return .System, false
+}
 
 // The name of the one source library of the system: the word before the
-// ":" of an import line (docs/GLOSSARY.md, "Source library"). The name is
+// ":" of an import line (docs/glossary/communication.md, "Source library"). The name is
 // not the folder: the flag of the compiler joins the two.
 SOURCE_LIBRARY_NAME :: "modus"
 
-// The two parts of the library: the first folder of the path of a
+// The three parts of the library: the first folder of the path of a
 // package, after the ":" of an import line.
 LIBRARY_PART_CONTRACT :: "contract" // What two parties agree on.
-LIBRARY_PART_SUPPORT :: "support" // What a program compiles in to use the contracts.
+LIBRARY_PART_SUPPORT :: "support" // What two modules or more compile in.
+LIBRARY_PART_PRIVATE :: "private" // What one module alone compiles in: "private/<module>/<part>".
 
 // The start of the path of an import of each part: "modus:contract/ring",
-// "modus:support/system".
+// "modus:support/system", "modus:private/storage/storage_tree".
 SOURCE_LIBRARY_IMPORT_START :: SOURCE_LIBRARY_NAME + ":"
 CONTRACT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_CONTRACT + "/"
 SUPPORT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_SUPPORT + "/"
+PRIVATE_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_PRIVATE + "/"
 
 // The one flag of the compiler for the library. Each command of the tool
 // that runs the compiler gives it, the compile of the kernel too: flake.nix

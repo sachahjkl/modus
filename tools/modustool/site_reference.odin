@@ -18,12 +18,13 @@ SITE_OPERATION_FILE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 SITE_ERRORS_FILE :: SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
 SITE_FIXED_ADDRESSES_FILE :: FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
 SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
-SITE_ROOT_FILE :: PROGRAM_SOURCES + "root/main.odin"
+// The table of the roles of the root service (program_roles_check.odin).
+SITE_ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
 // The rule of the root service for the budget that a module asks for.
-SITE_ROOT_BUDGETS_FILE :: PROGRAM_SOURCES + "root/budgets.odin"
+SITE_ROOT_BUDGETS_FILE :: SYSTEM_MODULE_SOURCES + "root/budgets.odin"
 SITE_START_GRANT_FILE :: SOURCE_FOLDER_CONTRACT + "/start_grant/start_grant.odin"
 SITE_MODULES_FILE :: "tools/modustool/modules.odin"
-SITE_CONSOLE_COMMAND_FILES :: [?]string{PROGRAM_SOURCES + "console/commands.odin", PROGRAM_SOURCES + "console/debugger_commands.odin", PROGRAM_SOURCES + "console/tables.odin"}
+SITE_CONSOLE_COMMAND_FILES :: [?]string{SYSTEM_MODULE_SOURCES + "console/commands.odin", SYSTEM_MODULE_SOURCES + "console/debugger_commands.odin", SYSTEM_MODULE_SOURCES + "console/tables.odin"}
 
 // The folder of each page of a generated table: site_page_file gives its file.
 SITE_OPERATIONS_FOLDER :: SITE_REFERENCE_FOLDER + "/operations"
@@ -41,7 +42,7 @@ SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       Module_Build,
-	kind:        string, // "program" for a source in src/programs/, else "module".
+	kind:        string, // "program" for a row marked program, else "module".
 	page:        string,
 	description: Module_Description,
 }
@@ -59,8 +60,7 @@ Site_Reference :: struct {
 	start_grants:     []Site_Enumeration_Member, // Grant of src/library/contract/start_grant: what a program receives at its start.
 	root_grants:      []Site_Enumeration_Member, // Root_Grant of src/library/support/system: what the root service records and can revoke.
 	root_grant_names: map[string]string,
-	program_grants:   []Site_Name_Case,
-	grants_otherwise: Site_Name_Case,
+	program_roles:    []Site_Role_Row, // program_roles of the root service: the whole role of each program.
 	fixed_ranges:     []Site_Enumeration_Member,
 	console_commands: []Site_Console_Command,
 	modules:          []Site_Module,
@@ -135,7 +135,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	errors_text := site_read(SITE_ERRORS_FILE) or_return
 	fixed_text := site_read(SITE_FIXED_ADDRESSES_FILE) or_return
 	grants_text := site_read(SITE_SYSTEM_GRANTS_FILE) or_return
-	root_text := site_read(SITE_ROOT_FILE) or_return
+	roles_text := site_read(SITE_ROOT_ROLES_FILE) or_return
 	start_grant_text := site_read(SITE_START_GRANT_FILE) or_return
 	problem: string
 
@@ -165,11 +165,17 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	note(&problems, problem)
 	reference.root_grant_names, problem = site_names_read(grants_text, SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
 	note(&problems, problem)
-	reference.program_grants, reference.grants_otherwise, problem = site_name_switch_read(root_text, SITE_ROOT_FILE, "grants_of")
+	system_parts: []string
+	reference.program_roles, system_parts, problem = program_roles_read(roles_text)
 	note(&problems, problem)
-	// A page shows each member of a set as a link to its row: a set that
-	// holds another thing stops the command.
-	note(&problems, site_name_cases_problem(reference.program_grants, reference.grants_otherwise, SITE_ROOT_FILE, "grants_of", reference.start_grants, true))
+	// A page shows each grant of a row as a link to its row, and a page of
+	// each program its role: a grant of no member, or a program with no
+	// row, stops the command, as it stops the build.
+	if problem == "" {
+		for item in program_roles_problems(reference.program_roles, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE) {
+			note(&problems, item)
+		}
+	}
 	reference.fixed_ranges, problem = site_enumeration_read(fixed_text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
 	note(&problems, problem)
 	commands := make([dynamic]Site_Console_Command, context.temp_allocator)
@@ -204,7 +210,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	modules := make([dynamic]Site_Module, context.temp_allocator)
 	for build in module_builds {
 		description := describe_package(build.source) or_return
-		kind := strings.has_prefix(build.source, PROGRAM_SOURCES) ? "program" : "module"
+		kind := build.program ? "program" : "module"
 		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
 	}
 	reference.modules = modules[:]
@@ -230,31 +236,6 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	site_types_read(site) or_return
 	site_code_links_make(site)
 	return true
-}
-
-// site_name_cases_problem gives the first case of a procedure of the root
-// service whose literal is not of the form that its page shows, or "": with
-// sets, each literal is a set of members of the enumeration; else each one
-// is a record of fields.
-site_name_cases_problem :: proc(cases: []Site_Name_Case, otherwise: Site_Name_Case, file, procedure: string, enumeration: []Site_Enumeration_Member, sets: bool) -> string {
-	all := make([dynamic]Site_Name_Case, context.temp_allocator)
-	append(&all, ..cases)
-	append(&all, otherwise)
-	for item in all {
-		if (sets && len(item.fields) > 0) || (!sets && len(item.members) > 0) {
-			return fmt.tprintf("%s, line %d: %s returns %s, where it returns a %s", file, item.line, procedure, item.value, sets ? "set of grants" : "record of fields")
-		}
-		for member in item.members {
-			known := false
-			for candidate in enumeration {
-				known ||= candidate.name == member
-			}
-			if !known {
-				return fmt.tprintf("%s, line %d: %s returns .%s, which no member of its enumeration has", file, item.line, procedure, member)
-			}
-		}
-	}
-	return ""
 }
 
 // site_grant_set_items gives each grant of a set of the root service as one
@@ -548,6 +529,19 @@ site_text_cell :: proc(b: ^strings.Builder, text: string, class: string = "") {
 	strings.write_string(b, "</td>")
 }
 
+// site_role_terms_cell writes the other terms of a role as the source
+// writes them, as code, or "none". The code breaks at its spaces, so a
+// long list of services goes on more lines and is never cut.
+site_role_terms_cell :: proc(b: ^strings.Builder, terms: string) {
+	if terms == "" {
+		strings.write_string(b, "<td>none</td>")
+		return
+	}
+	strings.write_string(b, "<td><code>")
+	site_escape(b, terms)
+	strings.write_string(b, "</code></td>")
+}
+
 // site_enumeration_table writes the members of an enumeration: the
 // number, the name (a link to its line), and its comment.
 // The names are values of one kind (a status, a grant): the kind is in the
@@ -733,34 +727,27 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, grants_table)
 		site_source_line(site, &b, SITE_SYSTEM_GRANTS_FILE)
-		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n<p>Each grant leads to its row in the first table of this page.</p>\n")
+		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n<p>One row for each program of the boot image: its start grants, each a link to its row in the first table of this page, and the other terms of its role. A build stops when a program has no row.</p>\n")
 		// The programs and the grants are lists of names: they break
 		// between the names, so the column of the reasons keeps its room.
-		programs_table := site_table_start(&b, "Grants of each program", {{"Programs", .List}, {"Grants", .List}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None})
-		for item in reference.program_grants {
-			// Each row is a link target, named by its first program.
-			if len(item.names) > 0 {
-				fmt.sbprintf(&b, "<tr id=\"programs-%s\" data-outline=\"", site_slug(item.names[0]))
-				site_escape(&b, strings.join(item.names, ", ", context.temp_allocator))
-				strings.write_string(&b, "\">")
-			} else {
-				strings.write_string(&b, "<tr>")
-			}
-			site_program_names_cell(site, &b, item.names)
+		// The terms are code that breaks at its spaces.
+		programs_table := site_table_start(&b, "Grants of each program", {{"Program", .List}, {"Grants", .List}, {"Other terms", .Prose}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None, .None})
+		for item in reference.program_roles {
+			// Each row is a link target, named by its program.
+			fmt.sbprintf(&b, "<tr id=\"programs-%s\" data-outline=\"", site_slug(item.name))
+			site_escape(&b, item.name)
+			strings.write_string(&b, "\">")
+			site_program_names_cell(site, &b, {item.name})
 			strings.write_string(&b, "<td>")
-			site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.members, false)
+			site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.grants, false)
 			strings.write_string(&b, "</td>")
+			site_role_terms_cell(&b, item.terms)
 			site_comment_cell(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
-		strings.write_string(&b, "<tr><td>Each other program</td><td>")
-		site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.grants_otherwise.members, false)
-		strings.write_string(&b, "</td>")
-		site_comment_cell(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.grants_otherwise.comment)
-		strings.write_string(&b, "</tr>\n")
 		site_table_end(&b, programs_table)
-		site_source_line(site, &b, SITE_ROOT_FILE)
-		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_FILE, SITE_START_GRANT_FILE, SITE_SYSTEM_GRANTS_FILE)
+		site_source_line(site, &b, SITE_ROOT_ROLES_FILE)
+		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the role of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_ROLES_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_ROLES_FILE, SITE_START_GRANT_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The fixed ranges.

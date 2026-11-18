@@ -11,7 +11,9 @@
 // developer tools, the settings). The parts:
 //
 // - `Draw_Table`, `Draw_Record`, `Draw_Kind`: the frame as records
-//   (`draw_rectangle`, `draw_text` and the other `draw_` procedures).
+//   (`draw_rectangle`, `draw_text` and the other `draw_` procedures). The
+//   form of a record and its border are the contract package
+//   `draw_record`.
 // - `Damage`, `records_equal` (`difference.odin`): what changed since the
 //   frame before.
 // - `execute`, `execute_in_rectangles` (`execute.odin`): the records drawn
@@ -32,72 +34,21 @@
 // [damage by difference](term:damage-by-difference).
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/glyph_cache"
 import "modus:support/display"
 import "modus:support/graphics"
 
-// The version of the draw records: a new kind of record, or a new field,
-// is a new version. The drawing module and the window agree on it.
-DRAW_RECORD_VERSION :: 10
-
-// What one draw record draws. The fields of `Draw_Record` that each kind
-// reads are in the comment of the member.
-Draw_Kind :: enum u8 {
-	None                = 0, // Nothing: a record of this kind is not drawn.
-	Rectangle           = 1, // One color.
-	Vertical_Gradient   = 2, // first_color at the top line, second_color at the bottom line.
-	Horizontal_Gradient = 3, // first_color at the left column, second_color at the right column.
-	Text                = 4, // The bytes text_start ..< text_start + text_count of the text table, in first_color.
-	Clip                = 5, // The next records are cut to this rectangle. Width 0: no cut.
-	Point_Grid          = 6, // The grid of points of the background (docs/DESIGN.md, section 3), in first_color.
-	// A part with no measure on this scale: the track with two lines at an
-	// angle in first_color, the one meaning of such lines (docs/DESIGN.md,
-	// section 2).
-	Folded_Gap          = 7,
-	// The pixels of a picture of the caller, width x height at (x, y):
-	// kind_detail is the number of its picture memory in
-	// Draw_Table.picture_memories, text_start the index of its first pixel
-	// in that memory, second_color its stride (the pixels from one line to
-	// the next), text_count its generation (a new number when its pixels
-	// change). Each is a value, so the record means the same in each
-	// address space (docs/INTERFACE.md, section 2.1).
-	Picture             = 8,
-	// A grid of text cells: the cells are a copy in the text table, row
-	// after row, from the byte text_start, text_count bytes; second_color is
-	// the columns. Each is a value, so the drawing module reads the cells
-	// in the text table that it already has. The cells are drawn on the
-	// background that the frame paints. The difference compares the cells
-	// one by one: a changed cell damages only its row span
-	// (docs/INTERFACE.md, section 2.4).
-	Text_Grid           = 9,
-	// A straight line in first_color: from (x, y) to (x + width, y + height),
-	// so width and height can be negative here; kind_detail (the thickness) is the side
-	// of the square drawn at each point of the path (docs/INTERFACE.md,
-	// section 2.5).
-	Line                = 10,
-	// A text in the interface font (docs/FONTS.md, section 12): the bytes
-	// text_start ..< text_start + text_count, in first_color. The rectangle
-	// of the record holds every pixel that the text draws: the box of its
-	// measure, grown by its ink margin on each side. second_color is the ink
-	// margin in pixels; the origin of the text is at x + margin, plus
-	// text_origin_thirds thirds of a pixel; kind_detail is the weight
-	// (docs/INTERFACE.md, section 2.1).
-	Interface_Text      = 11,
-}
-
-// is_text_kind says if a record is a text whose bytes are in the text table.
-is_text_kind :: proc "contextless" (kind: Draw_Kind) -> bool {
-	return kind == .Text || kind == .Interface_Text
-}
-
-// The largest thickness of a line: past it, the squares of a long line
-// cost too much to draw again in each damage rectangle.
-LINE_THICKNESS_LIMIT :: 32
-
-// The ends of a line stay inside this distance of the corner of the
-// surface: the drawing walks each point of the path, so a line of a
-// billion points would stop the program. A surface is far smaller.
-LINE_COORDINATE_LIMIT :: 1 << 15
+// The names of the contract that the package and its callers use. One
+// concept keeps one name: these are the names of the contract.
+DRAW_RECORD_VERSION :: draw_record.VERSION
+Draw_Kind :: draw_record.Draw_Kind
+Draw_Record :: draw_record.Draw_Record
+Draw_Color :: draw_record.Draw_Color
+Picture_Format :: draw_record.Picture_Format
+COORDINATE_LIMIT :: draw_record.COORDINATE_LIMIT
+LINE_THICKNESS_LIMIT :: draw_record.LINE_THICKNESS_LIMIT
+LINE_COORDINATE_LIMIT :: draw_record.LINE_COORDINATE_LIMIT
 
 // One cell of a text grid: a character of the font of the system, in its
 // color; or, reverse, in the color of the background on a cell of its
@@ -130,29 +81,6 @@ Text_Grid :: struct {
 	columns, rows, stride: int, // The cells of a line, the lines, and the cells from one line to the next.
 }
 
-// One thing to draw: 40 bytes, little-endian (docs/INTERFACE.md, section 2.1).
-//
-// A `draw_` procedure appends it to the table of the frame; the difference
-// compares it with the records of the frame before; the execution draws
-// it. Example: `draw_rectangle(table, 0, 0, 100, 24, graphics.colors.card_top)`
-// appends `{kind = .Rectangle, x = 0, y = 0, width = 100, height = 24,
-// first_color = <the color>}`.
-Draw_Record :: struct {
-	kind:            Draw_Kind, // What the record draws.
-	text_scale:      u8, // Text: 1, 2 or 3.
-	text_origin_thirds: u8, // Interface_Text: the origin after x + margin, in thirds of a pixel: 0, 1 or 2. 0 for the other kinds.
-	kind_detail:     u8, // Line: the thickness, 1 to LINE_THICKNESS_LIMIT pixels. Text: the weight (Font_Weight: 0 regular, 1 bold). Picture: its picture memory. 0 for the other kinds.
-	x, y:            i32, // The top left corner, in pixels of the surface.
-	width, height:   i32, // The size, in pixels; a Line: the vector to its end.
-	first_color:     u32, // The main color: see `Draw_Kind`.
-	second_color:    u32, // A gradient: its end color. Interface_Text: the ink margin. Picture: its stride, in pixels. Text_Grid: its columns.
-	text_start:      u32, // A text, a grid: its first byte in the text table. A picture: its first pixel in its picture memory.
-	text_count:      u32, // A text, a grid: its bytes. A picture: its generation.
-	element:         u32, // The low 32 bits of the identity of the element that wrote the record.
-}
-
-#assert(size_of(Draw_Record) == 40)
-
 // The draw records of one frame and the bytes of their texts, in the memory
 // of the program. full: a record, a text or the cells of a grid did not
 // fit, and is not drawn: the table is not the frame, so the next frame is
@@ -175,8 +103,8 @@ Draw_Table :: struct {
 	// pixels in one of them. A call of the drawing module takes one: the
 	// compositor gives each part of its screen its own list of one.
 	picture_memories: [][]graphics.Color,
-	// The interface font that measures and draws the Interface_Text records
-	// of the table: the caches that the program validated (display). nil:
+	// The interface font that measures and draws the Text records of the
+	// table in that font: the caches that the program validated (display). nil:
 	// the program has none, and a text in the interface font is a text in
 	// the font of the cells.
 	interface_font: ^display.Interface_Font,
@@ -253,43 +181,119 @@ record_append :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) ->
 	return &table.records[table.record_count - 1]
 }
 
-// draw_rectangle appends a rectangle of one color.
+// draw_rectangle appends a rectangle of one opaque color.
 draw_rectangle :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, color: graphics.Color, element: u32 = 0) {
+	draw_rectangle_with_alpha(table, x, y, width, height, draw_record.opaque(color), element)
+}
+
+// draw_rectangle_with_alpha appends a rectangle of one color with alpha,
+// which blends over what is drawn before it: a shadow, a translucent
+// panel. draw_record.with_alpha gives such a color from a token.
+draw_rectangle_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, color: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, with_place({kind = .Rectangle, first_color = color, element = element}, x, y, width, height))
+	record_append(table, placed_record(draw_record.Draw_Rectangle{color = canonical_color(color)}, element, x, y, width, height))
 }
 
 // draw_vertical_gradient appends the block of the rules: from top, on the
-// first line, to bottom, on the last line.
+// first line, to bottom, on the last line, both opaque.
 draw_vertical_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, top, bottom: graphics.Color, element: u32 = 0) {
+	draw_vertical_gradient_with_alpha(table, x, y, width, height, draw_record.opaque(top), draw_record.opaque(bottom), element)
+}
+
+// draw_vertical_gradient_with_alpha appends a vertical gradient between two
+// colors with alpha, which mix in their encoded values, alpha too: a fade
+// to the same color with alpha 0 keeps the color.
+draw_vertical_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, top, bottom: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, with_place({kind = .Vertical_Gradient, first_color = top, second_color = bottom, element = element}, x, y, width, height))
+	top_color, bottom_color := canonical_gradient_colors(top, bottom)
+	record_append(table, placed_record(draw_record.Draw_Vertical_Gradient{top_color = top_color, bottom_color = bottom_color}, element, x, y, width, height))
 }
 
 // draw_horizontal_gradient appends a rectangle whose color goes from left,
-// on its first column, to right, on its last column.
+// on its first column, to right, on its last column, both opaque.
 draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, left, right: graphics.Color, element: u32 = 0) {
+	draw_horizontal_gradient_with_alpha(table, x, y, width, height, draw_record.opaque(left), draw_record.opaque(right), element)
+}
+
+// draw_horizontal_gradient_with_alpha appends a horizontal gradient between
+// two colors with alpha, as draw_vertical_gradient_with_alpha.
+draw_horizontal_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, left, right: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, with_place({kind = .Horizontal_Gradient, first_color = left, second_color = right, element = element}, x, y, width, height))
+	left_color, right_color := canonical_gradient_colors(left, right)
+	record_append(table, placed_record(draw_record.Draw_Horizontal_Gradient{left_color = left_color, right_color = right_color}, element, x, y, width, height))
 }
 
-// draw_point_grid appends the grid of points of the background.
+// canonical_color gives the one form of a color of one color: a color with
+// alpha 0 draws nothing, whatever its channels, and is 0, so the border
+// reads the record and two such records have the same bytes.
+@(private)
+canonical_color :: proc "contextless" (color: Draw_Color) -> Draw_Color {
+	return draw_record.alpha_of(color) == 0 ? 0 : color
+}
+
+// canonical_gradient_colors gives the one form of the two colors of a
+// gradient: the channels of one end with alpha 0 color the mix, so they
+// stay, and two ends with alpha 0 are both 0.
+@(private)
+canonical_gradient_colors :: proc "contextless" (first, second: Draw_Color) -> (Draw_Color, Draw_Color) {
+	if draw_record.alpha_of(first) == 0 && draw_record.alpha_of(second) == 0 {
+		return 0, 0
+	}
+	return first, second
+}
+
+// The grid of points of the background (docs/DESIGN.md, "3. Surfaces") as
+// the pattern of a Rectangle: a point of POINT_SIZE pixels at
+// POINT_STEP / 2 + n * POINT_STEP of the surface on each axis. The pattern
+// is placed on the surface, so two areas of one surface show one grid.
+POINT_GRID_PATTERN :: draw_record.Repetition {
+	cell_x      = graphics.POINT_STEP / 2 * draw_record.UNITS_PER_PIXEL,
+	cell_y      = graphics.POINT_STEP / 2 * draw_record.UNITS_PER_PIXEL,
+	cell_width  = graphics.POINT_SIZE * draw_record.UNITS_PER_PIXEL,
+	cell_height = graphics.POINT_SIZE * draw_record.UNITS_PER_PIXEL,
+	step_x      = graphics.POINT_STEP * draw_record.UNITS_PER_PIXEL,
+	step_y      = graphics.POINT_STEP * draw_record.UNITS_PER_PIXEL,
+}
+
+// draw_point_grid appends the grid of points of the background: one
+// Rectangle whose pattern is the grid, cut to the area.
 draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, with_place({kind = .Point_Grid, first_color = graphics.colors.point}, x, y, width, height))
+	record_append(table, placed_record(draw_record.Draw_Rectangle{color = draw_record.opaque(graphics.colors.point), repetition = POINT_GRID_PATTERN}, 0, x, y, width, height))
 }
 
-// draw_folded_gap appends a part with no measure on this scale.
+// draw_folded_gap appends a part with no measure on this scale: the track,
+// then two lines at an angle, from the bottom left up to the right
+// (docs/DESIGN.md, "2. Forms"). Three records, each with the box of the
+// gap: the lines are cut to it, as the pixels of the gap always were, so
+// their ends can lie on its right edge. A line with an end past
+// LINE_COORDINATE_LIMIT is left out: no surface reaches it.
 draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, with_place({kind = .Folded_Gap, first_color = graphics.colors.dim, second_color = graphics.colors.track, element = element}, x, y, width, height))
+	draw_rectangle(table, x, y, width, height, graphics.colors.track, element)
+	line_in_box(table, x + 2, y + height - 4, x + width - 4, y + 4, graphics.colors.dim, element, x, y, width, height)
+	line_in_box(table, x + 6, y + height - 4, x + width, y + 8, graphics.colors.dim, element, x, y, width, height)
+}
+
+// line_in_box appends a line of 1 pixel from one end to the other in the
+// order given, whose record has the box of a place and a size: the line
+// draws only inside it. The execution walks the path from the end that
+// line_ends_in_order puts first, so the ends are written in that order.
+@(private)
+line_in_box :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y: int, color: graphics.Color, element: u32, x, y, width, height: int) {
+	if !inside_line_limit(from_x) || !inside_line_limit(from_y) || !inside_line_limit(to_x) || !inside_line_limit(to_y) {
+		return
+	}
+	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
+	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = draw_record.opaque(color), thickness = 1}
+	record_append(table, placed_record(line, element, x, y, width, height))
 }
 
 // draw_picture appends the pixels of a picture of the program at (x, y).
@@ -297,14 +301,28 @@ draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: 
 // the record names the first such memory, the index of the first pixel in
 // it, and the stride. generation is a new number each time its pixels
 // change: the difference sees the change. A picture with no pixel, or with
-// a pixel outside each picture memory, is refused.
+// a pixel outside each picture memory, is refused. Each pixel is
+// 0x00RRGGBB, copied as it is.
 draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, element: u32 = 0) {
+	picture_append(table, x, y, picture, generation, .Opaque, element)
+}
+
+// draw_picture_with_alpha appends a picture as draw_picture does, whose
+// pixels are 0xAARRGGBB with straight alpha: each blends over what is drawn
+// before it, by the rule of the colors.
+draw_picture_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, element: u32 = 0) {
+	picture_append(table, x, y, picture, generation, .Straight_Alpha, element)
+}
+
+// picture_append appends the record of a picture in a format.
+@(private)
+picture_append :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, format: Picture_Format, element: u32) {
 	memory, first, found := picture_place(table, picture)
 	if !found {
 		table.refused = true
 		return
 	}
-	record_append(table, with_place({kind = .Picture, kind_detail = u8(memory), second_color = u32(picture.stride), text_start = u32(first), text_count = generation, element = element}, x, y, picture.width, picture.height))
+	record_append(table, placed_record(draw_record.Draw_Picture{memory = u8(memory), format = format, first = u32(first), stride = u32(picture.stride), generation = generation}, element, x, y, picture.width, picture.height))
 }
 
 // picture_place finds the picture memory that holds each pixel of a
@@ -334,22 +352,34 @@ picture_place :: proc "contextless" (table: ^Draw_Table, picture: graphics.Canva
 }
 
 // picture_of gives the pixels that a Picture record names, as a canvas, or
-// false when the record names a memory that the table does not have, a
-// picture with no pixel, a stride below its width, or a pixel past its
-// memory. A record that a caller wrote by hand can have any bytes, and
-// the check is in integers that cannot wrap: each factor is below 2^32.
+// false when the record is not a Picture that the border reads, or names a
+// memory that the table does not have, a picture with no pixel, a stride
+// below its width, or a pixel past its memory.
 picture_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (picture: graphics.Canvas, ok: bool) {
-	number := int(record.kind_detail)
-	if number >= len(table.picture_memories) || record.width <= 0 || record.height <= 0 {
+	primitive, problem := draw_record.read(record)
+	fields, is_picture := primitive.(draw_record.Draw_Picture)
+	if problem != .None || !is_picture {
+		return {}, false
+	}
+	return picture_pixels(table, record_rectangle(record), fields)
+}
+
+// picture_pixels gives the pixels of a picture that the border read, in
+// its rectangle. A record that a caller wrote by hand can have any bytes,
+// and the check is in integers that cannot wrap: each factor is below 2^32.
+@(private)
+picture_pixels :: proc "contextless" (table: ^Draw_Table, place: Rectangle, fields: draw_record.Draw_Picture) -> (picture: graphics.Canvas, ok: bool) {
+	number := int(fields.memory)
+	width, height := place.right - place.left, place.bottom - place.top
+	if number >= len(table.picture_memories) || width <= 0 || height <= 0 || width > int(max(u32)) || height > int(max(u32)) {
 		return {}, false
 	}
 	pixels := table.picture_memories[number]
-	first, stride := u64(record.text_start), u64(record.second_color)
-	width, height := u64(record.width), u64(record.height)
-	if stride < width || first + (height - 1) * stride + width > u64(len(pixels)) {
+	first, stride := u64(fields.first), u64(fields.stride)
+	if stride < u64(width) || first + u64(height - 1) * stride + u64(width) > u64(len(pixels)) {
 		return {}, false
 	}
-	return {pixels = raw_data(pixels[first:]), width = int(width), height = int(height), stride = int(stride)}, true
+	return {pixels = raw_data(pixels[first:]), width = width, height = height, stride = int(stride)}, true
 }
 
 // The most cells of one grid: the bytes of its cells fit the u32 of a
@@ -383,17 +413,30 @@ draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, grid: Text_
 		}
 	}
 	table.text_count = start + size
-	record_append(table, with_place({kind = .Text_Grid, second_color = u32(grid.columns), text_start = u32(start), text_count = u32(size), element = element}, x, y, grid.columns * graphics.CELL_WIDTH, grid.rows * graphics.CELL_HEIGHT))
+	record_append(table, placed_record(draw_record.Draw_Text_Grid{first = u32(start), count = u32(size), columns = u32(grid.columns)}, element, x, y, grid.columns * graphics.CELL_WIDTH, grid.rows * graphics.CELL_HEIGHT))
 }
 
 // grid_of gives the cells that a Text_Grid record names in the text table
-// of its table, or false when the record names no column, bytes that are
-// not a whole count of rows, a range past the text table, or a place whose
-// address is not a multiple of 4. A record that a caller wrote by hand can
-// have any bytes: the sums are in 64 bits from values below 2^32, so no
-// range wraps. A grid of no row is valid, and draws nothing.
+// of its table, or false when the record is not a Text_Grid that the
+// border reads.
 grid_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (grid: Text_Grid, ok: bool) {
-	start, count, columns := u64(record.text_start), u64(record.text_count), u64(record.second_color)
+	primitive, problem := draw_record.read(record)
+	fields, is_grid := primitive.(draw_record.Draw_Text_Grid)
+	if problem != .None || !is_grid {
+		return {}, false
+	}
+	return grid_cells(table, fields)
+}
+
+// grid_cells gives the cells of a grid that the border read, or false when
+// it names no column, bytes that are not a whole count of rows, a range
+// past the text table, or a place whose address is not a multiple of 4. A
+// record that a caller wrote by hand can have any bytes: the sums are in 64
+// bits from values below 2^32, so no range wraps. A grid of no row is
+// valid, and draws nothing.
+@(private)
+grid_cells :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_Text_Grid) -> (grid: Text_Grid, ok: bool) {
+	start, count, columns := u64(fields.first), u64(fields.count), u64(fields.columns)
 	row_bytes := columns * size_of(Text_Grid_Cell)
 	if columns == 0 || count % row_bytes != 0 || start + count > u64(table.text_count) || start + count > u64(len(table.text)) {
 		return {}, false
@@ -408,13 +451,36 @@ grid_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (grid
 	return {cells = cells, columns = int(columns), rows = int(count / row_bytes), stride = int(columns)}, true
 }
 
+// text_of_record gives the text of a Text record, in either font, with its
+// scale, or false for another record, a record that the border refuses, or
+// a range outside the text table. A tool and a test find a text of a frame
+// with it.
+text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (text: string, scale: int, ok: bool) {
+	primitive, problem := draw_record.read(record)
+	if problem != .None {
+		return "", 0, false
+	}
+	first, count: u32
+	switch fields in primitive {
+	case draw_record.Draw_Text:
+		first, count, scale = fields.first, fields.count, int(fields.scale)
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Vertical_Gradient, draw_record.Draw_Horizontal_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
+		return "", 0, false
+	}
+	if u64(first) + u64(count) > u64(table.text_count) || u64(first) + u64(count) > u64(len(table.text)) {
+		return "", 0, false
+	}
+	return string(table.text[first:][:count]), scale, true
+}
+
 // draw_line appends a straight line from one point to another, with a
 // thickness in pixels. The record always goes from the left end (the top
 // end when the two ends have one x), so a line and its reverse are one
 // record and draw the same pixels. A thickness of 0 or less draws nothing;
 // a thickness past LINE_THICKNESS_LIMIT is cut to it. A line with an end
 // past LINE_COORDINATE_LIMIT is refused: no record. A line of length 0 is
-// one square of its thickness.
+// one square of its thickness. The box of the record holds each square of
+// the path.
 draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y: int, thickness: int, color: graphics.Color, element: u32 = 0) {
 	if thickness <= 0 {
 		return
@@ -422,8 +488,11 @@ draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y:
 	if !inside_line_limit(from_x) || !inside_line_limit(from_y) || !inside_line_limit(to_x) || !inside_line_limit(to_y) {
 		return
 	}
+	side := min(thickness, LINE_THICKNESS_LIMIT)
 	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
-	record_append(table, {kind = .Line, kind_detail = u8(min(thickness, LINE_THICKNESS_LIMIT)), x = i32(start_x), y = i32(start_y), width = i32(end_x - start_x), height = i32(end_y - start_y), first_color = color, element = element})
+	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = draw_record.opaque(color), thickness = u8(side)}
+	box := line_rectangle(start_x, start_y, end_x, end_y, side)
+	record_append(table, placed_record_of_edges(line, element, box.left, box.top, box.right, box.bottom))
 }
 
 // draw_outline appends the border of a rectangle, thickness pixels wide
@@ -455,45 +524,30 @@ line_ends_in_order :: proc "contextless" (from_x, from_y, to_x, to_y: int) -> (s
 	return from_x, from_y, to_x, to_y
 }
 
-// line_record_valid says if the execution draws a line record: a record
-// written by a caller with no draw_line can have any bytes.
-line_record_valid :: proc "contextless" (record: Draw_Record) -> bool {
-	thickness := int(record.kind_detail)
-	if thickness < 1 || thickness > LINE_THICKNESS_LIMIT {
-		return false
-	}
-	start_x, start_y := int(record.x), int(record.y)
-	end_x, end_y := start_x + int(record.width), start_y + int(record.height)
-	return inside_line_limit(start_x) && inside_line_limit(start_y) && inside_line_limit(end_x) && inside_line_limit(end_y)
-}
-
-// line_rectangle gives the rectangle that holds each pixel of a line: the
-// path stays between the x and the y of its two ends, and the square of
-// each point starts half a thickness before the point. The rectangle is
-// the damage of the line. Pieces of the path would be tighter, but the
-// damage list joins rectangles that touch, and the pieces of one line
-// touch. A line that the execution refuses covers nothing.
-line_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
-	if !line_record_valid(record) {
-		return {}
-	}
-	thickness := int(record.kind_detail)
+// line_rectangle gives the rectangle that holds each pixel of a line, in
+// pixels: the path stays between the x and the y of its two ends, and the
+// square of each point starts half a thickness before the point. It is the
+// box of the record, so it is the damage of the line. Pieces of the path
+// would be tighter, but the damage list joins rectangles that touch, and
+// the pieces of one line touch.
+line_rectangle :: proc "contextless" (start_x, start_y, end_x, end_y, thickness: int) -> Rectangle {
 	before := thickness / 2
-	start_x, start_y := int(record.x), int(record.y)
-	end_x, end_y := start_x + int(record.width), start_y + int(record.height)
 	return {min(start_x, end_x) - before, min(start_y, end_y) - before, max(start_x, end_x) - before + thickness, max(start_y, end_y) - before + thickness}
 }
 
 // draw_clip appends a clip: the next records are cut to the rectangle. A
 // width of 0 ends the cut.
 draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, with_place({kind = .Clip}, x, y, width, height))
+	record_append(table, placed_record(draw_record.Draw_Clip{}, 0, x, y, width, height))
 }
 
 // draw_text appends a run of text at (x, y), the top left corner of its
-// first character, and gives the x after its last character. A text in the
-// interface font is an Interface_Text record when the table has the font
-// (font_in_use), else a text of the font of the cells.
+// first character, and gives the x after its last character. The record is
+// a Text in the interface font when the table has the font (font_in_use),
+// else a Text in the font of the cells, whose origin is the left edge of
+// its box. A text in the font of the cells that starts past
+// COORDINATE_LIMIT has no record: no surface reaches it, and its origin
+// would leave its box.
 draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) -> int {
 	used := font_in_use(table, font, len(text))
 	if used.kind == .Interface {
@@ -503,6 +557,9 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	if len(text) == 0 {
 		return x
 	}
+	if x < -COORDINATE_LIMIT || x > COORDINATE_LIMIT - 1 {
+		return x + width
+	}
 	if table.text_count + len(text) > len(table.text) {
 		table.full = true
 		return x + width
@@ -511,7 +568,8 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(used)
-	record_append(table, with_place({kind = .Text, text_scale = u8(scale), kind_detail = u8(used.weight), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element}, x, y, width, graphics.CELL_HEIGHT * scale))
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.opaque(color), origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, scale = u8(scale), weight = used.weight}
+	record_append(table, placed_record(fields, element, x, y, width, graphics.CELL_HEIGHT * scale))
 	return x + width
 }
 
@@ -533,9 +591,11 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 // interface_text_append appends a text in the interface font whose origin
 // is at place, in 1/64 of a pixel, rounded to the nearest third of a pixel
 // (the positions of the glyph cache), and gives the x of the end of its
-// measured box, rounded up. The rectangle of the record is the box grown by
-// the ink margin of the font on each side (graphics.PROPORTIONAL_INK_MARGIN
+// measured box, rounded up. The box of the record is the measured box grown
+// by the ink margin of the font on each side (graphics.PROPORTIONAL_INK_MARGIN
 // times the scale), so the damage of the record holds each pixel of its ink.
+// A text whose box would start past COORDINATE_LIMIT has no record: no
+// surface reaches it, and its origin would leave its box.
 @(private)
 interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: int, text: string, color: graphics.Color, font: Font, element: u32) -> int {
 	width := interface_width_subpixels(table.interface_font, font, text)
@@ -545,6 +605,12 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	if len(text) == 0 {
 		return end
 	}
+	scale := font_scale(font)
+	margin := graphics.PROPORTIONAL_INK_MARGIN * scale
+	left := int(pixel) - margin
+	if left < -COORDINATE_LIMIT || left > COORDINATE_LIMIT - 1 {
+		return end
+	}
 	if table.text_count + len(text) > len(table.text) {
 		table.full = true
 		return end
@@ -552,35 +618,42 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	start := table.text_count
 	copy(table.text[start:], text)
 	table.text_count += len(text)
-	scale := font_scale(font)
-	margin := graphics.PROPORTIONAL_INK_MARGIN * scale
-	left := int(pixel) - margin
-	record_append(table, with_place({kind = .Interface_Text, text_scale = u8(scale), text_origin_thirds = u8(third), kind_detail = u8(font.weight), first_color = color, second_color = u32(margin), text_start = u32(start), text_count = u32(len(text)), element = element}, left, y, end + margin - left, graphics.CELL_HEIGHT * scale))
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.opaque(color), origin_x = i32(origin), font = .Interface, scale = u8(scale), weight = font.weight}
+	// The top and the bottom by the rule of each writer: the edges of a
+	// place and a size, each cut to the limit, so no sum passes the int.
+	top, bottom := cut_edges(y, graphics.CELL_HEIGHT * scale)
+	record_append(table, record_of_pixels(fields, element, left, top, cut_place(end + margin), bottom))
 	return end
 }
 
-// The places of a record stay inside this distance of the corner of the
-// surface. Inside it, a size is the difference of two places and fits the
-// i32 of a record. A surface is far smaller.
-COORDINATE_LIMIT :: 1 << 30
-
-// with_place gives a record with the place and the size of a rectangle,
-// cut to COORDINATE_LIMIT. Each edge is cut, then the size is the
-// difference of the two edges: a cut place with its own cut size would move
-// the other edge, so a rectangle that covers the surface could draw
-// nothing.
+// placed_record gives the record of a primitive in the rectangle of a
+// place and a size, in pixels, cut to COORDINATE_LIMIT.
 @(private)
-with_place :: proc "contextless" (record: Draw_Record, x, y, width, height: int) -> Draw_Record {
-	placed := record
+placed_record :: proc "contextless" (primitive: draw_record.Draw_Primitive, element: u32, x, y, width, height: int) -> Draw_Record {
 	left, right := cut_edges(x, width)
 	top, bottom := cut_edges(y, height)
-	placed.x, placed.width = i32(left), i32(right - left)
-	placed.y, placed.height = i32(top), i32(bottom - top)
-	return placed
+	return record_of_pixels(primitive, element, left, top, right, bottom)
+}
+
+// placed_record_of_edges gives the record of a primitive in the rectangle
+// of four edges, in pixels, each cut to COORDINATE_LIMIT.
+@(private)
+placed_record_of_edges :: proc "contextless" (primitive: draw_record.Draw_Primitive, element: u32, left, top, right, bottom: int) -> Draw_Record {
+	return record_of_pixels(primitive, element, cut_place(left), cut_place(top), cut_place(right), cut_place(bottom))
+}
+
+// record_of_pixels gives the record of a primitive in a box of edges in
+// pixels that are inside COORDINATE_LIMIT.
+@(private)
+record_of_pixels :: proc "contextless" (primitive: draw_record.Draw_Primitive, element: u32, left, top, right, bottom: int) -> Draw_Record {
+	return draw_record.record_of(primitive, element, draw_record.units_of_pixels(left), draw_record.units_of_pixels(top), draw_record.units_of_pixels(right), draw_record.units_of_pixels(bottom))
 }
 
 // cut_edges gives the two edges of a place and a size, each cut to
-// COORDINATE_LIMIT. The sum of the two numbers cannot pass the int.
+// COORDINATE_LIMIT. Each edge is cut, then the size is the difference of
+// the two edges: a cut place with its own cut size would move the other
+// edge, so a rectangle that covers the surface could draw nothing. The sum
+// of the two numbers cannot pass the int.
 @(private)
 cut_edges :: proc "contextless" (place, size: int) -> (start, end: int) {
 	switch {
@@ -591,17 +664,22 @@ cut_edges :: proc "contextless" (place, size: int) -> (start, end: int) {
 	case:
 		end = place + size
 	}
-	start = clamp(place, -COORDINATE_LIMIT, COORDINATE_LIMIT - 1)
-	end = clamp(end, -COORDINATE_LIMIT, COORDINATE_LIMIT - 1)
-	return
+	return cut_place(place), cut_place(end)
 }
 
-// record_rectangle gives the rectangle that a record covers.
+// cut_place cuts one edge to COORDINATE_LIMIT.
+@(private)
+cut_place :: proc "contextless" (place: int) -> int {
+	return clamp(place, -COORDINATE_LIMIT, COORDINATE_LIMIT - 1)
+}
+
+// record_rectangle gives the rectangle of the box of a record, in whole
+// pixels: the damage of the record. A box that is not on whole pixels
+// grows to the pixels that it touches, and a box whose right is left of its
+// left is empty. It reads the box of a record that the border refuses too:
+// such a record draws nothing, and its box is still the damage of a change.
 record_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
-	if record.kind == .Line {
-		return line_rectangle(record)
-	}
-	return {int(record.x), int(record.y), int(record.x) + int(record.width), int(record.y) + int(record.height)}
+	return {draw_record.pixels_floor(record.left), draw_record.pixels_floor(record.top), draw_record.pixels_ceiling(record.right), draw_record.pixels_ceiling(record.bottom)}
 }
 
 // draw_unsigned appends a number in decimal, with at least minimum_digits

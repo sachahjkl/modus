@@ -1,3 +1,0 @@
-type: Changed
-
-**A word in place of the other enum fields of a shared record.** The kind of a code run of the terminal, the result and the parameter kinds of an entry of the palette table, the types of a module file, the kinds of an event record and of a fault record of the kernel, the mode of the lockers board, the kind of a storage entry and the self test and the floor states of the boot information are now words that each reader takes through its border, with the same bytes in each record. A value of a setting that the setting does not have now refuses the whole settings page or kept record, where it read as the value 0 before.

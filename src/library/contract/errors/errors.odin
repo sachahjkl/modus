@@ -65,7 +65,7 @@ Error_Record :: struct {
 Kind :: enum i64 {
 	None              = 0, // No error: the record of a call that did not fail is all zero.
 	Empty             = 1, // A text argument has no byte. limit: the most that it can have.
-	// Given by the storage service and by the HTTP server (`src/programs/server`) for an empty name, and by QUIC.
+	// Given by the storage service and by the HTTP server (`src/modules/demonstrations/server`) for an empty name, and by QUIC.
 	Too_Long          = 2, // value: the size of the argument; limit: the most that it can have.
 	// The unit names what the size counts: `Words` for a word wait, `Bytes` for a name of the storage service or a
 	// frame of the frame service.
@@ -137,7 +137,8 @@ Kind :: enum i64 {
 	// The kernel gives it for a command record whose kind is 0 or above the last `op.Operation`; limit is the
 	// last operation.
 	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel).
-	// The last resort of a callee that has no better kind: a reader shows the status.
+	// The last resort of a callee that has no better kind: a reader shows the status. `src/library/support/system`
+	// gives it for a kernel call whose answer has another tag than its command, or is absent.
 	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: the word of an Unanswered, what did not answer.
 	// The network service gives it, with the unit `Milliseconds`.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
@@ -148,7 +149,8 @@ Kind :: enum i64 {
 	// The network service gives it for a send while the device reports no link.
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
 	// The block, frame and network services give it, with the unit `Requests`. Another try can pass after a
-	// completion.
+	// completion. `src/library/support/system` gives it with `Bad_Operation` and limit 0 for a kernel call on a
+	// kernel ring that holds a command or a completion: its command does not run.
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist; found: 0, or the number from 1 of the record of a table argument that names them (a record that names bytes of another argument by an offset, docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").
 	// The services of rings give it for a place and a count past the end of their data region (the unit `Bytes`),
 	// and the storage service for a range past the end of an object.
@@ -289,6 +291,8 @@ Unit :: enum i64 {
 	Stop_Reports = 50, // Absent: the stop reports of disk programs that the root service keeps; no disk program of the principal of the caller with this nickname stopped on a fault, or newer reports took its place (src/md/features/debug_object_of_a_disk_program.md).
 	Versions_Erase = 51, // No_Grant: the erase of the versions of an object (the start grant Versions_Erase, docs/STORAGE.md, "4.8 The erase of versions").
 	Dropped_Writes = 52, // Device: the blocks of a commit that the disk answered with Ok and did not keep; found: their count. The storage service refused the commit (docs/STORAGE.md, "3.3 The commit and the open").
+	Nanoseconds = 53, // A time of the system clock, or a span of it, in nanoseconds: the time of a record of a timed stream (src/library/contract/timed_stream).
+	Frames      = 54, // Frames of a timed stream: one sample of each channel (src/library/contract/timed_stream).
 }
 
 // How a handle ended (Handle_Ended).
@@ -386,6 +390,8 @@ UNIT_NAMES := [Unit]string {
 	.Stop_Reports = "stop reports of disk programs that the root service keeps",
 	.Versions_Erase = "the erase of the versions of an object",
 	.Dropped_Writes = "blocks that the disk did not keep",
+	.Nanoseconds = "nanoseconds",
+	.Frames      = "frames",
 }
 
 // A ring completion (src/library/contract/ring) has the status of the contract of its

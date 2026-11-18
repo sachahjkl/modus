@@ -1,6 +1,6 @@
 package interface
 
-import "base:intrinsics"
+import "modus:contract/draw_record"
 import "modus:support/graphics"
 
 DAMAGE_CAPACITY :: 8 // The rectangles that one frame keeps, as the compositor does.
@@ -48,32 +48,111 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 	return bounds
 }
 
-// records_equal says if two records draw the same thing: their 40 bytes are
-// equal, except the places of their texts in the two text tables, and the
-// bytes of their texts are equal. A text record whose range is not inside
-// its text table is equal to no record: its rectangle is damaged, and the
-// execution draws nothing for it. Two Text_Grid records are equal when
-// their bytes are equal except their places: their cells are compared one
-// by one after it (grid_damage). The check is on the records that it
-// receives, the copies that it compares.
+// records_equal says if two records draw the same thing: their 48 bytes are
+// equal, except the places of their texts and grids in the two text tables,
+// and the bytes of their texts are equal. A text record whose range is not
+// inside its text table is equal to no record. Two Text_Grid records are
+// equal when their bytes are equal except their places: their cells are
+// compared one by one after it (grid_damage). The check is on the records
+// that it receives, the copies that it compares.
+//
+// Most records of a frame are the records of the frame before, so the
+// equal case is one comparison of 48 bytes, with no read through the
+// border: two records with the same bytes draw the same thing, also two
+// records that the border refuses, which draw nothing in both frames. Only
+// a text compares its bytes too. The border keeps each byte of a record
+// that it reads canonical (each unused byte is 0, and a color with alpha 0
+// that draws nothing is 0), so two records whose bytes differ draw
+// different things, or one of them draws nothing: they are not equal, and
+// no read through the border is needed to know it. Where two records with
+// other bytes still draw the same pixels (a gradient of one line whose
+// second end, of alpha 0, is never drawn; rectangles of the color 0 with
+// other patterns; a rectangle of the color 0 against a None), the damage
+// is too large, never too small. The one exception is the first byte of the range of
+// a Text or a Text_Grid, which can move in the text table
+// with no change of what is drawn: those records are compared with that
+// word masked. Two refused records that are equal under the mask draw
+// nothing in both frames, or are damaged by the comparison of their texts
+// or by the grid; the damage can be too large, never too small.
 records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now: ^Draw_Table, new: Draw_Record) -> bool {
-	old_without_place, new_without_place := old, new
-	// A text and a grid have a place in the text table that can change
-	// with no change of what is drawn. For a picture, the same field is
-	// its first pixel.
-	if (is_text_kind(old.kind) || old.kind == .Text_Grid) && old.kind == new.kind {
-		old_without_place.text_start, new_without_place.text_start = 0, 0
-	}
-	if (transmute([size_of(Draw_Record)]u8)old_without_place) != (transmute([size_of(Draw_Record)]u8)new_without_place) {
-		return false
-	}
-	if !is_text_kind(old.kind) {
+	old_words := transmute([draw_record.RECORD_WORDS]u64)old
+	new_words := transmute([draw_record.RECORD_WORDS]u64)new
+	kind, known := draw_record.draw_kind_of_word(new.kind)
+	if old_words == new_words {
+		if !known {
+			return true
+		}
+		switch kind {
+		case .Text:
+			range := transmute(Range_Fields)new.fields
+			return texts_equal(before, range.first, now, range.first, range.count)
+		case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Picture, .Text_Grid, .Line:
+			return true
+		}
 		return true
 	}
-	if u64(old.text_start) + u64(old.text_count) > u64(before.text_count) || u64(new.text_start) + u64(new.text_count) > u64(now.text_count) {
+	if old.kind != new.kind || !known {
 		return false
 	}
-	return string(before.text[old.text_start:][:old.text_count]) == string(now.text[new.text_start:][:new.text_count])
+	switch kind {
+	case .Text, .Text_Grid:
+		old_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
+		new_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
+		if old_words != new_words {
+			return false
+		}
+		if kind == .Text_Grid {
+			return true
+		}
+		old_range := transmute(Range_Fields)old.fields
+		new_range := transmute(Range_Fields)new.fields
+		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
+	case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Picture, .Line:
+		return false
+	}
+	return false
+}
+
+// The first two fields of a Text and a Text_Grid: the
+// place of the range in the text table, and its count of bytes.
+@(private)
+Range_Fields :: struct {
+	first:    u32,
+	count:    u32,
+	reserved: [draw_record.FIELDS_SIZE - 8]u8,
+}
+
+// The word of the record that holds the field first of a range, and the
+// bits of that field in it: the fields start at the byte HEADER_SIZE, a
+// multiple of 8, and first is their first 4 bytes, the low half of the
+// word on this little-endian machine.
+@(private)
+RANGE_FIRST_WORD :: draw_record.HEADER_SIZE / size_of(u64)
+@(private)
+RANGE_FIRST_MASK :: u64(0xFFFF_FFFF)
+
+#assert(draw_record.HEADER_SIZE % size_of(u64) == 0)
+#assert(size_of(Range_Fields) == draw_record.FIELDS_SIZE)
+#assert(offset_of(draw_record.Text_Fields, first) == 0 && offset_of(draw_record.Text_Fields, count) == 4)
+#assert(offset_of(draw_record.Text_Grid_Fields, first) == 0 && offset_of(draw_record.Text_Grid_Fields, count) == 4)
+
+// texts_equal says if two ranges of count bytes, in the text tables of two
+// frames, hold the same bytes. A range outside its text table is equal to
+// no range: the sums are in 64 bits, so no range wraps.
+@(private)
+texts_equal :: proc "contextless" (before: ^Draw_Table, old_first: u32, now: ^Draw_Table, new_first: u32, count: u32) -> bool {
+	if u64(old_first) + u64(count) > u64(before.text_count) || u64(new_first) + u64(count) > u64(now.text_count) {
+		return false
+	}
+	return string(before.text[old_first:][:count]) == string(now.text[new_first:][:count])
+}
+
+// is_clip_record says if a record is a Clip: a clip that changes changes
+// what each record after it draws.
+@(private)
+is_clip_record :: proc "contextless" (record: Draw_Record) -> bool {
+	kind, known := draw_record.draw_kind_of_word(record.kind)
+	return known && kind == .Clip
 }
 
 // damage_by_difference finds what changed from the table before to the
@@ -87,58 +166,67 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 	for index in 0 ..< shared {
 		// One copy of each record: a table can be in memory that another
 		// program writes during the call (the interface as a module).
-		old := intrinsics.volatile_load(&before.records[index])
-		new := intrinsics.volatile_load(&now.records[index])
+		old := draw_record.copy_once(&before.records[index])
+		new := draw_record.copy_once(&now.records[index])
 		if records_equal(before, old, now, new) {
-			if new.kind == .Text_Grid {
-				grid_damage(before, old, now, new, damage)
-			}
+			grid_damage(before, old, now, new, damage)
 			continue
 		}
 		// A clip that changes changes what the next records draw.
-		if old.kind == .Clip || new.kind == .Clip {
+		if is_clip_record(old) || is_clip_record(new) {
 			damage_rest(before, now, index, damage)
 			return
 		}
 		damage_add(damage, record_rectangle(old))
 		damage_add(damage, record_rectangle(new))
 	}
-	for record in before.records[shared:before.record_count] {
-		damage_add(damage, record_rectangle(record))
+	for index in shared ..< before.record_count {
+		damage_add(damage, record_rectangle(draw_record.copy_once(&before.records[index])))
 	}
-	for record in now.records[shared:now.record_count] {
-		damage_add(damage, record_rectangle(record))
+	for index in shared ..< now.record_count {
+		damage_add(damage, record_rectangle(draw_record.copy_once(&now.records[index])))
 	}
 }
 
-// damage_rest damages each record of the two tables from an index to the end.
+// damage_rest damages each record of the two tables from an index to the
+// end. One copy of each record, as each other reader takes.
 @(private)
 damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage: ^Damage) {
-	for record in before.records[first:before.record_count] {
-		if record.kind != .Clip {
-			damage_add(damage, record_rectangle(record))
-		}
-	}
-	for record in now.records[first:now.record_count] {
-		if record.kind != .Clip {
-			damage_add(damage, record_rectangle(record))
+	tables := [2]^Draw_Table{before, now}
+	for table in tables {
+		for index in first ..< table.record_count {
+			record := draw_record.copy_once(&table.records[index])
+			if !is_clip_record(record) {
+				damage_add(damage, record_rectangle(record))
+			}
 		}
 	}
 }
 
 // grid_damage damages, in each row of a grid that did not move, the span
 // from the first changed cell to the last one. The two records are equal
-// except their places in their text tables. A grid whose cells one of the
-// two tables does not hold (grid_of) is damaged whole.
+// except their places in their text tables; a record that is no grid
+// damages nothing here. A grid whose cells one of the two tables does not
+// hold (grid_of) is damaged whole.
 @(private)
 grid_damage :: proc "contextless" (before: ^Draw_Table, old_record: Draw_Record, now: ^Draw_Table, record: Draw_Record, damage: ^Damage) {
+	// The word of the kind first: most equal records are no grid, and they
+	// cost no read through the border here.
+	if kind, known := draw_record.draw_kind_of_word(record.kind); !known || kind != .Text_Grid {
+		return
+	}
+	primitive, problem := draw_record.read(record)
+	if _, is_grid := primitive.(draw_record.Draw_Text_Grid); problem != .None || !is_grid {
+		return
+	}
 	old, old_ok := grid_of(before, old_record)
 	new, new_ok := grid_of(now, record)
 	if !old_ok || !new_ok || old.columns != new.columns || old.rows != new.rows {
 		damage_add(damage, record_rectangle(record))
 		return
 	}
-	x, y := int(record.x), int(record.y)
+	place := record_rectangle(record)
+	x, y := place.left, place.top
 	for row in 0 ..< new.rows {
 		old_row := old.cells[row * old.stride:][:new.columns]
 		new_row := new.cells[row * new.stride:][:new.columns]

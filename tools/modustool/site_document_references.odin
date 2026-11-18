@@ -14,8 +14,6 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 
-SITE_GLOSSARY_FILE :: "docs/GLOSSARY.md"
-
 // The words that start a label of a place in a document: "section 8",
 // "sections 4 and 5", "property <n>". The last one names a numbered item
 // of a list, not a heading (site_item_find).
@@ -83,9 +81,10 @@ Site_Comment_Form :: enum {
 	Line, // One line, in a cell of a table: the text, then "See:" and the references.
 }
 
-// site_document_path_end tells whether a path "docs/<NAME>.md" starts at an
-// index of a text, and gives the byte after it. A part of a longer path
-// ("tools/docs/X.md") or of a word is not a pointer.
+// site_document_path_end tells whether a path "docs/<NAME>.md", or a file
+// of the glossary "docs/glossary/<name>.md", starts at an index of a text,
+// and gives the byte after it. A part of a longer path ("tools/docs/X.md")
+// or of a word is not a pointer.
 site_document_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
 	if start >= 0 && start < len(text) && strings.has_prefix(text[start:], INTENT_PREFIX) {
 		return site_intent_path_end(text, start)
@@ -100,8 +99,14 @@ site_document_path_end :: proc(text: string, start: int) -> (end: int, found: bo
 		}
 	}
 	end = start + len("docs/")
+	// The files of the glossary have names in lower case, as the other
+	// files of the repository, and its index is README.md.
+	in_glossary := strings.has_prefix(text[end:], "glossary/")
+	if in_glossary {
+		end += len("glossary/")
+	}
 	name_start := end
-	for end < len(text) && ((text[end] >= 'A' && text[end] <= 'Z') || (text[end] >= '0' && text[end] <= '9') || text[end] == '_') {
+	for end < len(text) && ((text[end] >= 'A' && text[end] <= 'Z') || (in_glossary && text[end] >= 'a' && text[end] <= 'z') || (text[end] >= '0' && text[end] <= '9') || text[end] == '_') {
 		end += 1
 	}
 	if end == name_start || !strings.has_prefix(text[end:], ".md") {
@@ -579,10 +584,11 @@ site_document_heading_link :: proc(outline: Site_Document_Outline, heading: Site
 // site_document_outline gives the title, the headings and the items of a
 // document. A guide has the ids of its rendered page; a heading of a guide
 // that is not rendered yet has no id, and a label of it does not resolve.
-// The glossary is rendered after the guides: a heading of a group is the
-// title of the page of its group, with its slug as its id, and a term is
-// its entry on that page, with its anchor as its id. A working record is a file of the repository: its places are
-// lines.
+// The glossary is rendered after the guides: the file of a group has the
+// heading of the group, the title of its page with its slug as its id, and
+// its terms, each its entry on that page with its anchor as its id. The
+// index of the glossary has its title. A working record is a file of the
+// repository: its places are lines.
 site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outline {
 	if site == nil {
 		return {}
@@ -591,41 +597,35 @@ site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outlin
 	if !is_page && !site_is_working_record(path) {
 		return {}
 	}
+	if is_page && glossary_is_file(path) {
+		// The glossary is read already: its outline needs no file. The
+		// ids are those that glossary_read gives: the anchor of a term
+		// counts the terms of the files before it.
+		outline := Site_Document_Outline{page = page, found = true}
+		headings := make([dynamic]Site_Document_Heading, context.temp_allocator)
+		if path == GLOSSARY_INDEX_FILE {
+			append(&headings, Site_Document_Heading{level = 1, text = site.glossary.title, id = site_slug(site.glossary.title), line = 1})
+		}
+		for group in site.glossary.groups {
+			if group.file != path {
+				continue
+			}
+			group_page := site_glossary_group_page(group.id)
+			append(&headings, Site_Document_Heading{level = 2, text = group.name, id = group.id, page = group_page, line = group.line})
+			for term in group.terms {
+				append(&headings, Site_Document_Heading{level = 3, text = term.name, id = term.id, page = group_page, line = term.line})
+			}
+		}
+		// A reference names the glossary, then the group or the term.
+		outline.title = site.glossary.title
+		outline.headings = headings[:]
+		return outline
+	}
 	file := site_document_file_outline(site, path)
 	if !file.found || !is_page {
 		return file
 	}
 	outline := Site_Document_Outline{title = file.title, page = page, found = true}
-	if path == SITE_GLOSSARY_FILE {
-		// A heading of level 3 is a term: its id is the anchor of the term,
-		// as glossary_read gives it.
-		slugs := make(map[string]int, context.temp_allocator)
-		for heading in file.headings {
-			if heading.level != 3 {
-				slugs[site_slug(heading.text)] += 1
-			}
-		}
-		term_ids := make(map[string]int, context.temp_allocator)
-		headings := make([]Site_Document_Heading, len(file.headings), context.temp_allocator)
-		group_page := ""
-		for heading, index in file.headings {
-			headings[index] = heading
-			if heading.level == 2 {
-				group_page = site_glossary_group_page(site_slug(heading.text))
-			}
-			if heading.level == 3 {
-				headings[index].id = glossary_term_id(site_term_name(heading.text), &term_ids)
-				headings[index].page = group_page
-			} else if slugs[site_slug(heading.text)] == 1 {
-				headings[index].id = site_slug(heading.text)
-				if heading.level == 2 {
-					headings[index].page = group_page
-				}
-			}
-		}
-		outline.headings = headings
-		return outline
-	}
 	for guide in site.guides {
 		if guide.source != path {
 			continue
@@ -779,17 +779,24 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 	}
 	unresolved := whole
 	unresolved.resolved = false
-	// A quoted label of the glossary is first a term: its entry has the
-	// anchor of the term. Else it is a heading of a group of the glossary.
-	if path == SITE_GLOSSARY_FILE && len(labels) == 1 {
+	// A quoted label of the file of a group is first a term of that group:
+	// its entry has the anchor of the term. Else it is the heading of the
+	// group. A term of another group is not in the file, and does not
+	// resolve.
+	if glossary_is_file(path) && len(labels) == 1 {
 		key, quoted := site_label_key(labels[0])
-		for term in site.terms {
-			if quoted && site_slug(term.name) == site_slug(key) {
-				term_target := whole
-				term_target.heading = term.name
-				term_target.link = strings.concatenate({term.page, "#", term.id}, context.temp_allocator)
-				append(&targets, term_target)
-				return targets[:]
+		for group in site.glossary.groups {
+			if group.file != path {
+				continue
+			}
+			for term in group.terms {
+				if quoted && site_slug(term.name) == site_slug(key) {
+					term_target := whole
+					term_target.heading = term.name
+					term_target.link = strings.concatenate({site_glossary_group_page(group.id), "#", term.id}, context.temp_allocator)
+					append(&targets, term_target)
+					return targets[:]
+				}
 			}
 		}
 	}
@@ -1170,10 +1177,19 @@ site_comment_cell :: proc(site: ^Site, b: ^strings.Builder, from_page, text: str
 }
 
 // site_document_of_code_span gives the document that a code span of a guide
-// names: "ARCHITECTURE.md", "docs/FONTS.md", "SITE.md".
+// names: "ARCHITECTURE.md", "docs/FONTS.md", "SITE.md", and a file of the
+// glossary by its path from docs/ or from the root: "glossary/code.md".
 site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, found: bool) {
 	base := code[strings.last_index_byte(code, '/') + 1:]
 	if site == nil || !strings.has_suffix(base, ".md") {
+		return "", false
+	}
+	// A file of the glossary is named by its folder too: its name alone
+	// ("README.md", "text.md") is the name of other files.
+	if glossary_path := strings.concatenate({"docs/", strings.trim_prefix(code, "docs/")}, context.temp_allocator); glossary_is_file(glossary_path) {
+		if _, is_page := site.documents[glossary_path]; is_page {
+			return glossary_path, true
+		}
 		return "", false
 	}
 	// An intent file is named by its whole path: its file name alone
@@ -1192,7 +1208,7 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 // The folders whose source comments the check of the pointers reads: the
 // sources of the system. The tool is not read: its tests hold pointers
 // that do not resolve on purpose.
-SITE_POINTER_SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_BOOT}
+SITE_POINTER_SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_BOOT}
 
 // site_odin_files_under adds the path of each source file of a folder and
 // of its folders, but the tests, to paths.
@@ -1316,7 +1332,10 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	for guide in site.guides {
 		append(&documents, guide.source)
 	}
-	append(&documents, SITE_GLOSSARY_FILE)
+	append(&documents, GLOSSARY_INDEX_FILE)
+	for group in site.glossary.groups {
+		append(&documents, group.file)
+	}
 	if news_files, news_ok := files_with_suffix("news", ".md"); news_ok {
 		append(&documents, ..news_files)
 	}

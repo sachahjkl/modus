@@ -1,6 +1,7 @@
 #+build !freestanding
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/ring"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -179,22 +180,23 @@ draw_text_wrapped_places_each_line_under_the_line_before :: proc(t: ^testing.T) 
 	testing.expect_value(t, count, 3)
 	testing.expect_value(t, table.record_count, 3)
 	for record, line in table.records[:table.record_count] {
-		testing.expect_value(t, record.kind, Draw_Kind.Text)
-		testing.expect_value(t, int(record.x), 40)
-		testing.expect_value(t, int(record.y), 100 + line * graphics.CELL_HEIGHT)
-		testing.expect(t, int(record.width) <= 24 * 8, "a line stays in the box")
+		testing.expect_value(t, record_view(record).kind, Draw_Kind.Text)
+		testing.expect_value(t, record_view(record).x, 40)
+		testing.expect_value(t, record_view(record).y, 100 + line * graphics.CELL_HEIGHT)
+		testing.expect(t, record_view(record).width <= 24 * 8, "a line stays in the box")
 	}
 	// At scale 2 a character is 16 pixels wide and a line 32 pixels high.
 	table.record_count, table.text_count = 0, 0
 	count = draw_text_wrapped(&table, 0, 0, 10 * 16, "one two three four", graphics.colors.text, FONT_MEDIUM)
 	testing.expect_value(t, count, 2)
-	testing.expect_value(t, int(table.records[1].y), 32)
+	testing.expect_value(t, record_view(table.records[1]).y, 32)
 }
 
 // The text of a record of a table.
 @(private = "file")
 record_text :: proc(table: ^Draw_Table, record: Draw_Record) -> string {
-	return string(table.text[record.text_start:][:record.text_count])
+	text, _, _ := text_of_record(table, record)
+	return text
 }
 
 @(test)
@@ -213,21 +215,21 @@ label_value_lines_takes_the_lines_of_its_longest_text :: proc(t: ^testing.T) {
 	testing.expect_value(t, record_text(&table, table.records[0]), "a name")
 	testing.expect_value(t, record_text(&table, table.records[1]), "one two three")
 	testing.expect_value(t, record_text(&table, table.records[2]), "four five")
-	testing.expect_value(t, int(table.records[0].x), 8)
-	testing.expect_value(t, int(table.records[1].x), 8 + 96)
-	testing.expect_value(t, int(table.records[1].y), 8)
-	testing.expect_value(t, int(table.records[2].y), 8 + LINE)
+	testing.expect_value(t, record_view(table.records[0]).x, 8)
+	testing.expect_value(t, record_view(table.records[1]).x, 8 + 96)
+	testing.expect_value(t, record_view(table.records[1]).y, 8)
+	testing.expect_value(t, record_view(table.records[2]).y, 8 + LINE)
 	for record in table.records[:table.record_count] {
-		testing.expect(t, int(record.x) + int(record.width) <= 8 + 200, "a text stays in the column")
+		testing.expect(t, record_view(record).x + record_view(record).width <= 8 + 200, "a text stays in the column")
 	}
-	testing.expect(t, int(table.records[0].x) + int(table.records[0].width) <= 8 + 96 - 8, "the label stays before the value")
+	testing.expect(t, record_view(table.records[0]).x + record_view(table.records[0]).width <= 8 + 96 - 8, "the label stays before the value")
 
 	// The next row starts under the two lines. A label longer than its
 	// box has two lines too, and the value one.
 	count, drawn = label_value_lines(&frame, &column, "a name of two lines", "short", 96)
 	testing.expect_value(t, count, 2)
 	testing.expect(t, drawn)
-	testing.expect_value(t, int(table.records[3].y), 8 + 2 * LINE)
+	testing.expect_value(t, record_view(table.records[3]).y, 8 + 2 * LINE)
 	testing.expect_value(t, record_text(&table, table.records[3]), "a name of")
 	testing.expect_value(t, record_text(&table, table.records[4]), "two lines")
 	testing.expect_value(t, record_text(&table, table.records[5]), "short")
@@ -239,7 +241,7 @@ label_value_lines_takes_the_lines_of_its_longest_text :: proc(t: ^testing.T) {
 	count, drawn = label_value_lines(&frame, &column, "name", "value", 96, graphics.colors.text, TABLE_LINE)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, column.used, 4 * LINE + TABLE_LINE)
-	testing.expect_value(t, int(table.records[before].y), 8 + 4 * LINE + (TABLE_LINE - LINE) / 2)
+	testing.expect_value(t, record_view(table.records[before]).y, 8 + 4 * LINE + (TABLE_LINE - LINE) / 2)
 }
 
 @(test)
@@ -276,19 +278,19 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	// The band of the case at an even place: the whole row, 8 pixels wider
 	// on each side.
 	band := table.records[0]
-	testing.expect_value(t, band.kind, Draw_Kind.Rectangle)
-	testing.expect_value(t, int(band.x), 8)
-	testing.expect_value(t, int(band.width), 416)
-	testing.expect_value(t, int(band.height), TABLE_LINE + (count - 1) * LINE)
-	testing.expect_value(t, column.used, int(band.height))
+	testing.expect(t, is_solid_rectangle(record_view(band)), "the band is a solid rectangle")
+	testing.expect_value(t, record_view(band).x, 8)
+	testing.expect_value(t, record_view(band).width, 416)
+	testing.expect_value(t, record_view(band).height, TABLE_LINE + (count - 1) * LINE)
+	testing.expect_value(t, column.used, record_view(band).height)
 	// The text of the case, then each line of the answer; the lines of the
 	// answer, joined, are the answer.
 	testing.expect_value(t, table.record_count, 2 + count)
 	joined: [128]u8
 	length := 0
 	for record, line in table.records[2:table.record_count] {
-		testing.expect_value(t, int(record.x), 16 + 200)
-		testing.expect(t, int(record.width) <= 200, "a line of the answer stays in its box")
+		testing.expect_value(t, record_view(record).x, 16 + 200)
+		testing.expect(t, record_view(record).width <= 200, "a line of the answer stays in its box")
 		if line > 0 {
 			length += copy(joined[length:], " ")
 		}
@@ -298,8 +300,8 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	// The case after it has no band, and starts under the band.
 	before := table.record_count
 	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.colors.dim, graphics.colors.program)
-	testing.expect_value(t, table.records[before].kind, Draw_Kind.Text)
-	testing.expect_value(t, int(table.records[before].y), int(band.height) + (TABLE_LINE - LINE) / 2)
+	testing.expect_value(t, record_view(table.records[before]).kind, Draw_Kind.Text)
+	testing.expect_value(t, record_view(table.records[before]).y, record_view(band).height + (TABLE_LINE - LINE) / 2)
 }
 
 @(test)
@@ -383,7 +385,7 @@ damage_is_never_too_small :: proc(t: ^testing.T) {
 		canvas := graphics.Canvas{pixels = raw_data(partial), width = 320, height = 200, stride = 320}
 		execute_in_rectangles(&now, canvas, damage.rectangles[:damage.count])
 		draw_whole(&now, whole)
-		testing.expectf(t, string(transmute([]u8)partial) == string(transmute([]u8)whole), "the frame in its damage differs from the whole frame: %v", item)
+		testing.expectf(t, same_pixels(partial, whole), "the frame in its damage differs from the whole frame: %v", item)
 	}
 }
 
@@ -585,7 +587,7 @@ partial_equals_whole :: proc(t: ^testing.T, before, now: ^Draw_Table, name: stri
 	canvas := graphics.Canvas{pixels = raw_data(partial), width = 320, height = 200, stride = 320}
 	execute_in_rectangles(now, canvas, damage.rectangles[:damage.count])
 	draw_whole(now, whole)
-	testing.expectf(t, string(transmute([]u8)partial) == string(transmute([]u8)whole), "%s: the frame in its damage differs from the whole frame", name)
+	testing.expectf(t, same_pixels(partial, whole), "%s: the frame in its damage differs from the whole frame", name)
 }
 
 @(private = "file")
@@ -761,8 +763,8 @@ coordinates_are_cut_to_i32 :: proc(t: ^testing.T) {
 	memory: Tables
 	table := table_of(&memory)
 	draw_rectangle(&table, 1 << 40, -(1 << 40), 10, 10, 1)
-	testing.expect_value(t, int(table.records[0].x), COORDINATE_LIMIT - 1)
-	testing.expect_value(t, int(table.records[0].y), -COORDINATE_LIMIT)
+	testing.expect_value(t, record_view(table.records[0]).x, COORDINATE_LIMIT - 1)
+	testing.expect_value(t, record_view(table.records[0]).y, -COORDINATE_LIMIT)
 }
 
 // A record that the frame no longer has leaves no pixel, even
@@ -831,11 +833,12 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 	part := graphics.view(whole, 2, 3, 4, 2)
 	draw_picture(&table, 0, 0, part, 7)
 	testing.expect(t, !table.refused && table.record_count == 1, "a part of the memory is a picture")
-	record := table.records[0]
-	testing.expect_value(t, record.kind_detail, 0)
-	testing.expect_value(t, record.text_start, 3 * 8 + 2)
-	testing.expect_value(t, record.second_color, 8)
-	testing.expect_value(t, record.text_count, 7)
+	record := record_view(table.records[0])
+	testing.expect_value(t, record.kind, Draw_Kind.Picture)
+	testing.expect_value(t, record.memory, 0)
+	testing.expect_value(t, record.first, 3 * 8 + 2)
+	testing.expect_value(t, record.stride, 8)
+	testing.expect_value(t, record.generation, 7)
 	canvas_pixels: [4 * 2]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(canvas_pixels[:]), width = 4, height = 2, stride = 4}
 	execute(&table, canvas)
@@ -845,12 +848,12 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 	draw_picture(&table, 0, 0, graphics.Canvas{pixels = part.pixels, width = 4, height = 4, stride = 8}, 1)
 	testing.expect(t, table.refused && table.record_count == 1, "a picture past the end of its memory is refused")
 	// A record by hand: its last pixel is one past the memory.
-	table.records[0] = {kind = .Picture, width = 4, height = 2, text_start = 8 * 6 - 4 - 8 + 1, second_color = 8}
+	table.records[0] = draw_record.record_of(draw_record.Draw_Picture{first = 8 * 6 - 4 - 8 + 1, stride = 8}, 0, 0, 0, draw_record.units_of_pixels(4), draw_record.units_of_pixels(2))
 	canvas_pixels = {}
 	execute(&table, canvas)
 	testing.expect(t, canvas_pixels == [4 * 2]graphics.Color{}, "a record past its picture memory draws nothing")
 	// A record of a picture memory that the table does not have.
-	table.records[0] = {kind = .Picture, kind_detail = 1, width = 4, height = 2, second_color = 8}
+	table.records[0] = draw_record.record_of(draw_record.Draw_Picture{memory = 1, stride = 8}, 0, 0, 0, draw_record.units_of_pixels(4), draw_record.units_of_pixels(2))
 	execute(&table, canvas)
 	testing.expect(t, canvas_pixels == [4 * 2]graphics.Color{}, "a record of a missing picture memory draws nothing")
 }
@@ -861,7 +864,10 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 @(test)
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
 	text := [4]u8{'a', 'b', 'c', 'd'}
-	records := [1]Draw_Record{{kind = .Text, x = 8, width = 8, height = 16, text_start = 2, text_count = 4}}
+	text_record :: proc(first: u32) -> Draw_Record {
+		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, color = draw_record.opaque(0), origin_x = draw_record.units_of_pixels(8), scale = 1}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
+	}
+	records := [1]Draw_Record{text_record(2)}
 	before := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
 	now := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
 	damage: Damage
@@ -869,7 +875,7 @@ text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
 	testing.expect_value(t, damage.count, 1)
 	testing.expect_value(t, damage.rectangles[0], Rectangle{8, 0, 16, 16})
 	// The same record inside its table: no damage.
-	records[0].text_start = 0
+	records[0] = text_record(0)
 	damage = {}
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 0)
@@ -885,8 +891,8 @@ card_caption_stays_inside :: proc(t: ^testing.T) {
 	frame := frame_begin(&table, &state, &input)
 	card(&frame, {8, 8, 200, 100}, "SLOTS", "Program_Report and a long caption", graphics.colors.program, "34")
 	for record in table.records[:table.record_count] {
-		if record.kind == .Text {
-			testing.expectf(t, int(record.x + record.width) <= 8 + 200 - 16 + 1, "a text ends at %d, past the border", record.x + record.width)
+		if view := record_view(record); view.kind == .Text {
+			testing.expectf(t, view.x + view.width <= 8 + 200 - 16 + 1, "a text ends at %d, past the border", view.x + view.width)
 		}
 	}
 }
@@ -917,9 +923,11 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	draw_text_grid(&now, 10, 20, grid)
 	testing.expect(t, now.record_count == 2 && !now.full && !now.refused)
 	record := now.records[1]
-	testing.expect_value(t, record.text_start, 4)
-	testing.expect_value(t, record.text_count, 6 * 3 * size_of(Text_Grid_Cell))
-	testing.expect_value(t, record.second_color, 6)
+	view := record_view(record)
+	testing.expect_value(t, view.kind, Draw_Kind.Text_Grid)
+	testing.expect_value(t, view.first, 4)
+	testing.expect_value(t, view.count, 6 * 3 * size_of(Text_Grid_Cell))
+	testing.expect_value(t, view.columns, 6)
 	testing.expect_value(t, record_rectangle(record), Rectangle{10, 20, 10 + 6 * 8, 20 + 3 * 16})
 	found, ok := grid_of(&now, record)
 	testing.expect(t, ok, "the cells of the record are in the text table")
@@ -951,7 +959,7 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	draw_table_clear(&now)
 	draw_text(&now, 0, 0, "abcdefg", 0xFFFFFF)
 	draw_text_grid(&now, 10, 20, grid)
-	testing.expect_value(t, now.records[1].text_start, 8)
+	testing.expect_value(t, record_view(now.records[1]).first, 8)
 	damage = {}
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 1)
@@ -985,13 +993,16 @@ text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
 	words: [32]u32
 	bytes := grid_text(words[:])
 	table := Draw_Table{text = bytes, text_count = len(bytes)}
+	grid_record :: proc(first, count, columns: u32) -> Draw_Record {
+		return draw_record.record_of(draw_record.Draw_Text_Grid{first = first, count = count, columns = columns}, 0, 0, 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
+	}
 	hostile := [?]Draw_Record {
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 0, text_count = 32},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 33},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 112, text_count = 32},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = max(u32) - 3, text_count = 32},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = max(u32), text_count = max(u32)},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 2, text_count = 32},
+		grid_record(0, 32, 0),
+		grid_record(0, 33, 2),
+		grid_record(112, 32, 2),
+		grid_record(max(u32) - 3, 32, 2),
+		grid_record(0, max(u32), max(u32)),
+		grid_record(2, 32, 2),
 	}
 	pixels: [16 * 16]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 16, height = 16, stride = 16}
@@ -1011,7 +1022,7 @@ text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
 		testing.expectf(t, damage.count == 1 && damage.rectangles[0] == Rectangle{0, 0, 16, 16}, "the hostile record %d is not damaged whole", index)
 	}
 	// The good record over the same bytes: two cells of a row, one row.
-	good := Draw_Record{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 32}
+	good := grid_record(0, 32, 2)
 	found, ok := grid_of(&table, good)
 	testing.expect(t, ok && found.rows == 1 && found.columns == 2)
 }
@@ -1403,7 +1414,7 @@ line_hostile_values :: proc(t: ^testing.T) {
 	// A thickness past the limit is cut to it.
 	draw_line(&table, 0, 0, 10, 0, 1000, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 1)
-	testing.expect_value(t, int(table.records[0].kind_detail), LINE_THICKNESS_LIMIT)
+	testing.expect_value(t, record_view(table.records[0]).thickness, LINE_THICKNESS_LIMIT)
 	// The ends at the limit: a record, and only the pixels in the canvas.
 	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 2)
@@ -1420,16 +1431,24 @@ line_hostile_values :: proc(t: ^testing.T) {
 		}
 	}
 
-	// Records written by hand that the execution refuses: no pixel, no damage.
+	// Records written by hand that the border refuses: a thickness of 0 or
+	// past the limit, an end past the limit or inside a pixel. No pixel,
+	// and their damage is their box.
 	pixels = {}
+	line_record_of :: proc(fields: draw_record.Line_Fields) -> Draw_Record {
+		return {kind = u8(Draw_Kind.Line), right = draw_record.units_of_pixels(6), bottom = draw_record.units_of_pixels(6), fields = transmute([draw_record.FIELDS_SIZE]u8)fields}
+	}
+	one, six := draw_record.units_of_pixels(1), draw_record.units_of_pixels(6)
 	hostile := [?]Draw_Record {
-		{kind = .Line, kind_detail = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, kind_detail = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, kind_detail = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, kind_detail = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
+		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 0}),
+		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 200}),
+		line_record_of({start_x = one, start_y = one, end_x = max(i32) - 63, end_y = six, color = 0xFFFFFFFF, thickness = 1}),
+		line_record_of({start_x = one + 1, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 1}),
 	}
 	for record in hostile {
-		testing.expect(t, empty(record_rectangle(record)), "a refused line covers nothing")
+		_, problem := draw_record.read(record)
+		testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
+		testing.expect_value(t, record_rectangle(record), Rectangle{0, 0, 6, 6})
 	}
 	draw_table_clear(&table)
 	for record in hostile {
@@ -1447,15 +1466,18 @@ line_hostile_values :: proc(t: ^testing.T) {
 // size and the same generation, is another thing to draw: it is damaged.
 @(test)
 picture_index_that_changes_is_damaged :: proc(t: ^testing.T) {
-	record_before := [1]Draw_Record{{kind = .Picture, x = 8, y = 8, width = 16, height = 16, text_start = 0, text_count = 7}}
-	record_now := [1]Draw_Record{{kind = .Picture, x = 8, y = 8, width = 16, height = 16, text_start = 1, text_count = 7}}
+	picture_record :: proc(first: u32) -> Draw_Record {
+		return draw_record.record_of(draw_record.Draw_Picture{first = first, stride = 16, generation = 7}, 0, draw_record.units_of_pixels(8), draw_record.units_of_pixels(8), draw_record.units_of_pixels(24), draw_record.units_of_pixels(24))
+	}
+	record_before := [1]Draw_Record{picture_record(0)}
+	record_now := [1]Draw_Record{picture_record(1)}
 	before := Draw_Table{records = record_before[:], record_count = 1}
 	now := Draw_Table{records = record_now[:], record_count = 1}
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 1)
 	testing.expect_value(t, damage.rectangles[0], Rectangle{8, 8, 24, 24})
-	record_now[0].text_start = 0
+	record_now[0] = picture_record(0)
 	damage = {}
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 0)
@@ -1479,7 +1501,7 @@ screen_after_damage :: proc(before, now: ^Draw_Table) -> bool {
 	whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = 320, height = 200, stride = 320}
 	graphics.clear(whole_canvas, graphics.colors.background)
 	execute(now, whole_canvas)
-	return string(transmute([]u8)surface) == string(transmute([]u8)whole)
+	return same_pixels(surface, whole)
 }
 
 // Two tables, each with a text table that holds the cells of one grid; the
@@ -1591,7 +1613,7 @@ text_grid_in_rectangles_equals_whole :: proc(t: ^testing.T) {
 			draw_damage_on_surface(&tables.now, parts_canvas, rectangle[:])
 		}
 	}
-	testing.expect(t, string(transmute([]u8)whole) == string(transmute([]u8)parts), "the grid drawn in rectangles is the whole frame")
+	testing.expect(t, same_pixels(whole, parts), "the grid drawn in rectangles is the whole frame")
 }
 
 // draw_table_copy with too little room gives false: the caller draws the
@@ -1716,14 +1738,21 @@ coordinates_cut_by_their_edges :: proc(t: ^testing.T) {
 	draw_rectangle(&table, -3_000_000_000, -3_000_000_000, 5_000_000_000, 5_000_000_000, 1)
 	area := record_rectangle(table.records[0])
 	testing.expect(t, area.left <= 0 && area.top <= 0 && area.right >= 320 && area.bottom >= 200, "the rectangle still covers the surface")
-	testing.expect(t, table.records[0].width > 0 && table.records[0].height > 0)
+	testing.expect(t, record_view(table.records[0]).read && record_view(table.records[0]).width > 0 && record_view(table.records[0]).height > 0)
 	// No sum passes the int.
 	draw_rectangle(&table, max(int) - 2, 0, max(int), 10, 1)
 	area = record_rectangle(table.records[1])
 	testing.expect_value(t, area.left, COORDINATE_LIMIT - 1)
 	testing.expect_value(t, area.right, COORDINATE_LIMIT - 1)
+	// A text whose origin is past the limit has no record: no surface
+	// reaches it. At the limit, its origin is the left edge of its box.
 	draw_text(&table, min(int) + 1, 0, "text", 1)
-	testing.expect_value(t, int(table.records[2].x), -COORDINATE_LIMIT)
+	draw_text(&table, -COORDINATE_LIMIT - 1, 0, "text", 1)
+	draw_text(&table, COORDINATE_LIMIT, 0, "text", 1)
+	testing.expect_value(t, table.record_count, 2)
+	draw_text(&table, -COORDINATE_LIMIT, 0, "text", 1)
+	testing.expect_value(t, record_view(table.records[2]).x, -COORDINATE_LIMIT)
+	testing.expect_value(t, record_view(table.records[2]).origin_x, draw_record.units_of_pixels(-COORDINATE_LIMIT))
 	// A rectangle inside the limit keeps its place and its size.
 	draw_rectangle(&table, -7, 12, 30, 5, 1)
 	testing.expect_value(t, record_rectangle(table.records[3]), Rectangle{-7, 12, 23, 17})
@@ -1911,7 +1940,7 @@ whole_window_next_forgets_each_picture :: proc(t: ^testing.T) {
 @(private = "file")
 has_text :: proc(table: ^Draw_Table, text: string) -> bool {
 	for record in table.records[:table.record_count] {
-		if is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == text {
+		if found, _, is_text := text_of_record(table, record); is_text && found == text {
 			return true
 		}
 	}
@@ -1921,7 +1950,7 @@ has_text :: proc(table: ^Draw_Table, text: string) -> bool {
 @(private = "file")
 rectangles_of_color :: proc(table: ^Draw_Table, color: graphics.Color) -> (count: int, last: Draw_Record) {
 	for record in table.records[:table.record_count] {
-		if record.kind == .Rectangle && record.first_color == u32(color) {
+		if view := record_view(record); is_solid_rectangle(view) && view.color == color {
 			count += 1
 			last = record
 		}
@@ -1934,12 +1963,13 @@ rectangles_of_color :: proc(table: ^Draw_Table, color: graphics.Color) -> (count
 @(private = "file")
 rectangles_in_box :: proc(table: ^Draw_Table, color: graphics.Color, x, y, width, height: int) -> (count: int, pixels: int) {
 	for record in table.records[:table.record_count] {
-		if record.kind != .Rectangle || record.first_color != u32(color) {
+		view := record_view(record)
+		if !is_solid_rectangle(view) || view.color != color {
 			continue
 		}
-		if int(record.x) >= x && int(record.y) >= y && int(record.x + record.width) <= x + width && int(record.y + record.height) <= y + height {
+		if view.x >= x && view.y >= y && view.x + view.width <= x + width && view.y + view.height <= y + height {
 			count += 1
-			pixels += int(record.width) * int(record.height)
+			pixels += view.width * view.height
 		}
 	}
 	return
@@ -2022,17 +2052,18 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	// The chosen row: one fill of its whole line, its hint and not its kind.
 	count, fill := rectangles_of_color(&table, graphics.colors.chosen)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, fill.y, 2 * TABLE_LINE)
-	testing.expect_value(t, fill.width, 320)
-	testing.expect_value(t, fill.height, TABLE_LINE)
+	testing.expect_value(t, record_view(fill).y, 2 * TABLE_LINE)
+	testing.expect_value(t, record_view(fill).width, 320)
+	testing.expect_value(t, record_view(fill).height, TABLE_LINE)
 	testing.expect(t, has_text(&table, "enter: start"))
 	// The words at the right of the two rows that are not chosen.
 	words := 0
 	for record in table.records[:table.record_count] {
-		if is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == "program" {
+		if found, _, is_text := text_of_record(&table, record); is_text && found == "program" {
 			words += 1
-			testing.expect_value(t, record.first_color, u32(graphics.colors.dim))
-			testing.expect_value(t, int(record.x + record.width), 320 - LIST_ROW_RIGHT_MARGIN)
+			view := record_view(record)
+			testing.expect_value(t, view.color, graphics.colors.dim)
+			testing.expect_value(t, view.x + view.width, 320 - LIST_ROW_RIGHT_MARGIN)
 		}
 	}
 	testing.expect_value(t, words, 1)
@@ -2050,8 +2081,8 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	count, _ = rectangles_of_color(&table, graphics.colors.program)
 	testing.expect_value(t, count, 0)
 	for record in table.records[:table.record_count] {
-		if record.kind == .Rectangle && int(record.y) >= 3 * TABLE_LINE {
-			testing.expectf(t, false, "a row with no icon has a rectangle at %d,%d", record.x, record.y)
+		if view := record_view(record); is_solid_rectangle(view) && view.y >= 3 * TABLE_LINE {
+			testing.expectf(t, false, "a row with no icon has a rectangle at %d,%d", view.x, view.y)
 		}
 	}
 	testing.expect(t, LIST_ROW_NAME_X >= LIST_ROW_ICON_X + LIST_ROW_ICON_SIZE + 8, "the name starts after the icon and a gap")
@@ -2060,8 +2091,8 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	lines: [2]Draw_Record
 	line_count := 0
 	for record in table.records[:table.record_count] {
-		if record.kind == .Rectangle && record.height == 2 && int(record.y) == 2 * TABLE_LINE + 20 {
-			testing.expect_value(t, record.first_color, u32(graphics.COLOR_WHITE))
+		if view := record_view(record); is_solid_rectangle(view) && view.height == 2 && view.y == 2 * TABLE_LINE + 20 {
+			testing.expect_value(t, view.color, graphics.COLOR_WHITE)
 			if line_count < len(lines) {
 				lines[line_count] = record
 			}
@@ -2069,10 +2100,10 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, line_count, 2)
-	testing.expect_value(t, int(lines[0].x), LIST_ROW_NAME_X)
-	testing.expect_value(t, int(lines[0].width), 2 * graphics.CELL_WIDTH)
-	testing.expect_value(t, int(lines[1].x), LIST_ROW_NAME_X + 3 * graphics.CELL_WIDTH)
-	testing.expect_value(t, int(lines[1].width), graphics.CELL_WIDTH)
+	testing.expect_value(t, record_view(lines[0]).x, LIST_ROW_NAME_X)
+	testing.expect_value(t, record_view(lines[0]).width, 2 * graphics.CELL_WIDTH)
+	testing.expect_value(t, record_view(lines[1]).x, LIST_ROW_NAME_X + 3 * graphics.CELL_WIDTH)
+	testing.expect_value(t, record_view(lines[1]).width, graphics.CELL_WIDTH)
 	// An icon in the blue that the chosen blue is made from has no
 	// contrast on its own chosen row: it is white there, as each icon is.
 	frame = frame_begin(&table, &state, &input)
@@ -2117,26 +2148,27 @@ list_of_rows_draws_the_rows_of_its_area :: proc(t: ^testing.T) {
 	// The fill of the chosen row stops before the bar.
 	count, fill := rectangles_of_color(&table, graphics.colors.chosen)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, int(fill.width), 320 - LIST_ROW_SCROLL_WIDTH)
+	testing.expect_value(t, record_view(fill).width, 320 - LIST_ROW_SCROLL_WIDTH)
 	// The scroll bar: its track over the height of the rows, and its thumb
 	// at the place of the rows shown (the element, with no input).
 	bar_colors := graphics.scroll_bar_colors_dark
 	bar_geometry := scroll_bar_geometry(3 * TABLE_LINE, LIST_ROW_SCROLL_WIDTH, {total = 40, visible = 3, first = 10})
 	count, fill = rectangles_of_color(&table, bar_colors.track_border)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, fill.x, 320 - LIST_ROW_SCROLL_WIDTH)
-	testing.expect_value(t, fill.height, 3 * TABLE_LINE)
+	testing.expect_value(t, record_view(fill).x, 320 - LIST_ROW_SCROLL_WIDTH)
+	testing.expect_value(t, record_view(fill).height, 3 * TABLE_LINE)
 	count, fill = rectangles_of_color(&table, bar_colors.thumb_border)
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, int(fill.y), bar_geometry.thumb_start)
-	testing.expect_value(t, int(fill.height), bar_geometry.thumb_length)
+	testing.expect_value(t, record_view(fill).y, bar_geometry.thumb_start)
+	testing.expect_value(t, record_view(fill).height, bar_geometry.thumb_length)
 	// A name longer than its room is cut: no text passes the list.
 	long := [?]List_Row{{name = "a name that is far longer than the room of a narrow list of rows", right_text = "kind"}}
 	frame = frame_begin(&table, &state, &input)
 	list_of_rows(&frame, {0, 0, 160, TABLE_LINE}, long[:], {chosen = -1, total = 1})
 	frame_end(&frame)
 	for record in table.records[:table.record_count] {
-		testing.expect(t, int(record.x + record.width) <= 160)
+		view := record_view(record)
+		testing.expect(t, view.x + view.width <= 160)
 	}
 }
 
@@ -2157,45 +2189,49 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 	}
 	caret_of :: proc(table: ^Draw_Table) -> Draw_Record {
 		for record in table.records[:table.record_count] {
-			if record.kind == .Rectangle && record.first_color == u32(graphics.colors.title) && record.height != 2 {
+			if view := record_view(record); is_solid_rectangle(view) && view.color == graphics.colors.title && view.height != 2 {
 				return record
 			}
 		}
 		return {}
 	}
+	rectangle_of :: proc(x, y, width, height: int, color: graphics.Color) -> Draw_Record {
+		return draw_record.record_of(draw_record.Draw_Rectangle{color = draw_record.opaque(color)}, 0, draw_record.units_of_pixels(x), draw_record.units_of_pixels(y), draw_record.units_of_pixels(x + width), draw_record.units_of_pixels(y + height))
+	}
 	build(&table, &state, &input, "", 0, 2)
 	// The field, then its line, from edge to edge.
-	testing.expect_value(t, table.records[0], Draw_Record{kind = .Rectangle, x = 32, y = 16, width = 320, height = 46, first_color = graphics.colors.track})
-	testing.expect_value(t, table.records[1], Draw_Record{kind = .Rectangle, x = 32, y = 62, width = 320, height = 2, first_color = graphics.colors.title})
+	testing.expect_value(t, table.records[0], rectangle_of(32, 16, 320, 46, graphics.colors.track))
+	testing.expect_value(t, table.records[1], rectangle_of(32, 62, 320, 2, graphics.colors.title))
 	testing.expect(t, has_text(&table, "type here"))
 	caret := caret_of(&table)
-	testing.expect_value(t, int(caret.x), 32 + TEXT_INPUT_LINE_MARGIN)
-	testing.expect_value(t, int(caret.y), 16 + 8)
-	testing.expect_value(t, int(caret.width), 4)
-	testing.expect_value(t, int(caret.height), 32)
+	testing.expect_value(t, record_view(caret).x, 32 + TEXT_INPUT_LINE_MARGIN)
+	testing.expect_value(t, record_view(caret).y, 16 + 8)
+	testing.expect_value(t, record_view(caret).width, 4)
+	testing.expect_value(t, record_view(caret).height, 32)
 	// A caret inside the text, at scale 2: cells of 16 pixels.
 	build(&table, &state, &input, "plasma", 2, 2)
 	testing.expect(t, has_text(&table, "plasma") && !has_text(&table, "type here"))
-	testing.expect_value(t, int(caret_of(&table).x), 32 + TEXT_INPUT_LINE_MARGIN + 2 * 16)
+	testing.expect_value(t, record_view(caret_of(&table)).x, 32 + TEXT_INPUT_LINE_MARGIN + 2 * 16)
 	// At scale 1: cells of 8 pixels, a caret of 2 by 16.
 	build(&table, &state, &input, "plasma", 6, 1)
 	caret = caret_of(&table)
-	testing.expect_value(t, int(caret.x), 32 + TEXT_INPUT_LINE_MARGIN + 6 * 8)
-	testing.expect_value(t, int(caret.width), 2)
-	testing.expect_value(t, int(caret.height), 16)
+	testing.expect_value(t, record_view(caret).x, 32 + TEXT_INPUT_LINE_MARGIN + 6 * 8)
+	testing.expect_value(t, record_view(caret).width, 2)
+	testing.expect_value(t, record_view(caret).height, 16)
 	// A caret past the text is at its end.
 	build(&table, &state, &input, "ab", 9, 2)
-	testing.expect_value(t, int(caret_of(&table).x), 32 + TEXT_INPUT_LINE_MARGIN + 2 * 16)
+	testing.expect_value(t, record_view(caret_of(&table)).x, 32 + TEXT_INPUT_LINE_MARGIN + 2 * 16)
 	// A text longer than the field (17 cells at scale 2): with the caret at
 	// its end, its end shows; with the caret at its start, its start.
 	long := "abcdefghijklmnopqrstuvwxyz"
 	build(&table, &state, &input, long, len(long), 2)
 	testing.expect(t, has_text(&table, long[len(long) - 17:]))
-	testing.expect_value(t, int(caret_of(&table).x), 32 + TEXT_INPUT_LINE_MARGIN + 17 * 16)
+	testing.expect_value(t, record_view(caret_of(&table)).x, 32 + TEXT_INPUT_LINE_MARGIN + 17 * 16)
 	build(&table, &state, &input, long, 0, 2)
 	testing.expect(t, has_text(&table, long[:17]))
 	for record in table.records[:table.record_count] {
-		testing.expect(t, int(record.x) >= 32 && int(record.x + record.width) <= 32 + 320, "no record passes the field")
+		view := record_view(record)
+		testing.expect(t, view.x >= 32 && view.x + view.width <= 32 + 320, "no record passes the field")
 	}
 }
 
@@ -2277,4 +2313,423 @@ the_focus_by_an_act_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.focus, identity("eevdf"))
 	round_robin, eevdf := build(&table, &state, &input)
 	testing.expect(t, eevdf.focused && !round_robin.focused)
+}
+
+// A record in a box of whole pixels, and the same record with a byte that
+// its kind does not name, which the border refuses.
+@(private = "file")
+record_in_pixels :: proc(primitive: draw_record.Draw_Primitive, left, top, right, bottom: int) -> Draw_Record {
+	return draw_record.record_of(primitive, 0, draw_record.units_of_pixels(left), draw_record.units_of_pixels(top), draw_record.units_of_pixels(right), draw_record.units_of_pixels(bottom))
+}
+
+@(private = "file")
+refused_copy :: proc(record: Draw_Record) -> Draw_Record {
+	refused := record
+	refused.reserved[0] = 1
+	return refused
+}
+
+// A refused record through the difference: it is equal to no record whose
+// bytes differ, so both boxes are damaged; the same refused bytes in two
+// frames draw nothing in both, and damage nothing.
+@(test)
+a_refused_record_damages_its_box :: proc(t: ^testing.T) {
+	valid := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 0, 0, 10, 10)
+	refused := refused_copy(record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 50, 50, 60, 60))
+	_, problem := draw_record.read(refused)
+	testing.expect_value(t, problem, draw_record.Problem.Reserved_Not_Zero)
+	before_records, now_records := [1]Draw_Record{valid}, [1]Draw_Record{refused}
+	before := Draw_Table{records = before_records[:], record_count = 1}
+	now := Draw_Table{records = now_records[:], record_count = 1}
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 2)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, 10, 10})
+	testing.expect_value(t, damage.rectangles[1], Rectangle{50, 50, 60, 60})
+	// The same refused record in the two frames: no damage.
+	before_records[0] = refused
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 0)
+	// A refused record whose bytes differ from a refused record before:
+	// both boxes.
+	other := refused
+	other.reserved[0] = 2
+	before_records[0] = other
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{50, 50, 60, 60})
+}
+
+// The difference compares a text with the place of its bytes in the text
+// table masked: the same text at another place damages nothing, and a text
+// whose bytes, color or count changed damages its box. The interface text
+// and the plain text take the same path.
+@(test)
+a_text_at_another_place_in_the_text_table_damages_nothing :: proc(t: ^testing.T) {
+	before_memory, now_memory: Tables
+	before := table_of(&before_memory)
+	now := table_of(&now_memory)
+	draw_text(&before, 0, 0, "ab", 0xFFFFFF)
+	draw_text(&before, 0, 40, "same", 0xFFFFFF)
+	draw_text(&now, 0, 0, "abcdef", 0xFFFFFF)
+	draw_text(&now, 0, 40, "same", 0xFFFFFF)
+	testing.expect(t, record_view(before.records[1]).first != record_view(now.records[1]).first, "the second text is at another place")
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], damage_bounds_of_two(record_rectangle(before.records[0]), record_rectangle(now.records[0])))
+	// The same place and count, other bytes: damaged.
+	other_memory: Tables
+	other := table_of(&other_memory)
+	draw_text(&other, 0, 0, "abcdef", 0xFFFFFF)
+	draw_text(&other, 0, 40, "sane", 0xFFFFFF)
+	damage = {}
+	damage_by_difference(&now, &other, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(other.records[1]))
+	// Another color at another place: damaged.
+	colored_memory: Tables
+	colored := table_of(&colored_memory)
+	draw_text(&colored, 0, 0, "ab", 0xFFFFFF)
+	draw_text(&colored, 0, 40, "same", 0x00FF00)
+	damage = {}
+	damage_by_difference(&now, &colored, &damage)
+	testing.expect(t, damage.count >= 1, "a text of another color is damaged")
+	found := false
+	for index in 0 ..< damage.count {
+		found ||= contains(damage.rectangles[index], record_rectangle(colored.records[1]))
+	}
+	testing.expect(t, found, "the box of the text of another color is in the damage")
+}
+
+@(private = "file")
+damage_bounds_of_two :: proc(first, second: Rectangle) -> Rectangle {
+	return {min(first.left, second.left), min(first.top, second.top), max(first.right, second.right), max(first.bottom, second.bottom)}
+}
+
+@(private = "file")
+contains :: proc(outer, inner: Rectangle) -> bool {
+	return outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
+}
+
+// A line that becomes refused: its box is damaged, where version 10 of the
+// record damaged nothing for a refused line, and it draws nothing.
+@(test)
+a_refused_line_damages_its_box_and_draws_nothing :: proc(t: ^testing.T) {
+	memory: Tables
+	before := table_of(&memory)
+	draw_line(&before, 2, 2, 20, 2, 1, 0xFFFFFF)
+	testing.expect_value(t, before.record_count, 1)
+	line := before.records[0]
+	fields := transmute(draw_record.Line_Fields)line.fields
+	fields.thickness = 0
+	refused := line
+	refused.fields = transmute([draw_record.FIELDS_SIZE]u8)fields
+	_, problem := draw_record.read(refused)
+	testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
+	now_records := [1]Draw_Record{refused}
+	now := Draw_Table{records = now_records[:], record_count = 1}
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(line))
+	testing.expect_value(t, damage.rectangles[0], Rectangle{2, 2, 21, 3})
+	pixels: [32 * 8]graphics.Color
+	execute(&now, {pixels = raw_data(pixels[:]), width = 32, height = 8, stride = 32})
+	testing.expect(t, pixels == [32 * 8]graphics.Color{}, "a refused line draws")
+}
+
+// A refused Clip keeps the cut that was in force; the records after it
+// still draw and still damage.
+@(test)
+a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
+	SIDE :: 32
+	clip := record_in_pixels(draw_record.Draw_Clip{}, 0, 0, 8, 8)
+	refused_clip := refused_copy(record_in_pixels(draw_record.Draw_Clip{}, 0, 0, SIDE, SIDE))
+	fill := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 0, 0, SIDE, SIDE)
+	records := [3]Draw_Record{clip, refused_clip, fill}
+	table := Draw_Table{records = records[:], record_count = 3}
+	pixels: [SIDE * SIDE]graphics.Color
+	execute(&table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	for y in 0 ..< SIDE {
+		for x in 0 ..< SIDE {
+			testing.expectf(t, (pixels[y * SIDE + x] == 0xFFFFFF) == (x < 8 && y < 8), "the pixel (%d, %d) after a refused clip", x, y)
+		}
+	}
+	// A refused record alone draws nothing.
+	refused_fill := [1]Draw_Record{refused_copy(fill)}
+	alone := Draw_Table{records = refused_fill[:], record_count = 1}
+	pixels = {}
+	execute(&alone, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	testing.expect(t, pixels == [SIDE * SIDE]graphics.Color{}, "a refused rectangle draws")
+	// The same clips in two frames and a rectangle that changes: the
+	// rectangle is damaged.
+	changed := records
+	changed[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFF00FF00}, 4, 4, 12, 12)
+	now := Draw_Table{records = changed[:], record_count = 3}
+	damage: Damage
+	damage_by_difference(&table, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, SIDE, SIDE})
+	// A refused clip whose bytes change: each record after it is damaged.
+	moved := records
+	moved[1].reserved[0] = 2
+	moved[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 20, 20, 24, 24)
+	rest := Draw_Table{records = moved[:], record_count = 3}
+	damage = {}
+	damage_by_difference(&table, &rest, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, SIDE, SIDE})
+}
+
+// Text_Grid records that grid_of refuses: no column, a first byte that is
+// not a multiple of 4, bytes that are not a whole count of rows. And a
+// Picture record of a picture memory past the list of the table.
+@(test)
+grid_of_and_picture_of_refuse_what_the_table_does_not_hold :: proc(t: ^testing.T) {
+	words: [32]u32
+	table := Draw_Table{text = grid_text(words[:]), text_count = len(words) * 4}
+	refused := [?]draw_record.Draw_Text_Grid {
+		{first = 0, count = 32, columns = 0},
+		{first = 2, count = 32, columns = 2},
+		{first = 0, count = 32 + 16, columns = 2},
+	}
+	for fields, index in refused {
+		_, ok := grid_of(&table, record_in_pixels(fields, 0, 0, 16, 16))
+		testing.expectf(t, !ok, "the grid %d names cells", index)
+	}
+	_, ok := grid_of(&table, record_in_pixels(draw_record.Draw_Text_Grid{first = 4, count = 32, columns = 2}, 0, 0, 16, 16))
+	testing.expect(t, ok, "a grid at a multiple of 4 is read")
+	memory: [16]graphics.Color
+	memories := [][]graphics.Color{memory[:]}
+	pictures := Draw_Table{picture_memories = memories}
+	for number in ([3]u8{1, 2, max(u8)}) {
+		_, found := picture_of(&pictures, record_in_pixels(draw_record.Draw_Picture{memory = number, stride = 4}, 0, 0, 4, 4))
+		testing.expectf(t, !found, "a picture of the memory %d, past a list of one", number)
+	}
+	_, found := picture_of(&pictures, record_in_pixels(draw_record.Draw_Picture{memory = 0, stride = 4}, 0, 0, 4, 4))
+	testing.expect(t, found, "a picture of the memory 0 is read")
+}
+
+// The grid of points as the kind Point_Grid drew it, in version 11 of the
+// record: a point at 12 + 24 k of the surface for each k from 0, cut to
+// the area. The reference of the element.
+@(private = "file")
+point_grid_reference :: proc(canvas: graphics.Canvas, area: Rectangle, color: graphics.Color) {
+	view := graphics.view(canvas, area.left, area.top, area.right - area.left, area.bottom - area.top)
+	half := graphics.POINT_STEP / 2
+	first_x := half + max(0, (area.left - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
+	first_y := half + max(0, (area.top - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
+	for point_y := first_y; point_y < area.bottom; point_y += graphics.POINT_STEP {
+		for point_x := first_x; point_x < area.right; point_x += graphics.POINT_STEP {
+			graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, color)
+		}
+	}
+}
+
+// The folded gap as the kind Folded_Gap drew it, in version 11 of the
+// record: the track, then two lines from the given ends, cut to the gap.
+@(private = "file")
+folded_gap_reference :: proc(canvas: graphics.Canvas, x, y, width, height: int) {
+	view := graphics.view(canvas, x, y, width, height)
+	graphics.fill(view, 0, 0, width, height, graphics.colors.track)
+	graphics.line(view, 2, height - 4, width - 4, 4, 1, graphics.colors.dim)
+	graphics.line(view, 6, height - 4, width, 8, 1, graphics.colors.dim)
+}
+
+// The grid of points is one Rectangle with a pattern, cut to its area, and
+// draws the pixels of the kind that it replaced, in areas at each phase of
+// the grid: at the corner, inside a step, on a point, across a point, and
+// in a part of the surface only.
+@(test)
+the_grid_of_points_is_a_pattern_with_the_same_pixels :: proc(t: ^testing.T) {
+	WIDTH :: 120
+	HEIGHT :: 80
+	areas := [?]Rectangle{{0, 0, WIDTH, HEIGHT}, {5, 7, 105, 57}, {11, 11, 14, 14}, {13, 13, 50, 40}, {12, 12, 13, 13}, {36, 0, 37, HEIGHT}, {0, 0, 0, 0}}
+	for area, index in areas {
+		memory: Tables
+		table := table_of(&memory)
+		draw_point_grid(&table, area.left, area.top, area.right - area.left, area.bottom - area.top)
+		testing.expect_value(t, table.record_count, 1)
+		view := record_view(table.records[0])
+		testing.expect(t, view.read && view.kind == .Rectangle && view.repetition == POINT_GRID_PATTERN && view.color == graphics.colors.point)
+		drawn, expected: [WIDTH * HEIGHT]graphics.Color
+		canvas := graphics.Canvas{pixels = raw_data(drawn[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+		execute(&table, canvas)
+		point_grid_reference({pixels = raw_data(expected[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, area, graphics.colors.point)
+		testing.expectf(t, drawn == expected, "the area %d, %v: the grid of points draws other pixels", index, area)
+		// In each damage rectangle, the same pixels: the pattern is placed on
+		// the surface, not on the rectangle.
+		parts: [WIDTH * HEIGHT]graphics.Color
+		part_canvas := graphics.Canvas{pixels = raw_data(parts[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+		rectangles := [?]Rectangle{{0, 0, 30, HEIGHT}, {30, 0, 61, 33}, {30, 33, 61, HEIGHT}, {61, 0, WIDTH, HEIGHT}}
+		execute_in_rectangles(&table, part_canvas, rectangles[:])
+		testing.expectf(t, parts == expected, "the area %d: the grid in parts differs from the whole grid", index)
+	}
+}
+
+// The folded gap is a track and two lines, three records with the box of
+// the gap, and draws the pixels of the kind that it replaced at each width
+// from 6 pixels; the lines are cut to the gap as they were.
+@(test)
+the_folded_gap_is_three_records_with_the_same_pixels :: proc(t: ^testing.T) {
+	WIDTH :: 80
+	HEIGHT :: 40
+	for width in 6 ..< 64 {
+		for height in ([3]int{8, 16, 24}) {
+			memory: Tables
+			table := table_of(&memory)
+			draw_folded_gap(&table, 7, 5, width, height)
+			testing.expect_value(t, table.record_count, 3)
+			for record in table.records[:table.record_count] {
+				testing.expect_value(t, record_rectangle(record), Rectangle{7, 5, 7 + width, 5 + height})
+			}
+			testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Rectangle)
+			testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Line)
+			testing.expect_value(t, record_view(table.records[2]).kind, Draw_Kind.Line)
+			drawn, expected: [WIDTH * HEIGHT]graphics.Color
+			execute(&table, {pixels = raw_data(drawn[:]), width = WIDTH, height = HEIGHT, stride = WIDTH})
+			folded_gap_reference({pixels = raw_data(expected[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, 7, 5, width, height)
+			if drawn != expected {
+				testing.expectf(t, false, "a folded gap of %d by %d draws other pixels", width, height)
+				return
+			}
+		}
+	}
+	// No size: no record.
+	memory: Tables
+	table := table_of(&memory)
+	draw_folded_gap(&table, 7, 5, 0, 16)
+	draw_folded_gap(&table, 7, 5, 16, -1)
+	testing.expect_value(t, table.record_count, 0)
+}
+
+// One case of a pattern: its pattern in pixels, the area of its record in
+// pixels of the surface, and the place of the point (0, 0) of the surface in
+// the canvas, so an area can lie at negative places.
+@(private = "file")
+Pattern_Case :: struct {
+	name:                                   string,
+	cell_x, cell_y:                         i32, // In 1/64 pixel: a place can be at the limit.
+	cell_width, cell_height, step_x, step_y: int, // In pixels.
+	area:                                   Rectangle,
+	origin_x, origin_y:                     int,
+}
+
+@(private = "file")
+pattern_of_case :: proc(item: Pattern_Case) -> draw_record.Repetition {
+	units :: draw_record.UNITS_PER_PIXEL
+	return {cell_x = item.cell_x, cell_y = item.cell_y, cell_width = u16(item.cell_width * units), cell_height = u16(item.cell_height * units), step_x = u16(item.step_x * units), step_y = u16(item.step_y * units)}
+}
+
+// same_pixels says if two canvases of one size hold the same pixels.
+@(private = "file")
+same_pixels :: proc(first, second: []graphics.Color) -> bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for pixel, index in first {
+		if pixel != second[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// The plain loop over each pixel of the area: a pixel is in the pattern
+// when its place past the place of a cell, modulo the step, is inside the
+// cell, on each axis. No span, no division of the execution.
+@(private = "file")
+pattern_reference :: proc(pixels: []graphics.Color, canvas_width: int, item: Pattern_Case, color: graphics.Color) {
+	modulo :: proc(value, divisor: int) -> int {
+		return ((value % divisor) + divisor) % divisor
+	}
+	cell_x, cell_y := draw_record.pixels_floor(item.cell_x), draw_record.pixels_floor(item.cell_y)
+	for y in item.area.top ..< item.area.bottom {
+		for x in item.area.left ..< item.area.right {
+			if modulo(x - cell_x, item.step_x) < item.cell_width && modulo(y - cell_y, item.step_y) < item.cell_height {
+				pixels[(y + item.origin_y) * canvas_width + x + item.origin_x] = color
+			}
+		}
+	}
+}
+
+// The pattern drawn whole, and in damage rectangles that cut the area into
+// four parts, equals the plain loop over the pixels, at the bounds of a
+// pattern: a dense pattern, a cell of 1 pixel each 2 pixels, the largest
+// step, a place at each limit, an area at negative places, an area whose
+// first cell ends on its left edge, cells that touch across or down only,
+// and a cell that crosses the damage rectangles.
+@(test)
+a_pattern_at_its_bounds_draws_the_pixels_of_the_plain_loop :: proc(t: ^testing.T) {
+	pixel :: draw_record.UNITS_PER_PIXEL
+	limit :: draw_record.COORDINATE_UNIT_LIMIT
+	cases := [?]Pattern_Case {
+		{"a dense pattern: cell and step of 1", 0, 0, 1, 1, 1, 1, {0, 0, 40, 30}, 0, 0},
+		{"a cell of 1 each 2 pixels", pixel, 0, 1, 1, 2, 2, {0, 0, 40, 30}, 0, 0},
+		{"the largest step", 5 * pixel, 2 * pixel, 3, 2, 1023, 1023, {0, 0, 1100, 6}, 0, 0},
+		{"the place at the largest limit", limit, limit, 2, 3, 24, 24, {0, 0, 60, 50}, 0, 0},
+		{"the place at the smallest limit", -limit, -limit, 2, 3, 24, 24, {0, 0, 60, 50}, 0, 0},
+		{"an area at negative places", 3 * pixel, -5 * pixel, 4, 3, 9, 7, {-40, -30, 20, 25}, 40, 30},
+		{"the first cell ends on the left edge", 13 * pixel, 13 * pixel, 3, 3, 10, 10, {6, 6, 50, 50}, 0, 0},
+		{"cells that touch across", 0, pixel, 3, 2, 3, 5, {0, 0, 40, 30}, 0, 0},
+		{"cells that touch down", pixel, 0, 2, 4, 5, 4, {0, 0, 40, 30}, 0, 0},
+		{"a cell across the damage rectangles", 2 * pixel, 2 * pixel, 5, 5, 9, 7, {0, 0, 40, 30}, 0, 0},
+	}
+	COLOR :: graphics.Color(0x00C0FFEE)
+	for item in cases {
+		canvas_width := item.area.right + item.origin_x
+		canvas_height := item.area.bottom + item.origin_y
+		drawn := make([]graphics.Color, canvas_width * canvas_height)
+		parts := make([]graphics.Color, canvas_width * canvas_height)
+		expected := make([]graphics.Color, canvas_width * canvas_height)
+		defer delete(drawn)
+		defer delete(parts)
+		defer delete(expected)
+		records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = draw_record.opaque(COLOR), repetition = pattern_of_case(item)}, item.area.left, item.area.top, item.area.right, item.area.bottom)}
+		_, problem := draw_record.read(records[0])
+		testing.expectf(t, problem == .None, "%s: the border refuses the pattern: %v", item.name, problem)
+		table := Draw_Table{records = records[:], record_count = 1}
+		canvas := graphics.Canvas{pixels = raw_data(drawn), width = canvas_width, height = canvas_height, stride = canvas_width}
+		execute(&table, canvas, item.origin_x, item.origin_y)
+		pattern_reference(expected, canvas_width, item, COLOR)
+		testing.expectf(t, same_pixels(drawn, expected), "%s: the pattern draws other pixels than the plain loop", item.name)
+		// The area in four damage rectangles, whose edges cross cells.
+		middle_x := item.area.left + (item.area.right - item.area.left) / 2 + 1
+		middle_y := item.area.top + (item.area.bottom - item.area.top) / 2 + 1
+		rectangles := [4]Rectangle {
+			{item.area.left, item.area.top, middle_x, middle_y},
+			{middle_x, item.area.top, item.area.right, middle_y},
+			{item.area.left, middle_y, middle_x, item.area.bottom},
+			{middle_x, middle_y, item.area.right, item.area.bottom},
+		}
+		part_canvas := graphics.Canvas{pixels = raw_data(parts), width = canvas_width, height = canvas_height, stride = canvas_width}
+		execute_in_rectangles(&table, part_canvas, rectangles[:], item.origin_x, item.origin_y)
+		testing.expectf(t, same_pixels(parts, expected), "%s: the pattern in damage rectangles differs from the plain loop", item.name)
+	}
+}
+
+// A pattern that the border refuses (one step at 0 and the other not)
+// draws nothing, and the difference damages its box.
+@(test)
+a_refused_pattern_draws_nothing_and_damages_its_box :: proc(t: ^testing.T) {
+	pixel :: draw_record.UNITS_PER_PIXEL
+	good := draw_record.Repetition{cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 8 * pixel, step_y = 8 * pixel}
+	refused := good
+	refused.step_y = 0
+	before_records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF, repetition = good}, 4, 4, 36, 28)}
+	now_records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF, repetition = refused}, 4, 4, 36, 28)}
+	_, problem := draw_record.read(now_records[0])
+	testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
+	before := Draw_Table{records = before_records[:], record_count = 1}
+	now := Draw_Table{records = now_records[:], record_count = 1}
+	pixels: [40 * 32]graphics.Color
+	execute(&now, {pixels = raw_data(pixels[:]), width = 40, height = 32, stride = 40})
+	testing.expect(t, pixels == [40 * 32]graphics.Color{}, "a refused pattern draws")
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{4, 4, 36, 28})
 }

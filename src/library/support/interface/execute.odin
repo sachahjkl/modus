@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/text_encoding"
 import "modus:support/graphics"
 import "modus:support/text_shaping"
@@ -35,88 +36,173 @@ execute_in_rectangles :: proc "contextless" (table: ^Draw_Table, canvas: graphic
 }
 
 // execute_in_rectangle draws the records that touch one rectangle of the
-// surface, cut to it.
+// surface, cut to it. A color with alpha blends with the table of the text
+// state of the graphics package, which the program fills once at its start
+// (graphics.text_state_start; display.text_settings_load calls it).
 execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, rectangle: Rectangle, origin_x: int = 0, origin_y: int = 0) {
 	limit := intersection(rectangle, {-origin_x, -origin_y, canvas.width - origin_x, canvas.height - origin_y})
 	if empty(limit) {
 		return
 	}
 	cut := limit
-	for record in table.records[:table.record_count] {
-		if record.kind == .Clip {
-			cut = record.width == 0 ? limit : intersection(limit, record_rectangle(record))
+	for index in 0 ..< table.record_count {
+		// One copy of each record, read through the border: a table can be
+		// in memory that another program writes during the call, and each
+		// check and each draw reads this copy.
+		record := draw_record.copy_once(&table.records[index])
+		primitive, problem := draw_record.read(record)
+		if problem != .None {
 			continue
 		}
-		area := intersection(cut, record_rectangle(record))
+		place := record_rectangle(record)
+		if _, is_clip := primitive.(draw_record.Draw_Clip); is_clip {
+			cut = place.right == place.left ? limit : intersection(limit, place)
+			continue
+		}
+		area := intersection(cut, place)
 		if empty(area) {
 			continue
 		}
 		// The part of the canvas where this record can draw: the record draws
 		// in its own coordinates, and the view cuts it.
 		view := graphics.view(canvas, area.left + origin_x, area.top + origin_y, area.right - area.left, area.bottom - area.top)
-		x, y := int(record.x) - area.left, int(record.y) - area.top
-		width, height := int(record.width), int(record.height)
-		switch record.kind {
-		case .None, .Clip:
-		case .Rectangle:
-			graphics.fill(view, x, y, width, height, record.first_color)
-		case .Vertical_Gradient:
-			// One mix for each line: only the lines in the view.
+		x, y := place.left - area.left, place.top - area.top
+		width, height := place.right - place.left, place.bottom - place.top
+		switch fields in primitive {
+		case draw_record.Draw_Nothing, draw_record.Draw_Clip:
+		case draw_record.Draw_Rectangle:
+			if fields.repetition == (draw_record.Repetition{}) {
+				graphics.blend_fill(view, x, y, width, height, u32(fields.color), &graphics.text_state.square_root)
+			} else {
+				pattern_draw(view, area, fields.repetition, fields.color)
+			}
+		case draw_record.Draw_Vertical_Gradient:
+			// One mix for each line: only the lines in the view. A line
+			// blends by its mixed alpha; an opaque line is a fill.
 			first := max(0, -y)
 			last := min(height, view.height - y)
 			for row in first ..< last {
-				graphics.fill(view, x, y + row, width, 1, graphics.mix(record.first_color, record.second_color, u32(row * 255 / max(height - 1, 1))))
+				graphics.blend_fill(view, x, y + row, width, 1, graphics.mix_with_alpha(u32(fields.top_color), u32(fields.bottom_color), u32(row * 255 / max(height - 1, 1))), &graphics.text_state.square_root)
 			}
-		case .Horizontal_Gradient:
+		case draw_record.Draw_Horizontal_Gradient:
 			// One row of colors for the columns in the view, in parts of
-			// 512 pixels, then a copy of the row to each line.
+			// 512 pixels, then a copy of the row to each line. With two
+			// opaque ends each column is opaque, and the row is copied as
+			// it is; else each line blends the row.
 			row: [512]graphics.Color
 			last := min(width, view.width - x)
+			opaque := draw_record.alpha_of(fields.left_color) == draw_record.OPAQUE_ALPHA && draw_record.alpha_of(fields.right_color) == draw_record.OPAQUE_ALPHA
 			for part := max(0, -x); part < last; part += len(row) {
 				count := min(len(row), last - part)
-				graphics.gradient(row[:count], record.first_color, record.second_color, width, part)
-				graphics.copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
-			}
-		case .Text:
-			start := int(record.text_start)
-			count := int(record.text_count)
-			if start + count <= table.text_count {
-				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale), record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular)
-			}
-		case .Interface_Text:
-			interface_text_draw(table, record, view, x, y)
-		case .Folded_Gap:
-			graphics.fill(view, x, y, width, height, record.second_color)
-			// Two lines at an angle, from the bottom left up to the right.
-			graphics.line(view, x + 2, y + height - 4, x + width - 4, y + 4, 1, record.first_color)
-			graphics.line(view, x + 6, y + height - 4, x + width, y + 8, 1, record.first_color)
-		case .Picture:
-			if picture, ok := picture_of(table, record); ok {
-				graphics.copy(view, x, y, picture)
-			}
-		case .Text_Grid:
-			if grid, ok := grid_of(table, record); ok {
-				text_grid_draw(view, x, y, grid)
-			}
-		case .Line:
-			// (x, y) is the first end in the view; the path is the one of
-			// graphics.line from the end that line_ends_in_order puts first.
-			start_x, start_y, end_x, end_y := line_ends_in_order(x, y, x + width, y + height)
-			graphics.line(view, start_x, start_y, end_x, end_y, int(record.kind_detail), record.first_color)
-		case .Point_Grid:
-			// The points are at 12 + 24 n of the surface, so that two areas
-			// of one surface show one grid. A point that starts before the
-			// area can reach into it: the loop starts one step before.
-			half := graphics.POINT_STEP / 2
-			first_x := half + max(0, (area.left - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
-			first_y := half + max(0, (area.top - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
-			for point_y := first_y; point_y < area.bottom; point_y += graphics.POINT_STEP {
-				for point_x := first_x; point_x < area.right; point_x += graphics.POINT_STEP {
-					graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, record.first_color)
+				if opaque {
+					graphics.gradient(row[:count], u32(fields.left_color), u32(fields.right_color), width, part)
+					graphics.copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
+				} else {
+					graphics.gradient_with_alpha(row[:count], u32(fields.left_color), u32(fields.right_color), width, part)
+					graphics.blend_copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height}, &graphics.text_state.square_root)
 				}
 			}
+		case draw_record.Draw_Text:
+			// The border keeps the color of a text opaque: its channels.
+			color := draw_record.channels_of(fields.color)
+			switch fields.font {
+			case .Cells_8x16:
+				// The origin of a text in the font of the cells is a whole
+				// pixel: the writer makes it the left edge of the box.
+				start, count := u64(fields.first), u64(fields.count)
+				if start + count <= u64(table.text_count) {
+					text_draw(view, draw_record.pixels_floor(fields.origin_x) - area.left, y, string(table.text[start:][:count]), color, int(fields.scale), fields.weight)
+				}
+			case .Interface:
+				interface_text_draw(table, fields, view, area.left, y)
+			}
+		case draw_record.Draw_Picture:
+			if picture, ok := picture_pixels(table, place, fields); ok {
+				switch fields.format {
+				case .Opaque:
+					graphics.copy(view, x, y, picture)
+				case .Straight_Alpha:
+					graphics.blend_copy(view, x, y, picture, &graphics.text_state.square_root)
+				}
+			}
+		case draw_record.Draw_Text_Grid:
+			if grid, ok := grid_cells(table, fields); ok {
+				text_grid_draw(view, x, y, grid)
+			}
+		case draw_record.Draw_Line:
+			// The ends in the view; the path is the one of graphics.line from
+			// the end that line_ends_in_order puts first.
+			start_x, start_y, end_x, end_y := line_ends_in_order(draw_record.pixels_floor(fields.start_x) - area.left, draw_record.pixels_floor(fields.start_y) - area.top, draw_record.pixels_floor(fields.end_x) - area.left, draw_record.pixels_floor(fields.end_y) - area.top)
+			// The border keeps the color of a line opaque: its channels.
+			graphics.line(view, start_x, start_y, end_x, end_y, int(fields.thickness), draw_record.channels_of(fields.color))
 		}
 	}
+}
+
+// pattern_draw draws the cells of the pattern of a Rectangle that meet the
+// area, a rectangle of the surface that the view shows from its top left
+// corner. The cells are placed on the surface, so that two areas of one
+// surface show one pattern: the first cell is the first whose right edge
+// passes the left edge of the area, and a cell that starts before the area
+// reaches into it, cut by the view. The border keeps each size a whole
+// pixel of at least 1 and each cell inside its step, so the loop draws each
+// pixel of the area at most once.
+//
+// Cells that touch are one fill: a cell as wide as its step makes each row
+// of cells one span across the area, a cell as high as its step makes each
+// column of cells one span down it, and both make the area one fill. So a
+// dense pattern costs what a solid rectangle costs, and the most calls come
+// from a cell of 1 pixel and a step of 2 on each axis: one call for each
+// cell, a quarter of the pixels of the area. The pixel writes are never
+// more than the pixels of the area.
+@(private)
+pattern_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, pattern: draw_record.Repetition, draw_color: draw_record.Draw_Color) {
+	// Each cell blends by the rule of the colors: the cells never overlap,
+	// so each pixel blends at most once.
+	color := u32(draw_color)
+	cell_x, cell_y := draw_record.pixels_floor(pattern.cell_x), draw_record.pixels_floor(pattern.cell_y)
+	cell_width, cell_height := int(pattern.cell_width) >> draw_record.UNIT_SHIFT, int(pattern.cell_height) >> draw_record.UNIT_SHIFT
+	step_x, step_y := int(pattern.step_x) >> draw_record.UNIT_SHIFT, int(pattern.step_y) >> draw_record.UNIT_SHIFT
+	width, height := area.right - area.left, area.bottom - area.top
+	rows_touch := cell_width == step_x
+	columns_touch := cell_height == step_y
+	if rows_touch && columns_touch {
+		graphics.blend_fill(view, 0, 0, width, height, color, &graphics.text_state.square_root)
+		return
+	}
+	first_x := cell_x + (divide_down(area.left - cell_x - cell_width, step_x) + 1) * step_x
+	first_y := cell_y + (divide_down(area.top - cell_y - cell_height, step_y) + 1) * step_y
+	if rows_touch {
+		// Each row of cells is one span across the area.
+		for top := first_y; top < area.bottom; top += step_y {
+			graphics.blend_fill(view, 0, top - area.top, width, cell_height, color, &graphics.text_state.square_root)
+		}
+		return
+	}
+	if columns_touch {
+		// Each column of cells is one span down the area.
+		for left := first_x; left < area.right; left += step_x {
+			graphics.blend_fill(view, left - area.left, 0, cell_width, height, color, &graphics.text_state.square_root)
+		}
+		return
+	}
+	for top := first_y; top < area.bottom; top += step_y {
+		for left := first_x; left < area.right; left += step_x {
+			graphics.blend_fill(view, left - area.left, top - area.top, cell_width, cell_height, color, &graphics.text_state.square_root)
+		}
+	}
+}
+
+// divide_down gives the quotient of a division rounded toward minus
+// infinity, for a divisor above 0: the index of a cell of a pattern on the
+// left of the origin of its steps is negative.
+@(private)
+divide_down :: proc "contextless" (dividend, divisor: int) -> int {
+	quotient := dividend / divisor
+	if dividend % divisor != 0 && dividend < 0 {
+		quotient -= 1
+	}
+	return quotient
 }
 
 // text_grid_draw draws the cells of a grid that the view shows, with its
@@ -199,26 +285,28 @@ cell_character_put :: proc "contextless" (run: []u8, place: int, character: rune
 	return place + length
 }
 
-// interface_text_draw draws an Interface_Text record whose x and y are in
-// the view. The record is a copy, and each field is checked before its use:
-// a record that a caller wrote by hand can have any bytes. A record with a
-// range outside the text table, a third of 3 or more, an ink margin past
-// INK_MARGIN_LIMIT, a scale out of 1 to 3, or more than INTERFACE_TEXT_LIMIT
-// bytes draws nothing. With no interface font, the text is drawn in the
-// font of the cells at its origin, cut to its rectangle as each record.
+// interface_text_draw draws a Text record in the interface font that the
+// border read: its origin, its count, its scale and its weight are in their
+// bounds. view starts at the column view_left of the surface, and y is the
+// top of the record in the view. A record with a range outside the text
+// table draws nothing. With no interface font, the text is drawn in the
+// font of the cells at the pixel of its origin, cut to its box as each
+// record.
 @(private)
-interface_text_draw :: proc "contextless" (table: ^Draw_Table, record: Draw_Record, view: graphics.Canvas, x, y: int) {
-	start := u64(record.text_start)
-	count := u64(record.text_count)
-	margin := u64(record.second_color)
-	scale := int(record.text_scale)
-	if start + count > u64(table.text_count) || count > INTERFACE_TEXT_LIMIT || record.text_origin_thirds > 2 || margin > INK_MARGIN_LIMIT || scale < 1 || scale > 3 {
+interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_Text, view: graphics.Canvas, view_left, y: int) {
+	start := u64(fields.first)
+	count := u64(fields.count)
+	scale := int(fields.scale)
+	if start + count > u64(table.text_count) {
 		return
 	}
 	text := table.text[start:][:count]
-	font := Font{kind = .Interface, scale = u8(scale), weight = record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular}
+	font := Font{kind = .Interface, scale = u8(scale), weight = fields.weight}
+	// The origin in 1/64 pixel from the left of the view; the border keeps
+	// it on a third of a pixel and inside the box.
+	origin := i64(fields.origin_x) - i64(view_left) * draw_record.UNITS_PER_PIXEL
 	if table.interface_font == nil {
-		text_draw(view, x + int(margin), y, string(text), record.first_color, scale, font.weight)
+		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), draw_record.channels_of(fields.color), scale, font.weight)
 		return
 	}
 	cache := interface_cache_of(table.interface_font, font)
@@ -228,8 +316,7 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, record: Draw_Reco
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_shaping.Placed_Glyph
 	placed_count, _, _ := text_shaping.shape(&spacing, text, placed[:])
-	origin := (i64(x) + i64(margin)) * 64 + i64(record.text_origin_thirds) * 64 / 3
-	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, record.first_color)
+	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, draw_record.channels_of(fields.color))
 }
 
 // text_draw draws characters of the font of the system, each pixel of the

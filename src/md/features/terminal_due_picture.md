@@ -49,7 +49,7 @@ The terminal sends the due state, then waits. So each wait of the loop starts wi
 
 - `seen` is read once in a turn. The wait with nothing to draw uses this value, not a second read: a second read can take a record that the decision did not see, and the wait then holds while the record waits.
 - The `Present` ends the due picture in the compositor. So a change that comes after the read of `drawn` and before the `Present` must be said again after the `Present`: the next turn does it.
-- The checks of a lost wake stay (`lost_wake_check` in `src/programs/terminal/main.odin`). They do not explain this fault, which lost no wake. They name the side of a lost wake if one comes.
+- The checks of a lost wake stay (`lost_wake_check` in `src/modules/system/terminal/main.odin`). They do not explain this fault, which lost no wake. They name the side of a lost wake if one comes.
 - The event word also changes for the other events of the thread: the end of another thread, an interrupt. Such an event ends one wait with nothing to draw, and the turn reads the word again at its look at the program, so no turn follows with no sleep.
 - A drawing module that refuses each draw makes the terminal try a frame at each `FRAME_TIME`. The window layer writes the refusal on the log one time; the frames that it tries cost only the calls.
 

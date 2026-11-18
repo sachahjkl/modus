@@ -507,7 +507,7 @@ peer_header_fix :: proc(frame: []u8) {
 }
 
 // peer_refused sends the frames that the network service must refuse: ten
-// that no endpoint owns (src/programs/net, expected_machine_rows) and one to the
+// that no endpoint owns (src/modules/demonstrations/net, expected_machine_rows) and one to the
 // endpoint of `net` from a remote that its grant does not name, then one
 // correct echo request to the machine.
 @(private = "file")

@@ -11,13 +11,13 @@ import "core:slice"
 // its own generator and from the edge counters only, so one seed and one
 // binary give one run.
 
-// The kind of a fuzz target (docs/GLOSSARY.md, "Fuzz target").
+// The kind of a fuzz target (docs/glossary/project.md, "Fuzz target").
 Fuzz_Target_Kind :: enum u8 {
 	Raw, // The input is the bytes that the system reads.
 	Generated, // The input is the choices of a generator that builds a whole value.
 }
 
-// The oracle that an execution broke (docs/GLOSSARY.md, "Oracle"). The
+// The oracle that an execution broke (docs/glossary/project.md, "Oracle"). The
 // order is the order in which a target checks them.
 Fuzz_Oracle :: enum u8 {
 	None        = 0, // The execution broke no oracle.
@@ -62,7 +62,7 @@ Fuzz_Region :: struct {
 	count:  int, // The records that follow each other.
 }
 
-// One fuzz target (docs/GLOSSARY.md, "Fuzz target").
+// One fuzz target (docs/glossary/project.md, "Fuzz target").
 Fuzz_Target :: struct {
 	name:        string, // The name of the target in the commands and in the folder of its corpus.
 	kind:        Fuzz_Target_Kind,

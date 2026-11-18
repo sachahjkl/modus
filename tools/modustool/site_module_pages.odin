@@ -58,17 +58,17 @@ site_program_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []strin
 	strings.write_string(b, "</td>")
 }
 
-// site_case_of gives the case of a procedure of the root service that names
-// a program, or the value for each other program.
-site_case_of :: proc(cases: []Site_Name_Case, otherwise: Site_Name_Case, name: string) -> (item: Site_Name_Case, named: bool) {
-	for candidate in cases {
-		for case_name in candidate.names {
-			if case_name == name {
-				return candidate, true
-			}
+// site_role_row_of gives the row of the table of the roles of a program.
+// The site reads the table only when each program has its row
+// (program_roles_problems), so found is false only for a module that is no
+// program of the boot image.
+site_role_row_of :: proc(rows: []Site_Role_Row, name: string) -> (row: Site_Role_Row, found: bool) {
+	for candidate in rows {
+		if candidate.name == name {
+			return candidate, true
 		}
 	}
-	return otherwise, false
+	return {}, false
 }
 
 // site_boot_image_entry gives the entry of a module in the boot image of
@@ -97,7 +97,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		for item in reference.modules {
 			in_image += module_in_boot_image(item.build) ? 1 : 0
 		}
-		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module whose source is in <code>" + SOURCE_FOLDER_PROGRAMS + "/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module with an entry function that the root service starts; the others are modules that a program loads or calls. The source of each is in <code>" + SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
 		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
 		// One table for each group, in the order of the tree of the documentation.
 		for group in Site_Module_Group {
@@ -249,17 +249,26 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		sources := make([dynamic]string, context.temp_allocator)
 		append(&sources, SITE_MODULES_FILE, build.source)
 		if item.kind == "program" {
-			grants, named_in_grants := site_case_of(reference.program_grants, reference.grants_otherwise, build.name)
+			role, has_role := site_role_row_of(reference.program_roles, build.name)
 			budget := description.budget
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
 			// The grants and the fields of the budget are lists of values: a
 			// grant leads to its row on the page of the grants.
 			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .List}, {"As the root service says", .Prose}})
-			fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)))
-			site_grant_set_write(site, &b, item.page, grants.members, true)
+			// Only a program with a row of the table of the roles has a row on
+			// the page of the grants: the root service and a disk program
+			// have none, so their cell names the grants with no link.
+			if has_role {
+				fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), site_slug(build.name))
+			} else {
+				strings.write_string(&b, "<tr><td>Grants</td><td>")
+			}
+			site_grant_set_write(site, &b, item.page, role.grants, true)
 			strings.write_string(&b, "</td>")
-			site_comment_cell(site, &b, item.page, named_in_grants ? grants.comment : "Not named in `grants_of`: the grants of each other program.")
-			strings.write_string(&b, "</tr>\n<tr><td>Budget that it asks for</td><td>")
+			site_comment_cell(site, &b, item.page, has_role ? role.comment : "No row: the kernel starts the root service, and a disk program has the role of its row in the disk grant table of its principal.")
+			strings.write_string(&b, "</tr>\n<tr><td>Other terms of its role</td>")
+			site_role_terms_cell(&b, role.terms)
+			strings.write_string(&b, "<td></td></tr>\n<tr><td>Budget that it asks for</td><td>")
 			// The parts that the source states, and the counted parts that
 			// the source alone gives: the threads and the window. The pages
 			// of the module and of its imports come from the files of a
@@ -294,12 +303,12 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: it asks for the least budget.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
-			fmt.sbprintf(&b, "<p class=\"source\">The grants are read from <code>grants_of</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_FILE), SITE_ROOT_FILE)
+			fmt.sbprintf(&b, "<p class=\"source\">The role is read from <code>program_roles</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_ROLES_FILE), SITE_ROOT_ROLES_FILE)
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
 			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a program, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
-			append(&sources, SITE_ROOT_FILE, SITE_ROOT_BUDGETS_FILE)
+			append(&sources, SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"
 		if len(build.defines) > 0 {

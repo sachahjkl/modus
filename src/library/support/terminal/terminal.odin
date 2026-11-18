@@ -61,6 +61,7 @@ package terminal_records
 import "modus:contract/enum_word"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:support/system"
@@ -77,6 +78,35 @@ VALUE_NAME :: system.GRANT_VALUE_TERMINAL_NAME // 4 values: the name of the prog
 VALUE_COLUMNS :: system.GRANT_VALUE_TERMINAL_COLUMNS // The columns of the window, at most COLUMNS_LIMIT.
 VALUE_ROWS :: system.GRANT_VALUE_TERMINAL_ROWS // The rows of the window, at most ROWS_LIMIT.
 VALUE_MEASURE :: system.GRANT_VALUE_TERMINAL_MEASURE // 1: the window shows the rates of the program.
+// The handles that a terminal receives from its starter, the root service.
+Terminal_Handles :: struct {
+	display: system.Handle, // The ring to the compositor.
+	ring:    system.Handle, // The terminal ring.
+	text:    system.Handle, // The text region.
+	writer:  system.Handle, // The program that writes in it.
+	log:     system.Grant, // The log, with the rights that the starter chose.
+}
+
+// context_of writes the handles and the values of the context of a
+// terminal through the checked writes of the context, so that a test reads
+// the layout that the root service starts it with: the display ring, the
+// terminal ring and the program with the rights that the terminal needs, the
+// text region with Read only, the name of the program and the size of the
+// window. A slot or a value that the caller wrote already is refused, and
+// its refusal stays in the record.
+context_of :: proc "contextless" (grants: ^system.Context_Grants, values: ^system.Context_Values, handles: Terminal_Handles, name: [4]u64, columns, rows: u64, measure: bool) {
+	system.grant_put(grants, system.GRANT_DISPLAY, {handles.display, {.Read, .Write}})
+	system.grant_put(grants, GRANT_RING, {handles.ring, {.Read, .Write}})
+	system.grant_put(grants, GRANT_TEXT, {handles.text, {.Read}})
+	system.grant_put(grants, GRANT_PROGRAM, {handles.writer, {.Read}})
+	system.grant_put(grants, op.CONTEXT_LOG, handles.log)
+	words := name
+	system.values_put(values, VALUE_NAME, words[:])
+	system.value_put(values, VALUE_COLUMNS, columns)
+	system.value_put(values, VALUE_ROWS, rows)
+	system.value_put(values, VALUE_MEASURE, u64(measure))
+}
+
 COLUMNS_LIMIT :: 104 // The most columns of a terminal window.
 ROWS_LIMIT :: 32 // The most rows of a terminal window.
 
@@ -99,8 +129,9 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           terminal shows it after the last line. A new one replaces the
 //           one before. tag: the count of bytes of its text. values[0]: a
 //           Style. values[1]: the place of the cursor, in bytes from the
-//           start of the text, or NO_CURSOR. No text and no cursor: the
-//           terminal shows no such line.
+//           start of the text, or NO_CURSOR. values[2]: the serial of the
+//           newest key (Key.serial) whose character the line shows, or 0.
+//           No text and no cursor: the terminal shows no such line.
 //   Hint    One line under the edit line, in the dim color: what the
 //           program says about the line (the signature of the call at the
 //           cursor). It has a long form, and a short form for a terminal
@@ -159,8 +190,8 @@ NO_CHOICE :: max(u64) // A List record with no chosen row.
 LIST_ROWS :: 8 // The rows of a completion list.
 
 // What a row of a completion list is: the terminal draws the kind icon of
-// it before the name, as a row of the palette has one (docs/GLOSSARY.md,
-// "Kind icon"). The program says what the name is; the terminal
+// it before the name, as a row of the palette has one
+// (docs/glossary/desktop.md, "Kind icon"). The program says what the name is; the terminal
 // chooses the form and the color. None: the row has no icon, and a list
 // with no icon in any row keeps no room for one.
 List_Icon :: enum u8 {
@@ -179,6 +210,8 @@ List_Icon :: enum u8 {
 //   Key     A key was pressed. tag: the code of the key
 //           (display.KEY_*). values[0]: its character, or 0. values[1]:
 //           the modifiers that were held (display.MODIFIER_*).
+//           values[2]: the serial that the compositor gave the key, or 0
+//           (display.Event.key_serial); an Edit record names it back.
 //           Control-R gives the character 'r' with MODIFIER_CONTROL.
 //   List_First  The pointer moved the scroll bar of the completion list.
 //           values[0]: the first row of the whole list that the scroll
@@ -207,6 +240,7 @@ Key :: struct {
 	code:      u32, // The code of the key (display.KEY_*).
 	character: rune, // Its character as a code point, or 0. A program that keeps it writes its UTF-8.
 	modifiers: u32, // The modifiers held (display.MODIFIER_*).
+	serial:    u64, // The serial that the compositor gave the key, or 0: a program that shows the key names it with edit.
 }
 
 // What a run of text is. The terminal chooses the color of each tone.
@@ -359,12 +393,15 @@ status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u
 }
 
 // edit sets the line that the program changes, with the place of its
-// cursor. edit(terminal, "") removes the line.
-edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}) {
+// cursor. edit(terminal, "") removes the line. key_serial: the newest key
+// (Key.serial) whose character the line shows, or 0; the terminal names it
+// with the picture that shows the line, for the measure of a key to the
+// screen.
+edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}, key_serial: u64 = 0) {
 	marked: [RUN_LIMIT]u8
 	part := record_text(text, &marked)
 	append(terminal, part)
-	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor}})
+	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor, 2 = key_serial}})
 	system.wake_reader(&terminal.ring.commands)
 }
 
@@ -564,6 +601,20 @@ record_part :: proc "contextless" (text: string, room: int) -> int {
 	return text_encoding.complete_characters(transmute([]u8)text[:room])
 }
 
+// edit_key_serial_take keeps the key serial of an Edit record in kept, the
+// newest one, when the terminal forwarded that key to its program: a
+// serial past forwarded, the newest serial that the terminal forwarded,
+// names no key that the program got. It is refused, and kept stays: a
+// program cannot hold the measure of the keys with a serial of its own.
+// 0 names no key.
+edit_key_serial_take :: proc "contextless" (kept: ^u64, serial, forwarded: u64) -> (refused: bool) {
+	if serial > forwarded {
+		return true
+	}
+	kept^ = max(kept^, serial)
+	return false
+}
+
 // key gives the next key that was pressed. false: no key waits.
 // A program waits for a key with system.wait_records on
 // terminal.ring.completions.
@@ -622,7 +673,7 @@ input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Rec
 	case .None:
 		return {}, false
 	case .Key:
-		return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}}, true
+		return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1]), serial = record.values[2]}}, true
 	case .List_First:
 		// The number is the number of another program: the reader
 		// cuts it to its own list.

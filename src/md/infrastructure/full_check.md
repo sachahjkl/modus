@@ -26,6 +26,25 @@ A full check is `nix flake check` and `modustool screenshots`, both passed. This
 
 **The source of the check holds no byte that `screenshots` writes.** `screenshots` writes the pictures of `docs/screenshots` (the bar shows a clock: each run gives new bytes), the measure record (`docs/measures/measures.txt`) and the development log, outside the repository. The source of `boot-test` holds no file of `docs/measures`, and of `docs/screenshots` only the names of the PNG files: the build writes a PNG of one pixel under each name. The checks of the README, the news and the pages of the site read which pictures exist and that each is a PNG with a size, not the bytes of the picture. An empty file is refused: the site renders the text of a picture that is no PNG, and its test fails. So the source is the same before and after `screenshots`, and the order of the two commands does not matter: the second one finds the output of the first in the store. A run of the test that saves a picture with a new name gives a new source after its copy; that is a change of the test, which a new check must prove.
 
+## The host tests at once
+
+What changed: `modustool check` ran the `odin test` of each folder of `HOST_TEST_FOLDERS` one after the other. It now runs them at the same time, each in its own process.
+
+**The pool.** The host tests use the pool of processes of the parallel build of the modules (`build_processes_run`): one worker thread for each process at once, each takes the next folder of the list, and after a failure no new process starts while the processes that run end. The count at once is one for each processor that the check counts on, at least one and no more than the folders: the processors of the host, or `NIX_BUILD_CORES` in the sandbox when it is fewer, as for the parts of the machine test. A host test is a compile, then a test program on its own threads: one process for each processor keeps the processors busy with no more processes than they run.
+
+**The order.** The pool takes the folders in the order of the list, and the tool is first: its compile and its tests are the longest, and a long folder that starts last makes the whole run longer. The report has the order of the list.
+
+**The files of a folder.** Each folder writes only its own files, named by its path with `_` for each `/`: its test program `build/test_<name>`, its log `build/host_tests/<name>.txt`, and the temporary folder of its compiler, `build/host_tests/<name>`. The compiler names the object of an assembly file in its temporary folder by the name of the file and an address of its own memory. The two folders of the runtime assemble two different files of one name, `memory_for_host_tests.asm`, so with one temporary folder for all, two compilers at once could write one object, and a test would run the procedures of the other folder. A list in which two folders give one name is refused before any process starts.
+
+**The report.** For each folder that passed, one line with its time: `modustool: measure: the host tests of <folder>: <seconds> s`, then one line with the time of all on the clock. Each time is a measure, never a condition. For each folder that failed, its time, the path of its whole log, and its last 40 lines, where the summary of the test runner is. The count of the folders that did not start after a failure is one line. The kernel flag goes to the folders under `src/kernel` and to the tool only, as for their compile.
+
+Refused forms:
+
+- **A pool of its own for the host tests.** The pool of the build already keeps the output of each process, keeps the order of the commands, and stops after a failure; a second pool would be a second form of the same rule.
+- **Each output on the terminal while it runs.** The outputs of several processes would mix line by line. The log of each folder is whole in its file, and the terminal gets the lines that a reader needs.
+- **Every folder after a failure.** A check stops at its first failure, as the module build does; a developer runs the folder alone to see the rest.
+- **One test program for all the folders.** A package of the library is compiled with its own flags, and the kernel parts must stay out of the library: one program would need the kernel flag everywhere.
+
 ## What the full check proves, before and after
 
 Each fact that the two runs proved is proved by the one run of the flake: the build of the tracked files, the host tests, each machine, the second build. The measure runs stay on the host. The pictures were a fact of a run on the host; they are now a fact of the run in the sandbox, which is the same build of the same tree.
@@ -49,6 +68,6 @@ Each fact that the two runs proved is proved by the one run of the flake: the bu
 
 ## State
 
-Built: the output of the check, the command that takes it, the count of the checks, the measure runs on the host.
+Built: the output of the check, the command that takes it, the count of the checks, the measure runs on the host, the host tests at once with the time of each folder as a measure. The check runs the binary of the tool that the flake builds once for each change of its sources ([repository_layout.md](repository_layout.md), the tool built once).
 
 Left: the measures of the host checks of `modustool check` in the same time record as the machines.

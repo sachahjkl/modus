@@ -1,6 +1,6 @@
 # A dropped write
 
-A dropped write ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Dropped write") is a write that the disk answers with Ok and does not keep. A firmware fault, a cache that loses power with no report, and a device that lies about a `Flush` all give it. No error comes back: the storage service learns of it only from the bytes that it reads later.
+A dropped write ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Dropped write") is a write that the disk answers with Ok and does not keep. A firmware fault, a cache that loses power with no report, and a device that lies about a `Flush` all give it. No error comes back: the storage service learns of it only from the bytes that it reads later.
 
 This file records what the storage service does with a dropped write, and how a machine test proves it.
 
@@ -17,7 +17,7 @@ The storage service promises that a commit is on the disk when the call returns,
 
 ## The chosen form
 
-**The commit read back** ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Commit read back"), in two steps of the commit itself. The commit call returns after them, so the next commit never starts before them.
+**The commit read back** ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Commit read back"), in two steps of the commit itself. The commit call returns after them, so the next commit never starts before them.
 
 1. **The blocks, before the root.** After the `Flush` of its blocks, the commit reads each block that it wrote back from the device and compares the bytes with the bytes that it wrote. If one differs, the disk did not keep a write: the service refuses the commit before it writes the root. The call gives `Device` with the unit `Dropped_Writes` and the count of the blocks that differ, and the log has one line: "storage: the read back of the commit of generation G found 1 block with other bytes: the disk did not keep it; the commit is refused before its root, and the service goes on from generation G - 1". No root on the disk names a block of the refused commit.
 2. **The root, after its `Flush`.** The commit reads its root back. If it differs, the disk did not keep the root, and the root before is still the newest on the disk: the service refuses the commit with `Dropped_Writes` and a count of 1, and writes the line "storage: the read back of the root of the commit of generation G found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation G - 1".
@@ -38,7 +38,7 @@ A device that answers the read back from the cache that lost the write passes it
 
 ## The limit of the rule
 
-- **A drop that the read back does not see.** A device that answers the read from the cache that lost the write passes the read back. If the machine runs on, the next commit is built on that commit, and both roots then name the wrong block. The open then takes the newest root with its damage, and the object that holds the block reads `Damaged`; the other objects are served. This is the rule "If each valid root names a wrong block, the newest one, with its damage" of `mount` in `src/library/support/storage_mount`.
+- **A drop that the read back does not see.** A device that answers the read from the cache that lost the write passes the read back. If the machine runs on, the next commit is built on that commit, and both roots then name the wrong block. The open then takes the newest root with its damage, and the object that holds the block reads `Damaged`; the other objects are served. This is the rule "If each valid root names a wrong block, the newest one, with its damage" of `mount` in `src/library/private/storage/storage_mount`.
 
 - **A root that the disk writes late.** The read back of a root can give other bytes because the device writes the root later, not because it lost it. Until the next root replaces it in that place, the late root of the refused commit names whole blocks, and a loss of power in that time opens the refused commit. This is the device that lies at the read, as above; the blocks of the refused commit stay out of use until the allocator goes around the disk, so the window ends at the next commit.
 
@@ -46,7 +46,7 @@ A refused commit has no other limit: with the read back of the blocks before the
 
 ## The tests
 
-**The host test** (`src/library/support/storage_mount`, `dropped_write_test.odin`) checks a model of the writes, built by hand in the order of the service, with the code of the open; it does not run the service. A commit whose block of data the disk dropped, refused before its root; then the next commit from the state of the root before, on the blocks of the refused commit, with its root in the other place. Each image after each write of the next commit, each write of a block alone, and its root cut, opens at the root before or at the next commit, with no wrong block and no fallback. The model runs a second time with the bytes of the refused commit written again to the dropped block: no image shows the refused commit. The model takes the blocks of the refused commit again at once, the worst case: the allocator takes them only after it went around the disk. A third case is the second root of an erase that the disk dropped: the root before the commit of the end stays in its place, the next commit takes the blocks that only it names, and each image opens at the commit of the end or at the next commit.
+**The host test** (`src/library/private/storage/storage_mount`, `dropped_write_test.odin`) checks a model of the writes, built by hand in the order of the service, with the code of the open; it does not run the service. A commit whose block of data the disk dropped, refused before its root; then the next commit from the state of the root before, on the blocks of the refused commit, with its root in the other place. Each image after each write of the next commit, each write of a block alone, and its root cut, opens at the root before or at the next commit, with no wrong block and no fallback. The model runs a second time with the bytes of the refused commit written again to the dropped block: no image shows the refused commit. The model takes the blocks of the refused commit again at once, the worst case: the allocator takes them only after it went around the disk. A third case is the second root of an erase that the disk dropped: the root before the commit of the end stays in its place, the next commit takes the blocks that only it names, and each image opens at the commit of the end or at the next commit.
 
 **The machine test.** The tool serves the data disk (`tools/modustool/network_block_device.odin`). It drops two writes of the console, each the first block written that starts with a marker text; it keeps every other block, of that request too.
 

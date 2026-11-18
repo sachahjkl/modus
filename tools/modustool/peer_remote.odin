@@ -11,7 +11,6 @@ import "core:sync"
 import "core:time"
 import "modus:support/quic"
 import "modus:support/random"
-import cryptography_module "../../src/modules/cryptography"
 
 // The peer as the QUIC client of the remote service (docs/QUIC.md,
 // section 7). The thread of the peer holds one connection to `remote` and
@@ -191,22 +190,7 @@ peer_remote_make :: proc() -> ^Peer_Remote {
 		call.request = make([]u8, remote.REQUEST_LIMIT + 1)
 		call.answer = make([]u8, remote.ANSWER_LIMIT + 1)
 	}
-	state.cryptography = {
-		seal_with_aes_128_gcm                = cryptography_module.seal_with_aes_128_gcm,
-		open_with_aes_128_gcm                = cryptography_module.open_with_aes_128_gcm,
-		seal_with_chacha20_poly1305          = cryptography_module.seal_with_chacha20_poly1305,
-		open_with_chacha20_poly1305          = cryptography_module.open_with_chacha20_poly1305,
-		hkdf_sha256_extract                  = cryptography_module.hkdf_sha256_extract,
-		hkdf_sha256_expand                   = cryptography_module.hkdf_sha256_expand,
-		header_protection_mask_with_aes_128  = cryptography_module.header_protection_mask_with_aes_128,
-		header_protection_mask_with_chacha20 = cryptography_module.header_protection_mask_with_chacha20,
-		sha256                               = cryptography_module.sha256,
-		hmac_sha256                          = cryptography_module.hmac_sha256,
-		x25519                               = cryptography_module.x25519_export,
-		ed25519_public_key                   = cryptography_module.ed25519_public_key,
-		ed25519_sign                         = cryptography_module.ed25519_sign,
-		ed25519_verify                       = cryptography_module.ed25519_verify,
-	}
+	state.cryptography = quic_cryptography_of_the_host()
 	// A client of the test: a fixed seed, as the QUIC cases. Its keys
 	// protect nothing but the test; the key of `remote` is the one that is
 	// pinned.

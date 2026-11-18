@@ -1,6 +1,9 @@
 // modustool: all the automation of the project, in one program.
 //
-//   odin run tools/modustool -out:build/modustool -- <command>
+//   nix develop -c modustool <command>
+//
+// The command of the development shell runs build/tool/modustool, which
+// compiles itself again when its sources changed (tool_build.odin).
 //
 // The project has no scripts. Each build step, each test and each call to a
 // third-party program is a command of this tool, so that the way a third-party
@@ -41,6 +44,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "modus:contract/remote"
+import "modus:contract/timed_stream"
 import "modus:support/pci"
 
 EXIT_FAILURE :: 1
@@ -50,7 +54,7 @@ ROOT_MARK :: "flake.nix"
 
 BUILD_FOLDER :: "build"
 
-// The one source library of the project (docs/GLOSSARY.md, "Source
+// The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
 // "modus:contract/ring", "modus:support/system".
 //   contract   what two parties agree on: records, numbers, and the code
@@ -62,9 +66,13 @@ BUILD_FOLDER :: "build"
 // source_folders.odin; the rule of the kernel is held by
 // library_imports_check.odin.
 
-// The folders whose host tests `modustool check` runs, in the order of
-// the run: `odin test` on each.
+// The folders whose host tests `modustool check` runs: `odin test` on
+// each, several at once (host_tests.odin). The pool starts them in this
+// order, and reports them in it: the tool comes first, because its
+// compile and its tests are the longest, and a long folder that starts
+// last makes the whole run longer.
 HOST_TEST_FOLDERS :: [?]string {
+	TOOL_SOURCE_FOLDER,
 	SOURCE_FOLDER_RUNTIME,
 	SOURCE_FOLDER_CONTRACT + "/blake3",
 	SOURCE_FOLDER_CONTRACT + "/module",
@@ -75,7 +83,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/enum_word",
 	SOURCE_FOLDER_SUPPORT + "/sentence",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
-	SOURCE_FOLDER_MODULES + "/cryptography",
+	SOURCE_FOLDER_PRIVATE + "/cryptography/cryptography_primitives",
 	SOURCE_FOLDER_SUPPORT + "/quic",
 	SOURCE_FOLDER_CONTRACT + "/date",
 	SOURCE_FOLDER_CONTRACT + "/disk_program_page",
@@ -83,33 +91,36 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/bridge_requester",
 	SOURCE_FOLDER_KERNEL + "/debug_exception",
 	SOURCE_FOLDER_KERNEL + "/processor_counters",
-	SOURCE_FOLDER_SUPPORT + "/storage_mount",
-	SOURCE_FOLDER_SUPPORT + "/storage_object",
-	SOURCE_FOLDER_SUPPORT + "/storage_tree",
-	SOURCE_FOLDER_SUPPORT + "/storage_retention",
+	SOURCE_FOLDER_KERNEL + "/stolen_time",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",
+	SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
 	SOURCE_FOLDER_SUPPORT + "/principals",
 	SOURCE_FOLDER_SUPPORT + "/tpm2",
 	SOURCE_FOLDER_SUPPORT + "/disk_program",
 	SOURCE_FOLDER_SUPPORT + "/calendar",
 	SOURCE_FOLDER_SUPPORT + "/line_editor",
-	SOURCE_FOLDER_SUPPORT + "/console_language",
-	SOURCE_FOLDER_SUPPORT + "/debugging",
-	SOURCE_FOLDER_MODULES + "/interface_module",
-	SOURCE_FOLDER_MODULES + "/drawing",
-	SOURCE_FOLDER_MODULES + "/sample",
+	SOURCE_FOLDER_PRIVATE + "/console/console_language",
+	SOURCE_FOLDER_PRIVATE + "/debugger/debugging",
+	LIBRARY_MODULE_SOURCES + "interface_module",
+	LIBRARY_MODULE_SOURCES + "drawing",
+	DEMONSTRATION_MODULE_SOURCES + "sample",
 	SOURCE_FOLDER_SUPPORT + "/system",
 	SOURCE_FOLDER_SUPPORT + "/twins",
-	SOURCE_FOLDER_SUPPORT + "/kernel_events_rounds",
+	SOURCE_FOLDER_PRIVATE + "/kernel_events/kernel_events_rounds",
 	SOURCE_FOLDER_CONTRACT + "/tpm_service",
 	SOURCE_FOLDER_SUPPORT + "/storage",
-	SOURCE_FOLDER_SUPPORT + "/bar",
-	SOURCE_FOLDER_SUPPORT + "/palette",
+	SOURCE_FOLDER_PRIVATE + "/compositor/bar",
+	SOURCE_FOLDER_PRIVATE + "/compositor/palette",
+	SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
+	SOURCE_FOLDER_PRIVATE + "/compositor/quality",
 	SOURCE_FOLDER_CONTRACT + "/palette_table",
 	SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
 	SOURCE_FOLDER_SUPPORT + "/graphics",
 	SOURCE_FOLDER_SUPPORT + "/interface",
-	SOURCE_FOLDER_SUPPORT + "/addresses",
-	SOURCE_FOLDER_SUPPORT + "/information",
+	SOURCE_FOLDER_PRIVATE + "/inspect/addresses",
+	SOURCE_FOLDER_PRIVATE + "/manual/information",
 	SOURCE_FOLDER_SUPPORT + "/vector_font",
 	SOURCE_FOLDER_SUPPORT + "/network",
 	SOURCE_FOLDER_SUPPORT + "/tcp",
@@ -119,10 +130,9 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
 	SOURCE_FOLDER_CONTRACT + "/entropy_service",
-	TOOL_SOURCE_FOLDER,
 	SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
 	SOURCE_FOLDER_CONTRACT + "/settings",
-	SOURCE_FOLDER_MODULES + "/text_shaping",
+	LIBRARY_MODULE_SOURCES + "text_shaping",
 	SOURCE_FOLDER_SUPPORT + "/text_shaping",
 	SOURCE_FOLDER_SUPPORT + "/mark",
 	SOURCE_FOLDER_SUPPORT + "/terminal",
@@ -132,21 +142,23 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
 	SOURCE_FOLDER_CONTRACT + "/system_description",
 	SOURCE_FOLDER_CONTRACT + "/replacement_list",
-	SOURCE_FOLDER_SUPPORT + "/replacement_signature",
+	SOURCE_FOLDER_PRIVATE + "/root/replacement_signature",
 	SOURCE_FOLDER_CONTRACT + "/operation",
 	SOURCE_FOLDER_CONTRACT + "/operation_sequence",
 	SOURCE_FOLDER_CONTRACT + "/debug_object",
 	SOURCE_FOLDER_CONTRACT + "/value_kinds",
-	SOURCE_FOLDER_SUPPORT + "/source_comment_markdown",
-	SOURCE_FOLDER_SUPPORT + "/console_results",
+	SOURCE_FOLDER_PRIVATE + "/manual/source_comment_markdown",
+	SOURCE_FOLDER_PRIVATE + "/console/console_results",
 	SOURCE_FOLDER_SUPPORT + "/key_path",
 	SOURCE_FOLDER_SUPPORT + "/kind_icons",
 	SOURCE_FOLDER_CONTRACT + "/manual_pages",
-	SOURCE_FOLDER_SUPPORT + "/manual_navigation",
+	SOURCE_FOLDER_PRIVATE + "/manual/manual_navigation",
 	SOURCE_FOLDER_CONTRACT + "/ring",
 	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
 	SOURCE_FOLDER_CONTRACT + "/datagram",
 	SOURCE_FOLDER_CONTRACT + "/byte_order",
+	SOURCE_FOLDER_CONTRACT + "/timed_stream",
+	SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
@@ -160,6 +172,10 @@ BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
 BOOT_VOLUME_MEASURE :: BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `modustool measure`.
 BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
+// The machine of the operation sequences (operation_sequences.odin), with
+// the kernel that ships.
+BOOT_VOLUME_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_volume_operation_sequences.img"
+TEST_OUTPUT_OPERATION_SEQUENCES :: BUILD_FOLDER + "/test_output_operation_sequences.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 // The volumes of `test trusted_boot` (trusted_boot_scenario.odin): one byte
 // of a module changed after the system description was made; one bit of the
@@ -424,7 +440,7 @@ COMMANDS :: [?]Command {
 	//
 	// The tool checks no speed: a program checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that runs the scenario of a film, and films
 	// it: the pictures of the screen, taken while the scenario types, become
 	// a film with ffmpeg, which must be on the path. The film is for the
@@ -486,7 +502,7 @@ COMMANDS :: [?]Command {
 	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
 	// Converts each picture of `resources/hall_of_fame/CREDITS.md` to the
 	// pixels of a portrait of the program `hall_of_fame`, in
-	// `src/programs/hall_of_fame/portraits`. The result is in the
+	// `src/modules/demonstrations/hall_of_fame/portraits`. The result is in the
 	// repository, so a build decodes no PNG file.
 	{name = "portraits", about = "convert the pictures of " + HALL_OF_FAME_CREDITS_FILE + " to the portraits of " + HALL_OF_FAME_PORTRAIT_FOLDER, run = run_portraits},
 	// Calls an export of a service of the machine that `modustool run`
@@ -679,7 +695,8 @@ COMMANDS :: [?]Command {
 	// command, with `screenshots`.
 	//
 	// In order: `odin check -vet` of the tool, each package of the contract
-	// alone, the host tests of each library, the origin of the cryptography,
+	// alone, the host tests of each folder (several at once, each with its
+	// log in `build/host_tests/`), the origin of the cryptography,
 	// the mark, the pictures of the README, the fixed addresses, the bounds
 	// of the tests, the rule on comments, the form of the glossary, the
 	// file index of the intent, the source paths in the documents, the
@@ -730,6 +747,9 @@ main :: proc() {
 	// folder of the build in it (NIX_LDFLAGS). The linker would write it in
 	// each module, and the hash of a module would depend on that folder.
 	_ = os.unset_env("NIX_LDFLAGS")
+	when TOOL_BUILDS_ITSELF {
+		tool_build_current()
+	}
 	if len(os.args) < 2 || os.args[1] == "help" || os.args[1] == "-h" || os.args[1] == "--help" {
 		usage()
 		return
@@ -1030,6 +1050,8 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // run_measure runs the measures of the program `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other programs of
 // the test. The program checks its counts; the tool does not check a speed.
+// The same machine then runs processor_frame, whose lines the tool reads
+// for their form only (processor_frame_measure.odin).
 // The machine is a measure run: its boot image holds the resource
 // `measure_run`, so each program measures its rates over a duration
 // (measure_runs.odin). `measure <program>`: one program of
@@ -1094,7 +1116,7 @@ run_measure :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
 		return EXIT_USAGE
 	}
-	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) {
+	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
 		return EXIT_FAILURE
 	}
 	return 0
@@ -1118,24 +1140,9 @@ run_check :: proc(args: []string) -> int {
 	if !operation_count_check() || !allocator_check() || !export_error_record_check() || !choice_constant_check() {
 		return EXIT_FAILURE
 	}
-	// The tests of the memory procedures in assembly link the form of the
-	// host: the compiler assembles memory_for_host_tests.asm itself and
-	// links its object by its path (a library found through `-L/` is
-	// refused by the linker of the Nix sandbox).
 	host_test_folders := HOST_TEST_FOLDERS
-	for folder in host_test_folders {
-		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
-		test_command := make([dynamic]string, context.temp_allocator)
-		append(&test_command, "odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG)
-		// The kernel parts only for the folders that import them: a host
-		// test of the library that names one then fails to compile.
-		if source_folder_takes_kernel_library(folder) {
-			append(&test_command, KERNEL_LIBRARY_FLAG)
-		}
-		append(&test_command, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator))
-		if !run(test_command[:]) {
-			return EXIT_FAILURE
-		}
+	if !host_tests_run(host_test_folders[:]) {
+		return EXIT_FAILURE
 	}
 	// The fuzz targets: their corpus, then a fixed count of new executions
 	// with the seed of the sources (src/md/infrastructure/fuzzing.md).
@@ -1238,7 +1245,32 @@ Machine_Iommu :: enum {
 	Amd,
 }
 
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc") -> (command: []string, ok: bool) {
+// firmware_files names the files of a firmware: the variable of the
+// environment that gives its code, the one that gives its variable store,
+// the copy of that store outside a test, and the end of the name of the
+// copy of a test machine. The start of a machine and the names of the
+// addresses at a failure both read them, so the two name the same files.
+firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_variable, variables_copy, variables_suffix: string) {
+	switch firmware {
+	case .Usual:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES, FIRMWARE_VARIABLES_SUFFIX
+	case .With_Tpm_Driver:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES, FIRMWARE_TPM_VARIABLES_SUFFIX
+	case .With_Secure_Boot:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES, FIRMWARE_FULL_VARIABLES_SUFFIX
+	}
+	return
+}
+
+// The memory of a test machine, in MiB. Below the hole of PCI of q35, so an
+// offset in the memory file of a machine is a physical address.
+MACHINE_MEMORY_MIB :: 1024
+
+// memory_file: "", or a file of the host that holds the memory of the
+// machine, which the tool reads and writes (operation_sequences.odin); such
+// a machine has one processor, so that a sequence gives the same answers at
+// each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1257,17 +1289,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	if !disk_prepare(scratch_disk, SCRATCH_DISK_SIZE, true) {
 		return nil, false
 	}
-	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
-	variables_suffix := FIRMWARE_VARIABLES_SUFFIX
-	switch firmware {
-	case .Usual:
-	case .With_Tpm_Driver:
-		code_variable, variables_variable, variables_copy = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES
-		variables_suffix = FIRMWARE_TPM_VARIABLES_SUFFIX
-	case .With_Secure_Boot:
-		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
-		variables_suffix = FIRMWARE_FULL_VARIABLES_SUFFIX
-	}
+	code_variable, variables_variable, variables_copy, variables_suffix := firmware_files(firmware)
 	if test_output != "" {
 		variables_copy = machine_file(test_output, variables_suffix)
 	}
@@ -1313,7 +1335,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the processor: its variables are written only there. QEMU refuses
 		// interrupt remapping when KVM holds the whole interrupt controller:
 		// the machine with the IOMMU splits it. QEMU accepts both together.
-		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : ""}, context.temp_allocator),
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -1323,9 +1345,9 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// The main test keeps about 30 windows open, each with two
 		// pictures, and then starts a program that maps 164 MiB.
 		"-m",
-		"1024",
+		fmt.tprintf("%d", MACHINE_MEMORY_MIB),
 		"-smp",
-		fmt.tprintf("%d", MACHINE_PROCESSOR_COUNT),
+		fmt.tprintf("%d", memory_file != "" ? 1 : MACHINE_PROCESSOR_COUNT),
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
@@ -1354,6 +1376,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	case .Amd:
 		append(&list, "-device", "amd-iommu,dma-remap=on,intremap=on")
 		virtio_iommu = ",iommu_platform=on"
+	}
+	if memory_file != "" {
+		// The memory of the machine in a file that the tool reads and
+		// writes while the machine runs: share=on gives the tool the pages
+		// that the machine sees.
+		append(&list, "-object", fmt.tprintf("memory-backend-file,id=machine_memory,size=%dM,mem-path=%s,share=on", MACHINE_MEMORY_MIB, memory_file))
 	}
 	if paused {
 		// The machine waits for the step Monitor "cont" of the scenario: a
@@ -1441,6 +1469,14 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// device service its entry 0, and starts none for a device with no
 		// table.
 		append(&list, "-device", fmt.tprintf("virtio-rng-pci,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
+	}
+	if sound_output != "" {
+		// The sound device writes each frame that its stream gives to a wave
+		// file, in the one format of the timed stream: QEMU then converts no
+		// rate, and the file holds the frames of the sound service in order
+		// (src/md/features/timed_stream.md, "The proof").
+		append(&list, "-audiodev", fmt.tprintf("wav,id=sound,path=%s,out.frequency=%d,out.channels=%d,out.format=s16", sound_output, timed_stream.FRAME_RATE, timed_stream.CHANNELS))
+		append(&list, "-device", fmt.tprintf("virtio-sound-pci,audiodev=sound,disable-legacy=on,addr=0x%x%s", pci.SOUND_DEVICE, virtio_iommu))
 	}
 	if firmware != .Usual || tpm_device {
 		if test_output == "" {

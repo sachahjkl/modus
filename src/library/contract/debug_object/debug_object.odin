@@ -3,7 +3,7 @@
 // lines of its code, its types, its global variables, and the parameters
 // and the local variables of each procedure with their locations, as sorted
 // tables of fixed records. A reader names an offset of the module
-// "fault::three + 0x8 (src/programs/fault/main.odin:15)" with a binary search,
+// "fault::three + 0x8 (src/modules/demonstrations/fault/main.odin:15)" with a binary search,
 // and finds where a variable is and what its type is, with no allocator
 // and no parser of DWARF.
 //
@@ -49,7 +49,7 @@
 //
 // Example: the frame `0x0040_1234` of a stop report, in the module at
 // 0x0040_0000, is the offset 0x1234; `place_of` gives `{procedure =
-// "fault::three", offset_in_procedure = 8, file = "src/programs/fault/main.odin",
+// "fault::three", offset_in_procedure = 8, file = "src/modules/demonstrations/fault/main.odin",
 // line = 15}`, and `variable_by_name_at(object, 0x1234, "address")` gives
 // the parameter `address`: a `uintptr` in the register 5 (`rdi`).
 //
@@ -108,7 +108,7 @@ Procedure :: struct {
 #assert(size_of(Procedure) == 16)
 
 // One source file: its path from the root of the repository
-// ("src/programs/fault/main.odin"), or "base:runtime/print.odin" for a file of
+// ("src/modules/demonstrations/fault/main.odin"), or "base:runtime/print.odin" for a file of
 // the Odin compiler.
 //
 // `content_hash` is the BLAKE3 hash of the bytes of the file when the tool

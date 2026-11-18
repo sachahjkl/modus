@@ -113,6 +113,7 @@ test_parts := [?]Test_Part {
 		volumes = {BOOT_VOLUME},
 	},
 	{name = "fault_ring", does = "The machine of the fault ring", run = fault_ring_tests_run, procedures = {"fault_ring_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "sound", does = "The machine of sound, with a virtio sound device (`virtio-sound-pci`) whose output goes to a wave file: `tone` plays a tone of 440 Hz at 500 ms after the frame 0 of its stream and checks eight refusals of the sound service, a second `tone` is refused, and the tool finds the tone in the file by its start, with the crossings of zero of 440 Hz and its 24 000 frames, and checks its place against the frame that `tone` names (`SOUND.md`, \"4. The test\")", run = sound_tests_run, procedures = {"sound_tests_run"}, volumes = {BOOT_VOLUME}},
 	{name = "crypto", does = "The machine of the module `cryptography`", run = cryptography_tests_run, procedures = {"cryptography_tests_run"}, volumes = {BOOT_VOLUME}},
 	{
 		name = "guest",
@@ -123,6 +124,7 @@ test_parts := [?]Test_Part {
 	},
 	{name = "fails", does = "The machine of a start that fails: a boot image with no compositor", run = fails_tests_run, procedures = {"fails_tests_run"}, volumes = {BOOT_VOLUME_FAILS}},
 	{name = "shortage", does = "The machine of the shortage of frames", run = shortage_tests_run, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
+	{name = "operation_sequences", does = "The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence (\"The operation sequences\")", run = operation_sequences_tests_run, procedures = {"operation_sequences_tests_run"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 }
 
 // test_part_find gives the row of a part by its name.

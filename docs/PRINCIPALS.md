@@ -1,6 +1,6 @@
 # Principals
 
-A principal is a key pair and the root handles that the key unlocks (`PROPERTIES.md`, property 21; `GLOSSARY.md`, "Principal"). The kernel has no concept of who executes: a program acts with the handles that it holds. The root service holds the records of the principals, and names the principal of each program that it starts. Storage holds the data of a principal.
+A principal is a key pair and the root handles that the key unlocks (`PROPERTIES.md`, property 21; `glossary/access.md`, "Principal"). The kernel has no concept of who executes: a program acts with the handles that it holds. The root service holds the records of the principals, and names the principal of each program that it starts. Storage holds the data of a principal.
 
 This guide says what is built, how it works, and what is not built.
 
@@ -10,7 +10,7 @@ This guide says what is built, how it works, and what is not built.
 
 **For whom.** A reader who wants to know how the system separates the data of the machine from the data of a named principal, how the unlock works, and which program can see which store.
 
-**Read before.** `PROPERTIES.md`, "21. Principals: who acts, without users" (the rule and its layers) and "20. No ambient access: the other holes to close". The terms principal, named principal, session, unlock, lock of a session, passphrase and acts for the principal are in `GLOSSARY.md`, group Access.
+**Read before.** `PROPERTIES.md`, "21. Principals: who acts, without users" (the rule and its layers) and "20. No ambient access: the other holes to close". The terms principal, named principal, session, unlock, lock of a session, passphrase and acts for the principal are in `glossary/access.md`.
 
 **The map of this guide.**
 

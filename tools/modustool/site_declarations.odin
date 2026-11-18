@@ -18,7 +18,7 @@ import "core:strings"
 
 // The folders whose declarations the index holds: the sources of the system.
 // The tool is not read: its names are not names of the system.
-SITE_DECLARATION_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PROGRAMS}
+SITE_DECLARATION_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, SOURCE_FOLDER_MODULES}
 // The id of the card of a declaration on a page is this prefix and the
 // place of the declaration in the index; its first sentence has the suffix
 // of the type cards too, so that a screen reader reads it with the link.

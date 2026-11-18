@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -169,13 +170,15 @@ when DRAWING_THROUGH_MODULE {
 	// module with another version has other names, so the loader refuses
 	// it in place of a draw of records that it reads wrong. A new version
 	// stops the build here, until the names follow.
-	#assert(DRAW_RECORD_VERSION == 10)
+	#assert(DRAW_RECORD_VERSION == 14)
 
+	// The declarations name the record of the contract: the check of the
+	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
-		@(link_name = "damage_of_draw_table_10")
-		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> i64 ---
-		@(link_name = "execute_draw_table_in_rectangles_10")
-		module_execute_draw_table_in_rectangles :: proc "c" (now: ^system.Table_To_Read(Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Module_Canvas_Shape, rectangles: ^system.Table_To_Read(Module_Rectangle), error: ^errors.Error_Record) -> i64 ---
+		@(link_name = "damage_of_draw_table_14")
+		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> i64 ---
+		@(link_name = "execute_draw_table_in_rectangles_14")
+		module_execute_draw_table_in_rectangles :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Module_Canvas_Shape, rectangles: ^system.Table_To_Read(Module_Rectangle), error: ^errors.Error_Record) -> i64 ---
 	}
 
 	// records_to_read gives the table place of the records first ..< first
@@ -248,7 +251,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_difference :: proc "contextless" (drawing: ^Window_Drawing, before, now: ^Draw_Table, damage: ^Damage) -> bool {
 		drawing.module_calls += 1
 		if !difference_through_module(before, now, damage, &drawing.module_error) {
-			module_refusal_log(drawing, "damage_of_draw_table_10")
+			module_refusal_log(drawing, "damage_of_draw_table_14")
 			return false
 		}
 		return true
@@ -265,7 +268,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_draw :: proc "contextless" (drawing: ^Window_Drawing, now: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) -> bool {
 		if len(now.picture_memories) > 1 {
 			drawing.module_error = errors.error_make(.Unsupported, .None, 1, i64(len(now.picture_memories)))
-			module_refusal_log(drawing, "execute_draw_table_in_rectangles_10")
+			module_refusal_log(drawing, "execute_draw_table_in_rectangles_14")
 			return false
 		}
 		picture_memory: []graphics.Color
@@ -274,7 +277,7 @@ when DRAWING_THROUGH_MODULE {
 		}
 		drawing.module_calls += 1
 		if !draw_part_through_module(now, 0, now.record_count, picture_memory, canvas, rectangles, true, graphics.colors.background, &drawing.module_error) {
-			module_refusal_log(drawing, "execute_draw_table_in_rectangles_10")
+			module_refusal_log(drawing, "execute_draw_table_in_rectangles_14")
 			return false
 		}
 		return true
@@ -336,7 +339,7 @@ when DRAWING_THROUGH_MODULE {
 
 // window_drawing_of makes the drawing of a window with tables in the
 // memory of the caller.
-window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Record, text_now, text_before: []u8) -> Window_Drawing {
+window_drawing_of :: proc "contextless" (records_now, records_before: []draw_record.Draw_Record, text_now, text_before: []u8) -> Window_Drawing {
 	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}}
 }
 
@@ -394,8 +397,50 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		if event.kind == .Go_To {
 			act_go_to(drawing, window, event.act)
 		}
+		// The principal resized the window: the surface of the new size
+		// has no picture known, so the next frame draws it whole. A
+		// refused surface keeps the old one, whose pictures stay known.
+		if event.kind == .Resized && display.surface_resize(window, event.width, event.height) == .Ok {
+			draw_whole_window_next(drawing)
+		}
+		// The keys of the clipboard wait for the next frame, whose element
+		// with the focus takes them (clipboard_answer).
+		if event.kind == .Copy_Asked {
+			drawing.input.copy_asked = true
+		}
+		if event.kind == .Pasted {
+			// A newer paste: the compositor ended the lend of the one
+			// before, which no frame took.
+			if drawing.input.paste.kind == .Pasted {
+				display.paste_refuse(window, drawing.input.paste)
+			}
+			drawing.input.paste, drawing.input.paste_window = event, window
+		}
 	}
 	return came
+}
+
+// clipboard_answer answers, after a frame, the keys of the clipboard that
+// the frame had: the text that an element gave to a copy, or no content;
+// and a paste that no element took. Then the frame holds them no more.
+@(private = "file")
+clipboard_answer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
+	input := &drawing.input
+	if input.copy_asked {
+		if frame.copy_given {
+			display.copy_send(window, frame.copied)
+		} else {
+			display.copy_decline(window)
+		}
+		input.copy_asked = false
+	}
+	if input.paste.kind == .Pasted {
+		if !frame.paste_taken {
+			display.paste_refuse(window, input.paste)
+		}
+		input.paste, input.paste_window = {}, nil
+	}
+	frame.copied, frame.copy_given, frame.paste_taken = nil, false, false
 }
 
 // draw_whole_window_next makes the next frame of each picture of the
@@ -461,6 +506,7 @@ window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time
 // measures the time between them.
 window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> int {
 	frame_end(frame)
+	clipboard_answer(drawing, frame, window)
 	input_clear(&drawing.input)
 	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start
@@ -570,6 +616,7 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 // nothing and does not present.
 window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> bool {
 	frame_end(frame)
+	clipboard_answer(drawing, frame, window)
 	input_clear(&drawing.input)
 	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start

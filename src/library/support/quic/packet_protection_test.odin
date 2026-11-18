@@ -1,14 +1,15 @@
 #+build !freestanding
 // The packet protection of QUIC version 1 on the host, against RFC 9001,
 // appendix A, and RFC 9000, appendix A, with hostile datagrams. The library
-// calls the procedures of the module package `cryptography` itself, so the
-// tests run the code that the module ships.
+// calls the procedures of the private part `cryptography_primitives`, which
+// the module `cryptography` exports, so the tests run the code that the
+// module ships.
 package quic
 
 import "modus:contract/errors"
+import "modus:private/cryptography/cryptography_primitives"
 import "core:encoding/hex"
 import "core:testing"
-import cryptography_module "../../../modules/cryptography"
 
 // The values of RFC 9001, appendix A. A script that is not in the
 // repository copied each value from the text of the RFC (no value was typed
@@ -71,20 +72,20 @@ hex_of :: proc(bytes: []u8) -> string {
 // import slots.
 module_cryptography :: proc() -> Cryptography {
 	return {
-		seal_with_aes_128_gcm                = cryptography_module.seal_with_aes_128_gcm,
-		open_with_aes_128_gcm                = cryptography_module.open_with_aes_128_gcm,
-		seal_with_chacha20_poly1305          = cryptography_module.seal_with_chacha20_poly1305,
-		open_with_chacha20_poly1305          = cryptography_module.open_with_chacha20_poly1305,
-		hkdf_sha256_extract                  = cryptography_module.hkdf_sha256_extract,
-		hkdf_sha256_expand                   = cryptography_module.hkdf_sha256_expand,
-		header_protection_mask_with_aes_128  = cryptography_module.header_protection_mask_with_aes_128,
-		header_protection_mask_with_chacha20 = cryptography_module.header_protection_mask_with_chacha20,
-		sha256                               = cryptography_module.sha256,
-		hmac_sha256                          = cryptography_module.hmac_sha256,
-		x25519                               = cryptography_module.x25519_export,
-		ed25519_public_key                   = cryptography_module.ed25519_public_key,
-		ed25519_sign                         = cryptography_module.ed25519_sign,
-		ed25519_verify                       = cryptography_module.ed25519_verify,
+		seal_with_aes_128_gcm                = cryptography_primitives.seal_with_aes_128_gcm,
+		open_with_aes_128_gcm                = cryptography_primitives.open_with_aes_128_gcm,
+		seal_with_chacha20_poly1305          = cryptography_primitives.seal_with_chacha20_poly1305,
+		open_with_chacha20_poly1305          = cryptography_primitives.open_with_chacha20_poly1305,
+		hkdf_sha256_extract                  = cryptography_primitives.hkdf_sha256_extract,
+		hkdf_sha256_expand                   = cryptography_primitives.hkdf_sha256_expand,
+		header_protection_mask_with_aes_128  = cryptography_primitives.header_protection_mask_with_aes_128,
+		header_protection_mask_with_chacha20 = cryptography_primitives.header_protection_mask_with_chacha20,
+		sha256                               = cryptography_primitives.sha256,
+		hmac_sha256                          = cryptography_primitives.hmac_sha256,
+		x25519                               = cryptography_primitives.x25519,
+		ed25519_public_key                   = cryptography_primitives.ed25519_public_key,
+		ed25519_sign                         = cryptography_primitives.ed25519_sign,
+		ed25519_verify                       = cryptography_primitives.ed25519_verify,
 	}
 }
 

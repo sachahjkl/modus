@@ -35,7 +35,8 @@ Site_Comment_Link :: struct {
 //   "https://..." or "http://...": an address of another host;
 //   "term:<term>": a term of the glossary, by its name with no regard to case;
 //   "docs/<NAME>.md" or "docs/<NAME>.md#<id>": a guide, or a heading of it by
-//   the id of the heading on its page;
+//   the id of the heading on its page; "docs/glossary/<group>.md#<id>", a
+//   term or the heading of a group, on the page of the group;
 //   a name: a kernel operation, an error kind, a module or a command of the
 //   console ("load()"), as a code span names a row; "<module>.<export>", an
 //   export of a module; else a declaration of the sources ("fault_deliver",
@@ -75,7 +76,7 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 		if !site_document_has_id(site, path, anchor) {
 			return {}, fmt.tprintf("%s has no heading with the id \"%s\"", path, anchor)
 		}
-		if path == SITE_GLOSSARY_FILE {
+		if glossary_is_file(path) {
 			// A term and a group are on the page of their group.
 			page = site_glossary_anchor_page(site, anchor)
 		}
@@ -118,15 +119,9 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 }
 
 // site_document_has_id tells whether the page of a document has an element
-// with an id: a heading of a guide, or a heading or a term of the glossary.
+// with an id: a heading of a guide, or the heading of a group or a term in
+// the file of the group of the glossary (site_document_outline).
 site_document_has_id :: proc(site: ^Site, path, id: string) -> bool {
-	if path == SITE_GLOSSARY_FILE {
-		for term in site.terms {
-			if term.id == id {
-				return true
-			}
-		}
-	}
 	for heading in site_document_outline(site, path).headings {
 		if heading.id == id {
 			return true

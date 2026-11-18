@@ -39,7 +39,8 @@ fuzz_choice_word :: proc(choices: ^Fuzz_Choices, size: int) -> u64 {
 }
 
 // fuzz_choice_below gives a number from 0 to count - 1, from the fewest
-// bytes that hold count. A count of 0 or 1 reads no byte and gives 0.
+// bytes that hold count. A count of 0 or 1 reads no byte and gives 0; a
+// count of 0 has no place, so a caller never uses that 0 as a place.
 fuzz_choice_below :: proc(choices: ^Fuzz_Choices, count: int) -> int {
 	if count <= 1 {
 		return 0

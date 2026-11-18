@@ -1,6 +1,6 @@
 # The erase of the versions of an object
 
-A version erase ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Version erase") ends each version of one object in one commit, then writes zero bytes over each block that this commit freed. The guide is [`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.8 The erase of versions".
+A version erase ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Version erase") ends each version of one object in one commit, then writes zero bytes over each block that this commit freed. The guide is [`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.8 The erase of versions".
 
 ## Purpose
 
@@ -46,7 +46,7 @@ After a write whose answer is unknown, `unlock` does not erase: the store did no
 - **A cut write of the root of N + 1.** Its check is wrong, and the open takes N.
 - **After the root of N + 1.** Each block of step 4 holds its old bytes or zeros, and no root names it. The open counts it free.
 
-The host test of the open checks each of these images (`src/library/support/storage_mount`). It checks a model of the writes, built by hand in the order of the service, not the service itself. The machine test of `principals` opens the disk that the service left after an erase, on the host, and finds no wrong block and no version of the file.
+The host test of the open checks each of these images (`src/library/private/storage/storage_mount`). It checks a model of the writes, built by hand in the order of the service, not the service itself. The machine test of `principals` opens the disk that the service left after an erase, on the host, and finds no wrong block and no version of the file.
 
 ## The machine test of a dropped write of zeros
 

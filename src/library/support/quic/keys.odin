@@ -437,7 +437,7 @@ when ODIN_OS == .Freestanding {
 // The most bytes of a Retry Pseudo-Packet: 2048.
 //
 // The pseudo-packet is the additional data of one call of the module, which takes 2048 bytes at
-// most (`ADDITIONAL_LIMIT` in `src/modules/cryptography`). One byte and 20 bytes are kept for the
+// most (`ADDITIONAL_LIMIT` in `src/library/private/cryptography/cryptography_primitives`). One byte and 20 bytes are kept for the
 // original Destination Connection ID, so `retry_integrity_tag` takes a Retry packet of 2027 bytes
 // without its tag, 2043 with it: more than a datagram of a path of 1500 bytes.
 RETRY_PSEUDO_PACKET_LIMIT :: 2048

@@ -320,14 +320,14 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		cells := site_table_row_cells(line)
 		if len(cells) >= 2 && strings.has_prefix(cells[0], "`docs/") {
 			path := strings.trim(cells[0], "`")
-			if page, found := site.documents[path]; found && page != site_page_file(SITE_GLOSSARY_FOLDER) && strings.has_suffix(path, ".md") {
+			if _, found := site.documents[path]; found && !glossary_is_file(path) && strings.has_suffix(path, ".md") {
 				append(&sources, path)
 			}
 		}
 	}
 	others := make([dynamic]string, context.temp_allocator)
-	for path, page in site.documents {
-		if !strings.has_prefix(path, "docs/") || page == site_page_file(SITE_GLOSSARY_FOLDER) {
+	for path in site.documents {
+		if !strings.has_prefix(path, "docs/") || glossary_is_file(path) {
 			continue
 		}
 		listed := false

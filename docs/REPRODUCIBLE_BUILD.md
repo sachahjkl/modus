@@ -263,7 +263,7 @@ A buffer declared inside a loop of `console` gave another LLVM IR and another ob
 
 ### The symptom
 
-- `palette_candidates_give` (`src/programs/console/palette_provider.odin`) declares `value_buffer: [16]u8` inside a loop over the strategies. The optimizer unrolls the loop, and each copy of the loop zeroes the buffer with one `memset`.
+- `palette_candidates_give` (`src/modules/system/console/palette_provider.odin`) declares `value_buffer: [16]u8` inside a loop over the strategies. The optimizer unrolls the loop, and each copy of the loop zeroes the buffer with one `memset`.
 - `modustool repeat console 12`: 5 distinct LLVM IR files in 12 builds (2, 1, 5, 2, 2), 3 distinct objects, 1 distinct module, 1 distinct debug object.
 - Each difference is the order of three lines `llvm.dbg.assign` of `value_buffer`, with the fragments 0 to 40, 0 to 32 and 0 to 88 bits, the value 0 and the address `ptr undef`. No other line differs.
 
