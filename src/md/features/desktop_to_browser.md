@@ -279,6 +279,18 @@ A program that draws 3D on a machine with no GPU uses the processor back end of 
 `gui_toolkit` is ported to the system and becomes the toolkit of rich programs: a program whose interface needs more than the elements of the `interface` package (an editor, a browser, a program of a third party). A rich program is an outside module ([../infrastructure/third_party_module.md](../infrastructure/third_party_module.md)), never a source of `src/`.
 
 1. **A target "modus" for the core library of Odin**, for outside modules only. `core:os` reads and writes the objects of the private store and of the handles that the program was given; `core:thread` runs on `Thread_Create`; `core:time` reads the clock of the system; `core:sync` waits on `Word_Wait`; the allocators of the language run on arenas. A path names an object of the private store or of a given handle, never a global tree. The arguments of a command line and the environment are empty. A write to the standard output is a line of the log of the program, which no program reads as input.
+
+   **A ported program adapts to the system.** The system has no global path, no `PATH`, no environment and no ambient settings, and it gets none for a ported program. Each need of a program on another system has its form here:
+   - a file or a folder (`HOME`, `TMPDIR`, a path): a handle that the start record gives, such as the private store;
+   - a program to start (`PATH`): a module, named by its hash or by its name in the signed image;
+   - a service (`DISPLAY`, a socket path): `connect` to the root service, which answers only with a grant;
+   - a setting (`LANG`, `TZ`, a theme): the settings service and its read-only page, whose change comes as an event;
+   - the parameters of a start (`argv`): the values of the context, which a border reads as their types;
+   - a secret: a handle to an object or a grant, never a text.
+
+   A port changes the code of the program where it reads one of these: a new constraint gives a new rule, and the program follows it. Each read of the program becomes explicit in its start record, typed and refusable, where an environment is inherited, untyped and invisible.
+
+   A compatibility layer stays open. It would build, for a ported program only, an environment and arguments from its start record: `HOME` to its private store, `LANG` from the settings. It would never exist for the code of the system. It is decided when the first ports show what they read, from that measure and not before (`ROADMAP.md`, "Maybe").
 2. **A `gt:platform` back end for modus**: the surface, the input, the fonts and the clipboard. Its `render` draws through the draw table, and through the WebGPU subset when it exists. What the draw table does not have yet (a blur, a blend mode, a transform) is drawn by `gt:paint` on the processor into a picture memory, which a picture record shows.
 3. **The look of the system as a style of `gui_toolkit`.** The look of the `interface` package (the grid of points, the gradient of the cards, the folded gap, the colors of each concept, the scroll bar) is possible in `gui_toolkit` as an extended style, so a rich program can look like a program of the system. The style lives in `gui_toolkit`.
 
