@@ -191,6 +191,9 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_start_steps(&machine)
 	machine_wait(&machine, fmt.aprintf("root: unlock reads the machine key with no window, before the start policy: the choice of principal 0 is in its disk grant table"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal"), any_order = true)
+	// The run of unlock before the start policy stops with its own line,
+	// before the measure, whose wait below is ordered.
+	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped with code 0"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: read the disk grant table of principal 0 from the store module_files: 1 rows, with the tag of the machine key"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: reads the chosen start policy \"%s\", the file %s, from the store module_files of principal 0", CHOSEN_NICKNAME, string(chosen_digits[:])), any_order = true)
 	chosen_words := fmt.aprintf("(nickname \"%s\")", CHOSEN_NICKNAME)
@@ -201,8 +204,6 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: a start of the start policy of the boot image is refused with the status "), any_order = true)
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must"), any_order = true, fails_on = "disk_start_policy: the command ")
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: the console runs: the machine is usable"), any_order = true, fails_on = "the rescue start policy starts")
-	// The run of unlock before the start policy stopped with its own line.
-	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped with code 0"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: the machine is usable, by the start policy "), any_order = true)
 	machine_wait(&machine, fmt.aprintf(" chosen by principal 0, from the disk: the budget of this service holds "))
 	// The chosen row keeps its file and its persistence.
