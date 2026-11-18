@@ -16,6 +16,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A firmware that hangs in the end of its services.** On a machine with Secure Boot and a TPM, OVMF once hung in `ExitBootServices` after `boot program: ok`, with no line for ever. The boot program arms the watchdog of the firmware with a short bound before that call, so that a hang of the firmware starts the machine again in place of freezing it. [Design](src/md/features/missing_hardware.md)
+
 - **A silent data disk that freezes no processor.** On a disk with the default ioevent file of QEMU, the root service turns the bus master off over a request that never ends, QEMU then waits for that request, and every processor of the machine stops; only the test machine of the silent disk has no ioevent file. The machine of `run` and each test machine then get a form that QEMU does not drain, chosen after a measure of its cost for each request, so a silent disk gives its lines on every machine. [Design](src/md/features/missing_hardware.md)
 - **A screen of memory.** A machine with no screen still has a desktop, at a size that its start list or a viewer gives, and a viewer sees it. [Design](src/md/features/remote_display.md)
 - **An interface of the remote display for agents.** An agent takes a picture of the screen, and waits for the screen to settle or to change, from the damage of the compositor. [Design](src/md/features/remote_display.md)
