@@ -8,7 +8,7 @@ import "core:testing"
 // that change one field.
 @(private = "file")
 three_rows :: proc() -> (rows: [3]Start_Row, bytes: [size_of(List_Header) + 3 * size_of(Row_Record)]u8) {
-	first, first_made := row_make("input", {.Ps2_Controller}, .Not_Started, .Not_Needed)
+	first, first_made := row_make("input", {.Screen}, .Not_Started, .Not_Needed)
 	second, second_made := row_make("console", {.Screen}, .Not_Started, .Needed, 2)
 	third, third_made := row_make("date", {}, .Started_Anyway, .Not_Needed, RESTART_LIMIT)
 	assert(first_made && second_made && third_made)
@@ -160,10 +160,10 @@ a_machine_parts_page_that_disagrees_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, width, 0)
 		testing.expect_value(t, height, 0)
 	}
-	parts_page_write(&page, {.Screen, .Ps2_Controller}, 1920, 1080)
+	parts_page_write(&page, {.Screen, .Tpm}, 1920, 1080)
 	parts, width, height, ok := parts_page_read(&page)
 	testing.expect(t, ok)
-	testing.expect_value(t, parts, Machine_Parts{.Screen, .Ps2_Controller})
+	testing.expect_value(t, parts, Machine_Parts{.Screen, .Tpm})
 	testing.expect_value(t, width, 1920)
 	testing.expect_value(t, height, 1080)
 	parts_page_write(&page, {}, 0, 0)

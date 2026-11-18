@@ -54,7 +54,7 @@ test_parts := [?]Test_Part {
 	{name = "tcp", does = "The two machines of TCP", run = tcp_tests_run, procedures = {"tcp_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "random", does = "The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none", run = random_tests_run, procedures = {"random_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "quic", does = "The machine of QUIC through the network service", run = quic_tests_run, procedures = {"quic_tests_run"}, volumes = {build.BOOT_VOLUME}},
-	{name = "network", does = "The machine of the network service", run = network_tests_run, procedures = {"network_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "network", does = "The machine of the network service, then a machine with no network device, which refuses the processes with an endpoint and runs the rest", run = network_tests_run, procedures = {"network_tests_run", "no_network_device_run"}, volumes = {build.BOOT_VOLUME}},
 	// The machines of the keys sealed by the TPM too: the signed main
 	// volume, whose build writes the variable store of Secure Boot, and the
 	// other system, signed.
@@ -72,6 +72,14 @@ test_parts := [?]Test_Part {
 		procedures = {"disk_processes_tests_run", "disk_processes_named_principal_tests_run"},
 		volumes = {build.BOOT_VOLUME},
 	},
+	// The machines of a part that the machine lacks.
+	{
+		name = "missing_devices",
+		does = "The three machines of a part that the machine lacks, each with its line and a later step that works: a machine with no display device (`-vga none`) starts no compositor and no console, and the boot pass of `settings` through the storage service, then `unlock`, run; a machine with no PS/2 controller (`i8042=off`) stops the input service and shows the desktop; an entropy device whose source never answers (`rng-egd` with no client) passes the deadline of its reads, which count as refused",
+		run = missing_devices_tests_run,
+		procedures = {"missing_devices_tests_run", "missing_devices_silent_entropy_run"},
+		volumes = {build.BOOT_VOLUME},
+	},
 	// The two machines of the measure boot the main volume and the other
 	// system.
 	{
@@ -82,7 +90,7 @@ test_parts := [?]Test_Part {
 		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_CHANGED_MODULE, build.BOOT_VOLUME_WRONG_SIGNATURE, build.BOOT_VOLUME_OTHER_SYSTEM, build.BOOT_VOLUME_CHANGED_KERNEL, build.BOOT_VOLUME_WITHOUT_DESCRIPTION, build.BOOT_VOLUME_STATED_HASH, build.BOOT_VOLUME_KERNEL_MEMORY_RAISED, build.BOOT_VOLUME_SECURE_BOOT, build.BOOT_VOLUME_SECURE_BOOT_CHANGED, build.BOOT_VOLUME_NEWER_SYSTEM, build.BOOT_VOLUME_NEWER_KEY},
 	},
 	{name = "hierarchy", does = "The machines of the hierarchy of storage", run = hierarchy_tests_run, procedures = {"hierarchy_tests_run"}, volumes = {build.BOOT_VOLUME}},
-	{name = "power", does = "The loss of power: of the storage, of the settings, of the ranges, and the write that the disk drops", run = power_tests_run, procedures = {"power_tests_run", "power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "power", does = "The loss of power: of the storage, of the settings, of the ranges, the write that the disk drops, and the disk that stops to answer", run = power_tests_run, procedures = {"power_tests_run", "power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run", "silent_disk_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "persist", does = "The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines", run = persistence_run, procedures = {"persistence_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "extended_state", does = "The three machines of the extended state", run = extended_state_tests_run, procedures = {"extended_state_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "return_fault", does = "The machine of the return to a process", run = return_fault_tests_run, procedures = {"return_fault_tests_run"}, volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_WITHOUT_RETURN_CHECK}},
@@ -386,7 +394,7 @@ main_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 network_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_network[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_NETWORK, exit_status = build.MACHINE_STOP_OK})
+	return machine_test(part, scenario_network[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_NETWORK, exit_status = build.MACHINE_STOP_OK}) && no_network_device_run(part)
 }
 
 shortage_tests_run :: proc(part: ^Test_Part_Run) -> bool {
@@ -399,7 +407,7 @@ fails_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 power_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return power_loss_run(part) && power_loss_settings_run(part) && power_loss_ranges_run(part) && dropped_write_run(part)
+	return power_loss_run(part) && power_loss_settings_run(part) && power_loss_ranges_run(part) && dropped_write_run(part) && silent_disk_run(part)
 }
 
 outside_module_tests_run :: proc(_: ^Test_Part_Run) -> bool {

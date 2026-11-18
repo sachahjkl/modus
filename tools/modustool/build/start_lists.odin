@@ -30,7 +30,9 @@ Start_List_Row :: struct {
 // seed and the keys of the machine need them before any start policy.
 @(rodata)
 DEFAULT_START_LIST := [?]Start_List_Row {
-	{name = "input", needs = {.Ps2_Controller}, absent_rule = .Not_Started},
+	// With no screen, no window reads a key. An absent PS/2 controller is
+	// the line of the input service itself, which stops.
+	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
 	// The font service draws the demand cache, then ends.
 	{name = "glyphs", absent_rule = .Not_Started},
@@ -49,7 +51,7 @@ DEFAULT_START_LIST := [?]Start_List_Row {
 // a machine with a screen is usable without it.
 @(rodata)
 DEFAULT_RESCUE_LIST := [?]Start_List_Row {
-	{name = "input", needs = {.Ps2_Controller}, absent_rule = .Not_Started},
+	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "console", needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 	{name = "remote", needs = {.Network_Device}, absent_rule = .Not_Started},
@@ -75,7 +77,7 @@ MISSING_CONSOLE_MODULE :: "console_missing"
 // it goes only into the image of that test.
 @(rodata)
 MISSING_CONSOLE_START_LIST := [?]Start_List_Row {
-	{name = "input", needs = {.Ps2_Controller}, absent_rule = .Not_Started},
+	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "glyphs", absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},

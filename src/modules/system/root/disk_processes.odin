@@ -573,23 +573,30 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	system.grant_put(&context_grants, op.CONTEXT_LOG, {system.context_record().handles[op.CONTEXT_LOG], {.Write}})
-	display_memory, status := system.memory_create(ring.PAGE_COUNT)
-	if status != .Ok {
-		return status
-	}
+	status: system.Status
 	// This service does not keep the memory of the ring to the compositor.
-	defer system.close(display_memory)
-	client: system.Handle
-	if client, status = system.give(compositor, display_memory, {.Read, .Write}); status != .Ok {
-		return status
+	display_memory: system.Handle
+	defer if display_memory != 0 {
+		system.close(display_memory)
 	}
-	slot.client = client
-	// The compositor names the window by the nickname, beside the hash
-	// prefix of the file that this service checked: the process does not
-	// choose the name that the menu of the windows shows.
-	nickname := disk_process.name_pack(name)
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = process_page.hash_head(hash)}})
-	system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
+	// With no screen the process gets no window, as a process of the boot
+	// image (start_view_give).
+	if !screen_absent {
+		if display_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
+			return status
+		}
+		client: system.Handle
+		if client, status = system.give(compositor, display_memory, {.Read, .Write}); status != .Ok {
+			return status
+		}
+		slot.client = client
+		// The compositor names the window by the nickname, beside the hash
+		// prefix of the file that this service checked: the process does not
+		// choose the name that the menu of the windows shows.
+		nickname := disk_process.name_pack(name)
+		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = process_page.hash_head(hash)}})
+		system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
+	}
 	// The date page, the fresh bytes page, the settings page, five glyph
 	// caches, the font outlines, the demand cache, the file of the storage
 	// service.

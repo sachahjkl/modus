@@ -42,6 +42,10 @@ SCRATCH_DISK :: foundation.BUILD_FOLDER + "/scratch_disk.img"
 
 SCRATCH_DISK_SUFFIX :: "_scratch_disk.img"
 
+// The socket of the source of an entropy device that never answers, beside
+// the log of its machine.
+ENTROPY_SOURCE_SOCKET_SUFFIX :: "_entropy_source.socket"
+
 // The processors of each machine (`-smp`). The whole test starts at most
 // one part for each of these counts of processors of the host
 // (test_parts_at_once).
@@ -129,9 +133,21 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // machine, which the tool reads and writes (operation_sequences.odin); such
 // a machine has one processor, so that a sequence gives the same answers at
 // each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
+// The parts that a machine can lack (src/md/features/missing_hardware.md):
+// without_screen leaves out the display device, without_ps2_controller the
+// PS/2 controller, and entropy_device_silent gives the entropy device a
+// source that never answers, in place of the device of entropy_device.
+// no_network_device leaves the network device out: the root service then
+// starts no frame service (src/md/features/missing_hardware.md).
+// data_disk_without_ioevent gives the data disk no ioevent file: QEMU then
+// takes each request in the thread of its notify, and does not drain the
+// requests of the disk when the root service turns its bus master off, so a
+// request that the disk never answers stops no processor (silent_disk.odin).
 // without_pit leaves the 8254 out of the machine (`pit=off`): the start of
 // the kernel with no time base (src/md/features/missing_hardware.md).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_pit := false, shared_variables := "") -> (command: []string, ok: bool) {
+// shared_variables: the variable store that the machines of a part share
+// (start_policy_scenario.odin), or "" for a new copy.
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -203,7 +219,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the processor: its variables are written only there. QEMU refuses
 		// interrupt remapping when KVM holds the whole interrupt controller:
 		// the machine with the IOMMU splits it. QEMU accepts both together.
-		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : "", without_pit ? ",pit=off" : ""}, context.temp_allocator),
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : "", without_ps2_controller ? ",i8042=off" : "", without_pit ? ",pit=off" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -261,10 +277,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// (web_host.odin, frames_of_the_fetch_report).
 		append(&list, "-object", strings.concatenate({"filter-dump,id=frames,netdev=network,file=", frames_of_user_network_file(test_output)}, context.temp_allocator))
 	}
+	if !no_network_device {
+		append(&list, "-device", fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu))
+	}
 	append(
 		&list,
-		"-device",
-		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
@@ -289,7 +306,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
 		"-device",
-		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s", pci.DATA_DISK_DEVICE, virtio_iommu),
+		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s%s", pci.DATA_DISK_DEVICE, data_disk_without_ioevent ? ",ioeventfd=off" : "", virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=none,id=scratch,format=raw,file=", scratch_disk}, context.temp_allocator),
 	)
@@ -337,6 +354,23 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// device service its entry 0, and starts none for a device with no
 		// table.
 		append(&list, "-device", fmt.tprintf("virtio-rng-pci,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
+	}
+	if entropy_device_silent {
+		if test_output == "" {
+			fmt.eprintln("modustool: a machine with an entropy device that never answers runs only as a test machine, with its own files")
+			return nil, false
+		}
+		// The same device, whose source is the EGD protocol over a socket
+		// that QEMU serves and no process connects to: the device takes
+		// each read and never ends it, as a source of the host that stalls.
+		append(&list, "-chardev", strings.concatenate({"socket,id=entropy_source,server=on,wait=off,path=", machine_file(test_output, ENTROPY_SOURCE_SOCKET_SUFFIX)}, context.temp_allocator))
+		append(&list, "-object", "rng-egd,id=entropy_backend,chardev=entropy_source")
+		append(&list, "-device", fmt.tprintf("virtio-rng-pci,rng=entropy_backend,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
+	}
+	if without_screen {
+		// No display device: the firmware finds no graphics output, and the
+		// kernel gives the root service no framebuffer.
+		append(&list, "-vga", "none")
 	}
 	if sound_output != "" {
 		// The sound device writes each frame that its stream gives to a wave

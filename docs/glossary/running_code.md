@@ -200,7 +200,7 @@ Do not use: safe mode, recovery mode, single user mode.
 
 The machine parts page is one page that the root service writes once, before the start policy starts, and maps read-only in it: which parts of the machine are present.
 
-Each part is a member of the closed enum `Machine_Part`: a screen with its size, the data disk, the disk of the measures, the network device, the sound device, the entropy device, the TPM and the PS/2 controller. A part that the root service did not check is absent, never present by default. A start row names the parts that it needs from the same enum.
+Each part is a member of the closed enum `Machine_Part`: a screen with its size, the data disk, the disk of the measures, the network device, the sound device, the entropy device and the TPM. A part that the root service did not check is absent, never present by default. The input service, not the page, reads an absent PS/2 controller. A start row names the parts that it needs from the same enum.
 
 Do not use: hardware list, device tree, inventory.
 

@@ -15,7 +15,8 @@ import "modus:contract/start_grant"
 //
 // A handle that the process was not granted is 0. Two roles share one slot
 // only when no process holds both: a process has a window or a terminal,
-// one device service, and the TPM or an endpoint of the network. Each
+// one device service, the TPM or an endpoint of the network, and a device
+// service or the replacement table. Each
 // starter of the root service writes each handle and each value through
 // one procedure that refuses a place that is taken already, so a role that
 // holds two roles of one slot does not start, and loses no handle and no
@@ -86,6 +87,11 @@ GRANT_STORAGE_SERVICE :: 9 // The storage service, with Read.
 // only, for a process that loads modules by itself: its loader reads the
 // table before each load, so a replacement reaches the loads that follow.
 GRANT_REPLACEMENTS :: 10 // Memory, with Read: the replacement table of the machine (Replacement_Table).
+// The handle 10 of the client of a device service: the device service of
+// its device ring, with the right Read. Its stop is an event of the client,
+// so a wait for an answer of the device service ends when it stops. No
+// client of a device service loads modules by itself.
+GRANT_DEVICE_SERVICE :: 10 // The device service of the device ring, with Read.
 // The handle 11 of a process with the grant Network: the datagram ring of
 // its endpoint (modus:contract/datagram).
 GRANT_DATAGRAM_RING :: 11 // Memory: the datagram ring of the endpoint.
@@ -174,6 +180,7 @@ ROLE_HANDLE_SLOTS := [root_ring.Role_Handle]int {
 	.Tpm_Service     = GRANT_TPM_SERVICE,
 	.Tpm_Region      = GRANT_TPM_REGION,
 	.Client_Table    = GRANT_CLIENT_TABLE,
+	.Device_Service  = GRANT_DEVICE_SERVICE,
 	.Log             = op.CONTEXT_LOG,
 }
 

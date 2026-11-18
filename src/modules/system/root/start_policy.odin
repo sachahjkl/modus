@@ -60,18 +60,16 @@ start_policy_starting: bool
 machine_parts_memory: system.Handle
 machine_parts: start_list.Machine_Parts
 
-// PS/2: the status port of the controller. A port with no device reads
-// with each bit set.
-PS2_STATUS_PORT :: 0x64
-PS2_ABSENT_STATUS :: 0xFF
-
 // machine_parts_page_create checks each part of the machine that a start
 // row can need, and writes the page. A part that this service cannot check
-// is absent: the page never says that a part is present by default.
+// is absent: the page never says that a part is present by default. The
+// screen is the one test of the boot display (modus:support/screen_presence),
+// so the page and the line of a machine with no screen agree. The PS/2
+// controller is no part of the page: the input service reads its absence.
 machine_parts_page_create :: proc "contextless" () {
 	parts: start_list.Machine_Parts
 	width, height: u32
-	if screen.pixels != nil && screen.width > 0 && screen.height > 0 {
+	if !no_screen_at_the_start {
 		parts += {.Screen}
 		width, height = u32(screen.width), u32(screen.height)
 	}
@@ -98,12 +96,6 @@ machine_parts_page_create :: proc "contextless" () {
 	}
 	if trust_boot_report.trust.measure == .Measured {
 		parts += {.Tpm}
-	}
-	if ports, _, status := device_handle(.Ports, PS2_STATUS_PORT, 1); status == .Ok {
-		if system.port_read_8(PS2_STATUS_PORT) != PS2_ABSENT_STATUS {
-			parts += {.Ps2_Controller}
-		}
-		system.close(ports)
 	}
 	machine_parts = parts
 	status: system.Status

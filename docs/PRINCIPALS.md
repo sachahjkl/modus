@@ -250,6 +250,7 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 - With no file, `unlock` stops at once: "unlock: no named principal: the machine runs as principal 0, with no unlock".
 - With a file, `unlock` gives the public part of the record to the root service (`Principal_Record`), opens its window, and asks for the passphrase.
 - When the seal opens, `unlock` checks that the two secret keys give the two public keys of the file, erases them, tells the root service (`Principal_Unlock`), and stops. The root service starts the session.
+- On a machine with no screen, `unlock` gets no window. A machine key that the TPM releases needs none. When a key must be typed, `unlock` writes one line that starts with "unlock: no screen: ", names what cannot be typed and what stays absent, and stops with the code 0; the root service does not start it again while the screen is absent (`ARCHITECTURE.md`, "U4. Device services").
 
 **The keys are not kept after the unlock.** `unlock` gives the root service one key, derived from the unlock key: the key of the tag of the disk grant table of the principal (section 5, "The disk grant table of a named principal"). Then it erases the secret keys: no store is encrypted, and no grant is signed. A key that is held with no use is only a target. When storage encrypts the stores of a principal, the unlock gives the unlock key to the storage service, and the lock erases it there.
 

@@ -111,6 +111,8 @@ root: the first fresh bytes: 32 bytes of the entropy device mixed into the rando
 
 A refused read writes one warning. After 3 refused reads in a row, the root service asks for no more, with `root: the entropy device gave 3 refused reads in a row: no more fresh bytes for the running processes`. An entropy service that stops writes `root: the entropy service stopped: no more fresh bytes for the running processes`.
 
+**A read that never completes.** Each read has a deadline of 60 seconds from its ask, `READ_DEADLINE_MILLISECONDS` of `src/library/private/root/entropy_read_deadline`: the hang bound of the system, not a measure of the device. Each other document points here for this number. The entropy service serves one read at a time, so a device that takes a read and never ends it holds every later read. Past the deadline, each read in flight counts as refused, in the entropy report for the reads of the start, the root service stops the entropy service, and it writes one line, here for the two reads of the start: `root: the entropy device did not answer a read in <seconds> seconds: 2 reads count as refused, and the entropy service stops: no more bytes of the device`, with the deadline in seconds. The seed keeps the sources of the processor and the reads that ended. The design is in `src/md/features/missing_hardware.md`.
+
 The design is in `src/md/features/fresh_bytes.md`.
 
 ## 4. The tests
@@ -126,6 +128,8 @@ The design is in `src/md/features/fresh_bytes.md`.
   - a change of the fresh bytes page is mixed at the next refill and once, not at a draw from the buffer; a key and a child seed mix it at once, and the bytes of the key are the stream of BLAKE3 of the domain text, the old key and the page; a page in the middle of a change and a key refused for its strength mix nothing; `generator_from_context` attaches the page only when its range is mapped.
 - `odin test src/library/contract/entropy_service`: the bytes of a read go through the values of a completion and back, and a count above the limit gives the limit.
 - `odin test src/library/contract/fresh_bytes`: a write is read once, a change in progress and a cleared page give no bytes, and the page of a process is at its fixed range only with the bit of its range.
+- `odin test src/library/private/root/entropy_read_deadline`: a time before the ask and one before the deadline are not past it, a deadline that does not fit is the end of the clock, and the deadline and each later time are past it.
+- `modustool test missing_devices`, its third machine: an entropy device whose source never answers; the root service writes the line of the deadline, and a process `randomness` started after it logs "randomness: the entropy device: 0 bytes mixed after the gathering; refused reads: 2".
 - `modustool test random`, three machines:
   - two with the processor of the host (strength `entropy`), with two processes `randomness` in the first;
   - the first with the entropy device: the root service writes the line of the two reads, and `randomness` logs "randomness: the entropy device: 64 bytes mixed after the gathering; refused reads: 0"; then the root service writes the line of the first fresh bytes, and each of the two processes `randomness` logs "randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change N of its page" before the picture of its window;

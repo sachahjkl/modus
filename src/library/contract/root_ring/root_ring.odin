@@ -529,6 +529,7 @@ Role_Handle :: enum u8 {
 	Tpm_Service, // Tpm.
 	Tpm_Region, // Tpm.
 	Client_Table, // Remote_Clients.
+	Device_Service, // Data_Disk, Scratch_Disk, Network_Device or Sound_Device: the device service, with Read, so that its stop ends a wait for its answer.
 	Log, // Each process: the log.
 }
 
@@ -558,7 +559,7 @@ role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handle
 		handles += {.Service_Ring}
 	}
 	if role & {.Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device} != {} {
-		handles += {.Device_Ring}
+		handles += {.Device_Ring, .Device_Service}
 	}
 	if .Network_Device in role {
 		handles += {.Network_Control}

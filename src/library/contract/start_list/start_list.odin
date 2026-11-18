@@ -62,7 +62,9 @@ Machine_Part :: enum u8 {
 	Sound_Device   = 4,
 	Entropy_Device = 5,
 	Tpm            = 6, // The TPM into which the boot program measured the system.
-	Ps2_Controller = 7, // The PS/2 controller: the keyboard and the mouse.
+	// No member for the PS/2 controller: the input service reads its
+	// absence at its status port, as the one reader of it, and stops with
+	// its line (src/md/features/missing_hardware.md).
 }
 Machine_Parts :: bit_set[Machine_Part;u64]
 
@@ -76,7 +78,6 @@ PART_NAMES := [Machine_Part]string {
 	.Sound_Device   = "sound device",
 	.Entropy_Device = "entropy device",
 	.Tpm            = "TPM",
-	.Ps2_Controller = "PS/2 controller",
 }
 
 // What the start policy does with a row when a part that the row needs is

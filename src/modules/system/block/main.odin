@@ -52,8 +52,9 @@
 //
 // **What a reader sees.** No window: the line `block: ok, <count> blocks of
 // 4096 bytes, a queue of <size>, <count> requests in flight at most, flush:
-// yes` on the log. A failure at the start writes a line at the level error
-// on the channel `block` and stops the service.
+// yes` on the log. A failure at the start, a request that the device does
+// not answer by its deadline, and a device that needs a reset write a line
+// at the level error on the channel `block` and stop the service.
 //
 // **What it does not prove.** It drives virtio under QEMU only. On a
 // machine with no IOMMU the device can reach memory beyond the data region,
@@ -112,6 +113,9 @@ queue: virtio.Queue
 headers: [^]Header
 statuses: [^]u8
 slots: [SLOT_CAPACITY]Slot
+// The deadline of the request of each place, from the moment that the
+// device got it; 0 for a free place (system.answer_deadline_earliest).
+deadlines: [SLOT_CAPACITY]u64
 slot_count: u32
 in_flight: u32
 
@@ -283,6 +287,7 @@ submit :: proc "contextless" (command: ring.Record, kind: block.Command) -> (sta
 	}
 	statuses[slot] = 0xFF
 	slots[slot] = {tag = command.tag, blocks = count, busy = true, command = kind}
+	deadlines[slot] = system.answer_deadline(system.time())
 	in_flight += 1
 	virtio.give(&queue, u16(head))
 	return .Ok, .Sent, {}
@@ -310,10 +315,44 @@ harvest :: proc "contextless" () -> (count: int) {
 		requests_done += 1
 		blocks_moved += slots[slot].blocks
 		slots[slot] = {}
+		deadlines[slot] = 0
 		in_flight -= 1
 		count += 1
 	}
 	return count
+}
+
+// Why the device stops serving: the cause of the line of the service.
+Device_Stop :: enum {
+	No_Answer, // A request passed its deadline.
+	Needs_Reset, // The device set its needs-reset bit: it serves no request until a reset.
+}
+
+// stop_with_each_request_failed completes each request in flight with
+// Device_Error and the record No_Answer of the device, wakes the client,
+// writes the line of the cause and stops the service. Both causes give the
+// same record: a device that needs a reset will answer none of them, and
+// the client then makes the disk silent with one line. A request is never
+// given back to the device: the device can still write the data region of
+// a request that it did not answer, so the service stops and the root
+// service turns the bus master off (src/md/features/missing_hardware.md).
+stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
+	for slot in 0 ..< slot_count {
+		if !slots[slot].busy {
+			continue
+		}
+		// The completion queue keeps a place for each request in flight
+		// (room), so no completion is lost.
+		complete(slots[slot].tag, .Device_Error, block.no_answer_values(slots[slot].command))
+	}
+	system.wake_reader(&clients.completions)
+	switch cause {
+	case .No_Answer:
+		system.log_in("block", .Error, "block: the device did not answer a request in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: ", u64(in_flight), " requests in flight fail, and the service stops")
+	case .Needs_Reset:
+		system.log_in("block", .Error, "block: the device needs a reset: ", u64(in_flight), " requests in flight fail, and the service stops")
+	}
+	system.stop(1)
 }
 
 // entry starts the device and then serves the block ring, until the
@@ -336,12 +375,18 @@ harvest :: proc "contextless" () -> (count: int) {
 //    for the next turn.
 // 3. It tells the device of the new requests, and wakes the client when a
 //    completion came.
-// 4. It waits for the interrupt of the device, and for a new command when
-//    it has room for one.
+// 4. It waits for the interrupt of the device, for a new command when it
+//    has room for one, and at most until the earliest deadline of a
+//    request in flight.
 //
 // **The stop**: with no ring, no configuration, or no virtio registers, it
 // writes the reason (`block: no block ring`) at the level error and stops
-// with the code 1. Else it never returns.
+// with the code 1. A request that the device does not answer by its
+// deadline (system.ANSWER_BOUND_MILLISECONDS after the device got it), and
+// a device that sets its needs-reset bit, end the service too: each
+// request in flight completes with `Device_Error` and the record
+// `No_Answer` of the device, the line says the cause, and
+// the service stops with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
@@ -367,6 +412,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		wait := system.wait_begin() // An interrupt of the device is an event.
 		changed := harvest()
+		// A wake with requests in flight and no completion: the deadline,
+		// a new command, or a device that serves no more. The register is
+		// read only then, so a pass that harvests reads no register more.
+		if changed == 0 && in_flight != 0 && virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
+			stop_with_each_request_failed(.Needs_Reset)
+		}
+		// Each pass: a device that answers the other requests and never
+		// this one still reaches the deadline of this one.
+		if system.time() >= system.answer_deadline_earliest(deadlines[:slot_count]) {
+			stop_with_each_request_failed(.No_Answer)
+		}
 		for room() {
 			command: ring.Record
 			if has_waiting {
@@ -422,11 +478,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if room() && !has_waiting {
 			system.wait_records(&wait, &clients.commands)
 		}
-		system.wait_end(&wait)
+		system.wait_end(&wait, system.answer_deadline_earliest(deadlines[:slot_count]))
 	}
 }
 
 #assert(size_of(Header) == 16)
+#assert(block.NO_ANSWER_BOUND_MILLISECONDS == system.ANSWER_BOUND_MILLISECONDS)
 #assert(SLOT_CAPACITY <= block.RING_CAPACITY)
 #assert(op.PAGE_SIZE == block.BLOCK_SIZE)
 #assert(PAGE_REQUESTS < pci.QUEUE_PAGES)

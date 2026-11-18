@@ -105,6 +105,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/random"
+import "modus:support/screen_presence"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 import "modus:contract/enum_word"
@@ -359,6 +360,15 @@ prepared: system.Prepared_Modules
 compositor: system.Handle
 control: ring.Ring
 control_memory: system.Handle
+// The machine has no screen: no framebuffer at the start, or a compositor
+// that stopped. With no screen this service starts no input service, no
+// compositor and no console, gives no process a window, and refuses a start
+// that needs a terminal: the other services start
+// (src/md/features/missing_hardware.md).
+screen_absent: bool
+// The machine had no screen before the first start of a process, and not a
+// compositor that stopped later: it chooses the line of the absence.
+no_screen_at_the_start: bool
 
 // The replacement table of the machine: this service writes it. Each
 // process that this service starts receives its records (a process cannot
@@ -578,10 +588,22 @@ entropy_report: random.Entropy_Report
 //    service) start by their procedures here, each other process with the
 //    grants of its role.
 //
-// A failure in steps 1 to 5 calls `fail`: the boot display shows the cause,
-// and the machine waits until it is stopped from outside. A start policy
-// that fails starts the rescue start policy; with no start policy at all,
-// the boot display shows the cause, and the loop runs.
+// With no screen before the first start (modus:support/screen_presence),
+// this service writes the line "root: no screen: no console, no window;
+// the other services start" once, and the machine parts page has no
+// screen: the processes that start with no screen are a decision of the
+// start list (src/md/features/start_policy.md), and this service starts
+// none in place of the console, and refuses a compositor. `unlock` starts,
+// as a machine key that the TPM releases needs no typing, and when it must
+// have a key typed it writes its line and stops, and it is not started
+// again. A compositor that stops by itself later gives one line and
+// refuses the later windows and terminals; it starts nothing.
+//
+// A failure in steps 1 to 5, or a refusal of the rights of a part of the
+// system, calls `fail`: the boot display shows the cause, and the machine
+// waits until it is stopped from outside. A start policy that fails starts
+// the rescue start policy; with no start policy at all, the boot display
+// shows the cause, and the loop runs.
 //
 // Then one loop runs for ever. It waits on the control ring of the
 // compositor (a start or a stop from the desktop), on the root ring of each
@@ -609,7 +631,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("root: Machine_Stop refused the codes ", refused_codes[0], " and ", refused_codes[1], " with Bad_Operation and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must")
 	// The screen first: a failure of the check below stays on it.
-	boot_display_take(ctx)
+	screen_at_the_start := boot_display_take(ctx)
 	// The boot image against the system description, before any process
 	// starts (trust.odin).
 	trust_check()
@@ -624,7 +646,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	fresh_bytes_create() // fresh_bytes.odin
 	replacement_table_create()
 	remote_clients_create()
+	// The control ring exists with no compositor too: the loop waits on it,
+	// and a record for a compositor that is absent stays there.
 	screen_rings_create(ctx)
+	// With no screen before the first start, the one line, and a machine
+	// parts page with no screen: the start list then starts no input
+	// service, no compositor and no console.
+	if !screen_at_the_start {
+		no_screen_at_the_start = true
+		screen_absence_note()
+	}
 	// The seed and the keys of the machine need these two before any start
 	// policy: they are no row of a start list. The loop mixes the bytes of
 	// the entropy device when they come (entropy.odin).
@@ -676,12 +707,14 @@ boot_image_take :: proc "contextless" (ctx: ^system.Context) {
 	debug_image_take(ctx)
 }
 
-// boot_display_take maps the framebuffer for the boot display. With no
-// framebuffer, the boot display shows nothing and the start goes on.
-boot_display_take :: proc "contextless" (ctx: ^system.Context) {
+// boot_display_take maps the framebuffer for the boot display, and says if
+// the machine has a screen, by the test that the compositor makes too
+// (modus:support/screen_presence). With no screen, the boot display shows
+// nothing and the start goes on.
+boot_display_take :: proc "contextless" (ctx: ^system.Context) -> (present: bool) {
 	pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write})
-	if map_status != .Ok {
-		return
+	if !screen_presence.screen_present(map_status, ctx.values[op.ROOT_VALUE_WIDTH], ctx.values[op.ROOT_VALUE_HEIGHT]) {
+		return false
 	}
 	screen = {
 		pixels = ([^]graphics.Color)(pixels),
@@ -691,6 +724,7 @@ boot_display_take :: proc "contextless" (ctx: ^system.Context) {
 	}
 	screen_data.image = image
 	screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
+	return true
 }
 
 // random_seed_make seeds the random generator of the system from the
@@ -724,7 +758,12 @@ replacement_table_create :: proc "contextless" () {
 
 // input_start starts the input service with the ports and the interrupts
 // of the PS/2 controller, and the input ring, which the compositor reads.
-// A start policy asks for it: a failure is its status, with one line.
+// A start policy asks for it: a failure of the start is its status, with
+// one line. The kernel makes a device handle from its arguments and the
+// rights of this service only, so a refusal of a device handle is a fault
+// of this service, never an absent controller, and it stays `fail`: the
+// input service finds that absence itself, at its first read of the status
+// port, and stops with its line.
 input_start :: proc "contextless" () -> system.Status {
 	show("the root service starts input", .Running, .Input)
 	slot := part_place_take()
@@ -744,8 +783,7 @@ input_start :: proc "contextless" () -> system.Status {
 	for request, index in device_requests {
 		results, device_status := system.call(.Device_Create, u64(machine), request[0], request[1], request[2])
 		if device_status != .Ok {
-			system.log_in("devices", .Warning, "root: cannot start input: a device handle of the PS/2 controller is refused: status ", device_status)
-			return device_status
+			fail("cannot create a device handle", device_status)
 		}
 		devices[index] = system.Handle(results[0])
 	}
@@ -779,13 +817,34 @@ input_start :: proc "contextless" () -> system.Status {
 	return .Ok
 }
 
+// screen_absence_note records that the machine has no screen, and writes
+// one line, once: at the start with no framebuffer, or when the compositor
+// stopped by itself. This service starts no process in place of the
+// console: which processes start with no screen is a decision of the start
+// list (src/md/features/start_policy.md).
+screen_absence_note :: proc "contextless" () {
+	if screen_absent {
+		return
+	}
+	screen_absent = true
+	if no_screen_at_the_start {
+		system.log_in("devices", .Warning, "root: no screen: no console, no window; the other services start")
+	} else {
+		system.log_in("devices", .Warning, "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on")
+	}
+}
+
 // compositor_start starts the compositor with the framebuffer, the input
 // ring and a new control ring from this service: the ring of an earlier
 // compositor can hold records that name handles of that compositor only. A
 // connection to the compositor finds it by its name, in any place of the
 // table of the processes. A start policy asks for it: a failure is its
-// status, with one line.
+// status, with one line. With no screen it is refused: a start list that
+// asks for it on such a machine gets Bad_State.
 compositor_start :: proc "contextless" () -> system.Status {
+	if screen_absent {
+		return .Bad_State
+	}
 	show("the root service starts the compositor", .Running, .Compositor)
 	served := part_place_take()
 	if served == nil {
@@ -956,9 +1015,10 @@ root_loop_pass :: proc "contextless" () {
 	appearance_step(&wait)
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
-	// storage service. The next read of the fresh bytes has one too
-	// (entropy.odin), and the hang bound of a start policy that runs.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, start_policy_wake()))
+	// storage service. The next read of the fresh bytes has one too, a
+	// read of the entropy device in flight (entropy.odin), and the hang
+	// bound of a start policy that runs.
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1872,7 +1932,21 @@ reap :: proc "contextless" () {
 				unlock_stopped()
 			}
 			start_policy_stopped(&item, code)
+			// release closes the handle of the process, which is the handle
+			// of the compositor: no later start may give to it.
+			compositor_reaped := item.process == compositor
+			// A compositor that this service stopped for the rescue is
+			// started again by the rescue: it is no absence of the screen.
+			stopped_for_the_rescue := item.asked_by_start_policy && start_policy_stage == .Stopping
 			release(&item)
+			// A later start gets no window and a start with a terminal is
+			// refused (start_view_give), and nothing starts here.
+			if compositor_reaped {
+				compositor = 0
+				if !stopped_for_the_rescue {
+					screen_absence_note()
+				}
+			}
 		}
 	}
 }

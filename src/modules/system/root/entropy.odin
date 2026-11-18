@@ -5,6 +5,7 @@ import "modus:contract/entropy_service"
 import "modus:contract/errors"
 import "modus:contract/fresh_bytes"
 import "modus:contract/ring"
+import "modus:private/root/entropy_read_deadline"
 import "modus:support/pci"
 import "modus:support/random"
 import "modus:support/system"
@@ -23,6 +24,12 @@ import "modus:support/system"
 // bounds the time that a reader of one copy of the state of a process
 // keeps its stream; the device and this service pay one read and one pass
 // over the pages for each period, whatever the processes draw.
+//
+// Each read in flight has a deadline (entropy_read_deadline). A device that
+// takes a read and never ends it holds the entropy service, which serves one
+// read at a time: past the deadline, the reads in flight count as refused,
+// one line says so, and the entropy service stops. The seed keeps the
+// sources of the processor and the reads that ended.
 
 ENTROPY_READS_AT_START :: 2 // Two reads of 32 bytes: 512 bits, as many as the values of rdseed in a seed.
 ENTROPY_READ_BYTES :: 32
@@ -49,6 +56,7 @@ fresh_bytes_deadline: u64 = system.WAIT_FOREVER // The time of the next read of 
 fresh_bytes_refreshes: u64 // The reads of the fresh bytes that this service mixed.
 fresh_bytes_refusals_in_a_row: u32
 fresh_bytes_stopped: bool // No more reads of the fresh bytes: the service stopped, or the device refused too many.
+entropy_read_asked_at: u64 // The time of the last read that this service asked for: its deadline counts from there.
 
 // entropy_service_start starts the entropy service when the machine has an
 // entropy device at its place, and asks it for the reads of the start.
@@ -84,6 +92,7 @@ entropy_service_start :: proc "contextless" () {
 		ring.push(&entropy_ring.commands, ring.Record{kind = u32(entropy_service.Command.Read), tag = entropy_reads_asked, values = {0 = ENTROPY_READ_BYTES}})
 		entropy_reads_asked += 1
 	}
+	entropy_read_asked_at = system.time()
 	system.wake_reader(&entropy_ring.commands)
 }
 
@@ -138,10 +147,44 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 	if wait == nil {
 		return
 	}
+	if entropy_reads_answered < entropy_reads_asked && entropy_read_deadline.read_overdue(entropy_read_asked_at, system.time()) {
+		entropy_reads_late_end()
+		return
+	}
 	fresh_bytes_read_ask()
 	if entropy_reads_answered < entropy_reads_asked {
 		system.wait_records(wait, &entropy_ring.completions)
 	}
+}
+
+// entropy_read_deadline_time gives the time at which the reads in flight
+// count as refused, or WAIT_FOREVER with no read in flight. The loop of this
+// service ends its wait there.
+entropy_read_deadline_time :: proc "contextless" () -> u64 {
+	if entropy_ring.head == nil || entropy_reads_answered >= entropy_reads_asked {
+		return system.WAIT_FOREVER
+	}
+	return entropy_read_deadline.read_deadline(entropy_read_asked_at)
+}
+
+// entropy_reads_late_end ends the reads in flight past their deadline: each
+// counts as refused, as a read that the service refused, and the entropy
+// service stops, as its device holds a read that it never ends and the
+// service takes no other read while it waits. The answers that the service
+// still writes before its stop are not read: this service no longer counts
+// them.
+entropy_reads_late_end :: proc "contextless" () {
+	late := entropy_reads_asked - entropy_reads_answered
+	for number in entropy_reads_answered ..< entropy_reads_asked {
+		counts := number < ENTROPY_READS_AT_START ? &entropy_report : &fresh_bytes_counts
+		counts.device_reads_refused += 1
+	}
+	entropy_reads_answered = entropy_reads_asked
+	fresh_bytes_stopped = true
+	fresh_bytes_deadline = system.WAIT_FOREVER
+	intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after these.
+	system.log_in("devices", .Warning, "root: the entropy device did not answer a read in ", u64(entropy_read_deadline.READ_DEADLINE_MILLISECONDS / 1000), " seconds: ", u64(late), " reads count as refused, and the entropy service stops: no more bytes of the device")
+	system.call(.Process_Stop, u64(entropy_process.process), 0)
 }
 
 // fresh_bytes_read_ask asks the entropy service for the next read of the
@@ -158,6 +201,7 @@ fresh_bytes_read_ask :: proc "contextless" () {
 		return
 	}
 	entropy_reads_asked += 1
+	entropy_read_asked_at = system.time()
 	fresh_bytes_deadline = system.WAIT_FOREVER
 }
 
@@ -194,6 +238,8 @@ entropy_service_end :: proc "contextless" (item: ^Started) {
 	if item != entropy_process || entropy_process == nil {
 		return
 	}
+	// After a read past its deadline, each read counts as answered and the
+	// fresh bytes are stopped: the line of the deadline is the one line.
 	entropy_answers(nil)
 	if entropy_reads_answered < ENTROPY_READS_AT_START {
 		system.log_in("devices", .Warning, "root: the entropy service stopped after ", u64(entropy_reads_answered), " of ", u64(ENTROPY_READS_AT_START), " reads: the random seed of the system has the bytes of those reads only")

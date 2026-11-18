@@ -41,12 +41,12 @@ Grant :: enum i64 {
 	Terminal           = 6, // The process has no surface: it writes records to a terminal, and reads keys from it.
 	Store              = 7, // A private store in the storage service: a connection to it names the process, with a limit of blocks.
 	Acts_For_Principal = 8, // The process acts for the principal of its session: a service shows it what it holds for all callers.
-	Data_Disk          = 9, // A block service of the data disk, and its block ring.
-	Scratch_Disk       = 10, // A block service of the disk of the measures, and its block ring.
+	Data_Disk          = 9, // A block service of the data disk, with the right Read, and its block ring.
+	Scratch_Disk       = 10, // A block service of the disk of the measures, with the right Read, and its block ring.
 	Replacements       = 11, // Read the replacement table of the machine.
 	Replace            = 12, // Change the replacement table of the machine (Root_Command.Replace).
 	Network            = 13, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
-	Network_Device     = 14, // The frame service of the network device and its frame ring, and a control ring from the root service.
+	Network_Device     = 14, // The frame service of the network device, with the right Read, and its frame ring, and a control ring from the root service.
 	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (process_roles in src/modules/system/root/roles.odin).
 	Schedule           = 16, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings           = 17, // The settings page with Write (modus:contract/settings): the one writer of the settings of the machine.
@@ -62,7 +62,7 @@ Grant :: enum i64 {
 	Versions_Erase     = 27, // End the versions of an object of its private store, with zeros over their blocks (isolated.CALLER_ERASES_VERSIONS): the process that keeps a secret that an earlier version must not keep (docs/STORAGE.md, "4.8 The erase of versions").
 	Counters           = 28, // The machine, with the right Counters: count the events of the processor for the code of its own threads (docs/ARCHITECTURE.md, "The counters of a thread").
 	Remote_Clients     = 29, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the process that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
-	Sound_Device       = 30, // The sound service of the sound device and its stream ring (modus:contract/timed_stream): the one process that plays sound (docs/SOUND.md).
+	Sound_Device       = 30, // The sound service of the sound device, with the right Read, and its stream ring (modus:contract/timed_stream): the one process that plays sound (docs/SOUND.md).
 	Start_Policy       = 31, // A root ring for Start, Stop and Machine_Usable, and the machine parts page, read-only: the one process that starts the machine (src/md/features/start_policy.md). It has no window and nothing else.
 }
 
