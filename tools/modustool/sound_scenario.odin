@@ -69,6 +69,9 @@ sound_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.eprintfln("modustool: the log %s has no line \"%s<frame>\"", TEST_OUTPUT_SOUND, TONE_FRAME_LINE)
 		return false
 	}
+	// The steps of the machine free the temporary memory, where the first
+	// path was: the path is made again after them.
+	output_file = machine_file(TEST_OUTPUT_SOUND, SOUND_OUTPUT_SUFFIX)
 	file, file_error := os.read_entire_file(output_file, context.temp_allocator)
 	if file_error != nil {
 		fmt.eprintfln("modustool: cannot read the sound output %s: %v", output_file, file_error)
