@@ -3,7 +3,7 @@ date: 2026-11-18
 release: next
 picture: none
 kind: Measured
-guide: src/md/features/desktop_to_browser.md
+guide: docs/TOOLS.md
 
 modus is an operating system with a small kernel, in which each program draws its window into memory of its own, and the compositor shows it.
 
