@@ -38,12 +38,16 @@ SITE_MODULES_FOLDER :: SITE_REFERENCE_FOLDER + "/modules"
 // the roles leaves them out.
 SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 
+// The description of a module, named before Site_Module: inside that
+// struct, its field build hides the package build.
+Site_Module_Description :: build.Module_Description
+
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       foundation.Module_Build,
 	kind:        string, // "entry" for a row marked entry, else "module".
 	page:        string,
-	description: build.Module_Description,
+	description: Site_Module_Description,
 }
 
 // What the reference tables show, read once before any page is written:
