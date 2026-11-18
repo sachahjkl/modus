@@ -1106,12 +1106,12 @@ The tool reads and writes the mailbox at that offset of the memory file. It chec
 
 - the runner ran or stopped; a refused sequence, a runner that did not start and a runner that did not stop are faults;
 - the budget of the sequence holds after the runner what it held before: pages, programs, threads;
-- each status is `Ok` or a status of the list "**Statuses**" of the reference comment of its operation, and a word that names no operation gives `Bad_Operation`;
+- each status is `Ok` or a status of the list "**Statuses**" of the reference comment of its operation, and a word that names no operation, 0 included, gives `Bad_Operation` with the error record `Unknown_Operation` of the kind that the runner sent, and leaves its table of error details unchanged;
 - no value that the form of its parameter refuses gives `Ok`;
 - each table of error details agrees with the forms: unchanged after `Ok`; after a refusal, the error record first, then one detail of the right problem and limit for each other argument that the form refuses;
 - a planted `Handle_State` gives the kind that the reference names, and two planted `Budget_Read` with only refusals between them give the same amounts.
 
-The part runs the seed sequences: one step of each operation with arguments that fit their forms where a start handle can, then the cases that must succeed or be refused with their details. The line of the end is "the machine ran <n> operation sequences, <m> steps, through the mailbox: ...".
+The part runs the seed sequences: one step of each operation with arguments that fit their forms where a start handle can, then the cases that must succeed or be refused with their details. The regression of each finding of the fuzzing is such a case, with the answer that each of its steps must get: the status, the kind and the argument of the error record, and one detail of the table. The line of the end is "the machine ran <n> operation sequences, <m> steps, through the mailbox: ...".
 
 `modustool fuzz replay operations <file>` runs one sequence file on a new machine of the same volume, with every oracle, and ends with the exit code 0 when no oracle breaks. A file that is no operation sequence is refused before the build.
 

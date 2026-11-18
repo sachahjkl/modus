@@ -256,7 +256,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	switch op.Operation(command.kind) {
 	case .None:
-		return .Ok
+		// The kind 0 names no operation: a zero record is a command that
+		// a program never filled. It is refused as a kind past the last
+		// operation is, and its error record says Unknown_Operation.
+		return .Bad_Operation
 
 	case .Guest_Run:
 		// command_run takes Guest_Run before it comes here: it runs

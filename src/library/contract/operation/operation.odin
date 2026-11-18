@@ -240,7 +240,9 @@ Object_Kind :: enum u8 {
 // A command whose kind has the bit `COMMAND_NAMES_ERROR_DETAILS` also
 // receives one error detail for each other wrong argument, in the
 // [table of error details](term:table-of-error-details) that its last value
-// names.
+// names. The kind 0 (`None`) and each kind past the last operation name no
+// operation: the kernel refuses the command with `Bad_Operation` and the
+// error record `Unknown_Operation`, and changes nothing.
 //
 // A handle argument names an object of this program by the number that a
 // grant or an operation gave. When the handle names no object of the kind

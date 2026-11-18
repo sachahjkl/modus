@@ -204,7 +204,15 @@ the_arguments_that_the_operation_reads :: proc(t: ^testing.T) {
 	testing.expect(t, argument_is_read(.Memory_Commit, 0, values))
 	values[4] = 0
 	testing.expect(t, argument_is_read(.Memory_Commit, 1, values))
+	// A commit reads its budget when it is 0 too: 0 names no budget, and
+	// the kernel refuses it with a detail of the budget.
 	values[1] = 0
+	testing.expect(t, argument_is_read(.Memory_Commit, 1, values))
+	values[4] = transmute(u64)Commit_Flags{.Decommit}
+	testing.expect(t, !argument_is_read(.Memory_Commit, 1, values))
+	// A flag that the kernel does not know beside Decommit: still a
+	// decommit for the read of the budget, and refused for its flags.
+	values[4] = transmute(u64)Commit_Flags{.Decommit} | 1 << 40
 	testing.expect(t, !argument_is_read(.Memory_Commit, 1, values))
 	// Thread_Control: the thread is read only with a command in range.
 	values = {5, 0, 0, 0, 0, 0, 0}
