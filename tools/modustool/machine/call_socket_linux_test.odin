@@ -12,7 +12,11 @@ import "modustool:foundation"
 // other side.
 @(test)
 the_socket_of_the_calls_is_private :: proc(t: ^testing.T) {
-	base, made := os.make_directory_temp("", "modustool-socket-test-*", context.temp_allocator)
+	// A Unix socket path has 108 bytes at most, and the temporary folder of a
+	// build out of the sandbox is long: /tmp keeps the path of the test short
+	// where it exists, and the folder of the build stays the fallback.
+	parent := os.is_dir("/tmp") ? "/tmp" : ""
+	base, made := os.make_directory_temp(parent, "modustool-socket-test-*", context.temp_allocator)
 	testing.expect(t, made == nil)
 	defer os.remove_all(base)
 	before, had_before := os.lookup_env("XDG_RUNTIME_DIR", context.temp_allocator)
