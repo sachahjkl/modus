@@ -252,7 +252,11 @@ fast_blend_with_alpha_is_the_reference :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, differences == 0, "the fast blend with alpha differs from the reference in %v pixels", differences)
 	background_fill(a, .Flat)
-	copy(untouched, first)
+	// In this package copy is graphics.copy, which draws a canvas: the
+	// pixels are copied one by one.
+	for pixel, index in first {
+		untouched[index] = pixel
+	}
 	for character in 32 ..< 127 {
 		character_vector_with(&cache, &table, tables, .Red_Green_Blue, a, (character - 32) * 8, 0, rune(character), DARK_TEXT, 1, 0)
 	}

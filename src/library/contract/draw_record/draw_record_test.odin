@@ -375,15 +375,58 @@ read_refuses_each_reserved_byte_of_the_header :: proc(t: ^testing.T) {
 	}
 }
 
+// The bytes of the fields that a kind with no reserved run names, field by
+// field, each field starting where the one before it ends: FIELDS_SIZE
+// when the fields fill the 24 bytes with no gap. 0 for a kind that has
+// reserved runs.
+@(private = "file")
+named_bytes_of :: proc(kind: Draw_Kind) -> int {
+	switch kind {
+	case .Gradient:
+		fields: Gradient_Fields
+		ends := [6]int {
+			int(offset_of(Gradient_Fields, start_x)) + size_of(fields.start_x),
+			int(offset_of(Gradient_Fields, start_y)) + size_of(fields.start_y),
+			int(offset_of(Gradient_Fields, end_x)) + size_of(fields.end_x),
+			int(offset_of(Gradient_Fields, end_y)) + size_of(fields.end_y),
+			int(offset_of(Gradient_Fields, start_color)) + size_of(fields.start_color),
+			int(offset_of(Gradient_Fields, end_color)) + size_of(fields.end_color),
+		}
+		starts := [6]int {
+			int(offset_of(Gradient_Fields, start_x)),
+			int(offset_of(Gradient_Fields, start_y)),
+			int(offset_of(Gradient_Fields, end_x)),
+			int(offset_of(Gradient_Fields, end_y)),
+			int(offset_of(Gradient_Fields, start_color)),
+			int(offset_of(Gradient_Fields, end_color)),
+		}
+		named := 0
+		for start, index in starts {
+			if start != named {
+				return named
+			}
+			named = ends[index]
+		}
+		return named
+	case .None, .Rectangle, .Text, .Clip, .Picture, .Text_Grid, .Line:
+	}
+	return 0
+}
+
 // Each byte of the fields that the kind does not name is refused, for each
-// kind, with the smallest and the largest value that is not 0.
+// kind, with the smallest and the largest value that is not 0. A kind with
+// no such byte names each of the 24 bytes, with no gap.
 @(test)
 read_refuses_each_byte_that_the_kind_does_not_name :: proc(t: ^testing.T) {
 	checked := 0
 	for primitive in sample_primitives() {
 		base := sample_record(primitive)
 		runs, run_count := reserved_runs_of(sample_kind(base))
-		testing.expectf(t, run_count > 0, "%v has no reserved run", sample_kind(base))
+		if run_count == 0 {
+			named := named_bytes_of(sample_kind(base))
+			testing.expectf(t, named == FIELDS_SIZE, "%v has no reserved run, and its fields name %d of the %d bytes", sample_kind(base), named, FIELDS_SIZE)
+			continue
+		}
 		for run in runs[:run_count] {
 			for index in run.offset ..< run.offset + run.size {
 				for value in ([2]u8{1, max(u8)}) {
