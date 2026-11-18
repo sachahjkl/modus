@@ -419,7 +419,7 @@ The windows that follow the rule:
 - The boot display and the window of `boot`: a fact of the card of the machine on the lines that it needs (the name of the processor).
 - `notes`, `quic_echo`, `return_fault`, `fault_ring`, `extended_state`, `interface_font`.
 
-A window with its borders fits the screen of 1024 by 768 pixels: at most 1000 pixels wide, and at most 708 high under the bar and its title.
+A window with its borders fits the window bound of 1024 by 768 pixels: at most 1000 pixels wide, and at most 708 high under the bar and its title. The reference screen is 1920 by 1080; the window bound holds until the scale factor decides the logical screen (`src/md/features/desktop_to_browser.md`, "The reference screen").
 
 ## 6. The output and its execution
 

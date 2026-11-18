@@ -528,7 +528,7 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 |---|---|
 | `pointers.png` | The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use |
 
-A picture of the table has the size of the screen of the system, 1024 by 768 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`): the command stops on another size. The style sheet names the two widths at which a picture is shown, and they come from these constants.
+A picture of the table has the size of the reference screen of the system, 1920 by 1080 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`, from the contract package `reference_screen`): the command stops on another size, a picture of the screen of 1024 by 768 of before too, and says that `modustool screenshots` makes the pictures again. The style sheet names the two widths at which a picture is shown, and they come from these constants.
 
 ### The page of the gallery
 
@@ -559,7 +559,7 @@ The tool writes a thumbnail for each picture, `pictures/thumbnails/<name>.png` (
 - The divisor is whole, 2 (`SITE_THUMBNAIL_DIVISOR`): each pixel of the thumbnail is one square of 2 by 2 pixels of the picture. A divisor that is not whole mixes parts of pixels.
 - The filter is the mean of the square, for each channel, rounded to the nearest (`site_thumbnail_pixels`). A picture of the screen is text and lines of 1 pixel. The mean keeps a line as a line of half its tone, and a letter keeps its form: the titles and the large text of a window stay readable, the small text is a grey texture. One pixel taken from each square (nearest) drops every second row and column: a line of 1 pixel is whole or gone, and each letter loses half of its strokes. So the mean is the filter.
 - A thumbnail is for a first look: its text is not meant to be read. The link opens the picture at one pixel of the picture for one pixel of the screen of the system.
-- A thumbnail is never shown wider than its 512 pixels (`max-width`): on a window of 1100 pixels or more it is shown at one pixel for one pixel, in a column of 538 pixels. On a narrower window it takes the width of its column.
+- A thumbnail is 960 by 540 pixels, and is never shown wider than that (`max-width`). In a column of 538 pixels it is scaled down; on a narrower window it takes the width of its column.
 - The encoder is the one of the pictures of the repository (`png_encode`): the same pixels give the same bytes at each build. The command prints the count of the thumbnails, their bytes, and the bytes of the same pictures at full size.
 - The repository holds no thumbnail: the site is the one place that needs them, and the tool writes them from the pictures.
 
@@ -586,7 +586,7 @@ Nothing moves that the reader did not ask for: the carousel never changes its pi
 
 No layout shift:
 
-- Each `img` has its `width` and its `height`, and the style sheet gives it a width (the whole width of its box, at most 1024 pixels), so the browser knows its height before the picture came.
+- Each `img` has its `width` and its `height`, and the style sheet gives it a width (the whole width of its box, at most 1920 pixels), so the browser knows its height before the picture came.
 - The row has the height of its tallest picture and caption, because its pictures are the items of one flex line. A change of picture changes nothing under the row.
 - The script adds no element.
 
@@ -600,11 +600,11 @@ The sizes of a picture of the carousel:
 
 | Width of the window | The picture |
 |---|---|
-| From about 1090 pixels | 1024 by 768: one pixel of the picture for one pixel of the page |
-| Under it | The width of the column: the picture is scaled, and its small text is not readable |
+| From about 1184 pixels | The width of the page, 1120 pixels: the picture of 1920 by 1080 is scaled down, and its small text is not readable |
+| Under it | The width of the column |
 | 360 pixels | 310 pixels wide |
 
-On a narrow screen the home did the same before the carousel: a picture took the width of its column, and the link opened it at its full size. That rule is kept: the home has no second file for a narrow screen and no control of the scale. On a wide screen the picture is now at its full size, where it was 538 pixels wide in a column of two.
+A picture takes the width of its column, and the link opens it at its full size, one pixel of the picture for one pixel of the screen of the reader. The home has no second file for a narrow screen and no control of the scale. The page is never as wide as the reference screen, so no window shows a picture of the carousel at its full size in the page; the rule `max-width` keeps a picture from ever being shown wider than its pixels.
 
 The bytes of the home: 8 pictures of about 157 500 bytes, 1.3 MB if the reader passes each one, where the 20 pictures of before were 3.1 MB. Each is loaded when the reader comes near it (`loading="lazy"` also holds inside a row that scrolls sideways).
 
@@ -668,7 +668,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the carousel of the home, the thumbnails of the gallery, the pictures of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once. A film of a news entry is a `video` element with its `width`, its `height` and a `poster` ("The film of a news entry"); the check of the links of a page reads `poster` as it reads `href`, `src` and `srcset`.
 
-Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/modustool/site/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/modustool/machine/machine.odin`): 2 360 312 bytes for 1024 by 768. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
+Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/modustool/site/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/modustool/machine/machine.odin`): about 6.2 MB for 1920 by 1080, three bytes for each pixel. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
 
 No picture is written at half its width as a second candidate of a `srcset`. The thumbnails of the gallery are another case: a thumbnail is the `src` of its element, so every reader gets it, and the picture at its full size is behind its link (see "The thumbnails"). A browser takes a picture of 512 pixels from a `srcset` only when its place, times the density of the screen, is at most 512 pixels: the place of a picture of the home was 556 pixels on a wide screen, and a phone of density 2 or 3 needs more than 512 pixels for its whole width. So nearly no reader gets the half picture, and its 2 by 2 mean blurs the text of a screen picture. A build that wrote them measured about 60 000 bytes for each half picture; the compressed whole picture is expected near 150 000 bytes (the command prints the measure), so a half picture saves about 90 000 bytes, for that rare reader only. The rule: a version for `srcset` earns its place only when the common screens choose it and it saves at least half of the bytes; the half pictures fail the first part.
 
@@ -697,7 +697,7 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | Reads of the time page in one second | `test_output_measure_clock.txt` | `clock: the time page:` | yes |
 | Wakes in one second under EEVDF | `test_output_scheduler_1.txt` | `scheduler: EEVDF: two threads that wake each other` | yes |
 | One glyph of the vector font | `test_output.txt` | `vector_glyphs: one glyph from its outline` | yes |
-| A full frame of the compositor (the last line) | `test_output.txt` | `compositor: a full frame of` | no |
+| A full frame of the compositor at 1920 × 1080, with the windows of the main test (the last line) | `test_output.txt` | `compositor: a full frame of 1920x1080 ` | no |
 | A clear and a present at 1920 × 1080 on the processor | `test_output_measure.txt` | `processor_frame: measure: a clear and a present of 1920x1080` | yes |
 | A full frame of the compositor at 1920 × 1080 with 4 windows, on the processor | `test_output_measure.txt` | `processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows` | yes |
 | A frame of the compositor at 1920 × 1080 in its damage, on the processor | `test_output_measure.txt` | `processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage` | yes |

@@ -218,7 +218,7 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 	site := home_test_site()
 	measured := make([]Site_Measured, 2, context.temp_allocator)
 	measured[0] = {measure = checks.measure_entries[0], found = true, text = locks_line}
-	measured[1] = {measure = checks.measure_entries[4], found = true, text = "compositor: a full frame of 1024x768 with 17 windows in 1747 us"}
+	measured[1] = {measure = checks.measure_entries[4], found = true, text = checks.COMPOSITOR_FULL_FRAME + "with 17 windows in 1747 us"}
 	site.measured = measured
 	b := strings.builder_make(context.temp_allocator)
 	site_measure_charts_write(&site, &b, site_section_page(.Home))

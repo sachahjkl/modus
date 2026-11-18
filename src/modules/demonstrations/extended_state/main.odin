@@ -52,7 +52,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 928, processes = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
-WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.
+WIDTH :: 1000 // The window and its borders fit the window bound of 1024 columns.
 HEIGHT :: 704 // And its 768 lines, under the bar and the title of the window.
 WORKER_CAPACITY :: 31 // A process has 32 threads at most: the main thread and these. Its budget has 32.
 RUN_MILLISECONDS :: 3000 // How long the threads hold their registers.

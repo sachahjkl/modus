@@ -109,19 +109,24 @@ import process_page "modus:contract/disk_process_page"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
-// working memory: its surfaces, its tables and the screen. The device
-// memory of the screen costs no page, but its page tables do: the two
-// screen pages (1536 pages, 6 MiB) need up to 4 page tables where the one
-// framebuffer needed up to 3, and the page of the display registers needs
-// a page table and a page directory: 4 pages more. A resize maps the new
+// working memory: its surfaces, its tables and the screen. The frame and
+// the background each have the size of the screen: at the reference screen
+// of 1920 x 1080 each is 2025 pages, and their page tables up to 5 each.
+// The device memory of the screen costs no page, but its page tables do:
+// the two screen pages (4050 pages, 15.8 MiB) need up to 9 page tables,
+// and the page of the display registers needs a page table and a page
+// directory. Before the reference screen, at 1024 x 768, these parts were
+// 2 x 768 pages, 2 x 3 and 4 page tables: the screen adds 2 x 1257 pages,
+// 4 page tables for the frame and the background and 5 for the screen
+// pages, 2523 pages, to the 3803 pages of before. A resize maps the new
 // surface of a window beside its old one until its Present
 // (src/md/features/window_resize.md): the largest surface, 2048 x 2048
 // pixels of 8 bytes for two pictures, is 32 MiB, whose mapping takes at
 // most 17 page tables of 2 MiB (its start need not be on a 2 MiB edge) and
 // 2 page directories (it can cross a 1 GiB edge): 19 pages. Each of the 32
 // clients can hold one such second mapping: 32 x 19 = 608 pages, and
-// 3803 + 608 = 4411.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4411, processes = 1, threads = 2}
+// 3803 + 2523 + 608 = 6934.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6934, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -1455,7 +1460,10 @@ close_button_under_pointer :: proc "contextless" () -> ^Client {
 // has the time of one call in nanoseconds, and what the processor says of
 // its string instructions (CPUID leaf 7: ERMS, FSRM).
 memory_measure :: proc "contextless" () {
-	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20 - 128} // The last one: a frame, less the offsets of the measure.
+	// The last one: 3 MiB less the offsets of the measure, past the caches of
+	// the processor. It stays this size, smaller than a frame of the
+	// reference screen, so that its line keeps one series over the releases.
+	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20 - 128}
 	to := ([^]u8)(frame.pixels)
 	from := ([^]u8)(background.pixels)
 	limit := min(frame.width * frame.height, background.width * background.height) * size_of(graphics.Color)

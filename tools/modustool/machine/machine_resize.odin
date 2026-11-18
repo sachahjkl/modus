@@ -17,6 +17,9 @@ import "modustool:foundation"
 
 // The line of the compositor at its start: "compositor: ok 1280x800".
 SCREEN_SIZE_LINE :: "compositor: ok "
+// The line on a test machine: the reference screen. The main scenario
+// waits for it; a host test reads its size back (scenario_places_test.odin).
+REFERENCE_SCREEN_LINE :: SCREEN_SIZE_LINE + "1920x1080"
 
 // screen_size_of_log gives the size of the screen of the machine, from the
 // line of the compositor at its start.

@@ -4,8 +4,8 @@
 //
 // **What it is for.** It gives the numbers from which the thresholds of
 // the processor profile of the [quality profile](term:quality-profile)
-// come. The test machine shows 1024 x 768, so the process draws into
-// canvases of 1920 x 1080 in memory of its own budget, with the code that
+// come. The process draws into canvases of the reference screen in memory
+// of its own budget, apart from the screen of the compositor, with the code that
 // the compositor calls: `graphics.clear`, `graphics.copy` and the
 // [drawing module](term:drawing-module). It measures three parts, each 21
 // times after one frame that pays the pages on first use:
@@ -37,6 +37,7 @@ package processor_frame
 
 import "modus:contract/draw_record"
 import "modus:contract/errors"
+import "modus:contract/reference_screen"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -48,9 +49,12 @@ import "modus:support/system"
 #assert(interface.DRAWING_THROUGH_MODULE, "processor_frame is built with -define:DRAWING_THROUGH_MODULE=true")
 
 // The reference screen:
-// (src/md/features/desktop_to_browser.md, "The reference screen").
-SCREEN_WIDTH :: 1920
-SCREEN_HEIGHT :: 1080
+// (src/md/features/desktop_to_browser.md, "The reference screen"). The
+// lines of the log name its size in words: the sentence of a measure is its
+// identity in the measure record, so a new size starts a new series.
+SCREEN_WIDTH :: reference_screen.WIDTH
+SCREEN_HEIGHT :: reference_screen.HEIGHT
+#assert(SCREEN_WIDTH == 1920 && SCREEN_HEIGHT == 1080, "the lines of the measure name 1920x1080")
 
 // The frames of each part that the line counts: an odd count, so the
 // median is one frame.

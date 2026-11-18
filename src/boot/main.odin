@@ -17,6 +17,7 @@ package boot
 
 import info "modus:contract/boot_info"
 import "modus:contract/enum_word"
+import "modus:contract/reference_screen"
 import "modus:support/bootscreen"
 import "modus:support/graphics"
 import op "modus:contract/operation"
@@ -49,8 +50,10 @@ MINIMUM_DIRECT_MAP :: 4 << 30 // Device memory, such as the framebuffer, is belo
 MEMORY_RANGE_CAPACITY :: 1024
 FIRMWARE_MAP_PAGES :: 16
 
-PREFERRED_WIDTH :: 1024
-PREFERRED_HEIGHT :: 768
+// The mode that the boot program asks the firmware for: the reference
+// screen. A firmware with no such mode keeps the mode that it set.
+PREFERRED_WIDTH :: reference_screen.WIDTH
+PREFERRED_HEIGHT :: reference_screen.HEIGHT
 
 system: ^Efi_System_Table
 image_handle: rawptr

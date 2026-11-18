@@ -1,5 +1,6 @@
 package site
 
+import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -199,6 +200,53 @@ site_gallery_guides_are_pages :: proc(t: ^testing.T) {
 	}
 }
 
+// The head of a PNG file of a size: the signature and the record IHDR up
+// to the height, which is what the size of a picture needs.
+@(private = "file")
+gallery_test_png_head :: proc(width, height: int) -> []u8 {
+	head := make([]u8, 24, context.temp_allocator)
+	copy(head, []u8{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 0, 0, 0, 13, 'I', 'H', 'D', 'R'})
+	for shift, index in ([]uint{24, 16, 8, 0}) {
+		head[16 + index] = u8(uint(width) >> shift)
+		head[20 + index] = u8(uint(height) >> shift)
+	}
+	return head
+}
+
+// A picture of the gallery has the size of the reference screen: a picture
+// of the screen of before, one pixel more or less on each side, a picture
+// turned on its side and a file that is not a PNG file are refused.
+@(test)
+site_gallery_refuses_a_picture_of_another_screen :: proc(t: ^testing.T) {
+	Size :: struct {
+		width, height: int,
+	}
+	refused := [?]Size {
+		{1024, 768},
+		{SITE_SCREEN_PICTURE_WIDTH - 1, SITE_SCREEN_PICTURE_HEIGHT},
+		{SITE_SCREEN_PICTURE_WIDTH + 1, SITE_SCREEN_PICTURE_HEIGHT},
+		{SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT - 1},
+		{SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT + 1},
+		{SITE_SCREEN_PICTURE_HEIGHT, SITE_SCREEN_PICTURE_WIDTH},
+		{SITE_SCREEN_PICTURE_WIDTH / SITE_THUMBNAIL_DIVISOR, SITE_SCREEN_PICTURE_HEIGHT / SITE_THUMBNAIL_DIVISOR},
+		{0, 0},
+	}
+	for size in refused {
+		_, _, is_screen := site_screen_picture_size(gallery_test_png_head(size.width, size.height))
+		testing.expectf(t, !is_screen, "a picture of %d by %d is a picture of the reference screen", size.width, size.height)
+	}
+	not_png := gallery_test_png_head(SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT)
+	not_png[1] = 'X'
+	_, _, not_png_is_screen := site_screen_picture_size(not_png)
+	testing.expect(t, !not_png_is_screen, "a file that is not a PNG file is a picture of the reference screen")
+	_, _, short_is_screen := site_screen_picture_size(gallery_test_png_head(SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT)[:20])
+	testing.expect(t, !short_is_screen, "a head with no height is a picture of the reference screen")
+	width, height, is_screen := site_screen_picture_size(gallery_test_png_head(SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT))
+	testing.expect(t, is_screen)
+	testing.expect_value(t, width, SITE_SCREEN_PICTURE_WIDTH)
+	testing.expect_value(t, height, SITE_SCREEN_PICTURE_HEIGHT)
+}
+
 // A thumbnail has the mean of each square of two by two pixels, and a
 // picture with an odd side has none.
 @(test)
@@ -264,7 +312,7 @@ site_carousel_of_the_home :: proc(t: ^testing.T) {
 	testing.expect(t, strings.index(html, "<nav class=\"carousel-controls\"") < strings.index(html, "<div class=\"carousel-track\""))
 	// A picture at its full size, with its width and its height, as a link
 	// to its file; its caption with its place and the link to its guide.
-	testing.expect(t, strings.contains(html, "<figure class=\"carousel-slide\" id=\"picture-desktop\"><a href=\"pictures/desktop.png\"><img src=\"pictures/desktop.png\" width=\"1024\" height=\"768\" loading=\"lazy\" decoding=\"async\" alt=\"What the picture desktop shows: a &lt;window&gt; &amp; its text.\"></a>"))
+	testing.expect(t, strings.contains(html, fmt.tprintf("<figure class=\"carousel-slide\" id=\"picture-desktop\"><a href=\"pictures/desktop.png\"><img src=\"pictures/desktop.png\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"What the picture desktop shows: a &lt;window&gt; &amp; its text.\"></a>", SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT)), html)
 	testing.expect(t, strings.contains(html, "<figcaption><span class=\"carousel-place\">1 of 2</span> <span aria-hidden=\"true\">What the picture desktop shows: a &lt;window&gt; &amp; its text.</span> <a class=\"gallery-guide\" href=\"docs/guides/NETWORK/index.html\">Guide: NETWORK</a></figcaption>"))
 	testing.expect(t, strings.contains(html, "<span class=\"carousel-place\">2 of 2</span>"))
 	// Nothing plays by itself, and no page holds a style or a script of its own.
@@ -306,7 +354,7 @@ site_gallery_group_of_pictures :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(html, "<section aria-labelledby=\"group-the-desktop-and-the-palette\">\n<h2 id=\"group-the-desktop-and-the-palette\">The desktop and the palette</h2>\n<p>"))
 	testing.expect(t, strings.contains(html, " 2 pictures.</p>\n<div class=\"pictures gallery-pictures\">\n"))
 	testing.expect_value(t, strings.count(html, "<figure id=\"picture-"), 2)
-	testing.expect(t, strings.contains(html, "<figure id=\"picture-heron-free\"><a href=\"../pictures/heron_free.png\"><img src=\"../pictures/thumbnails/heron_free.png\" width=\"512\" height=\"384\" loading=\"lazy\" decoding=\"async\" alt=\"What the picture heron_free shows: a &lt;window&gt; &amp; its text.\"></a><figcaption><span aria-hidden=\"true\">What the picture heron_free shows: a &lt;window&gt; &amp; its text.</span> <a class=\"gallery-guide\" href=\"../docs/guides/NETWORK/index.html\">Guide: NETWORK</a></figcaption></figure>"))
+	testing.expect(t, strings.contains(html, fmt.tprintf("<figure id=\"picture-heron-free\"><a href=\"../pictures/heron_free.png\"><img src=\"../pictures/thumbnails/heron_free.png\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"What the picture heron_free shows: a &lt;window&gt; &amp; its text.\"></a><figcaption><span aria-hidden=\"true\">What the picture heron_free shows: a &lt;window&gt; &amp; its text.</span> <a class=\"gallery-guide\" href=\"../docs/guides/NETWORK/index.html\">Guide: NETWORK</a></figcaption></figure>", SITE_SCREEN_PICTURE_WIDTH / SITE_THUMBNAIL_DIVISOR, SITE_SCREEN_PICTURE_HEIGHT / SITE_THUMBNAIL_DIVISOR)), html)
 	testing.expect(t, strings.has_suffix(html, "</div>\n</section>\n"))
 
 	// A group of one picture says "1 picture"; a group with none is not written.
@@ -415,8 +463,8 @@ site_carousel_rules_and_script :: proc(t: ^testing.T) {
 		".carousel-slide { flex: 0 0 100%; scroll-snap-align: start;",
 		".carousel-controls a { display: block; width: 32px; height: 32px;",
 		".carousel-controls a[aria-current=\"true\"] {",
-		".carousel-slide img { max-width: 1024px; }",
-		".gallery-pictures figure img { max-width: 512px; }",
+		strings.concatenate({".carousel-slide img { max-width: ", fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH), "px; }"}, context.temp_allocator),
+		strings.concatenate({".gallery-pictures figure img { max-width: ", fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH / SITE_THUMBNAIL_DIVISOR), "px; }"}, context.temp_allocator),
 		".gallery-film { grid-column: 1 / -1;",
 	}
 	for rule in rules {

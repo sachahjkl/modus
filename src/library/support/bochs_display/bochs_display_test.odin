@@ -2,27 +2,35 @@
 package bochs_display
 
 import "core:testing"
+import "modus:contract/reference_screen"
 
-TEST_WIDTH :: 1024
-TEST_HEIGHT :: 768
+TEST_WIDTH :: reference_screen.WIDTH
+TEST_HEIGHT :: reference_screen.HEIGHT
+// The video memory of QEMU with no option, which a test machine states
+// (tools/modustool/machine/machine_command.odin, MACHINE_VIDEO_MEMORY_MIB).
+TEST_VIDEO_MEMORY_BYTES :: 16 << 20
 
 // The display registers as the firmware leaves them on the standard VGA of
-// QEMU with 16 MiB of video memory: the mode of the screen, and the lines
+// QEMU with 16 MiB of video memory: the mode of a screen, and the lines
 // that the video memory holds, which QEMU computes.
-registers_of_the_firmware :: proc() -> (registers: [Register]u16) {
+registers_of_the_firmware :: proc(width: u16 = TEST_WIDTH, height: u16 = TEST_HEIGHT) -> (registers: [Register]u16) {
 	registers[.Identity] = IDENTITY_LAST
-	registers[.Width] = TEST_WIDTH
-	registers[.Height] = TEST_HEIGHT
+	registers[.Width] = width
+	registers[.Height] = height
 	registers[.Bits_Per_Pixel] = BITS_PER_PIXEL
 	registers[.Enable] = ENABLED | LINEAR_FRAMEBUFFER
-	registers[.Virtual_Width] = TEST_WIDTH
-	registers[.Virtual_Height] = (16 << 20) / (TEST_WIDTH * BITS_PER_PIXEL / 8)
-	registers[.Video_Memory_Blocks] = (16 << 20) / VIDEO_MEMORY_BLOCK
+	registers[.Virtual_Width] = width
+	registers[.Virtual_Height] = u16(TEST_VIDEO_MEMORY_BYTES / (int(width) * BITS_PER_PIXEL / 8))
+	registers[.Video_Memory_Blocks] = TEST_VIDEO_MEMORY_BYTES / VIDEO_MEMORY_BLOCK
 	return
 }
 
-// The blocks of video memory that two screens of the test take.
-TWO_SCREEN_BLOCKS :: PAGE_COUNT * TEST_HEIGHT * TEST_WIDTH * BITS_PER_PIXEL / 8 / VIDEO_MEMORY_BLOCK
+// The bytes of two screens of the test, and the blocks of video memory
+// that hold them: two screens of the reference screen are not a whole
+// count of blocks, so the count rounds up.
+TWO_SCREEN_BYTES :: PAGE_COUNT * TEST_HEIGHT * TEST_WIDTH * BITS_PER_PIXEL / 8
+TWO_SCREEN_BLOCKS :: (TWO_SCREEN_BYTES + VIDEO_MEMORY_BLOCK - 1) / VIDEO_MEMORY_BLOCK
+#assert(TWO_SCREEN_BYTES % VIDEO_MEMORY_BLOCK != 0, "the test of the block that is one short needs two screens that end inside a block")
 
 // Each fact that a page needs, broken one at a time, gives one page: the
 // display would show a part of two screens, or a screen of another mode.
@@ -62,6 +70,28 @@ a_mode_that_differs_from_the_framebuffer_gives_one_page :: proc(t: ^testing.T) {
 	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
 }
 
+// The reference screen in the video memory of a test machine: the 16 MiB
+// hold two pages, with 24 lines to spare, and a video memory that ends one
+// block before the end of the second page, though the lines of the
+// register say that two pages fit, gives one page. A screen of 1920 by
+// 2160, whose second page would end past the video memory, gives one.
+@(test)
+the_reference_screen_fits_two_pages_in_the_video_memory :: proc(t: ^testing.T) {
+	registers := registers_of_the_firmware()
+	testing.expect_value(t, int(registers[.Virtual_Height]), PAGE_COUNT * TEST_HEIGHT + 24)
+	testing.expect(t, TWO_SCREEN_BYTES <= TEST_VIDEO_MEMORY_BYTES)
+
+	short := registers_of_the_firmware()
+	short[.Video_Memory_Blocks] = TWO_SCREEN_BLOCKS - 1
+	testing.expect_value(t, screen_pages(&short[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), 1)
+	testing.expect_value(t, short[.Offset_Y], u16(0))
+
+	tall := registers_of_the_firmware(TEST_WIDTH, 2 * TEST_HEIGHT)
+	testing.expect_value(t, screen_pages(&tall[.Identity], TEST_WIDTH, 2 * TEST_HEIGHT, TEST_WIDTH), 1)
+
+	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
+}
+
 // A flip writes the first line of the page, and reads it back: plain
 // memory keeps it, as the device keeps a page that fits.
 @(test)
@@ -74,9 +104,12 @@ a_flip_writes_the_first_line_of_the_page :: proc(t: ^testing.T) {
 	testing.expect_value(t, registers[.Offset_X], u16(0))
 }
 
-// The mode of the firmware with room for two screens gives two pages.
+// The mode of the firmware with room for two screens gives two pages, at
+// the reference screen and at the screen of 1024 by 768 of before.
 @(test)
 the_mode_of_the_firmware_gives_two_screen_pages :: proc(t: ^testing.T) {
 	registers := registers_of_the_firmware()
 	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
+	smaller := registers_of_the_firmware(1024, 768)
+	testing.expect_value(t, screen_pages(&smaller[.Identity], 1024, 768, 1024), PAGE_COUNT)
 }

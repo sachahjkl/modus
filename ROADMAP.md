@@ -10,7 +10,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A clip stack in the draw record.** A clip is pushed and popped, so an element that clips inside a clipped area keeps the outer clip. A list inside a scrolled card then needs no intersection by hand. [Design](src/md/api/draw_table.md)
 - **The text grid measured against text runs.** The terminal draws a full grid both ways through the drawing module, and the kind `Text_Grid` stays only if the runs cost more than 1 ms more for a frame or more than 4 096 records. The format then has one text form, or a measured reason for two. [Design](src/md/api/draw_table.md)
 - **The counted kernel.** A test kernel counts the edges of the kernel code that each operation sequence reaches, which only the tool reads, and the engine keeps the sequences that reach new code, which become the reach inputs of the corpus. The release refuses it by its hash, its signature and its bytes. [Design](src/md/infrastructure/kernel_fuzzing.md)
-- **The reference screen of 1920 × 1080 with a scale.** The test machines, the screenshots, the sizes of the windows, the grid, the fonts and the pointers move from 1024 × 768 to 1920 × 1080 with a scale from 1.25 to 2. [Design](src/md/features/desktop_to_browser.md)
+- **The scale factor of the reference screen.** The windows, the grid, the fonts and the pointers of the screen of 1920 × 1080 draw at a scale from 1.25 to 2, in place of scale 1, so a text on that screen has the size that a reader needs. [Design](src/md/features/desktop_to_browser.md)
 
 ## Later
 

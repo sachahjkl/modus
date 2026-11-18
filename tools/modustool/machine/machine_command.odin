@@ -6,8 +6,10 @@ package machine
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modus:contract/reference_screen"
 import "modus:contract/remote"
 import "modus:contract/timed_stream"
+import "modus:support/bochs_display"
 import "modus:support/pci"
 import "modustool:build"
 import "modustool:foundation"
@@ -109,6 +111,14 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 // offset in the memory file of a machine is a physical address.
 MACHINE_MEMORY_MIB :: 1024
 
+// The video memory of the standard VGA of a test machine, in MiB: the
+// amount of QEMU with no option, stated so that the check below reads it.
+// The compositor flips between two screen pages of the reference screen in
+// it (src/md/infrastructure/whole_frame.md); a screen whose two pages do
+// not fit stops the build of the tool, not a machine test.
+MACHINE_VIDEO_MEMORY_MIB :: 16
+#assert(bochs_display.PAGE_COUNT * reference_screen.WIDTH * reference_screen.HEIGHT * bochs_display.BITS_PER_PIXEL / 8 <= MACHINE_VIDEO_MEMORY_MIB << 20)
+
 // memory_file: "", or a file of the host that holds the memory of the
 // machine, which the tool reads and writes (operation_sequences.odin); such
 // a machine has one processor, so that a sequence gives the same answers at
@@ -193,6 +203,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.tprintf("%d", memory_file != "" ? 1 : MACHINE_PROCESSOR_COUNT),
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
+		// The standard VGA that QEMU gives the machine, with the video
+		// memory of the two screen pages.
+		"-global",
+		fmt.tprintf("VGA.vgamem_mb=%d", MACHINE_VIDEO_MEMORY_MIB),
 		"-no-reboot",
 		// The real-time clock of the machine: the clock of the host in UTC
 		// for a machine that a principal runs; a fixed hour of the night for

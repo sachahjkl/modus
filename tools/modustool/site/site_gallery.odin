@@ -11,6 +11,7 @@ package site
 import "core:fmt"
 import "core:image/png"
 import "core:strings"
+import "modus:contract/reference_screen"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
@@ -19,11 +20,12 @@ import "modustool:checks"
 // The folder of the pictures of the screen that the machine tests take.
 SITE_SCREEN_PICTURE_FOLDER :: "docs/screenshots"
 SITE_GALLERY_FOLDER :: "gallery"
-// A picture of the screen is the whole screen of the system. The style
-// sheet shows a picture of this width at one pixel for one pixel where the
-// page has the room, so the table holds pictures of this size only.
-SITE_SCREEN_PICTURE_WIDTH :: 1024
-SITE_SCREEN_PICTURE_HEIGHT :: 768
+// A picture of the screen is the whole reference screen of the system. The
+// style sheet never shows a picture wider than this width, and the table
+// holds pictures of this size only, so a page knows the height of each
+// picture before it comes.
+SITE_SCREEN_PICTURE_WIDTH :: reference_screen.WIDTH
+SITE_SCREEN_PICTURE_HEIGHT :: reference_screen.HEIGHT
 // The folder of the site that holds the thumbnails of the gallery.
 SITE_THUMBNAIL_FOLDER :: resources.SITE_PICTURE_FOLDER + "/thumbnails"
 // A thumbnail has one pixel for each square of this side of its picture:
@@ -371,6 +373,15 @@ site_gallery_folder_files :: proc() -> (names: []string, ok: bool) {
 	return list, true
 }
 
+// site_screen_picture_size gives the size of a picture of the screen, and
+// says whether it is a PNG file of the reference screen. A picture of
+// another size, a screen of before among them, is not one.
+site_screen_picture_size :: proc(data: []u8) -> (width, height: int, is_screen: bool) {
+	is_png: bool
+	width, height, is_png = foundation.png_size(data)
+	return width, height, is_png && width == SITE_SCREEN_PICTURE_WIDTH && height == SITE_SCREEN_PICTURE_HEIGHT
+}
+
 // site_gallery_read checks the table against the folder and reads the size
 // of each picture, before any page is written. Each picture of the table
 // is copied to the site at its full size; its thumbnail is written after
@@ -393,9 +404,9 @@ site_gallery_read :: proc(site: ^Site) -> bool {
 			return false
 		}
 		data := foundation.read_file(source) or_return
-		width, height, is_png := foundation.png_size(data)
-		if !is_png || width != SITE_SCREEN_PICTURE_WIDTH || height != SITE_SCREEN_PICTURE_HEIGHT {
-			fmt.eprintfln("modustool: site: %s is not a PNG file of %d by %d pixels, the screen of the system: the gallery shows pictures of the screen only", source, SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT)
+		width, height, is_screen := site_screen_picture_size(data)
+		if !is_screen {
+			fmt.eprintfln("modustool: site: %s is not a PNG file of %d by %d pixels, the reference screen of the system: the gallery shows pictures of the screen only, and `modustool screenshots` makes each of them again at that size", source, SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT)
 			return false
 		}
 		picture := Site_Gallery_Picture{row = row, width = width, height = height}
