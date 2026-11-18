@@ -227,6 +227,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
 	foundation.SOURCE_FOLDER_SUPPORT + "/principals",
 	foundation.SOURCE_FOLDER_SUPPORT + "/tpm2",
+	foundation.SOURCE_FOLDER_PRIVATE + "/boot_program/firmware_memory_map",
 	foundation.SOURCE_FOLDER_SUPPORT + "/disk_process",
 	foundation.SOURCE_FOLDER_SUPPORT + "/calendar",
 	foundation.SOURCE_FOLDER_SUPPORT + "/line_editor",

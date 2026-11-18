@@ -15,7 +15,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A start of the kernel without a part.** A machine with no PIT, with an IOMMU unit that does not finish its first invalidation, with no table of the APIC or with an xsave area that does not read back starts with one line for the part, or stops with that line when it has no time base. [Design](src/md/features/missing_hardware.md)
 - **No PS/2 controller.** The input service writes one line and stops in place of a spin on one processor, and the desktop runs with no keyboard and no mouse. [Design](src/md/features/missing_hardware.md)
 - **A frame service that stops.** The network service ends its wait when the frame service stops, writes one line and stops, so the root service refuses the network and starts the rest. [Design](src/md/features/missing_hardware.md)
-- **A readable stop of the boot program.** A stop for memory or for the map of the firmware stays on the boot display with the watchdog off, in place of a power off at once, and the map of the firmware has the room that the firmware asks. [Design](src/md/features/missing_hardware.md)
 - **An entropy read that never completes.** A read past its deadline counts as refused, with its line, so the fresh bytes do not stop in silence. [Design](src/md/features/missing_hardware.md)
 
 ## Later
