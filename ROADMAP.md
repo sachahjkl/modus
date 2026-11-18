@@ -6,6 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **A process in place of a program.** What runs is a process and the file is a module, in the kernel operations, the contract, the guides and the log. A reader then never takes the file for what runs, or the reverse. [Design](src/md/api/process.md)
 - **Edges inside a pixel and a gradient along any line in the draw record.** A rectangle and a gradient get antialiased edges inside a pixel, a gradient runs along any line in place of the two axes, and a text takes a color with alpha. A window can then place a shape between two pixels and fade a text. [Design](src/md/api/draw_table.md)
 - **Paths in the draw record.** A path of lines and quadratic curves is filled and stroked with antialiased edges, and the line of today becomes a stroke. A window then draws an icon or a chart from outlines in place of rectangles. [Design](src/md/api/draw_table.md)
 - **A clip stack in the draw record.** A clip is pushed and popped, so an element that clips inside a clipped area keeps the outer clip. A list inside a scrolled card then needs no intersection by hand. [Design](src/md/api/draw_table.md)
