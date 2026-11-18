@@ -68,7 +68,7 @@ Module_Build :: struct {
 	entry:   bool,
 	image:   bool,
 	// Settings of the compiler for this module only (-define): a kernel
-	// for one machine of the test, and each process that draws its window
+	// for one machine of the test, and each module that draws its window
 	// through the drawing module (DRAWING_THROUGH_MODULE).
 	defines: []string,
 	// A library module (docs/MODULE_CONTRACT.md, "A library as a module"):
@@ -77,8 +77,9 @@ Module_Build :: struct {
 	// module is one shared copy at each address, and takes one place in the
 	// table of prepared modules of a starter, not one for each importer.
 	library: bool,
-	// A process that a disk holds: it is built as each process, with the
-	// system library, and no boot image gets its file (disk_processes.odin).
+	// A module that a disk holds: it is built as each module with an
+	// entry, with the system library, and no boot image gets its file
+	// (disk_processes.odin).
 	disk:    bool,
 	// The one boot image of a test that holds the module, and no other
 	// image: the modules of the operation sequences. "": the module is in
@@ -98,7 +99,7 @@ module_in_a_boot_image :: proc(build: Module_Build) -> bool {
 	return module_in_boot_image(build) || build.image && !build.disk && build.only_in_image != ""
 }
 
-// The drawing module, and the setting of a process that draws its window
+// The drawing module, and the setting of a module that draws its window
 // through it (src/library/support/interface, window_drawing.odin). A module with the
 // setting imports the module: a host test checks it
 // (import_declarations_test.odin).
@@ -118,7 +119,7 @@ module_builds := [?]Module_Build {
 	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
 	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", entry = true, image = true},
 	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", entry = true, image = true},
-	// The drawing of a window, for each process below that imports it.
+	// The drawing of a window, for each module below that imports it.
 	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", image = true, library = true},
 	// It draws its screen in parts, one call of the drawing module for each
 	// part (src/md/api/picture.md).
@@ -222,7 +223,7 @@ module_builds := [?]Module_Build {
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
 	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", entry = true, image = true},
 	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", entry = true, image = true},
-	// The process of the operation sequences and its runner: only the boot
+	// The module of the operation sequences and its runner: only the boot
 	// image of the operation sequences holds them, and the root service
 	// starts nothing else there.
 	{name = OPERATION_SEQUENCE_RUNNER_MODULE, source = TEST_MODULE_SOURCES + OPERATION_SEQUENCE_RUNNER_MODULE, entry = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
@@ -309,7 +310,7 @@ build_modules :: proc() -> bool {
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// process shortage (the test of the shortage of frames).
-	// The fifth holds the process of the operation sequences, which no
+	// The fifth holds the module of the operation sequences, which no
 	// other image holds.
 	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
 	if images_built {
@@ -330,7 +331,7 @@ build_modules :: proc() -> bool {
 // library_modules_measure_print prints, for each library module of the
 // table, the size of its file, then the size of the file of each module
 // that imports it and their sum: a measure, to compare with the build
-// before a process became an importer. It checks nothing, and a file that
+// before a module became an importer. It checks nothing, and a file that
 // cannot be read only ends the line of its library.
 library_modules_measure_print :: proc() {
 	for library in module_builds {
@@ -430,8 +431,8 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 	// The module itself has no byte of it: the converter copies the
 	// segments only, and `check` proves that each module is the same bytes
 	// without it.
-	// The kind of debug information that never changes the code: the build
-	// gives the compiler the same process as a build with none. A plain
+	// The kind of debug information that never changes the code: the compiler
+	// makes the same module as a build with none. A plain
 	// `-debug` adds aids for a debugger that are instructions, and it sets
 	// a constant that a source can read.
 	if debug_information {
@@ -481,8 +482,8 @@ module_object_command :: proc(build: Module_Build) -> []string {
 }
 
 // module_assembly_files gives the assembly files that a module links: the
-// copies and the fills, the files of its folder, and for a process the
-// files of the system library, which has instructions of its own.
+// copies and the fills, the files of its folder, and for a module with an
+// entry the files of the system library, which has instructions of its own.
 module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool) {
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, RUNTIME_MEMORY)

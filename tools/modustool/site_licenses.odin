@@ -498,8 +498,8 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 	append(&system_rows, fiat)
 
-	// The portraits of the process hall_of_fame: one row for each picture
-	// of its credits file. The place is the file of pixels that the process
+	// The portraits of the module hall_of_fame: one row for each picture
+	// of its credits file. The place is the file of pixels that the module
 	// holds, so the card of the module links each row.
 	credits, credits_problem := hall_of_fame_credits_read()
 	if credits_problem != "" {

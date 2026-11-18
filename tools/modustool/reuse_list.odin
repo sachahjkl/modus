@@ -371,7 +371,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 		append(&works, Reused_Work{what = join("the package ", path, " of the Odin compiler"), place = path, license = odin_license, license_file = SITE_ODIN_LICENSE_FILE})
 	}
 
-	// The portraits of the process hall_of_fame.
+	// The portraits of the module hall_of_fame.
 	credits, credits_problem := hall_of_fame_credits_read()
 	if credits_problem != "" {
 		append(problems, credits_problem)

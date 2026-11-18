@@ -32,7 +32,7 @@ sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, n
 
 // The source of an importer: the record has other names and the same
 // layout, the procedure has another name and the attribute link_name, and
-// the block is inside a when, as a process declares an import for one
+// the block is inside a when, as a module declares an import for one
 // build setting.
 @(private = "file")
 IMPORTER_HEAD :: `package importer_of_the_test
@@ -504,7 +504,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 		}
 		append(&paths, ..own_files)
 		// The declarations of the drawing module are in the window layer of
-		// the interface package, for each process with the setting.
+		// the interface package, for each module with the setting.
 		if slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
 			append(&paths, SOURCE_FOLDER_SUPPORT + "/interface/window_drawing.odin")
 		}
@@ -528,14 +528,14 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 	}
 }
 
-// The rules of a process that draws its window through the drawing module
+// The rules of a module that draws its window through the drawing module
 // (src/library/support/interface, window_drawing.odin):
 //   - it imports the module, which is a library module of the table, and
 //     the module is before it in the table;
 //   - it starts no child of its own file with no load source: the loader
 //     of the child would not find the import.
 // A picture and a grid of text cells are named by values, so such a
-// process can draw both.
+// module can draw both.
 @(test)
 processes_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 	library_found := false

@@ -4,7 +4,7 @@ import "core:strings"
 
 // The boot volume: a FAT32 file system in a file, with no partition table.
 // The firmware reads the boot program from it. The tool writes the volume
-// itself: the machine then has a plain disk, and no third-party process
+// itself: the machine then has a plain disk, and no third-party program
 // takes part.
 //
 // Layout: 32 reserved sectors, two tables, then the clusters. A cluster is

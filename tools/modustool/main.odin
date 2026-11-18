@@ -1,4 +1,4 @@
-// modustool: all the automation of the project, in one process.
+// modustool: all the automation of the project, in one program.
 //
 //   nix develop -c modustool <command>
 //
@@ -6,8 +6,8 @@
 // compiles itself again when its sources changed (tool_build.odin).
 //
 // The project has no scripts. Each build step, each test and each call to a
-// third-party process is a command of this tool, so that the way a third-party
-// process is run is written in one place.
+// third-party program is a command of this tool, so that the way a third-party
+// program is run is written in one place.
 //
 // The development shell of flake.nix supplies what this tool needs:
 //   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64, swtpm
@@ -60,7 +60,7 @@ BUILD_FOLDER :: "build"
 //   contract   what two parties agree on: records, numbers, and the code
 //              that reads them. It uses no kernel operation. The kernel
 //              imports these packages and its own kernel parts only.
-//   support    what a process compiles in to use the contracts.
+//   support    what a module compiles in to use the contracts.
 // The kernel parts are a second source library, "kernel:iommu". The names,
 // the folders and the flags of the two libraries are in
 // source_folders.odin; the rule of the kernel is held by
@@ -273,11 +273,11 @@ Command :: struct {
 // it is what `modustool help` prints, one line for each command. The comment
 // above each command is its documentation on the site.
 //
-// `modustool` is the one process of the automation of the project: the
+// `modustool` is the one program of the automation of the project: the
 // build, the machine tests, the pictures, the measures, the changelog, the
 // news and the site. The project has no script: each step of the work, by
 // hand or in a workflow, is a command here, so each call of a third-party
-// process (the compiler, the linker, QEMU) is written in one place.
+// program (the compiler, the linker, QEMU) is written in one place.
 //
 // Run a command from the root of the repository, in the development shell
 // of the flake, which gives the tool its compilers, QEMU and the firmware:
@@ -1573,7 +1573,7 @@ network_device_problem :: proc(device: string) -> string {
 	return ""
 }
 
-// run starts a process with the terminal of this tool and waits for its end.
+// run starts a host process with the terminal of this tool and waits for its end.
 run :: proc(command: []string) -> bool {
 	host_process, err := os.process_start({command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
 	if err != nil {

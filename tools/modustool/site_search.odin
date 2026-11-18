@@ -74,7 +74,7 @@ Site_Search_Kind_Description :: struct {
 // entries have looks of their own: a page is a file of the site, a term
 // has the kind of the glossary, an export (a procedure that a process
 // calls in a module) the arrow into a box of a call, a license row the
-// mark of what a license grants. A module and a process share the look of
+// mark of what a license grants. A module and an entry module share the look of
 // the one page that lists both.
 site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Page            = {name = "page", value_kind = .File, folder = ""},

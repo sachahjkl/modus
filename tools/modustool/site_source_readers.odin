@@ -4,7 +4,7 @@
 // reader gives the file and the line, and the command `site` stops: a table
 // never shows a part of a file that the reader did not understand.
 //
-// The readers read the text of the files, not the compiled process: the
+// The readers read the text of the files, not the compiled module: the
 // comments of a contract are its documentation, and the compiler drops them.
 // The reader of the table of the roles of the root service reads the tree
 // of the parser of Odin, and the comments from the lines that the tree

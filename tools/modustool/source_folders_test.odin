@@ -73,7 +73,8 @@ the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
 // the folder of a group alone, a group whose name a longer folder starts
 // with. Then the table and the tree: each row that is not a kernel is in a
 // group, each folder of a group is a row, src/modules holds the groups and
-// nothing else, no two rows have one name, and each process has an entry.
+// nothing else, no two rows have one name, and each module marked with an entry has an
+// entry function.
 @(test)
 the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
 	for source in ([]string{"", SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_MODULES + "/root", SOURCE_FOLDER_MODULES + "/processes/root", SYSTEM_MODULE_SOURCES, SOURCE_FOLDER_MODULES + "/systems/root", "src/processes/root"}) {

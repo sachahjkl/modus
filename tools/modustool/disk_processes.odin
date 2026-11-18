@@ -30,7 +30,7 @@ import block_tree "modus:private/storage/storage_object"
 // module table that is not in the boot image.
 DISK_MODULE_NAME :: "visitor"
 
-// A library module and a process that imports it: two rows of the module
+// A library module and a module that imports it: two rows of the module
 // table that are not in the boot image. The root service finds the import
 // in the store `module_files` by the hash of its bytes.
 STORE_LIBRARY_MODULE :: "store_library"
@@ -380,7 +380,7 @@ module_debug_object_file :: proc(module_name: string, module_file: []u8, object:
 // its frames with no attach (disk_processes_stop_report_steps).
 //
 // And two modules that no boot image holds: store_library, a library
-// module, and store_importer, a process that imports it.
+// module, and store_importer, a module that imports it.
 //
 // The store module_files of principal 0 holds 10 objects: 7 module files (visitor, changed, notes,
 // outsider, outsider_fault, store_library, store_importer), the debug
@@ -817,12 +817,12 @@ disk_processes_principal_store_steps :: proc(steps: ^[dynamic]Step, hash: string
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_MODULE_NAME)})
 }
 
-// The line of the source of the process visitor where its entry calls
+// The line of the source of the module visitor where its entry calls
 // sleep_for_ever: the place of the frame of the entry while the thread
 // sleeps. A change of that file above the call changes it.
 VISITOR_LINE_OF_THE_SLEEP :: "93"
 
-// The line of the source of the process visitor where fault_three writes
+// The line of the source of the module visitor where fault_three writes
 // to the address 0: the place of the frame 0 of the stop report of the
 // copy that faults. A change of that file above the write changes it.
 VISITOR_LINE_OF_THE_FAULT :: "169"
@@ -953,7 +953,7 @@ hash_digits_of :: proc(bytes: []u8) -> string {
 // its bytes, and the process calls it. Then the module file service writes
 // the library with one byte changed over its entry: no file of the store
 // has the hash of the import any more, and the start is refused with one
-// line. The scan reads each of the 7 files of the store but the process
+// line. The scan reads each of the 7 files of the store but the importer
 // and the disk grant table: changed, notes, outsider, outsider_fault,
 // received, store_library and visitor.
 disk_processes_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_Hashes, changed_library_size: int) {

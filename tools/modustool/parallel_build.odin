@@ -209,7 +209,7 @@ build_modules_in_parallel :: proc() -> bool {
 	if _, imports_hold := library_imports_hold(); !imports_hold {
 		return false
 	}
-	// Each process of the boot image has its row in the table of the
+	// Each module with an entry in the boot image has its row in the table of the
 	// roles of the root service (process_roles_check.odin).
 	process_roles_hold() or_return
 	levels := module_levels() or_return

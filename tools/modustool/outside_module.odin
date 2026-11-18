@@ -380,7 +380,7 @@ Outside_Module_Example :: struct {
 
 THIRD_PARTY_EXAMPLE_FOLDER :: BUILD_FOLDER + "/third_party_example"
 
-// A process with no import, and a module with an import: the second
+// A module with an entry and no import, and a module with an import: the second
 // needs the file of its import from the folder of the system while its
 // own file goes to the folder of the copy.
 OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
@@ -546,7 +546,7 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 }
 
 // The name of the outside module that the test of the disk processes starts
-// in a machine: the sources of the process visitor, copied outside the
+// in a machine: the sources of the module visitor, copied outside the
 // sources and built by `module-build` under this name, which is no module
 // of the boot image.
 OUTSIDE_DISK_MODULE :: "outsider"

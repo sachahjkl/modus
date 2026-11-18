@@ -132,12 +132,12 @@ the_layout_of_a_device_service_takes_each_slot_once :: proc(t: ^testing.T) {
 }
 
 // The table of the roles is whole against the modules of the build. The
-// faults come first, each with its line: a process of the boot image with
-// no row, a row of a module that is no process of the boot image (a disk
-// process, the root service, a name of no module), a process with two
-// rows, a grant that is no start grant, a part of the system whose row
-// lacks System_Part or holds another grant or a term, a process that is no
-// part of the system with System_Part, a part of the system with no row.
+// faults come first, each with its line: a module with an entry in the
+// boot image and no row, a row that names no such module (a disk process,
+// the root service, a name of no module), a module with two rows, a grant
+// that is no start grant, a part of the system whose row lacks System_Part
+// or holds another grant or a term, a module that is no part of the system
+// with System_Part, a part of the system with no row.
 // The table of the repository, which the build checks, holds none of them,
 // last.
 @(test)
@@ -179,13 +179,13 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 		{name = "compositor", grants = {"Serve", "System_Part"}, line = 3},
 		{name = "block", grants = {"System_Part"}, line = 4},
 	}
-	// A process of the boot image with no row.
+	// A module with an entry in the boot image and no row.
 	expect_one(t, {whole[1], whole[2], whole[3]}, system_parts, builds, "the process alpha of the boot image has no row")
 	// A row of a disk process, of the root service, of no module.
 	for name in ([?]string{"visitor", "root", "gamma"}) {
 		expect_one(t, with(whole, {name = name, line = 5}), system_parts, builds, fmt.tprintf("line 5: the row %s names no process", name))
 	}
-	// A process with two rows, and a grant that is no start grant.
+	// A module with two rows, and a grant that is no start grant.
 	two := make([dynamic]Site_Role_Row, context.temp_allocator)
 	append(&two, ..whole)
 	append(&two, Site_Role_Row{name = "alpha", line = 5})
@@ -204,12 +204,12 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	for broken in broken_parts {
 		expect_one(t, with(whole, broken), system_parts, builds, fmt.tprintf("line %d: the row %s of a part of the system", broken.line, broken.name))
 	}
-	// A process that is no part of the system, with System_Part.
+	// A module that is no part of the system, with System_Part.
 	expect_one(t, with(whole, {name = "alpha", grants = {"System_Part"}, line = 1}), system_parts, builds, "line 1: the row alpha has the grant System_Part")
 	expect_one(t, with(whole, {name = "beta", grants = {"Inspect", "System_Part"}, line = 2}), system_parts, builds, "line 2: the row beta has the grant System_Part")
 	// A part of the system with no row.
 	expect_one(t, whole, []string{"root", "compositor", "block", "glyphs"}, builds, "system_part_names names glyphs, which has no row")
-	// A module that is no process may have a row: a service that starts as
+	// A module with no entry may have a row: a service that starts as
 	// a process at its first connection.
 	testing.expect_value(t, len(process_roles_problems(with(whole, {name = "library", line = 5}), system_parts, builds, "roles.odin")), 0)
 	testing.expect_value(t, len(process_roles_problems(whole, system_parts, builds, "roles.odin")), 0)

@@ -293,7 +293,7 @@ site_news_of_release :: proc(site: ^Site, b: ^strings.Builder, from_page, releas
 }
 
 // site_feed_address gives the address of a file of the site that is not a
-// page, for a file at the root of the site that another process reads (a
+// page, for a file at the root of the site that another program reads (a
 // feed): absolute when the site has an address, else relative to the root.
 // A reader resolves a relative address against the address that it
 // fetched the file from.
@@ -305,7 +305,7 @@ site_feed_address :: proc(site: ^Site, path: string) -> string {
 }
 
 // site_feed_page_address gives the address of a page (its file, with an
-// anchor or none) for a file at the root of the site that another process
+// anchor or none) for a file at the root of the site that another program
 // reads (a feed, llms.txt): with a site address the absolute address of
 // its folder, else the link from the root, which names its index.html.
 site_feed_page_address :: proc(site: ^Site, target: string) -> string {

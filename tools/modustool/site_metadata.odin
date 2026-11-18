@@ -153,7 +153,7 @@ site_guide_index :: proc(site: ^Site, path: string) -> int {
 }
 
 // site_head_metadata writes the part of the head of a page that other
-// processes read: the feeds, the manifest, the guides before and after, and,
+// programs read: the feeds, the manifest, the guides before and after, and,
 // with an address, the canonical address, Open Graph, the summary card and
 // the JSON-LD graph.
 site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
@@ -371,7 +371,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_close(&action)
 		site_json_close(&node)
 	}
-	// The system as a process: an operating system, so it needs no other.
+	// The system as a program: an operating system, so it needs no other.
 	// The machine is the one that docs/PROPERTIES.md names.
 	{
 		strings.write_byte(&b, ',')
@@ -776,7 +776,7 @@ site_manifest :: proc(site: ^Site) -> string {
 }
 
 // site_language_model_index gives llms.txt (https://llmstxt.org): what the
-// site is and its pages, in Markdown, for processes that read a site to
+// site is and its pages, in Markdown, for programs that read a site to
 // answer a question. Each line is the title and the description of a page;
 // the module pages are in the part "Optional", which a reader can skip.
 site_language_model_index :: proc(site: ^Site) -> string {
@@ -947,7 +947,7 @@ site_is_json_array :: proc(value: json.Value) -> bool {
 	return is_array
 }
 
-// site_check_metadata checks what other processes read of the pages:
+// site_check_metadata checks what other programs read of the pages:
 //   with an address, each page has one canonical address, its own, and no
 //   two pages share one; it has Open Graph, and its picture is a picture
 //   that the command wrote with the size that the page states; it has one

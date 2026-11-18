@@ -1,4 +1,4 @@
-// The lines of the process processor_frame, which measures a frame at
+// The lines that processor_frame writes as it measures a frame at
 // 1920 x 1080 on the processor in three parts
 // (src/md/features/desktop_to_browser.md, "The first measure: a frame at 1920 × 1080 on the processor").
 // The scenario of the measure run waits for each line; after the machine,

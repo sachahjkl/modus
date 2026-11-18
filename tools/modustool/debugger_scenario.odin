@@ -103,7 +103,7 @@ scenario_debugger := [?]Step {
 
 TEST_OUTPUT_DEBUGGER_COMMANDS :: BUILD_FOLDER + "/test_output_debugger_commands.txt"
 
-// The source file of the process debug_target, as its debug object names it.
+// The source file of the module debug_target, as its debug object names it.
 DEBUG_TARGET_SOURCE_FILE :: TEST_MODULE_SOURCES + "debug_target/main.odin"
 
 // The line of the second statement of the procedure add_step of that
@@ -140,7 +140,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "root: started debug_target"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
-	// The attach: the process module has its debug object.
+	// The attach: the module of the process has its debug object.
 	{kind = .Type, text = "columns(debug(\"debug_target\"), \"process described\")"},
 	{kind = .Wait, text = "[console] debug_target          1"},
 

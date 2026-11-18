@@ -2179,8 +2179,9 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 
-	// One module in each role: the file of tally is a process, a service, a
-	// library in the memory of the console, and a sandboxed process. Each
+	// One module in each role: the file of tally runs as a process, as a
+	// service, as a library in the memory of the console, and as a sandboxed
+	// process. Each
 	// process that runs the module has its own count.
 	{kind = .Launch, text = "tally"},
 	{kind = .Wait, text = "tally: ok", any_order = true}, // The compositor can write the line of the surface first.
@@ -3341,7 +3342,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light"},
-	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button of the processes in the bar: the light form of the pointer.
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button start of the bar: the light form of the pointer.
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "desktop_light"},
 	// The console in the light appearance: a record whose values have the

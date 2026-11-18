@@ -268,8 +268,8 @@ procedure_gives_negative :: proc(search: ^Negative_Search, name: string) -> bool
 	return negative
 }
 
-// exports_without_error_record_of_tree reads each package of the processes
-// and of the modules under a root ("" is the repository).
+// exports_without_error_record_of_tree reads each package of the modules,
+// with an entry or not, under a root ("" is the repository).
 exports_without_error_record_of_tree :: proc(root: string) -> (found: []Export_Without_Error_Record, package_count: int, export_count: int, ok: bool) {
 	files := make([dynamic]string, context.temp_allocator)
 	folders := EXPORT_ERROR_RECORD_FOLDERS

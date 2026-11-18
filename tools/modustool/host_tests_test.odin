@@ -19,7 +19,7 @@ host_test_pool_stops_after_a_failure :: proc(t: ^testing.T) {
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
 	testing.expect(t, len(outcomes[0].output) > 0, "a command that cannot start says why")
 	testing.expect(t, !outcomes[1].started && !outcomes[2].started, "no process starts after a failure")
-	// A process that runs and ends with a status that is not 0: its
+	// A host process that runs and ends with a status that is not 0: its
 	// output is kept, and the next command does not start.
 	absent := "/a folder that is not there/of a host test"
 	outcomes = build_host_processes_run([][]string{[]string{"ls", absent}, []string{"true"}}, 1, context.temp_allocator)
@@ -86,7 +86,7 @@ host_test_folders_with_one_name_are_refused :: proc(t: ^testing.T) {
 
 // The flag of the kernel parts goes to the host tests of src/kernel/* and
 // of the tool only, as in the compile of each; each command has its own
-// temporary folder and its own test process.
+// temporary folder and its own test program.
 @(test)
 host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.T) {
 	folders := HOST_TEST_FOLDERS

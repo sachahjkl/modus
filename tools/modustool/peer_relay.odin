@@ -5,8 +5,8 @@ import "core:net"
 import "core:sync"
 import "core:time"
 
-// A UDP relay in the peer of the tool (docs/QUIC.md, section 6): a process
-// of the host, such as the QUIC client of OpenSSL, reaches the UDP port
+// A UDP relay in the peer of the tool (docs/QUIC.md, section 6): a host
+// process, such as the QUIC client of OpenSSL, reaches the UDP port
 // 4433 of the machine through the peer, with no network of the host but
 // its loopback. QEMU user networking with restrict=on drops each UDP
 // datagram of the machine (libslirp, udp_input), so the machine of

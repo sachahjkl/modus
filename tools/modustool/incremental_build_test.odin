@@ -7,9 +7,9 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-// A small tree of sources in a new folder: a process that imports a
+// A small tree of sources in a new folder: a module that imports a
 // library, an assembly file, a file that `#load` reads, and a package that
-// the process does not use.
+// the module does not use.
 @(private = "file")
 source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "incremental_build_test_*", context.temp_allocator)
@@ -40,7 +40,7 @@ file_write :: proc(root, name, text: string) {
 @(private = "file")
 SOURCE_TREE_FOLDERS :: [?]string{"process", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
 
-// The inputs of the key of the process of the tree, as a compiler lists them.
+// The inputs of the key of the importer of the tree, as a compiler lists them.
 @(private = "file")
 process_inputs :: proc(root: string) -> Build_Key_Inputs {
 	sources := make([]string, 2, context.temp_allocator)
@@ -428,7 +428,7 @@ build_measure_lines_name_the_counts_and_the_steps :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(lines[2], "0 built, 18 kept, 0 not needed"), lines[2])
 }
 
-// A library and a process that imports it, in a new folder: the sources of
+// A library and a module that imports it, in a new folder: the sources of
 // each, and the files of a build of the two. No compiler runs: the test
 // writes the output of each step itself, as a function of what the step
 // reads, so a step that the tool skips leaves a stale file that the test
@@ -439,7 +439,7 @@ Two_Modules :: struct {
 	table:   ^Input_File_Table,
 	library: Module_Steps,
 	process: Module_Steps,
-	final:   Module_Steps, // A module that imports the process: the second level of the chain.
+	final:   Module_Steps, // A module that imports the importer: the second level of the chain.
 }
 
 @(private = "file")
@@ -751,13 +751,13 @@ no_conversion_record_with_a_source_that_changed_during_the_build :: proc(t: ^tes
 	modules := two_modules_make(t)
 	defer two_modules_destroy(&modules)
 	test_build_all(t, &modules)
-	// The import changes, so the process is converted in the next build.
+	// The import changes, so the importer is converted in the next build.
 	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count + 2}\n")
 	two_modules_new_build(&modules)
 	testing.expect_value(t, test_build_one(t, &modules, modules.library), Module_Step.Built)
 	step, _ := module_step_needed(modules.process, modules.table)
 	testing.expect_value(t, step, Module_Step.Converted)
-	// A source of the process is saved while the conversion runs.
+	// A source of the importer is saved while the conversion runs.
 	file_write(modules.root, "process/main.odin", "package process\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nlate :: 1\n")
 	test_convert(modules.process)
 	testing.expect(t, !module_step_records_write(modules.process, modules.table, false, modules.process.compile_inputs.source_files, nil), "no record with a source that changed during the build")
