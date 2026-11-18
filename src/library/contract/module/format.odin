@@ -53,7 +53,7 @@ Machine :: enum u32 {
 // The first 48 bytes of a module file. A loader reads it first and refuses
 // the file when one field is not one that it takes (`validate`).
 //
-// Example: the header of a process starts with the bytes "MODULE", the
+// Example: the header of a module with an entry starts with the bytes "MODULE", the
 // version 2, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {

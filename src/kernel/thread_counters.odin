@@ -5,7 +5,7 @@ import op "modus:contract/operation"
 import "kernel:processor_counters"
 
 // The counters of a thread (docs/ARCHITECTURE.md, "The counters of a
-// thread"; src/md/features/processor_counters.md): the kernel processes the
+// thread"; src/md/features/processor_counters.md): the kernel programs the
 // general counters 0 to 3 of the processor for the calling thread, in user
 // mode only, and keeps their counts when the thread leaves a processor.
 //

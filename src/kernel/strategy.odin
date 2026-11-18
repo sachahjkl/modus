@@ -322,7 +322,7 @@ strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread
 // it takes a thread from a queue with more load. Without it, a thread
 // alone in its queue under EEVDF keeps its processor while threads wait in
 // another queue: measured, "at most 3 of 4 processors ran the process at
-// the same time" (process processors).
+// the same time" (the module `processors`).
 strategy_tick :: proc "contextless" (cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
 	queue := &run_queues[cpu.index]
 	lock_take(&queue.lock, .Run)

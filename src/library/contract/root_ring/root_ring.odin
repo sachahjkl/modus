@@ -38,12 +38,12 @@ import "modus:contract/start_grant"
 // ```
 Root_Command :: enum u32 {
 	None       = 0, // Refused with `Unsupported`, as a word that names no command (command_of_word).
-	Start      = 1, // Start the process of the boot image with this name. A process of the system (root, input, compositor, terminal, block, frame) is refused with `Reserved`; a name with no module with `Absent`.
+	Start      = 1, // Start the module of the boot image with this name. A module of the system (root, input, compositor, terminal, block, frame) is refused with `Reserved`; a name with no module with `Absent`.
 	Stop       = 2, // Stop the process with this name. The compositor and the terminal are refused with `Reserved`; a name that runs no process with `Absent`.
 	// Connect makes a connection to a service that runs. The completion has
 	// three handles of the caller: values[0] the process (right Read: its
 	// state), values[1] the call ring, values[2] the call region. values[3..7]
-	// is the hash of the file of the process: its exports are described there.
+	// is the hash of the module file of the process: its exports are described there.
 	//
 	// values[4] not 0: the connection is for the row values[4] - 1 of the
 	// client table, whose serial is values[5] (modus:contract/remote,
@@ -140,7 +140,7 @@ Root_Command :: enum u32 {
 	// a grant of the caller, the root service ends each debugging that the
 	// rule no longer gives.
 	// The completion: values[0] the handle, values[1..4] the hash of the
-	// file of the process, values[5] its principal. A refusal has the kind
+	// module file of the process, values[5] its principal. A refusal has the kind
 	// `No_Grant` with the unit `Debug_Access`, and `found` is 1 + the start
 	// grant that refuses (start_grant.Grant), which the sentence of the
 	// record names. The grant is `debug` in `Grants`, a grant of the
@@ -166,7 +166,7 @@ Root_Command :: enum u32 {
 	// (docs/MODULE_CONTRACT.md, "A process from a disk").
 	// This command does not carry its name as the others do:
 	// values[0..3] is the hash of the module file (BLAKE3, 32 bytes), and
-	// values[4..6] the name of the process and of its entry in the store, 1
+	// values[4..6] the name of the module and of its entry in the store, 1
 	// to 23 bytes, zero bytes after it (modus:support/disk_process).
 	//
 	// The root service reads the object from the storage service and starts
@@ -473,8 +473,8 @@ root_ring_given :: proc "contextless" (role: bit_set[start_grant.Grant]) -> bool
 	return role & ROOT_RING_GRANTS != {}
 }
 
-// The handles that the root service gives a process of the boot image at
-// its start, by its start grants. Each one has one context slot
+// The handles that the root service gives a process that it starts from
+// the boot image, at its start, by its start grants. Each one has one context slot
 // (system.ROLE_HANDLE_SLOTS); several start grants can give one handle (the
 // machine, the root ring). A start writes a handle only when role_handles
 // gives it, so this mapping is the one that the start follows.

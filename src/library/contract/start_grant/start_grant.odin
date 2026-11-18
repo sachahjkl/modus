@@ -104,7 +104,7 @@ GRANT_NAMES := [Grant]string {
 
 // grant_name gives the name of the start grant with a number, and says if
 // the number names one. The number comes from an error record, which
-// another process wrote, and that process can be of a later build with one
+// another process wrote, and its module can be of a later build with one
 // more start grant: a reader calls this before it writes a name.
 //
 // Example: `grant_name(7)` is `"Store", true`; `grant_name(99)` is `"",
