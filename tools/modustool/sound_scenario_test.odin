@@ -78,9 +78,10 @@ a_wave_of_another_format_is_refused :: proc(t: ^testing.T) {
 }
 
 // Silence only, a header with no frame, a tone one frame before the
-// tolerance and at the frame 0, a tone too near the end for the window, a
+// tolerance and at the frame 0, a file that ends before the window, a
 // tone too long and too short, and a tone of another frequency are
-// refused.
+// refused, each for the fault that it names. The cosine of the test has a
+// frame of 0 at every eleventh crossing: 48000 / (4 × 440) is 300 / 11.
 @(test)
 a_tone_out_of_its_place_or_its_frequency_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, tone_check(wave_make(FRAMES_OF_THE_TEST, -1, 0), TONE_FRAME_OF_THE_TEST).problem, Sound_Output_Problem.No_Sound)
@@ -92,8 +93,9 @@ a_tone_out_of_its_place_or_its_frequency_is_refused :: proc(t: ^testing.T) {
 	}
 	short := wave_make(TONE_FRAME_OF_THE_TEST + TONE_WINDOW_FRAMES - 1, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ)
 	testing.expect_value(t, tone_check(short, TONE_FRAME_OF_THE_TEST).problem, Sound_Output_Problem.Too_Short)
-	// Past the tolerance by more than the few frames of a cosine that are
-	// silence.
+	// A span past the tolerance on each side, and a tone of the window only:
+	// each file holds the window, and its frequency is right, so the fault
+	// that each case names is its length.
 	for length in ([]int{TONE_CHECK_FRAMES + 4 * TONE_LENGTH_TOLERANCE, TONE_CHECK_FRAMES - 4 * TONE_LENGTH_TOLERANCE, TONE_WINDOW_FRAMES}) {
 		found := tone_check(wave_make(TONE_FRAME_OF_THE_TEST + length, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ), TONE_FRAME_OF_THE_TEST)
 		testing.expectf(t, found.problem == .Wrong_Length, "a tone of %d frames gives %v", length, found.problem)
@@ -128,13 +130,25 @@ silence_from_the_device_does_not_move_the_tone :: proc(t: ^testing.T) {
 	good := wave_make(FRAMES_OF_THE_TEST, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ)
 	before := silence_insert(good, 0, 1000)
 	inside := silence_insert(before, TONE_FRAME_OF_THE_TEST + 1000 + TONE_WINDOW_FRAMES / 2, 500)
-	for padded in ([][]u8{before, inside}) {
+	inserted := [?]int{0, 500}
+	for padded, index in ([][]u8{before, inside}) {
 		found := tone_check(padded, TONE_FRAME_OF_THE_TEST)
 		testing.expect_value(t, found.problem, Sound_Output_Problem.None)
 		testing.expect_value(t, found.place, Tone_Place.After_Frames_Of_The_Device)
 		testing.expect_value(t, found.first_sound_frame, TONE_FRAME_OF_THE_TEST + 1000)
 		testing.expectf(t, abs(found.crossings - tone_crossings_expected()) <= 1, "%d crossings", found.crossings)
+		// A frame of 0 of the tone next to the inserted run joins it.
+		testing.expectf(t, abs(found.inserted_frames - inserted[index]) <= 2, "%d frames of inserted silence, %d inserted", found.inserted_frames, inserted[index])
+		testing.expectf(t, abs(found.tone_frames - TONE_CHECK_FRAMES) <= TONE_LENGTH_TOLERANCE, "a span of %d frames", found.tone_frames)
 	}
+	// A run of silence no longer than one period inside the tone is a part
+	// of the tone, not inserted silence: the length then counts it. Two
+	// frames less than a period, as a frame of 0 of the tone can join the
+	// run on each side.
+	one_period := silence_insert(good, TONE_FRAME_OF_THE_TEST + TONE_WINDOW_FRAMES / 2, TONE_PERIOD_FRAMES - 2)
+	found_one := tone_check(one_period, TONE_FRAME_OF_THE_TEST)
+	testing.expect_value(t, found_one.problem, Sound_Output_Problem.Wrong_Length)
+	testing.expect_value(t, found_one.inserted_frames, 0)
 	// One frame past the tolerance is not proved either.
 	late := wave_make(FRAMES_OF_THE_TEST + 1, TONE_FRAME_OF_THE_TEST + TONE_FRAME_TOLERANCE + 1, TONE_CHECK_HERTZ)
 	found := tone_check(late, TONE_FRAME_OF_THE_TEST)
@@ -153,6 +167,52 @@ the_tone_at_its_frame_passes :: proc(t: ^testing.T) {
 		testing.expect_value(t, found.place, Tone_Place.At_The_Frame_Of_The_Line)
 		testing.expect_value(t, found.first_sound_frame, first)
 		testing.expectf(t, abs(found.crossings - tone_crossings_expected()) <= 1, "%d crossings", found.crossings)
-		testing.expectf(t, abs(found.sound_frames - TONE_CHECK_FRAMES) <= TONE_LENGTH_TOLERANCE, "%d frames that are not silence", found.sound_frames)
+		testing.expectf(t, abs(found.tone_frames - TONE_CHECK_FRAMES) <= TONE_LENGTH_TOLERANCE, "a span of %d frames", found.tone_frames)
+		testing.expect_value(t, found.inserted_frames, 0)
 	}
+}
+
+// crossings_on_zero gives a copy of a wave file whose tone has frames of 0
+// at its crossings: the frame where the sign changes, and the frame before
+// it at every other crossing, so runs of one frame and of two; and its
+// last frame.
+@(private = "file")
+crossings_on_zero :: proc(file: []u8, tone_first: int) -> []u8 {
+	zeroed := make([]u8, len(file), context.temp_allocator)
+	copy(zeroed, file)
+	frames := zeroed[WAVE_HEADER_BYTES:]
+	count := len(frames) / timed_stream.FRAME_BYTES
+	sample_of :: proc(frames: []u8, index: int) -> i16 {
+		return i16(byte_order.read_u16_little_endian(frames, index * timed_stream.FRAME_BYTES))
+	}
+	crossing := 0
+	positive := sample_of(file[WAVE_HEADER_BYTES:], tone_first) > 0
+	for index in tone_first + 2 ..< count {
+		sample := sample_of(file[WAVE_HEADER_BYTES:], index)
+		if sample == 0 || (sample > 0) == positive {
+			continue
+		}
+		positive = sample > 0
+		byte_order.write_u32_little_endian(frames, index * timed_stream.FRAME_BYTES, 0)
+		if crossing % 2 == 1 {
+			byte_order.write_u32_little_endian(frames, (index - 1) * timed_stream.FRAME_BYTES, 0)
+		}
+		crossing += 1
+	}
+	byte_order.write_u32_little_endian(frames, (count - 1) * timed_stream.FRAME_BYTES, 0)
+	return zeroed
+}
+
+// A crossing that falls exactly on a frame of 0, or on two, is a frame of
+// the tone: the crossing counts once, and the span keeps its frames; a
+// last frame of 0 shortens the span by one, inside the tolerance.
+@(test)
+a_crossing_on_a_frame_of_zero_is_a_frame_of_the_tone :: proc(t: ^testing.T) {
+	good := wave_make(FRAMES_OF_THE_TEST, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ)
+	found := tone_check(crossings_on_zero(good, TONE_FRAME_OF_THE_TEST), TONE_FRAME_OF_THE_TEST)
+	testing.expect_value(t, found.problem, Sound_Output_Problem.None)
+	testing.expect_value(t, found.place, Tone_Place.At_The_Frame_Of_The_Line)
+	testing.expect_value(t, found.inserted_frames, 0)
+	testing.expectf(t, abs(found.crossings - tone_crossings_expected()) <= 1, "%d crossings", found.crossings)
+	testing.expectf(t, TONE_CHECK_FRAMES - found.tone_frames >= 1 && TONE_CHECK_FRAMES - found.tone_frames <= TONE_LENGTH_TOLERANCE, "a span of %d frames", found.tone_frames)
 }

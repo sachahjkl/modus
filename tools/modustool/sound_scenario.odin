@@ -76,16 +76,16 @@ sound_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	found := tone_check(file, frame)
 	if found.problem != .None {
-		fmt.eprintfln("modustool: the sound output %s: %s (the line names the frame %d; the first frame that is not silence: %d; frames that are not silence: %d, the tone has %d; crossings of zero in %d frames: %d, a tone of %d Hz has %d)", output_file, SOUND_OUTPUT_PROBLEM_TEXTS[found.problem], frame, found.first_sound_frame, found.sound_frames, TONE_CHECK_FRAMES, TONE_WINDOW_FRAMES, found.crossings, TONE_CHECK_HERTZ, tone_crossings_expected())
+		fmt.eprintfln("modustool: the sound output %s: %s (the line names the frame %d; the first frame that is not silence: %d; the span of the tone: %d frames, the tone has %d; silence that the device wrote inside it: %d frames; crossings of zero in %d frames: %d, a tone of %d Hz has %d)", output_file, SOUND_OUTPUT_PROBLEM_TEXTS[found.problem], frame, found.first_sound_frame, found.tone_frames, TONE_CHECK_FRAMES, found.inserted_frames, TONE_WINDOW_FRAMES, found.crossings, TONE_CHECK_HERTZ, tone_crossings_expected())
 		return false
 	}
 	switch found.place {
 	case .At_The_Frame_Of_The_Line:
-		test_passed_print("the sound output holds the tone from the frame %d, the frame that the line of tone names, with %d frames that are not silence and %d crossings of zero in %d frames (a tone of %d Hz has %d); it holds %d frames", found.first_sound_frame, found.sound_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.frames)
+		test_passed_print("the sound output holds the tone from the frame %d, the frame that the line of tone names, with a span of %d frames and %d crossings of zero in %d frames (a tone of %d Hz has %d); it holds %d frames", found.first_sound_frame, found.tone_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.frames)
 	case .After_Frames_Of_The_Device:
 		// Not a failure: QEMU wrote frames that the stream did not give,
 		// which depends on the load of the host. The place is not proved.
-		test_passed_print("the sound output holds the tone with %d frames that are not silence and %d crossings of zero in %d frames (a tone of %d Hz has %d); it starts at the frame %d, %d frames after the frame that the line names: QEMU wrote frames that the stream did not give, so the place is not proved", found.sound_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.first_sound_frame, found.first_sound_frame - frame)
+		test_passed_print("the sound output holds the tone with a span of %d frames, %d frames of silence that QEMU wrote inside it, and %d crossings of zero in %d frames (a tone of %d Hz has %d); it starts at the frame %d, %d frames after the frame that the line names: QEMU wrote frames that the stream did not give, so the place is not proved", found.tone_frames, found.inserted_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.first_sound_frame, found.first_sound_frame - frame)
 	}
 	// The file of a test that passed would fill the build folder: about
 	// 192 KB for each second of the machine.
@@ -121,10 +121,13 @@ TONE_WINDOW_FRAMES :: timed_stream.FRAME_RATE / 10
 TONE_FRAME_TOLERANCE :: 2
 // A count of crossings is exact to one crossing at each end of the window.
 TONE_CROSSINGS_TOLERANCE :: 2
-// A frame of the tone where both samples are below one step of 16 bits is
-// silence: about one in 24000 frames of a cosine at half of the largest
-// sample.
-TONE_LENGTH_TOLERANCE :: 8
+// The span of the tone is exact but at its ends: a crossing of zero on
+// its first or its last frame makes that frame silence.
+TONE_LENGTH_TOLERANCE :: 2
+// One period of the tone in frames, rounded down: 48000 / 440 is 109.1. A
+// run of silent frames inside the tone longer than it is silence that the
+// device wrote; a crossing of zero is a run of one frame or two.
+TONE_PERIOD_FRAMES :: timed_stream.FRAME_RATE / TONE_CHECK_HERTZ
 
 // The header of the wave file that QEMU writes: 44 bytes, PCM.
 WAVE_HEADER_BYTES :: 44
@@ -142,9 +145,9 @@ Sound_Output_Problem :: enum {
 	Not_The_Format, // Its channels, rate or bits are not the format of the timed stream.
 	No_Sound, // Each frame is silence.
 	Tone_Early, // The tone starts before the frame of the line: the file holds fewer frames before it than the stream gave.
-	Too_Short, // The file holds fewer frames of the tone than the window of the check.
+	Too_Short, // The file ends before the window of the check, from the start of the tone.
 	Wrong_Frequency, // The crossings of zero are not those of the tone.
-	Wrong_Length, // The frames that are not silence are not the frames of the tone.
+	Wrong_Length, // The span of the tone, less the silence that the device wrote inside it, is not the frames of the tone.
 }
 
 @(rodata)
@@ -154,9 +157,9 @@ SOUND_OUTPUT_PROBLEM_TEXTS := [Sound_Output_Problem]string {
 	.Not_The_Format  = "its channels, its rate or its bits are not 2 channels of 48000 frames of 16 bits",
 	.No_Sound        = "each frame is silence",
 	.Tone_Early      = "the tone starts before the frame of the line",
-	.Too_Short       = "it holds fewer frames of the tone than the window of the check",
+	.Too_Short       = "it ends before the window of the check, from the start of the tone",
 	.Wrong_Frequency = "the left channel does not cross zero as a tone of 440 Hz does",
-	.Wrong_Length    = "its frames that are not silence are not the 24000 frames of the tone",
+	.Wrong_Length    = "the span of the tone is not its 24000 frames",
 }
 
 // Where the tone is in the file, against the frame of the line. QEMU
@@ -174,7 +177,8 @@ Tone_Check :: struct {
 	place:             Tone_Place,
 	frames:            int,
 	first_sound_frame: int, // -1: none.
-	sound_frames:      int, // The frames that are not silence, from the first one.
+	tone_frames:       int, // The span from the first to the last frame that is not silence, less the runs of silence longer than TONE_PERIOD_FRAMES inside it.
+	inserted_frames:   int, // The frames of those runs: silence that the device wrote inside the tone.
 	crossings:         int,
 }
 
@@ -187,9 +191,13 @@ frame_is_silence :: proc(frames: []u8, index: int) -> bool {
 // tone_check reads a wave file of the sound device: its header, then its
 // frames to the end of the file. QEMU writes the sizes of the header only
 // at a clean end, so the check does not read them. It finds the tone by
-// its own start, the first frame that is not silence, and counts only the
-// frames that are not silence: frames of silence that the device wrote
-// before or inside the tone change neither its frequency nor its length.
+// its own start, the first frame that is not silence, and measures it as a
+// span of frames to its last frame that is not silence: a frame of 0 at a
+// crossing is a frame of the tone. A run of silence inside the span longer
+// than one period of the tone is silence that the device wrote: it counts
+// neither in the length nor in the window of the crossings. The checks
+// come in the order of their faults: a file too short for the window, then
+// the frequency, then the length.
 tone_check :: proc(file: []u8, expected_frame: int) -> (check: Tone_Check) {
 	check.first_sound_frame = -1
 	if len(file) < WAVE_HEADER_BYTES || string(file[0:4]) != "RIFF" || string(file[8:12]) != "WAVE" || string(file[12:16]) != "fmt " || string(file[36:40]) != "data" || byte_order.read_u16_little_endian(file, 20) != WAVE_FORMAT_PCM {
@@ -217,15 +225,30 @@ tone_check :: proc(file: []u8, expected_frame: int) -> (check: Tone_Check) {
 		return
 	}
 	check.place = check.first_sound_frame <= expected_frame + TONE_FRAME_TOLERANCE ? .At_The_Frame_Of_The_Line : .After_Frames_Of_The_Device
-	// The crossings over the first frames of the tone that are not
-	// silence. The sign of the left sample: a zero keeps the sign before it.
+	if check.frames - check.first_sound_frame < TONE_WINDOW_FRAMES {
+		check.problem = .Too_Short
+		return
+	}
+	// One pass over the frames from the start. A run of silent frames is
+	// known as a crossing or as inserted silence only at its end: at the
+	// next frame that is not silence. A run after the last such frame is
+	// past the tone. The sign of the left sample: a zero keeps the sign
+	// before it, so a frame of 0 at a crossing counts the crossing once.
 	positive := i16(byte_order.read_u16_little_endian(frames, check.first_sound_frame * timed_stream.FRAME_BYTES)) > 0
+	silent_run := 0
 	for index in check.first_sound_frame ..< check.frames {
 		if frame_is_silence(frames, index) {
+			silent_run += 1
 			continue
 		}
-		check.sound_frames += 1
-		if check.sound_frames > TONE_WINDOW_FRAMES {
+		if silent_run > TONE_PERIOD_FRAMES {
+			check.inserted_frames += silent_run
+		} else {
+			check.tone_frames += silent_run
+		}
+		silent_run = 0
+		check.tone_frames += 1
+		if check.tone_frames > TONE_WINDOW_FRAMES {
 			continue
 		}
 		sample := i16(byte_order.read_u16_little_endian(frames, index * timed_stream.FRAME_BYTES))
@@ -235,11 +258,9 @@ tone_check :: proc(file: []u8, expected_frame: int) -> (check: Tone_Check) {
 		}
 	}
 	switch {
-	case check.sound_frames < TONE_WINDOW_FRAMES:
-		check.problem = .Too_Short
 	case abs(check.crossings - tone_crossings_expected()) > TONE_CROSSINGS_TOLERANCE:
 		check.problem = .Wrong_Frequency
-	case abs(check.sound_frames - TONE_CHECK_FRAMES) > TONE_LENGTH_TOLERANCE:
+	case abs(check.tone_frames - TONE_CHECK_FRAMES) > TONE_LENGTH_TOLERANCE:
 		check.problem = .Wrong_Length
 	}
 	return

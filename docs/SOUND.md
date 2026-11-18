@@ -70,15 +70,16 @@ A late record is refused whole: the service does not play its end, and does not 
 - It checks that the tone played at the frame of its time: the frame 24 000.
 - A second `start("tone")` is refused while the first one runs, with the line "root: cannot start tone: the sound device plays for another program; one program plays at a time".
 
-After the machine, the tool reads the wave file. It finds the tone by its first frame that is not silence, and counts only the frames that are not silence from there, so silence that the device writes before the tone or inside it does not change the check:
+After the machine, the tool reads the wave file. It finds the tone by its first frame that is not silence, and measures it as a span to its last frame that is not silence: a frame of 0 at a crossing is a frame of the tone. A run of silence inside the tone longer than one period of the tone (109 frames) is silence that the device wrote, and is not counted, so silence before the tone or inside it does not change the check:
 
-- Over the first 4800 frames of the tone, the left channel must cross zero 88 times, within 2: a tone of 440 Hz.
-- The tone must have its 24 000 frames, within 8.
+- The file must hold 4800 frames from the start of the tone.
+- Over those frames, the left channel must cross zero 88 times, within 2: a tone of 440 Hz.
+- The span of the tone, less that silence, must be its 24 000 frames, within 2.
 - It must not start before the frame that `tone` names. When it starts at that frame, within 2, the file holds only the frames of the stream and the place is proved. When it starts later, the device wrote frames of its own before it: the test passes and says that the place is not proved.
 
 The check counts frames and reads no time of the host. It reads the frames to the end of the file, because QEMU writes the sizes of the header only at a clean end.
 
-Host tests: the border of a record (`src/library/contract/timed_stream`) refuses an unknown format, a count of 0 and past its bound, a place off a frame, a damaged record, a time before the earliest, too far and over the record before, and checks the map of the clocks against a reference at its edges; the readers of the device answers (`src/library/private/sound/sound_device`) refuse a short or refused answer, a `PCM_INFO` with fewer records than asked, a used entry that names no period, no period in flight or a period out of order, and a status that is not Ok, decide an underrun and a hold by the time, and close each refused region that came through the ring; the check of the tool refuses a file that is not a wave of PCM, another format, silence, a tone that starts early, a short file, a tone of another length and another frequency, and passes a tone with silence before it and inside it.
+Host tests: the border of a record (`src/library/contract/timed_stream`) refuses an unknown format, a count of 0 and past its bound, a place off a frame, a damaged record, a time before the earliest, too far and over the record before, and checks the map of the clocks against a reference at its edges; the readers of the device answers (`src/library/private/sound/sound_device`) refuse a short or refused answer, a `PCM_INFO` with fewer records than asked, a used entry that names no period, no period in flight or a period out of order, and a status that is not Ok, decide an underrun and a hold by the time, and close each refused region that came through the ring; the check of the tool refuses a file that is not a wave of PCM, another format, silence, a tone that starts early, a short file, a tone of another length and another frequency, and passes a tone with silence before it and inside it, and a tone whose crossings fall on frames of 0.
 
 ## 5. What is not built
 

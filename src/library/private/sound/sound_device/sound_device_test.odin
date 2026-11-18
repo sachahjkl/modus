@@ -76,9 +76,9 @@ a_short_or_foreign_pcm_info_gives_no_stream :: proc(t: ^testing.T) {
 		{PCM_INFO_CHANNELS_LEAST, timed_stream.CHANNELS + 1},
 	}
 	for change in changes {
-		foreign := pcm_info_answer(1)
-		foreign[ANSWER_CODE_BYTES + change.offset] = change.value
-		_, choice, _ = stream_of_answer(foreign[:], answer_length(1), 1)
+		changed := pcm_info_answer(1)
+		changed[ANSWER_CODE_BYTES + change.offset] = change.value
+		_, choice, _ = stream_of_answer(changed[:], answer_length(1), 1)
 		testing.expectf(t, choice == .None_Of_The_Format, "the byte %d at %d gives %v", change.value, change.offset, choice)
 	}
 }

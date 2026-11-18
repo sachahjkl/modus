@@ -113,13 +113,14 @@ QEMU 10.2 consumes a request of the transmit queue when its frames reach its mix
 
 The machine test `sound` starts a machine with `virtio-sound-pci` and an output to a file (`-audiodev wav`), at 48000 frames in one second and two channels, so QEMU converts no rate. The program `tone` starts the stream, asks for a tone of 440 Hz of 500 ms at 500 ms after the frame 0, and writes the frame where it played. It checks that the frame is the frame of its time, and, with no underrun, that it played at the time of that frame. It also sends eight commands that the service must refuse (a second region, a damaged `Start`, and six records), and checks each status and error record.
 
-The tool then reads the file. It finds the tone by its own start, the first frame that is not silence, and counts only the frames that are not silence from there:
+The tool then reads the file. It finds the tone by its own start, the first frame that is not silence, and measures it as a span to its last frame that is not silence. A frame of 0 is a frame of the tone: a cosine has samples of exactly 0 at some crossings (here every eleventh one), so a count of the frames that are not silence would miss them. A run of silent frames inside the span longer than one period of the tone (109 frames) is silence that the device wrote, and counts in neither the length nor the window; a crossing is a run of one frame or two. The checks come in the order of their faults:
 
-- **The frequency.** The left channel over the first 4800 frames of the tone crosses zero 88 times, within 2: a tone of 440 Hz.
-- **The length.** The frames that are not silence are the 24000 frames of the tone, within 8.
+- **The window.** The file holds 4800 frames from the start of the tone; else it is too short.
+- **The frequency.** The left channel over the first 4800 frames of the tone crosses zero 88 times, within 2: a tone of 440 Hz. A frame of 0 keeps the sign before it, so a crossing on it counts once.
+- **The length.** The span, less the inserted silence, is the 24000 frames of the tone, within 2: a crossing on its first or its last frame.
 - **The place.** The tone must not start before the frame that `tone` names: the file then holds fewer frames before it than the stream gave, a frame lost. When it starts at that frame, within 2, the file starts with the frame 0 of the stream and the place is proved. When it starts later, the device wrote frames that the stream did not give (a backend that pads by its timer, at a stall of the host): the test passes and says that the place is not proved, with the count of those frames.
 
-What the check proves: the service gives the device the frames of the record, whole and in order, and with a file that holds only the frames of the stream, at the frame of their time. What it cannot prove: the time of the host at which the device played a frame, and the place of the tone when the device writes frames of its own. Silence that the device writes inside the tone changes neither the frequency nor the length that it counts.
+What the check proves: the service gives the device the frames of the record, whole and in order, and with a file that holds only the frames of the stream, at the frame of their time. What it cannot prove: the time of the host at which the device played a frame, and the place of the tone when the device writes frames of its own. Silence that the device writes inside the tone changes neither the frequency nor the length that it counts, when it lasts more than one period of the tone; a shorter run of inserted silence counts as a part of the tone, and fails the length.
 
 The tool reads the samples to the end of the file and does not trust the sizes of its header: QEMU writes them only at a clean end.
 
