@@ -240,6 +240,16 @@ The design: `docs/STORAGE.md`, "3. The format on the disk".
 
 Do not use: data drive, home disk.
 
+### Silent disk
+
+A silent disk is a data disk that did not answer a request by its deadline, or whose block service stopped while a request waited.
+
+The storage service makes the disk silent once, with one line, and from then on sends no request to the block service. Each call that needs a block gets `Device` at once, so no client waits with no end; a call that needs no block is still served. The state lasts until the next start of the storage service. A silent disk is not a damaged disk: its blocks can be whole, and a later start opens them.
+
+The design: `src/md/features/missing_hardware.md`.
+
+Do not use: dead disk, hung disk, offline disk.
+
 ### Disk of the measures
 
 The disk of the measures is a disk that holds no data that a process keeps: the process `disk` measures the block service on it.

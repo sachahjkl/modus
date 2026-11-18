@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "modus:contract/block"
 import "modus:contract/date"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import format "modus:contract/store"
 import "modus:private/storage/storage_mount"
@@ -67,6 +68,99 @@ disk_tag: u32
 disk_errors: u64
 disk_size: u64 // The blocks of the disk that the service uses.
 broken: bool // The write of a root or its read back failed, or a place of the root dropped ROOT_REFUSAL_LIMIT roots in a row: the service makes no change until its next start.
+
+// The block service, with the right Read: its stop is an event of this
+// process, which ends each wait for a completion (block.GRANT_SERVICE).
+block_service: system.Handle
+// The event word of this thread when the service last read the state of
+// the block service. The state is read again only after an event, so a
+// wait for a completion costs no kernel call while the block service runs.
+// Until the first read, the state is not known.
+block_service_events: u32
+block_service_state_read: bool
+
+// Why the disk is silent (disk_silence_note).
+Disk_Silence :: enum {
+	No_Answer, // The block service gave a request the record No_Answer: the device did not answer it by its deadline.
+	Block_Service_Stopped, // The block service stopped while a request waited for its completion, or before it mapped the block ring.
+	No_Completion, // No completion came for system.ANSWER_BOUND_MILLISECONDS while a request waited.
+}
+
+// The disk does not answer: the service never reads the block ring again,
+// so a late completion is never taken for the answer of a later request,
+// and each call that needs a block is refused at once with Device. It makes
+// no change until its next start (src/md/features/missing_hardware.md).
+disk_silent: bool
+
+// The line that the storage service writes once when the disk goes silent,
+// after its cause. A machine test waits for it.
+DISK_SILENT_LINE :: "; the service reads and changes nothing on the disk until its next start, and refuses each call that needs the disk"
+
+// The open of the disk is done: the service knows its stores. A disk that
+// went silent before it leaves this false, and each call is refused.
+disk_opened: bool
+
+// disk_unopened_refusal refuses a call while the disk went silent before
+// the open was done: the service knows no store, so it can answer no
+// call with a fact of the disk. It gives Device, as a read of a silent disk
+// does after the open.
+disk_unopened_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: i64) {
+	if disk_opened {
+		return false, 0
+	}
+	return true, errors.fail(error, failure(.Disk), .Device, .None, 0, 0, 0, 1)
+}
+
+// disk_silence_note makes the disk silent, with its line, once. It closes
+// the handle of the block service: no wait reads it after the silence, and
+// its stopped process then frees its slot of the kernel.
+disk_silence_note :: proc "contextless" (cause: Disk_Silence) {
+	if disk_silent {
+		return
+	}
+	disk_silent = true
+	broken = true
+	disk_errors += 1
+	system.close(block_service)
+	block_service = 0
+	switch cause {
+	case .No_Answer:
+		system.log_in("disk", .Error, "storage: the disk does not answer: the block service says that the device did not answer a request", DISK_SILENT_LINE)
+	case .Block_Service_Stopped:
+		system.log_in("disk", .Error, "storage: the disk does not answer: the block service stopped before it answered", DISK_SILENT_LINE)
+	case .No_Completion:
+		system.log_in("disk", .Error, "storage: the disk does not answer: no completion came in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms", DISK_SILENT_LINE)
+	}
+}
+
+// disk_answer_absent says if a completion of the block service says that
+// the device did not answer (the border block.device_did_not_answer).
+disk_answer_absent :: proc "contextless" (completion: ring.Record) -> bool {
+	return block.device_did_not_answer(completion.kind, completion.values)
+}
+
+// disk_wait_goes_on decides a wait for a completion of the block service
+// that came to no completion in its pass: false when the block service
+// stopped or the deadline passed, with the disk then silent.
+disk_wait_goes_on :: proc "contextless" (deadline: u64) -> bool {
+	state := op.Process_State.Ready
+	// The word is read before the state: a stop after the read changes
+	// the word again, and the next pass reads the state.
+	if events := intrinsics.volatile_load(system.events()); !block_service_state_read || events != block_service_events {
+		block_service_events = events
+		block_service_state_read = true
+		state, _ = system.process_state(block_service)
+	}
+	switch system.answer_wait_of(system.time(), deadline, state) {
+	case .Waits:
+		return true
+	case .Stopped:
+		disk_silence_note(.Block_Service_Stopped)
+	case .Silent:
+		disk_silence_note(.No_Completion)
+	}
+	return false
+}
 
 check_of :: format.check
 root_check :: format.root_check
@@ -134,13 +228,24 @@ Request :: struct {
 	slot:   u64,
 }
 
-// transfer reads or writes blocks: all are in flight at the same time.
+// transfer reads or writes blocks: all are in flight at the same time. A
+// silent disk refuses at once. A wait for a completion ends when the block
+// service stops, or after a stall of system.ANSWER_BOUND_MILLISECONDS: the
+// disk is then silent, and the transfer fails.
 transfer :: proc "contextless" (command: block.Command, requests: []Request) -> bool {
+	if disk_silent {
+		disk_errors += 1
+		return false
+	}
 	first := disk_tag
+	defer disk_tag = first + u32(len(requests))
 	sent := 0
 	done := 0
 	good := true
+	// A stall bound: each completion is progress, and moves the deadline.
+	deadline := system.answer_deadline(system.time())
 	for done < len(requests) {
+		wait := system.wait_begin() // The stop of the block service is an event.
 		for sent < len(requests) {
 			request := requests[sent]
 			record := ring.Record{kind = u32(command), tag = first + u32(sent), values = {0 = request.number, 1 = 1, 2 = request.slot * BLOCK_SIZE}}
@@ -150,12 +255,18 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 			sent += 1
 		}
 		system.wake_reader(&blocks.commands)
+		completed := false
 		for {
 			completion, ok := system.receive(&blocks.completions)
 			if !ok {
 				break
 			}
 			done += 1
+			completed = true
+			if disk_answer_absent(completion) {
+				disk_silence_note(.No_Answer)
+				return false
+			}
 			if block.Status(completion.kind) != .Ok {
 				if good {
 					// The first refusal of this batch goes on the log, with the
@@ -170,46 +281,69 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 			}
 		}
 		if done < len(requests) {
-			wait: system.Wait
+			if completed {
+				deadline = system.answer_deadline(system.time())
+			} else if !disk_wait_goes_on(deadline) {
+				return false
+			}
 			system.wait_records(&wait, &blocks.completions)
 			if sent < len(requests) {
 				system.wait_room(&wait, &blocks.commands)
 			}
 			if !system.wait_spin(&wait) {
-				system.wait_end(&wait)
+				system.wait_end(&wait, deadline)
 			}
 		}
 	}
-	disk_tag += u32(len(requests))
 	if !good {
 		disk_errors += 1
 	}
 	return good
 }
 
-// command sends one command with no data and waits for its completion.
+// command sends one command with no data and waits for its completion. On
+// a silent disk, and when the wait for the block service ends with no
+// completion (disk_wait_goes_on), it gives a completion Device_Error with
+// the record No_Answer of the device, as the block service gives one.
 command :: proc "contextless" (kind: block.Command, values: [7]u64 = {}) -> ring.Record {
+	silent := ring.Record{kind = u32(block.Status.Device_Error), values = block.no_answer_values(kind)}
+	if disk_silent {
+		return silent
+	}
 	disk_tag += 1
 	tag := disk_tag
-	for !system.send(&blocks.commands, ring.Record{kind = u32(kind), tag = tag, values = values}) {
-		wait: system.Wait
+	deadline := system.answer_deadline(system.time())
+	for {
+		wait := system.wait_begin() // The stop of the block service is an event.
+		if system.send(&blocks.commands, ring.Record{kind = u32(kind), tag = tag, values = values}) {
+			break
+		}
+		if !disk_wait_goes_on(deadline) {
+			return silent
+		}
 		system.wait_room(&wait, &blocks.commands)
-		system.wait_end(&wait)
+		system.wait_end(&wait, deadline)
 	}
 	for {
+		wait := system.wait_begin()
 		for {
 			completion, ok := system.receive(&blocks.completions)
 			if !ok {
 				break
 			}
 			if completion.tag == tag {
+				if disk_answer_absent(completion) {
+					disk_silence_note(.No_Answer)
+				}
 				return completion
 			}
 		}
-		wait: system.Wait
+		if !disk_wait_goes_on(deadline) {
+			return silent
+		}
 		system.wait_records(&wait, &blocks.completions)
 		if !system.wait_spin(&wait) {
-			system.wait_end(&wait)
+			system.wait_end(&wait, deadline)
 		}
 	}
 }

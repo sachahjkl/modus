@@ -53,6 +53,21 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 	return {}
 }
 
+// The network service stopped, or did not start: no process with an
+// endpoint starts until the machine starts again. A frame service that
+// stops at each start would cost a start of two services and a line for
+// each process that asks (src/md/features/missing_hardware.md).
+network_refused: bool
+
+// network_refuse refuses the network from now on, with one line.
+network_refuse :: proc "contextless" (cause: string) {
+	if network_refused {
+		return
+	}
+	network_refused = true
+	system.log_in("devices", .Warning, "root: ", cause, ": no process with an endpoint of the network starts until the machine starts again; the other processes start")
+}
+
 // network_service gives the network service that runs, or starts it.
 network_service :: proc "contextless" () -> (service: ^Started, status: system.Status) {
 	for &item in started {
@@ -60,7 +75,18 @@ network_service :: proc "contextless" () -> (service: ^Started, status: system.S
 			return &item, .Ok
 		}
 	}
-	start("network") or_return
+	if network_refused {
+		return nil, .Bad_State
+	}
+	if status = start("network"); status != .Ok {
+		// Only an absent device is for ever: driver_start gives Bad_Handle
+		// when no network device is at its place. A full table, a short
+		// budget or short memory can pass at a later start.
+		if status == .Bad_Handle {
+			network_refuse("the network service did not start")
+		}
+		return nil, status
+	}
 	for &item in started {
 		if item.process != 0 && item.network.head != nil {
 			return &item, .Ok
@@ -164,4 +190,5 @@ network_end :: proc "contextless" (item: ^Started) {
 	}
 	system.ring_close(&item.network)
 	system.close(item.network_memory)
+	network_refuse("the network service stopped")
 }

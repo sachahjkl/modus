@@ -18,6 +18,8 @@ import "modus:support/system"
 // slot by the name of the table, and the build stops when the two differ.
 #assert(block.GRANT_RING == system.GRANT_DEVICE_RING)
 #assert(frame.GRANT_RING == system.GRANT_DEVICE_RING)
+#assert(block.GRANT_SERVICE == system.GRANT_DEVICE_SERVICE)
+#assert(frame.GRANT_SERVICE == system.GRANT_DEVICE_SERVICE)
 #assert(date.GRANT_PAGE == system.GRANT_DATE_PAGE)
 #assert(date.GRANT_PORTS == system.GRANT_DATE_PORTS)
 #assert(datagram.GRANT_RING == system.GRANT_DATAGRAM_RING)
