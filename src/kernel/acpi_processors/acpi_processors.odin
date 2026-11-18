@@ -68,3 +68,38 @@ processors_read :: proc "contextless" (table: []u8, extended_identifiers: bool, 
 	}
 	return count
 }
+
+// Why the table APIC gives the kernel no processor to start: the machine
+// then runs on the first processor alone, with one line. A table that
+// lists one processor, the first, is no absence: that machine has one.
+Table_Absence :: enum u8 {
+	None,
+	Absent, // The firmware lists no table APIC, or the table is outside the direct map.
+	Too_Short, // The table ends before ENTRIES_START.
+	No_Usable_Processor, // No entry names a processor that can run, in the mode of the controller.
+}
+
+// The words of each absence in the line of the kernel, which ends with
+// ": one processor".
+@(rodata)
+TABLE_ABSENCE_TEXTS := [Table_Absence]string {
+	.None                = "",
+	.Absent              = "the firmware lists no APIC table",
+	.Too_Short           = "the APIC table of the firmware ends before its first entry",
+	.No_Usable_Processor = "the APIC table of the firmware lists no usable processor",
+}
+
+// table_absence says why a table gives no processor: `found` says if the
+// kernel found the table, and `count` is what processors_read gave.
+table_absence :: proc "contextless" (found: bool, table: []u8, count: int) -> Table_Absence {
+	if !found {
+		return .Absent
+	}
+	if len(table) < ENTRIES_START {
+		return .Too_Short
+	}
+	if count <= 0 {
+		return .No_Usable_Processor
+	}
+	return .None
+}

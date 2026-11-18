@@ -26,7 +26,8 @@ import block_tree "modus:private/storage/storage_object"
 // disk with a fault that reports none; and hide one: it answers Ok, gives
 // the bytes at a read, and never makes them durable (dropped_write.odin);
 // and drop one write of zeros of an erase of versions
-// (tpm_key_scenario.odin).
+// (tpm_key_scenario.odin); and stop to answer at a write, with its
+// connection kept open (silent_disk.odin).
 //
 // The protocol: https://github.com/NetworkBlockDevice/nbd/blob/master/doc/proto.md
 // All numbers on the wire are big-endian.
@@ -132,6 +133,18 @@ Network_Block_Device :: struct {
 	// bytes that the disk kept between the flush before and that flush,
 	// the zeros of that erase that reached the disk.
 	zero_blocks_kept_with_drop:  int,
+	// The silent disk (silent_disk.odin): not empty, from the first write
+	// that holds a block whose bytes start with this marker, the disk keeps
+	// nothing, reads each request and answers none, as a disk that stops to
+	// answer and keeps its connection. disk_server_disconnect ends it.
+	silence_marker:              string,
+	silent:                      bool, // Atomic: the disk answers nothing more.
+	silent_requests:             int, // Atomic: the requests that it read and did not answer, that write first.
+	// Atomic: disk_server_disconnect closed the connection. The server
+	// then refuses each new connection, with a line, and counts it: a
+	// machine that connects again would read a disk that answers.
+	disconnected:                bool,
+	connections_refused:         int,
 }
 
 // The states of the dropped write of zeros, in their order.
@@ -329,6 +342,17 @@ disk_server_stop :: proc(server: ^Network_Block_Device) {
 	server.thread = nil
 }
 
+// disk_server_disconnect closes the connection of the machine and keeps the
+// server: QEMU then fails each request that waits for an answer, so a
+// machine whose disk went silent can end (silent_disk.odin). The server
+// refuses each later connection, with a line.
+disk_server_disconnect :: proc(server: ^Network_Block_Device) {
+	sync.atomic_store(&server.disconnected, true)
+	if client := net.TCP_Socket(sync.atomic_load((^int)(&server.client))); client != 0 {
+		_ = net.shutdown(client, .Both)
+	}
+}
+
 disk_server_free :: proc(server: ^Network_Block_Device) {
 	for write in server.pending {
 		delete(write.bytes)
@@ -347,6 +371,12 @@ disk_server_run :: proc(server: ^Network_Block_Device) {
 		client, _, err := net.accept_tcp(server.socket)
 		if err != nil {
 			return
+		}
+		if sync.atomic_load(&server.disconnected) {
+			sync.atomic_add(&server.connections_refused, 1)
+			fmt.eprintln("modustool: the disk server refused a new connection of QEMU: the test closed the connection of the disk, and a disk that answers again would hide the silence")
+			net.close(client)
+			continue
 		}
 		sync.atomic_store((^int)(&server.client), int(client))
 		if disk_server_handshake(server, client) {
@@ -473,6 +503,18 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 			server.failure = "a request with a wrong magic"
 			return
 		}
+		if sync.atomic_load(&server.silent) {
+			// A silent disk reads the data of a write too, so the client is
+			// never stopped by a full socket: it waits for answers only.
+			if kind == NBD_COMMAND_WRITE && (length > u64(len(data)) || !receive_all(client, data[:length])) {
+				return
+			}
+			if kind == NBD_COMMAND_DISCONNECT {
+				return
+			}
+			sync.atomic_add(&server.silent_requests, 1)
+			continue
+		}
 		reply: [16]u8
 		put_u32(reply[0:], NBD_SIMPLE_REPLY_MAGIC)
 		put_u64(reply[8:], cookie)
@@ -495,6 +537,13 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 		case NBD_COMMAND_WRITE:
 			if length > u64(len(data)) || !receive_all(client, data[:length]) {
 				return
+			}
+			if in_range && marker_block(offset, data[:length], server.silence_marker) >= 0 {
+				// The disk stops to answer at this write: it keeps none of it,
+				// and answers neither it nor any later request.
+				sync.atomic_store(&server.silent, true)
+				sync.atomic_add(&server.silent_requests, 1)
+				continue
 			}
 			if !in_range {
 				put_u32(reply[4:], NBD_ERROR_INVALID)

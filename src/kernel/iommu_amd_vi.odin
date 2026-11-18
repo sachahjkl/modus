@@ -237,16 +237,18 @@ amd_units_start :: proc "contextless" () -> (started: bool, round_trip_cycles: u
 		amd_message_interrupt_start(unit)
 		register_write_64(unit, iommu.AMD_REGISTER_CONTROL, iommu.AMD_CONTROL_STARTED)
 		unit_started := amd_status_wait(unit, iommu.AMD_STATUS_RUNS, true)
+		invalidated := true
 		if unit_started {
 			forget: Descriptor_Batch
 			if iommu.amd_extended_invalidate_all(unit.extended) {
 				batch_add(&forget, iommu.amd_command_all())
 			}
 			before := cycles_now()
-			invalidate_unit(unit, forget)
+			invalidated = invalidate_unit_at_start(unit, forget)
 			if index == 0 {
 				round_trip_cycles = cycles_now() - before
 			}
+			unit_started = invalidated
 		}
 		if !unit_started {
 			// A machine with a part of its units on would let a device of a
@@ -254,7 +256,11 @@ amd_units_start :: proc "contextless" () -> (started: bool, round_trip_cycles: u
 			for &earlier in iommu_units[:index + 1] {
 				amd_unit_off(&earlier)
 			}
-			log("kernel: no IOMMU in use: a unit did not start its queue of invalidations and its event log; each device reaches all memory")
+			if !invalidated {
+				log(IOMMU_FIRST_INVALIDATION_LINE)
+			} else {
+				log("kernel: no IOMMU in use: a unit did not start its queue of invalidations and its event log; each device reaches all memory")
+			}
 			return false, 0
 		}
 	}
@@ -262,13 +268,21 @@ amd_units_start :: proc "contextless" () -> (started: bool, round_trip_cycles: u
 	// not translate a requester changes nothing, and the table IVRS of
 	// QEMU does not name each function that QEMU sends through its unit.
 	// A batch holds the most commands that one wait allows: about 9400
-	// waits for each unit, at the start only.
+	// waits for each unit, at the start only. These are still the first
+	// invalidations of the entries: a unit that does not finish one turns
+	// every unit off, as above.
 	for &unit in iommu_units[:iommu_unit_count] {
 		batch: Descriptor_Batch
 		for requester in u32(0) ..< iommu.AMD_DEVICE_TABLE_ENTRIES {
 			batch_add(&batch, iommu.amd_command_device_entry(u16(requester)))
 			if int(batch.count) == len(batch.descriptors) || requester == iommu.AMD_DEVICE_TABLE_ENTRIES - 1 {
-				invalidate_unit(&unit, batch)
+				if !invalidate_unit_at_start(&unit, batch) {
+					for &each_unit in iommu_units[:iommu_unit_count] {
+						amd_unit_off(&each_unit)
+					}
+					log(IOMMU_FIRST_INVALIDATION_LINE)
+					return false, 0
+				}
 				batch = {}
 			}
 		}

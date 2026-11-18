@@ -7,13 +7,13 @@ import "core:strings"
 import "core:testing"
 import "modustool:foundation"
 
-// The table of the boot volumes: 16 fixed volumes and one for each test of
+// The table of the boot volumes: 17 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 16 + len(self_tests))
-	testing.expect_value(t, len(volumes), 23)
+	testing.expect_value(t, len(volumes), 17 + len(self_tests))
+	testing.expect_value(t, len(volumes), 24)
 	// The volumes of the TPM floors are signed for Secure Boot: only a start
 	// with the PCR 7 of Secure Boot raises a floor. The newer key differs
 	// from the newer system by its key number alone.
@@ -62,8 +62,9 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 		}
 		// The kernel module that the build key names is the module of the
 		// table, or the changed copy of this volume.
-		if volume.change.kernel_changed_after_description {
+		if volume.change.kernel_changed_after_description || volume.change.kernel_memory_raised {
 			testing.expect(t, strings.contains(boot_volume_kernel_module_path(volume), boot_volume_name(volume.path)), "the changed kernel has the name of its volume")
+			testing.expect(t, !(volume.change.kernel_changed_after_description && volume.change.kernel_memory_raised), "one volume changes its kernel in one way")
 		} else {
 			testing.expect_value(t, boot_volume_kernel_module_path(volume), foundation.module_path(volume.kernel))
 		}

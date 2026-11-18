@@ -282,6 +282,18 @@ fuzz_target_table := [?]Fuzz_Target {
 		regions = fuzz_draw_record_regions,
 	},
 	{
+		name = "draw_path",
+		kind = .Raw,
+		about = "support/interface: a path of fuzzed points and stroke writes no pixel outside its canvas and its box, and draws the same pixels whole and in damage rectangles",
+		packages = {foundation.SOURCE_FOLDER_SUPPORT + "/interface", foundation.SOURCE_FOLDER_CONTRACT + "/draw_record"},
+		input_limit = 4 + 1024 * 12,
+		// A path of the most points draws many edges in each band.
+		check_executions = 300,
+		execute = fuzz_draw_path_execute,
+		seeds = fuzz_draw_path_seeds,
+		regions = fuzz_draw_path_regions,
+	},
+	{
 		name = "firmware_tables",
 		kind = .Raw,
 		about = "kernel:iommu: the tables DMAR, IVRS and MCFG that the readers accept keep their counts, ranges and units in their bounds",

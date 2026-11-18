@@ -132,8 +132,9 @@ A failed check of the boot program stops the boot. The kernel does not start.
 
 - The serial log has one line with the file and the two hashes: `boot program: console does not have the hash of the system description: expected <64 digits>, found <64 digits>`. A wrong signature gives `boot program: the signature of the system description is wrong`.
 - A refusal of a TPM floor gives `boot program: the security version 1 of the system description is below the version floor 2 of the TPM: an older system`, or `boot program: the key number 1 of this boot program is below the key floor 2 of the TPM: its key is revoked`. The boot display shows the same sentence.
-- The boot display shows the same failure in red in its head, with the first 16 digits of each hash. Its step is "the kernel module" for the kernel, else "the boot image".
-- The boot program turns off the watchdog of the firmware, so the failure stays on the screen until the machine is stopped by hand. It never returns to the firmware: the firmware does not try the next boot option.
+- The boot display shows the same failure in red in its head, with the first 16 digits of each hash. Its step is "the kernel module" for the kernel, else "the boot image". The boot program checks each file of the boot image before the kernel, in the order of the steps of the display: the boot image comes first.
+- The boot program turns off the watchdog of the firmware, so the failure stays on the screen until the machine is stopped by hand. It never returns to the firmware: the firmware does not try the next boot option. After the draw, the log has `boot program: the boot display shows the failure`. With no screen, the log has `boot program: no boot display: the failure stays on the console of the firmware`, and the failure stays there. After a call of `ExitBootServices` that failed, the firmware allows only its services of the memory: the boot program then writes on the serial port only, turns no watchdog off, and with no screen writes `boot program: no boot display: the failure is on the serial port only`.
+- Each other stop of the boot program has the same form, with its step on the boot display: no memory from the firmware (`boot program: the firmware gives no memory for <count> pages`), a memory map that the firmware refuses, that grows at each of 4 reads, that does not fit its buffer, whose step between descriptors is below 40 bytes or past one page, or whose usable range starts inside a page or ends past 2^52, a kernel module that cannot be loaded, a firmware that refuses to end its services. The boot program never powers the machine off (`src/md/features/missing_hardware.md`, "The stop of the boot program").
 - With Secure Boot on, a boot program that the firmware refuses never starts. The boot manager of the firmware writes `BdsDxe: failed to load Boot<number>` on the serial console, and tries its next boot option.
 
 A failed check of the root service stops the start of the processes. The boot display shows "the start failed:" and the file, and the log has the two hashes.
@@ -273,11 +274,12 @@ The machines with this firmware run with four processors, as every other machine
 | The format, its reader and its checks | `src/library/contract/system_description/system_description.odin` |
 | The trust record | `src/library/contract/boot_info/boot_info.odin` (`Boot_Trust`) |
 | The checks and the measure of the boot program | `src/boot/trust.odin` |
+| The stop of the boot program, on the boot display, and the read of the memory map | `src/boot/main.odin` (`stop`, `boot_stop`, `read_memory_map`), `src/library/private/boot_program/firmware_memory_map` |
 | The check of the root service | `src/modules/system/root/trust.odin` |
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
 | The signature, the keys, the key numbers, the command `key` | `tools/modustool/build/system_description.odin`, `resources/keys/key_numbers` |
-| The seventeen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/machine/trusted_boot_scenario.odin` |
+| The eighteen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/machine/trusted_boot_scenario.odin` |
 | The check and the raise of the TPM floors by the boot program | `src/boot/trust.odin` (`floors_check`, `floor_raise`) |
 | The commands of the indices of the floors, the checks of their answers, the decisions | `src/library/support/tpm2` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/build/secure_boot.odin` |

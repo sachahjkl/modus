@@ -65,11 +65,14 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 	if !signature_verifies(trust.public_key[:], message[:], signature) {
 		trust_fail(boot, .Boot_Image, "the signature of the system description is wrong")
 	}
-	if kernel_result := system_description.kernel_check(description, kernel_file); kernel_result.fault != .None {
-		check_fail(boot, .Kernel_Module, &kernel_result)
-	}
+	// The files of the boot image before the kernel, in the order of the
+	// steps of the boot display: a failure of the kernel then shows the
+	// boot image as done, which it is.
 	if image_result := system_description.image_check(description, image); image_result.fault != .None {
 		check_fail(boot, .Boot_Image, &image_result)
+	}
+	if kernel_result := system_description.kernel_check(description, kernel_file); kernel_result.fault != .None {
+		check_fail(boot, .Kernel_Module, &kernel_result)
 	}
 	trust.verifier = secure_boot_on() ? info.Verifier.Firmware_And_Boot_Program : info.Verifier.Boot_Program
 	trust.description_hash = blake3.hash(description)
@@ -194,7 +197,7 @@ check_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 	case .None, .Not_Valid, .Image_Not_Valid, .Count_Differs:
 		// No one file of the boot image is at fault.
 	}
-	trust_stop(boot, step, string(shown.bytes[:shown.count]))
+	boot_stop(boot, step, string(shown.bytes[:shown.count]))
 }
 
 // trust_fail writes one failure on the log and on the boot display, then
@@ -203,21 +206,7 @@ trust_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 	print("boot program: ")
 	print(text)
 	print("\r\n")
-	trust_stop(boot, step, text)
-}
-
-// trust_stop shows the failure and keeps it on the screen. The watchdog of
-// the firmware restarts the machine after 5 minutes and starts the same
-// boot program again: the boot program turns the watchdog off, so the
-// failure stays until a person stops the machine.
-trust_stop :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, text: string) -> ! {
-	display(boot, text, .Failed, step)
-	// After the draw, print writes on the serial port only (src/boot/main.odin).
-	print("boot program: the boot display shows the failure\r\n")
-	system.boot_services.set_watchdog_timer(0, 0, 0, nil)
-	for {
-		intrinsics.cpu_relax()
-	}
+	boot_stop(boot, step, text)
 }
 
 // The commands of the TPM that the boot program sends (TPM 2.0 Library,

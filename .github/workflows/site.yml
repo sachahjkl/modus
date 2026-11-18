@@ -25,8 +25,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - uses: nixbuild/nix-quick-install-action@v35
+      # The store of the development shell, with the LLVM, the QEMU and the
+      # Odin that the flake builds, back from the last run with the same
+      # flake.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: site-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: site-${{ runner.os }}-
       # The boot image gives the tiles of the home, the sizes of the module
       # pages and the column "in the boot image" of the licenses.
       - run: nix develop -c modustool build

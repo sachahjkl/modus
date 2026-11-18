@@ -32,6 +32,9 @@
 // This package allocates no memory and calls no kernel operation.
 package block
 
+import "modus:contract/enum_word"
+import "modus:contract/errors"
+
 BLOCK_SIZE :: 4096 // The bytes of one block: the unit of each request.
 RING_CAPACITY :: 256 // The capacity of the block ring.
 
@@ -39,6 +42,9 @@ RING_CAPACITY :: 256 // The capacity of the block ring.
 SERVICE_RING :: 0
 // The role of the block ring in the context of a client of a block service.
 GRANT_RING :: 6
+// The role of the block service in the context of its client: the process,
+// with the right Read. Its stop ends a wait of the client for a completion.
+GRANT_SERVICE :: 10
 
 // A command of a client, as the kind of a command record of the block ring.
 Command :: enum u32 {
@@ -75,6 +81,40 @@ Status :: enum u32 {
 	No_Region    = 3, // No data region, or the handle did not come through the block ring.
 	Device_Error = 4, // The device reported an error.
 	Unsupported  = 5, // The device cannot do this request.
+}
+
+// The bound of a wait for the device, in milliseconds: the hang bound of a
+// process (system.ANSWER_BOUND_MILLISECONDS, which the block service checks
+// against it), never a measure of a disk. It is the limit of the record of
+// a request that the device did not answer.
+NO_ANSWER_BOUND_MILLISECONDS :: 60_000
+
+// no_answer_values gives the values of a completion Device_Error of a
+// request that the device did not answer by its deadline, or that it will
+// never answer: the record No_Answer, with the device as what did not
+// answer. The block service gives it to each request in flight when it
+// stops, and the storage service reads it with device_did_not_answer.
+no_answer_values :: proc "contextless" (command: Command) -> [7]u64 {
+	return errors.ring_fail(u32(command), .No_Answer, .Milliseconds, 0, 0, NO_ANSWER_BOUND_MILLISECONDS, i64(errors.Unanswered.Device))
+}
+
+// device_did_not_answer is the border of a completion that says that the
+// device did not answer: the status Device_Error and the record No_Answer
+// with the device as what did not answer. The words come from the block
+// service: each one goes through its border, and a word that names no
+// member gives false. It reads and changes no state.
+device_did_not_answer :: proc "contextless" (completion_kind: u32, values: [7]u64) -> bool {
+	status, status_known := enum_word.member_of_word(Status, u64(completion_kind))
+	if !status_known || status != .Device_Error {
+		return false
+	}
+	record := errors.completion_record(values)
+	kind, kind_known := errors.kind_of_word(record.kind)
+	if !kind_known || kind != .No_Answer {
+		return false
+	}
+	unanswered, unanswered_known := errors.unanswered_of_word(record.found)
+	return unanswered_known && unanswered == .Device
 }
 
 // The names of the commands and of their values, for the sentence of the

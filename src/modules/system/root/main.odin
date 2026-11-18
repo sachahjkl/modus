@@ -534,7 +534,8 @@ entropy_report: random.Entropy_Report
 // step 7 starts no input service and no compositor, and step 8 starts no
 // console, with the line "root: no screen: no console, no window; the
 // other services start"; the processes that start with no screen are a
-// decision of a start plan that is not built, so this service adds none;
+// decision of the start policy (src/md/features/start_policy.md), so this
+// service adds none;
 // `unlock` starts, as a machine key that the TPM releases needs no typing,
 // and when it must have a key typed it writes its line and stops, and it is
 // not started again. A compositor that stops later gives one line and
@@ -740,8 +741,8 @@ control_ring_create :: proc "contextless" () {
 // screen_absence_note records that the machine has no screen, and writes
 // one line, once: at the start with no framebuffer, or when the compositor
 // stopped. This service starts no process in place of the console: which
-// processes start with no screen is a decision of a start plan, which is
-// not built (src/md/features/missing_hardware.md).
+// processes start with no screen is a decision of the start policy
+// (src/md/features/start_policy.md).
 screen_absence_note :: proc "contextless" () {
 	if screen_absent {
 		return

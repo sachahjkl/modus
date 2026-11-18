@@ -1,9 +1,11 @@
 package machine
 
 import "modus:contract/glyph_cache"
+import "modus:contract/reference_screen"
 import "modus:contract/store"
 import tree "modus:private/storage/storage_tree"
 import "modus:private/compositor/bar"
+import "modus:private/compositor/palette"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -78,6 +80,11 @@ Step_Kind :: enum {
 	// of the line, and the zone must be `expected`, "+08:00"
 	// (machine_clock.odin).
 	Bar_Local_Time,
+	// As Wait, for the line of the compositor at its start (text:
+	// SCREEN_SIZE_LINE): the size on that line must be the reference
+	// screen, else the step fails at once and names the size that the
+	// firmware gave (machine_resize.odin, reference_screen_problem).
+	Screen_Size,
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -127,6 +134,7 @@ Step_Kind :: enum {
 	// the cut (power_loss.odin).
 	Power_Loss_Arm,
 	Power_Loss, // Wait until the disk of the last Power_Loss_Arm loses its power: it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
+	Disk_Disconnect, // The disk that the tool serves closes its connection: QEMU fails each request that waits for an answer, so a machine whose disk went silent can end (silent_disk.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
@@ -1002,6 +1010,9 @@ scenario := [?]Step {
 	// of the compositor, before its first frame.
 	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
 	{kind = .Wait, text = "compositor: fill_bytes_with_value, not aligned: ", any_order = true},
+	// The firmware gave the mode that the boot program asked for: the
+	// compositor shows the reference screen.
+	{kind = .Screen_Size, text = SCREEN_SIZE_LINE, any_order = true},
 	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
 	// The two come in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
@@ -2050,8 +2061,8 @@ scenario := [?]Step {
 	{kind = .Launch, text = "boot"},
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot"},
-	// The window covers the screen: move it down, away from the console.
-	{kind = .Move, text = "boot", to_x = 64, to_y = 744},
+	// The window covers the console: move it down, away from the console.
+	{kind = .Move, text = "boot", to_x = 64, to_y = WINDOW_TITLE_ONLY_Y},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"boot\")"},
 	{kind = .Wait, text = "root: boot stopped"},
@@ -2066,7 +2077,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "pages: ok, the page tables keep the rules"},
 	{kind = .Wait, text = "pages: the processor refuses the memory of processes to the kernel"},
 	{kind = .Shot, text = "pages"},
-	{kind = .Move, text = "pages", to_x = 168, to_y = 744}, // The window covers the console.
+	{kind = .Move, text = "pages", to_x = 168, to_y = WINDOW_TITLE_ONLY_Y}, // The window covers the console.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
@@ -2205,7 +2216,7 @@ scenario := [?]Step {
 	// The manual reads the Markdown of the documentation: it checks its own
 	// page, whose comments have each mark.
 	{kind = .Wait, text = "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must", fails_on = "manual: the Markdown of its page: FAILED"},
-	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
+	{kind = .Move, text = "manual", to_x = 208, to_y = WINDOW_TITLE_ONLY_Y},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},
 	{kind = .Wait, text = "[console]   module     manual"},
@@ -2279,7 +2290,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "backspace"},
 	{kind = .Wait, text = "manual: back to the page before"},
 	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
-	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
+	{kind = .Move, text = "manual", to_x = 208, to_y = WINDOW_TITLE_ONLY_Y},
 	{kind = .Front, text = "console"},
 
 	// A module with imports: agenda imports calendar. The loader finds an
@@ -2441,7 +2452,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: calendar_fixed: no entry, "},
 	{kind = .Front, text = "manual"},
 	{kind = .Shot, text = "module_information"},
-	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
+	{kind = .Move, text = "manual", to_x = 208, to_y = WINDOW_TITLE_ONLY_Y},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "unload(\"agenda\")"},
 	{kind = .Wait, text = "[console]   module    agenda"},
@@ -2464,7 +2475,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " gone before its start, 0 lost since, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
-	{kind = .Move, text = "log", to_x = 96, to_y = 744},
+	{kind = .Move, text = "log", to_x = 96, to_y = WINDOW_TITLE_ONLY_Y},
 	// The log records as a table with typed fields, through the remote
 	// service: from here on some checks read the process, the channel and
 	// the level of a record (step Record), not only a line of text.
@@ -3164,9 +3175,9 @@ scenario := [?]Step {
 	{kind = .Shot, text = "pointer_text"},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
-	{kind = .Point, x = 400, y = 120, text = "text"}, // The input band of the palette.
-	{kind = .Point, x = 400, y = 180, text = "pointing_hand"}, // The first entry of its list, under the heading of its group.
-	{kind = .Point, x = 400, y = 476, text = "arrow"}, // Its footer.
+	{kind = .Point, x = PALETTE_POINT_X, y = 120, text = "text"}, // The input band of the palette.
+	{kind = .Point, x = PALETTE_POINT_X, y = 180, text = "pointing_hand"}, // The first entry of its list, under the heading of its group.
+	{kind = .Point, x = PALETTE_POINT_X, y = 476, text = "arrow"}, // Its footer.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	// The settings of the system: the font, the order of the stripes, the
@@ -3735,6 +3746,28 @@ WINDOW_TITLE_HEIGHT :: 24 // The title bar of a window, above its surface.
 WINDOW_CLOSE_RIGHT :: 14
 WINDOW_CLOSE_Y :: 12
 
+// The places of the scenarios that name an edge of the screen, from the
+// reference screen that a test machine shows
+// (src/md/features/desktop_to_browser.md, "The reference screen"). The
+// other places of the scenarios are the places of their windows, which
+// keep the window bound, so they stay where they were.
+//
+// A point 6 pixels inside the lower right corner, which no window of a
+// scenario covers: a press there falls on the background.
+SCREEN_CORNER_X :: reference_screen.WIDTH - 6
+SCREEN_CORNER_Y :: reference_screen.HEIGHT - 6
+// A window at this height shows its title bar only, at the bottom of the
+// screen: a scenario moves a window there to show the console under it.
+WINDOW_TITLE_ONLY_Y :: reference_screen.HEIGHT - WINDOW_TITLE_HEIGHT
+#assert(WINDOW_TITLE_ONLY_Y % bar.GRID == 0 && WINDOW_TITLE_ONLY_Y + WINDOW_GRAB_Y < reference_screen.HEIGHT)
+// The left side of the palette, in the middle of the width of the screen
+// on the grid, as palette.panel_place gives it; a host test compares the
+// two (scenario_places_test.odin).
+PALETTE_LEFT :: (reference_screen.WIDTH - palette.PANEL_WIDTH) / 2 / bar.GRID * bar.GRID
+// A point of the palette 208 pixels from its left side: in its input band,
+// its list and its footer, and on no text that changes the pointer.
+PALETTE_POINT_X :: PALETTE_LEFT + 208
+
 // window_width gives the width of the surface of the last window with a
 // title: "compositor: surface title 480x320 at 276,232".
 window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool) {
@@ -4076,6 +4109,9 @@ Machine_Options :: struct {
 	without_screen:         bool,
 	without_ps2_controller: bool,
 	entropy_device_silent:  bool,
+	no_network_device: bool, // The machine has no network device (silent_disk.odin).
+	data_disk_without_ioevent: bool, // The data disk has no ioevent file (machine_command).
+	without_pit:    bool, // No 8254: `-machine q35,pit=off` (src/md/features/missing_hardware.md).
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4132,7 +4168,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit)
 		if !ok {
 			return false
 		}
@@ -4435,6 +4471,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			date_check(index, value, step.text, machine.started_unix, machine.clock_offset_seconds) or_return
+		case .Screen_Size:
+			if !log_wait(machine, step.text, step.any_order) {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			// The whole log: a step in any order can find a line before the
+			// place of the last step. The size is that of the last start
+			// of the compositor.
+			if problem := reference_screen_problem(log_read(machine)); problem != "" {
+				fmt.eprintfln("modustool: test failed: step %d: %s", index + 1, problem)
+				return false
+			}
+			foundation.test_passed_print("the machine printed \"%s\"", REFERENCE_SCREEN_LINE)
 		case .Appearance_Auto:
 			appearance_auto_check(machine, index, step) or_return // machine_clock.odin
 		case .Bar_Local_Time:
@@ -5039,6 +5088,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("modustool: the power of the disk went off at its write %d, the write of the root %d after the start of the count (seed %d)", writes, roots, POWER_LOSS_SEED)
+		case .Disk_Disconnect:
+			if machine.disk_server == nil {
+				fmt.eprintfln("modustool: test failed: step %d: the tool does not serve the data disk", index + 1)
+				return false
+			}
+			disk_server_disconnect(machine.disk_server)
 		case .Shot:
 			if !screen_save(machine, step.text) {
 				return false

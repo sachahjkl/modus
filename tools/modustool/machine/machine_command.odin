@@ -6,8 +6,10 @@ package machine
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modus:contract/reference_screen"
 import "modus:contract/remote"
 import "modus:contract/timed_stream"
+import "modus:support/bochs_display"
 import "modus:support/pci"
 import "modustool:build"
 import "modustool:foundation"
@@ -63,14 +65,18 @@ Processor_Model :: enum {
 	Without_Random, // No rdrand and no rdseed: the fallback of the seed of the root service (`test random`).
 	Without_Avx, // No AVX: the kernel saves x87 and SSE with xsaveopt (`test extended_state`).
 	Without_Xsave, // No xsave: the kernel saves with fxsave (`test extended_state`).
+	// No leaf 0x15 of CPUID and none above: the processor states no
+	// frequency of its cycle counter, on every host (`test no_pit`).
+	Without_Frequency_Leaves,
 }
 
 @(rodata)
 processor_models := [Processor_Model]string {
-	.Maximum        = "max",
-	.Without_Random = "max,-rdrand,-rdseed",
-	.Without_Avx    = "max,-avx",
-	.Without_Xsave  = "max,-xsave",
+	.Maximum                  = "max",
+	.Without_Random           = "max,-rdrand,-rdseed",
+	.Without_Avx              = "max,-avx",
+	.Without_Xsave            = "max,-xsave",
+	.Without_Frequency_Leaves = "max,level=0x14",
 }
 
 // machine_command gives the one QEMU command line of the project: the first
@@ -113,6 +119,16 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 // offset in the memory file of a machine is a physical address.
 MACHINE_MEMORY_MIB :: 1024
 
+// The video memory of the standard VGA of a test machine, in MiB: the
+// amount of QEMU with no option, stated so that the check below reads it.
+// The machine passes no option for it: with `-global VGA.vgamem_mb`, the
+// firmware gives no graphics output, and the boot program finds no screen.
+// The compositor flips between two screen pages of the reference screen in
+// it (src/md/infrastructure/whole_frame.md); a screen whose two pages do
+// not fit stops the build of the tool, not a machine test.
+MACHINE_VIDEO_MEMORY_MIB :: 16
+#assert(bochs_display.PAGE_COUNT * reference_screen.WIDTH * reference_screen.HEIGHT * bochs_display.BITS_PER_PIXEL / 8 <= MACHINE_VIDEO_MEMORY_MIB << 20)
+
 // memory_file: "", or a file of the host that holds the memory of the
 // machine, which the tool reads and writes (operation_sequences.odin); such
 // a machine has one processor, so that a sequence gives the same answers at
@@ -121,7 +137,15 @@ MACHINE_MEMORY_MIB :: 1024
 // without_screen leaves out the display device, without_ps2_controller the
 // PS/2 controller, and entropy_device_silent gives the entropy device a
 // source that never answers, in place of the device of entropy_device.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false) -> (command: []string, ok: bool) {
+// no_network_device leaves the network device out: the root service then
+// starts no frame service (src/md/features/missing_hardware.md).
+// data_disk_without_ioevent gives the data disk no ioevent file: QEMU then
+// takes each request in the thread of its notify, and does not drain the
+// requests of the disk when the root service turns its bus master off, so a
+// request that the disk never answers stops no processor (silent_disk.odin).
+// without_pit leaves the 8254 out of the machine (`pit=off`): the start of
+// the kernel with no time base (src/md/features/missing_hardware.md).
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -186,7 +210,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the processor: its variables are written only there. QEMU refuses
 		// interrupt remapping when KVM holds the whole interrupt controller:
 		// the machine with the IOMMU splits it. QEMU accepts both together.
-		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : "", without_ps2_controller ? ",i8042=off" : ""}, context.temp_allocator),
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : "", without_ps2_controller ? ",i8042=off" : "", without_pit ? ",pit=off" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -244,10 +268,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// (web_host.odin, frames_of_the_fetch_report).
 		append(&list, "-object", strings.concatenate({"filter-dump,id=frames,netdev=network,file=", frames_of_user_network_file(test_output)}, context.temp_allocator))
 	}
+	if !no_network_device {
+		append(&list, "-device", fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu))
+	}
 	append(
 		&list,
-		"-device",
-		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
@@ -272,7 +297,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
 		"-device",
-		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s", pci.DATA_DISK_DEVICE, virtio_iommu),
+		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s%s", pci.DATA_DISK_DEVICE, data_disk_without_ioevent ? ",ioeventfd=off" : "", virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=none,id=scratch,format=raw,file=", scratch_disk}, context.temp_allocator),
 	)

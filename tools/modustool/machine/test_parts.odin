@@ -54,7 +54,7 @@ test_parts := [?]Test_Part {
 	{name = "tcp", does = "The two machines of TCP", run = tcp_tests_run, procedures = {"tcp_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "random", does = "The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none", run = random_tests_run, procedures = {"random_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "quic", does = "The machine of QUIC through the network service", run = quic_tests_run, procedures = {"quic_tests_run"}, volumes = {build.BOOT_VOLUME}},
-	{name = "network", does = "The machine of the network service", run = network_tests_run, procedures = {"network_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "network", does = "The machine of the network service, then a machine with no network device, which refuses the processes with an endpoint and runs the rest", run = network_tests_run, procedures = {"network_tests_run", "no_network_device_run"}, volumes = {build.BOOT_VOLUME}},
 	// The machines of the keys sealed by the TPM too: the signed main
 	// volume, whose build writes the variable store of Secure Boot, and the
 	// other system, signed.
@@ -84,13 +84,13 @@ test_parts := [?]Test_Part {
 	// system.
 	{
 		name = "trusted_boot",
-		does = "The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign",
+		does = "The volumes of the trusted boot: the five refusals of the boot program, a kernel that asks more memory than the machine has, whose stop stays on the boot display, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign",
 		run = trusted_boot_tests_run,
 		procedures = {"trusted_boot_tests_run", "release_image_machine_run", "floor_tests_run"},
-		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_CHANGED_MODULE, build.BOOT_VOLUME_WRONG_SIGNATURE, build.BOOT_VOLUME_OTHER_SYSTEM, build.BOOT_VOLUME_CHANGED_KERNEL, build.BOOT_VOLUME_WITHOUT_DESCRIPTION, build.BOOT_VOLUME_STATED_HASH, build.BOOT_VOLUME_SECURE_BOOT, build.BOOT_VOLUME_SECURE_BOOT_CHANGED, build.BOOT_VOLUME_NEWER_SYSTEM, build.BOOT_VOLUME_NEWER_KEY},
+		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_CHANGED_MODULE, build.BOOT_VOLUME_WRONG_SIGNATURE, build.BOOT_VOLUME_OTHER_SYSTEM, build.BOOT_VOLUME_CHANGED_KERNEL, build.BOOT_VOLUME_WITHOUT_DESCRIPTION, build.BOOT_VOLUME_STATED_HASH, build.BOOT_VOLUME_KERNEL_MEMORY_RAISED, build.BOOT_VOLUME_SECURE_BOOT, build.BOOT_VOLUME_SECURE_BOOT_CHANGED, build.BOOT_VOLUME_NEWER_SYSTEM, build.BOOT_VOLUME_NEWER_KEY},
 	},
 	{name = "hierarchy", does = "The machines of the hierarchy of storage", run = hierarchy_tests_run, procedures = {"hierarchy_tests_run"}, volumes = {build.BOOT_VOLUME}},
-	{name = "power", does = "The loss of power: of the storage, of the settings, of the ranges, and the write that the disk drops", run = power_tests_run, procedures = {"power_tests_run", "power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "power", does = "The loss of power: of the storage, of the settings, of the ranges, the write that the disk drops, and the disk that stops to answer", run = power_tests_run, procedures = {"power_tests_run", "power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run", "silent_disk_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "persist", does = "The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines", run = persistence_run, procedures = {"persistence_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "extended_state", does = "The three machines of the extended state", run = extended_state_tests_run, procedures = {"extended_state_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "return_fault", does = "The machine of the return to a process", run = return_fault_tests_run, procedures = {"return_fault_tests_run"}, volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_WITHOUT_RETURN_CHECK}},
@@ -133,6 +133,7 @@ test_parts := [?]Test_Part {
 		procedures = {"guest_tests_run"},
 		volumes = {build.BOOT_VOLUME},
 	},
+	{name = "no_pit", does = "The machine with no time base: no 8254 (`-machine q35,pit=off`) and a processor whose CPUID states no frequency of its cycle counter; the kernel writes its line and stops with the code 1", run = no_pit_tests_run, procedures = {"no_pit_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "fails", does = "The machine of a start that fails: a boot image with no compositor", run = fails_tests_run, procedures = {"fails_tests_run"}, volumes = {build.BOOT_VOLUME_FAILS}},
 	{name = "shortage", does = "The machine of the shortage of frames", run = shortage_tests_run, procedures = {"shortage_tests_run"}, volumes = {build.BOOT_VOLUME_SHORTAGE}},
 	{name = "operation_sequences", does = "The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence (\"The operation sequences\")", run = operation_sequences_tests_run, procedures = {"operation_sequences_tests_run"}, volumes = {build.BOOT_VOLUME_OPERATION_SEQUENCES}},
@@ -386,7 +387,7 @@ main_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 network_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_network[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_NETWORK, exit_status = build.MACHINE_STOP_OK})
+	return machine_test(part, scenario_network[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_NETWORK, exit_status = build.MACHINE_STOP_OK}) && no_network_device_run(part)
 }
 
 shortage_tests_run :: proc(part: ^Test_Part_Run) -> bool {
@@ -399,7 +400,7 @@ fails_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 power_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return power_loss_run(part) && power_loss_settings_run(part) && power_loss_ranges_run(part) && dropped_write_run(part)
+	return power_loss_run(part) && power_loss_settings_run(part) && power_loss_ranges_run(part) && dropped_write_run(part) && silent_disk_run(part)
 }
 
 outside_module_tests_run :: proc(_: ^Test_Part_Run) -> bool {

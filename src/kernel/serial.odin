@@ -1,6 +1,8 @@
 package kernel
 
 import "base:intrinsics"
+import "kernel:delivery_count"
+import "kernel:time_base"
 import "modus:contract/cut_mark"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
@@ -30,9 +32,52 @@ serial_start :: proc "contextless" () {
 	port_write_8(SERIAL_PORT + 2, 0xC7) // queues on
 }
 
+// How long a writer waits for the transmit register. A byte takes 87 us at
+// 115200 baud, and a full queue of the device SERIAL_QUEUE_BYTES of them: a
+// device that takes no byte in a hundred times that does not drain.
+SERIAL_TRANSMIT_BOUND_MICROSECONDS :: 10_000
+// The serial port took no byte in its bound: each writer drops its bytes
+// with no wait until a read of the line status finds the register empty.
+// Without it each byte of a silent port would wait the whole bound, and a
+// start that drains each line at once would take minutes.
+serial_port_silent: bool
+// The bytes that the serial port did not take. Only the copy of the serial
+// port is lost: the log keeps each record. A writer can hold any lock, so
+// the tick writes the count (delivery_faults_log).
+serial_bytes_dropped: u64
+
+// serial_transmit_ready says if the transmit register takes a byte now. It
+// waits at most SERIAL_TRANSMIT_BOUND_MICROSECONDS, and not at all while
+// the port is silent. Before the calibration the frequency is 0, and the
+// bound takes the highest frequency that the kernel accepts: it is then
+// longer, never shorter.
+serial_transmit_ready :: proc "contextless" () -> bool {
+	if port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY != 0 {
+		if intrinsics.atomic_load(&serial_port_silent) {
+			intrinsics.atomic_store(&serial_port_silent, false)
+		}
+		return true
+	}
+	if intrinsics.atomic_load(&serial_port_silent) {
+		return false
+	}
+	end := time_base.deadline(cycles_now(), SERIAL_TRANSMIT_BOUND_MICROSECONDS, cycle_frequency)
+	for port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {
+		if cycles_now() >= end {
+			intrinsics.atomic_store(&serial_port_silent, true)
+			return false
+		}
+		intrinsics.cpu_relax()
+	}
+	return true
+}
+
 log_bytes :: proc "contextless" (bytes: []u8) {
 	for b in bytes {
-		for port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {}
+		if !serial_transmit_ready() {
+			intrinsics.atomic_add(&serial_bytes_dropped, 1)
+			continue
+		}
 		port_write_8(SERIAL_PORT, b)
 	}
 }
@@ -421,8 +466,9 @@ serial_writer_free :: proc "contextless" () {
 
 // How a drain may use its processor.
 Serial_Drain_Mode :: enum u8 {
-	// The flush, a report, the start: it waits for the device and has no
-	// bound; those end the machine or run alone.
+	// The flush, a report, the start: it waits for the device, those end
+	// the machine or run alone. A device that takes no byte in
+	// SERIAL_TRANSMIT_BOUND_MICROSECONDS loses the line, which is counted.
 	Wait,
 	// A tick or a long wait for a lock: SERIAL_MICROSECONDS_OF_A_TICK at
 	// most, with interrupts off.
@@ -464,8 +510,12 @@ serial_drain :: proc "contextless" (until: u64, cpu: ^Processor, mode: Serial_Dr
 		}
 		switch mode {
 		case .Wait:
-			for port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {
-				intrinsics.cpu_relax()
+			if !serial_transmit_ready() {
+				// The rest of the line is dropped at once: one read of the
+				// line status for each line, not for each byte.
+				intrinsics.atomic_add(&serial_bytes_dropped, u64(serial_line_count - serial_line_written))
+				serial_line_written = serial_line_count
+				continue
 			}
 		case .Tick:
 			if cycles_now() >= deadline || intrinsics.atomic_load(&machine_stopping) {
@@ -744,6 +794,42 @@ serial_tick :: proc "contextless" (cpu: ^Processor) {
 		at_the_ticks := rate * SERIAL_MICROSECONDS_OF_A_TICK * TICKS_PER_SECOND / 1_000_000
 		log("kernel: the drain of the serial port wrote ", Size{bytes, .Bytes}, " in ", Duration{cycles * 1_000_000 / frequency, .Microseconds}, " of port writes: ", rate, " bytes each second while it writes; ", intrinsics.atomic_load(&serial_measured_idle_bytes), " bytes in the idle loop, at that rate, and ", intrinsics.atomic_load(&serial_measured_tick_bytes), " at the ticks, at most ", at_the_ticks, " each second for one busy processor")
 	}
+	delivery_faults_log()
+}
+
+// The count in the last line of each fault of delivery.
+serial_bytes_dropped_written: u64
+apic_sends_not_sent_written: u64
+
+// delivery_faults_log writes the count of the bytes that the serial port
+// did not take and of the interrupts that the controller did not send,
+// each time a count reaches a new power of two: a device that stays broken
+// writes about one line for each doubling, not one line at each tick. The
+// writers of the counts can hold any lock, the tick holds none. The line is
+// a record of the log, so the serial port shows it when it takes bytes
+// again, and the log shows it when the port never does.
+@(private = "file")
+delivery_faults_log :: proc "contextless" () {
+	if count, reached := count_reached_a_power_of_two(&serial_bytes_dropped, &serial_bytes_dropped_written); reached {
+		log("kernel: the serial port did not take ", count, " bytes in their bound: the log keeps each record, and the serial port lacks their lines")
+	}
+	if count, reached := count_reached_a_power_of_two(&apic_sends_not_sent, &apic_sends_not_sent_written); reached {
+		log("kernel: the interrupt controller did not send ", count, " interrupts to another processor in their bound: a processor that one of them would wake waits for its next interrupt, and a synchronization waits for the next tick of its target")
+	}
+}
+
+// count_reached_a_power_of_two says if `count` has a higher power of two
+// than the count of the last line (delivery_count.line_is_due), and takes
+// it as that count: one tick alone writes the line.
+@(private = "file")
+count_reached_a_power_of_two :: proc "contextless" (count: ^u64, written: ^u64) -> (now: u64, reached: bool) {
+	now = intrinsics.atomic_load(count)
+	before := intrinsics.atomic_load(written)
+	if !delivery_count.line_is_due(before, now) {
+		return now, false
+	}
+	_, reached = intrinsics.atomic_compare_exchange_strong(written, before, now)
+	return now, reached
 }
 
 #assert(SERIAL_MICROSECONDS_OF_A_TICK == 100) // The line of the measure says it.
