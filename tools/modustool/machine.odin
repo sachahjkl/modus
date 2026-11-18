@@ -4124,9 +4124,9 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	forward: Forward
 	// The port of hostfwd goes back to the free ports after QEMU ended: the
 	// defers run in the reverse order.
-	defer loopback_port_take_back(forward.host_port)
+	defer loopback_port_take_back(&given_loopback_ports, forward.host_port)
 	if options.user_network {
-		port, free := free_port()
+		port, free := free_port(&given_loopback_ports)
 		if free {
 			forward.host_port = port
 		}
@@ -4202,8 +4202,8 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		qmp = {}
 		os.close(monitor_write)
 		os.close(monitor_read)
-		loopback_port_take_back(forward.host_port)
-		port, free := free_port()
+		loopback_port_take_back(&given_loopback_ports, forward.host_port)
+		port, free := free_port(&given_loopback_ports)
 		forward.host_port = free ? port : 0
 		if !free {
 			fmt.eprintln("modustool: no port of the loopback for the TCP of QEMU")

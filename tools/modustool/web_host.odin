@@ -1,5 +1,6 @@
 package modustool
 
+import "base:runtime"
 import "core:strconv"
 
 import "modus:support/calendar"
@@ -64,11 +65,18 @@ Listener :: struct {
 // then fails at its start, and machine_test starts it again with a new
 // port, a bounded count of times (MACHINE_START_TRIES). The UDP port of the
 // peer never has that gap: QEMU uses a copy of the socket of the peer.
+//
+// The list lives longer than the caller that adds to it first, so its
+// memory comes from the heap of the process, never from the allocator of a
+// caller: the allocator of a host test is freed when the test ends, and a
+// later port would then be written into the memory of another test.
 Given_Loopback_Ports :: struct {
 	lock:  sync.Mutex,
 	ports: [dynamic]int,
 }
 
+// The list of the process, which the machines use. A host test gives its
+// own list.
 given_loopback_ports: Given_Loopback_Ports
 
 // The sockets that one search for a free port holds open: each new socket
@@ -78,44 +86,55 @@ FREE_PORT_TRIES :: 16
 
 // loopback_port_give adds a port to the given ports, and says if it was not
 // there.
-loopback_port_give :: proc(port: int) -> bool {
-	sync.mutex_lock(&given_loopback_ports.lock)
-	defer sync.mutex_unlock(&given_loopback_ports.lock)
-	for given in given_loopback_ports.ports {
+loopback_port_give :: proc(given_ports: ^Given_Loopback_Ports, port: int) -> bool {
+	sync.mutex_lock(&given_ports.lock)
+	defer sync.mutex_unlock(&given_ports.lock)
+	for given in given_ports.ports {
 		if given == port {
 			return false
 		}
 	}
-	append(&given_loopback_ports.ports, port)
+	if given_ports.ports.allocator.procedure == nil {
+		given_ports.ports.allocator = runtime.heap_allocator()
+	}
+	append(&given_ports.ports, port)
 	return true
 }
 
 // loopback_port_take_back removes a port from the given ports, when the
 // QEMU that bound it ended. 0 is no port.
-loopback_port_take_back :: proc(port: int) {
+loopback_port_take_back :: proc(given_ports: ^Given_Loopback_Ports, port: int) {
 	if port == 0 {
 		return
 	}
-	sync.mutex_lock(&given_loopback_ports.lock)
-	defer sync.mutex_unlock(&given_loopback_ports.lock)
-	for given, place in given_loopback_ports.ports {
+	sync.mutex_lock(&given_ports.lock)
+	defer sync.mutex_unlock(&given_ports.lock)
+	for given, place in given_ports.ports {
 		if given == port {
-			unordered_remove(&given_loopback_ports.ports, place)
+			unordered_remove(&given_ports.ports, place)
 			return
 		}
 	}
 }
 
+// loopback_ports_free frees the memory of a list that a host test gave.
+loopback_ports_free :: proc(given_ports: ^Given_Loopback_Ports) {
+	sync.mutex_lock(&given_ports.lock)
+	defer sync.mutex_unlock(&given_ports.lock)
+	delete(given_ports.ports)
+	given_ports.ports = nil
+}
+
 // loopback_port_search gives the first port that next gives and that the
 // list does not hold, and adds it to the list, in at most FREE_PORT_TRIES
 // tries; false when next fails, or when each try gave a port of the list.
-loopback_port_search :: proc(next: proc(data: rawptr) -> (int, bool), data: rawptr) -> (port: int, ok: bool) {
+loopback_port_search :: proc(given_ports: ^Given_Loopback_Ports, next: proc(data: rawptr) -> (int, bool), data: rawptr) -> (port: int, ok: bool) {
 	for _ in 0 ..< FREE_PORT_TRIES {
 		candidate, found := next(data)
 		if !found {
 			return 0, false
 		}
-		if loopback_port_give(candidate) {
+		if loopback_port_give(given_ports, candidate) {
 			return candidate, true
 		}
 	}
@@ -123,9 +142,9 @@ loopback_port_search :: proc(next: proc(data: rawptr) -> (int, bool), data: rawp
 }
 
 // free_port gives a TCP port of the loopback that no socket holds now and
-// that this process gave to no QEMU that runs. The caller takes it back
-// with loopback_port_take_back.
-free_port :: proc() -> (port: int, ok: bool) {
+// that the list does not hold, and adds it to the list. The caller takes
+// it back with loopback_port_take_back.
+free_port :: proc(given_ports: ^Given_Loopback_Ports) -> (port: int, ok: bool) {
 	held := make([dynamic]net.TCP_Socket, context.temp_allocator)
 	defer {
 		for socket in held {
@@ -144,21 +163,21 @@ free_port :: proc() -> (port: int, ok: bool) {
 		bound, bound_error := net.bound_endpoint(listening)
 		return bound.port, bound_error == nil
 	}
-	return loopback_port_search(next, &held)
+	return loopback_port_search(given_ports, next, &held)
 }
 
 // loopback_ports_given_count gives the count of the ports in the list.
-loopback_ports_given_count :: proc() -> int {
-	sync.mutex_lock(&given_loopback_ports.lock)
-	defer sync.mutex_unlock(&given_loopback_ports.lock)
-	return len(given_loopback_ports.ports)
+loopback_ports_given_count :: proc(given_ports: ^Given_Loopback_Ports) -> int {
+	sync.mutex_lock(&given_ports.lock)
+	defer sync.mutex_unlock(&given_ports.lock)
+	return len(given_ports.ports)
 }
 
 // loopback_port_is_given says if the list holds a port.
-loopback_port_is_given :: proc(port: int) -> bool {
-	sync.mutex_lock(&given_loopback_ports.lock)
-	defer sync.mutex_unlock(&given_loopback_ports.lock)
-	for given in given_loopback_ports.ports {
+loopback_port_is_given :: proc(given_ports: ^Given_Loopback_Ports, port: int) -> bool {
+	sync.mutex_lock(&given_ports.lock)
+	defer sync.mutex_unlock(&given_ports.lock)
+	for given in given_ports.ports {
 		if given == port {
 			return true
 		}

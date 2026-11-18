@@ -1,5 +1,6 @@
 package modustool
 
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -17,22 +18,30 @@ TEST_PORT_FIRST :: 7
 TEST_PORT_SECOND :: 9
 
 // A port is never given twice while it is in the list; a port that is not
-// in the list, and the port 0, change nothing when taken back.
+// in the list, and the port 0, change nothing when taken back. The test has
+// its own list: the list of the process outlives each test, and the tests
+// run on several threads.
 @(test)
 a_given_port_is_not_given_again :: proc(t: ^testing.T) {
-	testing.expect(t, loopback_port_give(TEST_PORT_FIRST), "a port that is in no list is given")
-	defer loopback_port_take_back(TEST_PORT_FIRST)
-	testing.expect(t, !loopback_port_give(TEST_PORT_FIRST), "a port of the list is refused")
-	testing.expect(t, loopback_port_is_given(TEST_PORT_FIRST))
+	ports: Given_Loopback_Ports
+	defer loopback_ports_free(&ports)
+	testing.expect(t, loopback_port_give(&ports, TEST_PORT_FIRST), "a port that is in no list is given")
+	testing.expect(t, !loopback_port_give(&ports, TEST_PORT_FIRST), "a port of the list is refused")
+	testing.expect(t, loopback_port_is_given(&ports, TEST_PORT_FIRST))
 	// A port not in the list and 0: the list stays as it is.
-	testing.expect(t, !loopback_port_is_given(TEST_PORT_SECOND))
-	loopback_port_take_back(TEST_PORT_SECOND)
-	loopback_port_take_back(0)
-	testing.expect(t, loopback_port_is_given(TEST_PORT_FIRST), "taking back another port leaves the port")
-	testing.expect(t, !loopback_port_give(TEST_PORT_FIRST), "taking back another port does not free the port")
-	loopback_port_take_back(TEST_PORT_FIRST)
-	testing.expect(t, !loopback_port_is_given(TEST_PORT_FIRST))
-	testing.expect(t, loopback_port_give(TEST_PORT_FIRST), "a port taken back is given again")
+	testing.expect(t, !loopback_port_is_given(&ports, TEST_PORT_SECOND))
+	loopback_port_take_back(&ports, TEST_PORT_SECOND)
+	loopback_port_take_back(&ports, 0)
+	testing.expect_value(t, loopback_ports_given_count(&ports), 1)
+	testing.expect(t, loopback_port_is_given(&ports, TEST_PORT_FIRST), "taking back another port leaves the port")
+	testing.expect(t, !loopback_port_give(&ports, TEST_PORT_FIRST), "taking back another port does not free the port")
+	loopback_port_take_back(&ports, TEST_PORT_FIRST)
+	testing.expect(t, !loopback_port_is_given(&ports, TEST_PORT_FIRST))
+	testing.expect(t, loopback_port_give(&ports, TEST_PORT_FIRST), "a port taken back is given again")
+	// The memory of a list is the heap of the process, never the memory of
+	// the test that adds the first port, which the runner frees when that
+	// test ends.
+	testing.expect(t, ports.ports.allocator.procedure == runtime.heap_allocator().procedure, "the list holds memory of its first caller")
 }
 
 @(private = "file")
@@ -57,15 +66,16 @@ port_of_the_next_try :: proc(data: rawptr) -> (int, bool) {
 // it gives the first port that is not in the list.
 @(test)
 the_search_of_a_port_has_a_limit :: proc(t: ^testing.T) {
-	testing.expect(t, loopback_port_give(TEST_PORT_FIRST))
-	defer loopback_port_take_back(TEST_PORT_FIRST)
+	ports: Given_Loopback_Ports
+	defer loopback_ports_free(&ports)
+	testing.expect(t, loopback_port_give(&ports, TEST_PORT_FIRST))
 	always_given := Port_Tries{ports = {TEST_PORT_FIRST}}
-	port, found := loopback_port_search(port_of_the_next_try, &always_given)
+	port, found := loopback_port_search(&ports, port_of_the_next_try, &always_given)
 	testing.expect(t, !found, "each try gives a port of the list: refused")
 	testing.expect_value(t, port, 0)
 	testing.expect_value(t, always_given.tries, FREE_PORT_TRIES)
 	failing := Port_Tries{fails = true}
-	_, found = loopback_port_search(port_of_the_next_try, &failing)
+	_, found = loopback_port_search(&ports, port_of_the_next_try, &failing)
 	testing.expect(t, !found, "a try that fails ends the search")
 	testing.expect_value(t, failing.tries, 1)
 	// The last try of the limit gives a free port: it is given.
@@ -75,19 +85,18 @@ the_search_of_a_port_has_a_limit :: proc(t: ^testing.T) {
 	}
 	at_the_limit[FREE_PORT_TRIES - 1] = TEST_PORT_SECOND
 	late := Port_Tries{ports = at_the_limit}
-	port, found = loopback_port_search(port_of_the_next_try, &late)
-	defer loopback_port_take_back(TEST_PORT_SECOND)
+	port, found = loopback_port_search(&ports, port_of_the_next_try, &late)
 	testing.expect(t, found, "the last try gives a free port")
 	testing.expect_value(t, port, TEST_PORT_SECOND)
-	testing.expect(t, loopback_port_is_given(TEST_PORT_SECOND), "the port given is in the list")
+	testing.expect(t, loopback_port_is_given(&ports, TEST_PORT_SECOND), "the port given is in the list")
 	// A real port of the system: never one of the list, and in it after.
-	real_port, real_found := free_port()
+	real_port, real_found := free_port(&ports)
 	testing.expect(t, real_found)
 	if real_found {
 		testing.expect(t, real_port != TEST_PORT_FIRST && real_port != TEST_PORT_SECOND)
-		testing.expect(t, loopback_port_is_given(real_port))
-		loopback_port_take_back(real_port)
-		testing.expect(t, !loopback_port_is_given(real_port))
+		testing.expect(t, loopback_port_is_given(&ports, real_port))
+		loopback_port_take_back(&ports, real_port)
+		testing.expect(t, !loopback_port_is_given(&ports, real_port))
 	}
 }
 
@@ -204,21 +213,27 @@ the_pool_waits_for_the_parts_that_run :: proc(t: ^testing.T) {
 }
 
 // A picture name that a part took is refused to another part, and given
-// again to the same part.
+// again to the same part; a forgotten name is free again. The test has its
+// own table: the table of the process outlives each test.
 @(test)
 two_parts_never_save_one_picture :: proc(t: ^testing.T) {
-	// A name that no scenario uses: tests of the parts run at once.
 	NAME :: "a_picture_of_the_test_of_the_picture_names"
-	owner, claimed := picture_name_claim("first", NAME)
+	names: Picture_Names
+	defer picture_names_free(&names)
+	owner, claimed := picture_name_claim(&names, "first", NAME)
 	testing.expect(t, claimed)
 	testing.expect_value(t, owner, "first")
-	owner, claimed = picture_name_claim("second", NAME)
+	owner, claimed = picture_name_claim(&names, "second", NAME)
 	testing.expect(t, !claimed, "another part is refused the name")
 	testing.expect_value(t, owner, "first")
-	_, claimed = picture_name_claim("first", NAME)
+	_, claimed = picture_name_claim(&names, "first", NAME)
 	testing.expect(t, claimed, "the same part saves the name again")
-	_, claimed = picture_name_claim("second", NAME + "_other")
+	_, claimed = picture_name_claim(&names, "second", NAME + "_other")
 	testing.expect(t, claimed, "another name is free")
+	picture_names_forget(&names)
+	owner, claimed = picture_name_claim(&names, "second", NAME)
+	testing.expect(t, claimed, "a forgotten name is free again")
+	testing.expect_value(t, owner, "second")
 }
 
 // paths_first_repeat gives the first path that two names hold, or "".

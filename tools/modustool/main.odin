@@ -844,7 +844,7 @@ run_test :: proc(args: []string) -> int {
 	}
 	processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
 	at_once := test_parts_at_once(len(parts), processors)
-	picture_names_forget()
+	picture_names_forget(&picture_names)
 	if len(parts) > 1 {
 		fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine", len(parts), at_once, processors, MACHINE_PROCESSOR_COUNT)
 	}
