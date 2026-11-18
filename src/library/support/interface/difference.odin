@@ -65,8 +65,10 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // that draws nothing is 0), so two records whose bytes differ draw
 // different things, or one of them draws nothing: they are not equal, and
 // no read through the border is needed to know it. Where two records with
-// other bytes still draw the same pixels (a gradient of one line, whose
-// second end is never drawn), the damage is too large, never too small. The one exception is the first byte of the range of
+// other bytes still draw the same pixels (a gradient of one line whose
+// second end, of alpha 0, is never drawn; rectangles of the color 0 with
+// other patterns; a rectangle of the color 0 against a None), the damage
+// is too large, never too small. The one exception is the first byte of the range of
 // a Text or a Text_Grid, which can move in the text table
 // with no change of what is drawn: those records are compared with that
 // word masked. Two refused records that are equal under the mask draw

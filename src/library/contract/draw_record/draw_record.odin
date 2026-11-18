@@ -6,8 +6,10 @@
 // A record is 48 bytes: a header of 24 bytes (the word of the kind, three
 // reserved bytes, the element identity and the box), then 24 bytes that
 // belong to its kind. Each byte that its kind does not name is 0, so two
-// records that draw the same thing have the same bytes, and the damage by
-// difference compares bytes.
+// records with the same bytes draw the same thing, and the damage by
+// difference compares bytes. Two records with other bytes can still draw
+// the same pixels (`read` names the cases): their damage is then too
+// large, never too small.
 //
 // One border reads a record: `read` takes one copy and gives a
 // `Draw_Primitive`, a union with one record type for each kind, or the
@@ -373,9 +375,13 @@ copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Rec
 // problem of the first check.
 //
 // A record that the border reads is canonical: each byte that the kind does
-// not name is 0, and a color with alpha 0 that draws nothing is 0. Two
-// records that it reads draw the same thing only if their bytes are equal,
-// but the first byte of a range in the text table.
+// not name is 0, and a color with alpha 0 that draws nothing is 0. So two
+// records with the same bytes draw the same thing. Two records with other
+// bytes, but the first byte of a range in the text table, can still draw
+// the same pixels: a gradient of one line whose second end, with alpha 0,
+// is never drawn, two rectangles of the color 0 with other patterns, and a
+// rectangle of the color 0 against a None. The difference damages their
+// boxes: too large, never too small.
 //
 // The checks are on the record alone. What a record names in the tables of
 // its frame (a range of the text table, the pixels of a picture memory) is
@@ -653,7 +659,7 @@ all_zero :: proc "contextless" (bytes: [$COUNT]u8) -> bool {
 
 // color_canonical says if a color of one color is in its one form: a color
 // with alpha 0 draws nothing whatever its channels, so it must be 0, and
-// two records that draw the same thing keep the same bytes.
+// two rectangles of alpha 0 with the same pattern keep the same bytes.
 color_canonical :: proc "contextless" (color: Draw_Color) -> bool {
 	return alpha_of(color) != 0 || color == 0
 }

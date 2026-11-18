@@ -49,6 +49,8 @@ framed_pixels :: proc(memory: ^[(FRAMED_SIDE + 2) * (FRAMED_SIDE + 2)]Color) -> 
 // out of it and with no size: blend_fill writes only inside the canvas.
 @(test)
 blend_fill_of_an_opaque_color_is_fill :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
 	places := [?]int{-30, -1, 0, 1, 7, FRAMED_SIDE - 1, FRAMED_SIDE, 40}
 	sizes := [?]int{0, 1, 2, 63, 64, 65, 200}
 	transparent := [3]u32{0, 0x00FFFFFF, 0x00123456}
@@ -56,14 +58,45 @@ blend_fill_of_an_opaque_color_is_fill :: proc(t: ^testing.T) {
 		for width in sizes {
 			filled, blended: [(FRAMED_SIDE + 2) * (FRAMED_SIDE + 2)]Color
 			fill(framed_pixels(&filled), x, x / 2, width, width / 3 + 1, 0x00ABCDEF)
-			blend_fill(framed_pixels(&blended), x, x / 2, width, width / 3 + 1, 0xFFABCDEF)
+			blend_fill(framed_pixels(&blended), x, x / 2, width, width / 3 + 1, 0xFFABCDEF, &table)
 			testing.expectf(t, filled == blended, "an opaque color at %d of %d pixels draws other pixels than fill", x, width)
 			for color in transparent {
 				untouched, drawn: [(FRAMED_SIDE + 2) * (FRAMED_SIDE + 2)]Color
 				framed_pixels(&untouched)
-				blend_fill(framed_pixels(&drawn), x, x / 2, width, width / 3 + 1, color)
+				blend_fill(framed_pixels(&drawn), x, x / 2, width, width / 3 + 1, color, &table)
 				testing.expectf(t, untouched == drawn, "the color %08x at %d of %d pixels draws", color, x, width)
 			}
+		}
+	}
+}
+
+// A width or a height of 0 or below draws nothing, for an opaque and a
+// translucent color and for a source with alpha, at places inside and
+// outside the canvas: no pixel of the canvas or of its frame changes.
+@(test)
+blend_of_a_negative_size_draws_nothing :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	source: [4]u32 = {0x80FFFFFF, 0xFF000000, 0x01020304, 0xFE808080}
+	places := [3]int{-3, 0, 5}
+	sizes := [?]int{0, -1, -2, -64, -65, -1000}
+	colors := [2]u32{0xFFABCDEF, 0x80ABCDEF}
+	for x in places {
+		for size in sizes {
+			for color in colors {
+				untouched, wide, high: [(FRAMED_SIDE + 2) * (FRAMED_SIDE + 2)]Color
+				framed_pixels(&untouched)
+				blend_fill(framed_pixels(&wide), x, x, size, 4, color, &table)
+				blend_fill(framed_pixels(&high), x, x, 4, size, color, &table)
+				testing.expectf(t, wide == untouched, "the width %d at %d in %08x draws", size, x, color)
+				testing.expectf(t, high == untouched, "the height %d at %d in %08x draws", size, x, color)
+			}
+			kept, copied_wide, copied_high: [(FRAMED_SIDE + 2) * (FRAMED_SIDE + 2)]Color
+			framed_pixels(&kept)
+			blend_copy(framed_pixels(&copied_wide), x, x, {pixels = raw_data(source[:]), width = size, height = 2, stride = 2}, &table)
+			blend_copy(framed_pixels(&copied_high), x, x, {pixels = raw_data(source[:]), width = 2, height = size, stride = 2}, &table)
+			testing.expectf(t, copied_wide == kept, "a source of width %d at %d draws", size, x)
+			testing.expectf(t, copied_high == kept, "a source of height %d at %d draws", size, x)
 		}
 	}
 }
@@ -93,7 +126,7 @@ blend_fill_follows_the_rule :: proc(t: ^testing.T) {
 				}
 			}
 			before := pixels
-			blend_fill({pixels = raw_data(pixels[:]), width = WIDTH, height = 3, stride = WIDTH}, 1, 1, WIDTH - 2, 1, alpha << 24 | channels)
+			blend_fill({pixels = raw_data(pixels[:]), width = WIDTH, height = 3, stride = WIDTH}, 1, 1, WIDTH - 2, 1, alpha << 24 | channels, &table)
 			for row in 0 ..< 3 {
 				for column in 0 ..< WIDTH {
 					index := row * WIDTH + column
@@ -118,6 +151,8 @@ blend_fill_follows_the_rule :: proc(t: ^testing.T) {
 // into each line.
 @(test)
 blend_copy_is_blend_fill_for_one_color :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
 	SOURCE :: 5
 	colors := [4]u32{0, 0x01000000, 0x80336699, 0xFF336699}
 	places := [?]int{-6, -1, 0, 3, FRAMED_SIDE - 2, FRAMED_SIDE + 1}
@@ -128,9 +163,9 @@ blend_copy_is_blend_fill_for_one_color :: proc(t: ^testing.T) {
 		}
 		for x in places {
 			filled, copied, one_line: [(FRAMED_SIDE + 2) * (FRAMED_SIDE + 2)]Color
-			blend_fill(framed_pixels(&filled), x, x + 1, SOURCE, SOURCE, color)
-			blend_copy(framed_pixels(&copied), x, x + 1, {pixels = raw_data(source[:]), width = SOURCE, height = SOURCE, stride = SOURCE})
-			blend_copy(framed_pixels(&one_line), x, x + 1, {pixels = raw_data(source[:]), width = SOURCE, height = SOURCE, stride = 0})
+			blend_fill(framed_pixels(&filled), x, x + 1, SOURCE, SOURCE, color, &table)
+			blend_copy(framed_pixels(&copied), x, x + 1, {pixels = raw_data(source[:]), width = SOURCE, height = SOURCE, stride = SOURCE}, &table)
+			blend_copy(framed_pixels(&one_line), x, x + 1, {pixels = raw_data(source[:]), width = SOURCE, height = SOURCE, stride = 0}, &table)
 			testing.expectf(t, filled == copied, "the color %08x at %d: blend_copy draws other pixels than blend_fill", color, x)
 			testing.expectf(t, filled == one_line, "the color %08x at %d: a source of one line draws other pixels", color, x)
 		}

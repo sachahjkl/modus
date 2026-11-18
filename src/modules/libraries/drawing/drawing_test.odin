@@ -269,6 +269,52 @@ fill_of_the_background_pictures_and_grids :: proc(t: ^testing.T) {
 	}
 }
 
+// A Picture record of the format Straight_Alpha through the export: each
+// pixel of the picture memory, of each alpha, blends over the pixels of the
+// canvas by the rule of the colors, in the two rectangles of a damage, and
+// gives the pixels of graphics.blend_copy with a table of the test. The
+// same picture with the format Opaque and the same generation is another
+// record: the difference damages its box.
+@(test)
+picture_with_alpha_through_the_exports :: proc(t: ^testing.T) {
+	sync.mutex_lock(&draw_lock)
+	defer sync.mutex_unlock(&draw_lock)
+	table: [4096]u8
+	graphics.square_root_table_fill(&table)
+	SIDE :: 8
+	pixels, expected: [SIDE * SIDE]u32
+	for &pixel, index in pixels {
+		pixel = u32(index) * 0x9E3779B1 & 0x00FFFFFF
+	}
+	expected = pixels
+	alphas := [5]u32{0, 1, 128, 254, 255}
+	picture_pixels: [4 * 4]u32
+	for &pixel, index in picture_pixels {
+		pixel = alphas[index % len(alphas)] << 24 | u32(index) * 0x00071F3B & 0x00FFFFFF
+	}
+	with_alpha := record_in_pixels(draw_record.Draw_Picture{format = .Straight_Alpha, stride = 4, generation = 1}, 1, 1, 5, 5)
+	records := [1]interface.Draw_Record{with_alpha}
+	now := system.Table_To_Read(interface.Draw_Record){records = &records[0], count = 1, capacity = 1}
+	text := system.Bytes_To_Read{}
+	picture_memory := system.Bytes_To_Read{bytes = ([^]u8)(&picture_pixels[0]), count = size_of(picture_pixels), capacity = size_of(picture_pixels)}
+	bytes := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0]), count = size_of(pixels), capacity = size_of(pixels)}
+	shape := Canvas_Shape{width = SIDE, height = SIDE, stride = SIDE}
+	parts := [2]Damage_Rectangle{{0, 0, SIDE, 3}, {0, 3, SIDE, SIDE}}
+	places := rectangles_to_read(parts[:])
+	testing.expect_value(t, execute_draw_table_in_rectangles_14(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
+	graphics.blend_copy({pixels = raw_data(expected[:]), width = SIDE, height = SIDE, stride = SIDE}, 1, 1, {pixels = raw_data(picture_pixels[:]), width = 4, height = 4, stride = 4}, &table)
+	testing.expect(t, pixels == expected, "a picture with alpha through the export draws other pixels than blend_copy")
+	// The format changes and the generation stays: the box is damaged.
+	before_records := [1]interface.Draw_Record{record_in_pixels(draw_record.Draw_Picture{format = .Opaque, stride = 4, generation = 1}, 1, 1, 5, 5)}
+	before := system.Table_To_Read(interface.Draw_Record){records = &before_records[0], count = 1, capacity = 1}
+	damage: [RECTANGLE_CAPACITY]Damage_Rectangle
+	result := damage[:]
+	testing.expect_value(t, damage_of_draw_table_14(&before, &text, &now, &text, &result, nil), 1)
+	testing.expect_value(t, damage[0], Damage_Rectangle{1, 1, 5, 5})
+	// The same record in the two frames damages nothing.
+	testing.expect_value(t, damage_of_draw_table_14(&now, &text, &now, &text, &result, nil), 0)
+}
+
 // The proof of the same pixels (docs/INTERFACE.md, section 7): the frames
 // below are drawn two times, with the package as a window drew them before
 // the module (the clear and the execution of a whole frame, then the

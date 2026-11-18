@@ -183,6 +183,14 @@ square_root_table_fill :: proc "contextless" (table: ^[4096]u8) {
 	}
 }
 
+// text_state_start fills the table of the blend in linear light of the
+// text state. A program calls it once at its start, before any thread
+// draws (display.text_settings_load does), so no blend fills it on first
+// use while another reads it: the draw records with alpha blend with it.
+text_state_start :: proc "contextless" () {
+	square_root_table_fill(&text_state.square_root)
+}
+
 // text_choice_set sets the font and the order of the stripes.
 text_choice_set :: proc "contextless" (font: Text_Font, order: Subpixel_Order) {
 	text_state.font = font

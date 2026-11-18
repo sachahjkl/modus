@@ -2,6 +2,7 @@
 package interface
 
 import "core:slice"
+import "core:sync"
 import "core:testing"
 import "modus:contract/draw_record"
 import "modus:support/graphics"
@@ -10,6 +11,20 @@ import "modus:support/graphics"
 // record"): an opaque record draws the pixels of the drawing before alpha,
 // a translucent record blends by the one rule in each cut, and a color that
 // draws nothing has one form.
+
+// The execution blends with the table of the text state, which a program
+// fills once at its start: the tests of this program fill it once, before
+// the first test that blends reads it, and no test writes it again.
+@(private = "file")
+blend_table_once: sync.Once
+
+@(private = "file")
+blend_table :: proc() -> ^[4096]u8 {
+	sync.once_do(&blend_table_once, proc() {
+		graphics.text_state_start()
+	})
+	return &graphics.text_state.square_root
+}
 
 @(private = "file")
 ALPHA_WIDTH :: 70
@@ -70,6 +85,7 @@ pattern_reference :: proc(canvas: graphics.Canvas, box: Rectangle, color: graphi
 // frame is drawn whole and in the parts of a damage.
 @(test)
 opaque_records_keep_their_pixels :: proc(t: ^testing.T) {
+	_ = blend_table()
 	memory := new(Alpha_Tables)
 	defer free(memory)
 	table := alpha_table_of(memory)
@@ -119,6 +135,7 @@ opaque_records_keep_their_pixels :: proc(t: ^testing.T) {
 // of the records give the same pixels.
 @(test)
 translucent_records_blend_by_the_rule_in_each_cut :: proc(t: ^testing.T) {
+	square_root := blend_table()
 	memory := new(Alpha_Tables)
 	defer free(memory)
 	alpha_picture: [6 * 5]graphics.Color
@@ -156,23 +173,23 @@ translucent_records_blend_by_the_rule_in_each_cut :: proc(t: ^testing.T) {
 	execute_in_rectangles(&table, alpha_canvas_of(parts), rectangles[:])
 	canvas := alpha_canvas_of(expected)
 	graphics.fill(canvas, 10, 5, 40, 30, PANEL)
-	graphics.blend_fill(canvas, 4, 2, 50, 20, 96 << 24 | SHADOW)
+	graphics.blend_fill(canvas, 4, 2, 50, 20, 96 << 24 | SHADOW, square_root)
 	for row in 0 ..< 40 {
-		graphics.blend_fill(canvas, 30, -4 + row, 30, 1, graphics.mix_with_alpha(0xFFFF8000, 0x00FF8000, u32(row * 255 / 39)))
+		graphics.blend_fill(canvas, 30, -4 + row, 30, 1, graphics.mix_with_alpha(0xFFFF8000, 0x00FF8000, u32(row * 255 / 39)), square_root)
 	}
 	columns: [80]u32
 	graphics.gradient_with_alpha(columns[:], 0x0000FF00, 0xC800FF00, len(columns), 0)
-	graphics.blend_copy(canvas, -6, 30, {pixels = raw_data(columns[:]), width = len(columns), height = 10, stride = 0})
+	graphics.blend_copy(canvas, -6, 30, {pixels = raw_data(columns[:]), width = len(columns), height = 10, stride = 0}, square_root)
 	for y in 0 ..< ALPHA_HEIGHT {
 		for x in 0 ..< ALPHA_WIDTH {
 			in_x := ((x - graphics.POINT_STEP / 2) % graphics.POINT_STEP + graphics.POINT_STEP) % graphics.POINT_STEP < graphics.POINT_SIZE
 			in_y := ((y - graphics.POINT_STEP / 2) % graphics.POINT_STEP + graphics.POINT_STEP) % graphics.POINT_STEP < graphics.POINT_SIZE
 			if in_x && in_y {
-				graphics.blend_fill(canvas, x, y, 1, 1, 50 << 24 | 0x00FFFFFF)
+				graphics.blend_fill(canvas, x, y, 1, 1, 50 << 24 | 0x00FFFFFF, square_root)
 			}
 		}
 	}
-	graphics.blend_copy(canvas, 60, 38, {pixels = raw_data(alpha_picture[:]), width = 6, height = 5, stride = 6})
+	graphics.blend_copy(canvas, 60, 38, {pixels = raw_data(alpha_picture[:]), width = 6, height = 5, stride = 6}, square_root)
 	testing.expect(t, slice.equal(drawn, expected), "the translucent records draw other pixels than the blends")
 	testing.expect(t, slice.equal(parts, expected), "the translucent records in parts draw other pixels than the blends")
 	// The shadow over the panel is darker than the panel, and lighter than
@@ -186,6 +203,7 @@ translucent_records_blend_by_the_rule_in_each_cut :: proc(t: ^testing.T) {
 // drawn whole. The blend reads the background that each cut paints first.
 @(test)
 a_translucent_rectangle_that_moves_damages_its_two_boxes :: proc(t: ^testing.T) {
+	_ = blend_table()
 	before_memory := new(Alpha_Tables)
 	now_memory := new(Alpha_Tables)
 	defer free(before_memory)

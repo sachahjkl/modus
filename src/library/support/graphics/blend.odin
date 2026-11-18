@@ -182,8 +182,12 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 //   result = sqrt((d * d * (255 - a) + c * c * a) / 255)
 //
 // in linear light with a gamma of 2, as blend_coverage_row. Alpha 0 keeps
-// each pixel, and alpha 255 is fill: the same pixels, with no blend.
-blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, color: u32) {
+// each pixel, and alpha 255 is fill: the same pixels, with no blend. A
+// width or a height of 0 or below draws nothing. square_root is the table
+// of the blend (square_root_table_fill): a program passes the table of its
+// text state, which text_state_start fills at its start, and a test passes
+// its own.
+blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, color: u32, square_root: ^[4096]u8) {
 	alpha := color >> 24
 	if alpha == 0 {
 		return
@@ -199,7 +203,6 @@ blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, colo
 	if x0 >= x1 {
 		return
 	}
-	square_root := blend_square_root()
 	// The row of one color that the blend reads: a part of a span at a
 	// time, so the stack holds a fixed size. Only the columns that a part
 	// reads are written: a cell of a pattern of 1 pixel writes one.
@@ -217,9 +220,10 @@ blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, colo
 
 // blend_copy draws all of source at (x, y) of canvas, cut to the canvas,
 // each pixel of source a color with straight alpha, 0xAARRGGBB, blended by
-// the rule of blend_fill. A source with stride 0 has one line, that each
-// line of the result blends.
-blend_copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
+// the rule of blend_fill, with the table of blend_fill. A source with
+// stride 0 has one line, that each line of the result blends. A source of
+// a width or a height of 0 or below draws nothing.
+blend_copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas, square_root: ^[4096]u8) {
 	x0 := max(x, 0)
 	y0 := max(y, 0)
 	x1 := min(x + source.width, canvas.width)
@@ -227,7 +231,6 @@ blend_copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
 	if x0 >= x1 {
 		return
 	}
-	square_root := blend_square_root()
 	for line in y0 ..< y1 {
 		blend_straight_alpha_row(canvas.pixels[line * canvas.stride + x0:], source.pixels[(line - y) * source.stride + (x0 - x):], x1 - x0, square_root)
 	}
@@ -236,16 +239,6 @@ blend_copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
 // The pixels of the row of one color of blend_fill.
 @(private)
 BLEND_PART :: 64
-
-// blend_square_root gives the table of the blend in linear light of the
-// text state, made on first use: a program that draws no text still blends.
-@(private)
-blend_square_root :: proc "contextless" () -> ^[4096]u8 {
-	if text_state.square_root[4095] == 0 {
-		square_root_table_fill(&text_state.square_root)
-	}
-	return &text_state.square_root
-}
 
 // blend_straight_alpha_row blends one row in the form of the target.
 @(private)

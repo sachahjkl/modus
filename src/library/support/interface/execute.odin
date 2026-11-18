@@ -36,7 +36,9 @@ execute_in_rectangles :: proc "contextless" (table: ^Draw_Table, canvas: graphic
 }
 
 // execute_in_rectangle draws the records that touch one rectangle of the
-// surface, cut to it.
+// surface, cut to it. A color with alpha blends with the table of the text
+// state of the graphics package, which the program fills once at its start
+// (graphics.text_state_start; display.text_settings_load calls it).
 execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, rectangle: Rectangle, origin_x: int = 0, origin_y: int = 0) {
 	limit := intersection(rectangle, {-origin_x, -origin_y, canvas.width - origin_x, canvas.height - origin_y})
 	if empty(limit) {
@@ -70,7 +72,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		case draw_record.Draw_Nothing, draw_record.Draw_Clip:
 		case draw_record.Draw_Rectangle:
 			if fields.repetition == (draw_record.Repetition{}) {
-				graphics.blend_fill(view, x, y, width, height, u32(fields.color))
+				graphics.blend_fill(view, x, y, width, height, u32(fields.color), &graphics.text_state.square_root)
 			} else {
 				pattern_draw(view, area, fields.repetition, fields.color)
 			}
@@ -80,7 +82,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			first := max(0, -y)
 			last := min(height, view.height - y)
 			for row in first ..< last {
-				graphics.blend_fill(view, x, y + row, width, 1, graphics.mix_with_alpha(u32(fields.top_color), u32(fields.bottom_color), u32(row * 255 / max(height - 1, 1))))
+				graphics.blend_fill(view, x, y + row, width, 1, graphics.mix_with_alpha(u32(fields.top_color), u32(fields.bottom_color), u32(row * 255 / max(height - 1, 1))), &graphics.text_state.square_root)
 			}
 		case draw_record.Draw_Horizontal_Gradient:
 			// One row of colors for the columns in the view, in parts of
@@ -97,7 +99,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 					graphics.copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
 				} else {
 					graphics.gradient_with_alpha(row[:count], u32(fields.left_color), u32(fields.right_color), width, part)
-					graphics.blend_copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
+					graphics.blend_copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height}, &graphics.text_state.square_root)
 				}
 			}
 		case draw_record.Draw_Text:
@@ -120,7 +122,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 				case .Opaque:
 					graphics.copy(view, x, y, picture)
 				case .Straight_Alpha:
-					graphics.blend_copy(view, x, y, picture)
+					graphics.blend_copy(view, x, y, picture, &graphics.text_state.square_root)
 				}
 			}
 		case draw_record.Draw_Text_Grid:
@@ -165,7 +167,7 @@ pattern_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, patt
 	rows_touch := cell_width == step_x
 	columns_touch := cell_height == step_y
 	if rows_touch && columns_touch {
-		graphics.blend_fill(view, 0, 0, width, height, color)
+		graphics.blend_fill(view, 0, 0, width, height, color, &graphics.text_state.square_root)
 		return
 	}
 	first_x := cell_x + (divide_down(area.left - cell_x - cell_width, step_x) + 1) * step_x
@@ -173,20 +175,20 @@ pattern_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, patt
 	if rows_touch {
 		// Each row of cells is one span across the area.
 		for top := first_y; top < area.bottom; top += step_y {
-			graphics.blend_fill(view, 0, top - area.top, width, cell_height, color)
+			graphics.blend_fill(view, 0, top - area.top, width, cell_height, color, &graphics.text_state.square_root)
 		}
 		return
 	}
 	if columns_touch {
 		// Each column of cells is one span down the area.
 		for left := first_x; left < area.right; left += step_x {
-			graphics.blend_fill(view, left - area.left, 0, cell_width, height, color)
+			graphics.blend_fill(view, left - area.left, 0, cell_width, height, color, &graphics.text_state.square_root)
 		}
 		return
 	}
 	for top := first_y; top < area.bottom; top += step_y {
 		for left := first_x; left < area.right; left += step_x {
-			graphics.blend_fill(view, left - area.left, top - area.top, cell_width, cell_height, color)
+			graphics.blend_fill(view, left - area.left, top - area.top, cell_width, cell_height, color, &graphics.text_state.square_root)
 		}
 	}
 }

@@ -294,7 +294,7 @@ Do not use: draw command, shape.
 
 A draw color is the color of a draw record: `0xAARRGGBB`, with straight alpha in the high byte, so alpha 255 is opaque and the color 0 is transparent.
 
-It blends over the pixels by one rule in linear light, the rule of the glyphs with the alpha as the coverage of the three channels. A color with alpha 0 has one form, 0, so two records that draw the same pixels have the same bytes. A writer makes one from a color token with `draw_record.opaque` or `draw_record.with_alpha`. A draw color is not a pixel of a surface: a pixel is `0x00RRGGBB`, and stays opaque.
+It blends over the pixels by one rule in linear light, the rule of the glyphs with the alpha as the coverage of the three channels. A color with alpha 0 has one form, 0, so two rectangles that draw nothing in one box have the same bytes, but for their patterns. A writer makes one from a color token with `draw_record.opaque` or `draw_record.with_alpha`. A draw color is not a pixel of a surface: a pixel is `0x00RRGGBB`, and stays opaque.
 
 The design: `docs/INTERFACE.md`, "2.1 Draw record".
 

@@ -542,8 +542,8 @@ records_of_an_opaque_color :: proc(color: Draw_Color) -> [3]Draw_Primitive {
 // A color with alpha 0 draws nothing whatever its channels, so its one form
 // is 0: the border refuses the other forms, with the smallest and the
 // largest channels, in each record of one color and in a gradient whose two
-// ends have alpha 0. Two records that draw the same pixels then have the
-// same bytes.
+// ends have alpha 0. Two such records that draw nothing in one box then
+// have the same bytes, but for a pattern.
 @(test)
 read_refuses_a_transparent_color_that_is_not_zero :: proc(t: ^testing.T) {
 	channels := [3]u32{1, 0x0012_3456, CHANNELS_MASK}
