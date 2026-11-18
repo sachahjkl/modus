@@ -92,12 +92,17 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 				graphics.copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
 			}
 		case draw_record.Draw_Text:
-			start, count := u64(fields.first), u64(fields.count)
-			if start + count <= u64(table.text_count) {
-				text_draw(view, x, y, string(table.text[start:][:count]), fields.color, int(fields.scale), fields.weight)
+			switch fields.font {
+			case .Cells_8x16:
+				// The origin of a text in the font of the cells is a whole
+				// pixel: the writer makes it the left edge of the box.
+				start, count := u64(fields.first), u64(fields.count)
+				if start + count <= u64(table.text_count) {
+					text_draw(view, draw_record.pixels_floor(fields.origin_x) - area.left, y, string(table.text[start:][:count]), fields.color, int(fields.scale), fields.weight)
+				}
+			case .Interface:
+				interface_text_draw(table, fields, view, area.left, y)
 			}
-		case draw_record.Draw_Interface_Text:
-			interface_text_draw(table, fields, view, area.left, y)
 		case draw_record.Draw_Picture:
 			if picture, ok := picture_pixels(table, place, fields); ok {
 				graphics.copy(view, x, y, picture)
@@ -258,14 +263,15 @@ cell_character_put :: proc "contextless" (run: []u8, place: int, character: rune
 	return place + length
 }
 
-// interface_text_draw draws an Interface_Text record that the border read:
-// its origin, its count, its scale and its weight are in their bounds. view
-// starts at the column view_left of the surface, and y is the top of the
-// record in the view. A record with a range outside the text table draws
-// nothing. With no interface font, the text is drawn in the font of the
-// cells at the pixel of its origin, cut to its box as each record.
+// interface_text_draw draws a Text record in the interface font that the
+// border read: its origin, its count, its scale and its weight are in their
+// bounds. view starts at the column view_left of the surface, and y is the
+// top of the record in the view. A record with a range outside the text
+// table draws nothing. With no interface font, the text is drawn in the
+// font of the cells at the pixel of its origin, cut to its box as each
+// record.
 @(private)
-interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_Interface_Text, view: graphics.Canvas, view_left, y: int) {
+interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_Text, view: graphics.Canvas, view_left, y: int) {
 	start := u64(fields.first)
 	count := u64(fields.count)
 	scale := int(fields.scale)

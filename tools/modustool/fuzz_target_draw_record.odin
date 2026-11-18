@@ -74,7 +74,7 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		draw_record.Draw_Picture{first = 0, stride = 16, generation = 1},
 		draw_record.Draw_Text_Grid{first = 0, count = 32, columns = 2},
 		draw_record.Draw_Line{start_x = pixel(1), start_y = pixel(1), end_x = pixel(9), end_y = pixel(5), color = 9, thickness = 2},
-		draw_record.Draw_Interface_Text{first = 0, count = 4, color = 10, origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, scale = 1, weight = .Bold},
+		draw_record.Draw_Text{first = 0, count = 4, color = 10, origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, font = .Interface, scale = 1, weight = .Bold},
 	}
 	all := make([]u8, len(primitives) * draw_record.RECORD_SIZE)
 	for primitive, index in primitives {

@@ -865,7 +865,7 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
 	text := [4]u8{'a', 'b', 'c', 'd'}
 	text_record :: proc(first: u32) -> Draw_Record {
-		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, scale = 1}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
+		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, origin_x = draw_record.units_of_pixels(8), scale = 1}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
 	}
 	records := [1]Draw_Record{text_record(2)}
 	before := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
@@ -1744,8 +1744,15 @@ coordinates_cut_by_their_edges :: proc(t: ^testing.T) {
 	area = record_rectangle(table.records[1])
 	testing.expect_value(t, area.left, COORDINATE_LIMIT - 1)
 	testing.expect_value(t, area.right, COORDINATE_LIMIT - 1)
+	// A text whose origin is past the limit has no record: no surface
+	// reaches it. At the limit, its origin is the left edge of its box.
 	draw_text(&table, min(int) + 1, 0, "text", 1)
+	draw_text(&table, -COORDINATE_LIMIT - 1, 0, "text", 1)
+	draw_text(&table, COORDINATE_LIMIT, 0, "text", 1)
+	testing.expect_value(t, table.record_count, 2)
+	draw_text(&table, -COORDINATE_LIMIT, 0, "text", 1)
 	testing.expect_value(t, record_view(table.records[2]).x, -COORDINATE_LIMIT)
+	testing.expect_value(t, record_view(table.records[2]).origin_x, draw_record.units_of_pixels(-COORDINATE_LIMIT))
 	// A rectangle inside the limit keeps its place and its size.
 	draw_rectangle(&table, -7, 12, 30, 5, 1)
 	testing.expect_value(t, record_rectangle(table.records[3]), Rectangle{-7, 12, 23, 17})

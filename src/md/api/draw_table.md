@@ -213,7 +213,15 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 ## What is built and what is left
 
-Built: version 12 of the record. The look of the system left the format: the grid of points is one `Rectangle` with a pattern placed on the surface, and the folded gap is a `Rectangle` and two `Line` records with the box of the gap, both drawn by elements of the interface package with the pixels of the kinds that they replaced. The words 6 and 7 of those kinds name no kind, and the border refuses them as unknown. The pixels can differ in three cases:
+Built: version 13 of the record. A text is one kind, `Text` (4), for both fonts: `first` u32 at 24, `count` u32 at 28, `color` u32 at 32, `origin_x` i32 at 36, `font` u8 at 40, `scale` u8 at 41, `weight` u8 at 42. The range stays the first word of the fields, so the difference masks it with one word as before. The origin is a place on the top edge of the box; the target form with `origin_y` and `TEXT_BYTES_LIMIT` for each font waits for the byte table.
+
+- **The font of the cells** puts its origin on the left edge of its box, a whole pixel. The border refuses another place. A writer gives no record to a text in that font whose left is past `COORDINATE_LIMIT`, as it already did for the interface font: version 12 cut that box to the limit and drew the text there, where no surface reaches.
+- **The interface font** keeps its origin on a third of a pixel, the ink margin right of the left edge, and its 256 bytes (`INTERFACE_TEXT_LIMIT`).
+- **The border** refuses a font word that names no member, and the word 11 of the kind `Interface_Text`, which left the format, as unknown.
+- **The pixels** of each text are those of its kind in version 12: a host test draws each text in both fonts, at each scale, weight and third of a pixel, whole and in four damage rectangles, and compares every pixel with the drawing of the old kind.
+- **The cost**: the execution switches on the font of each text, and the font of the cells reads its origin in place of the left of its box. Both are one branch and one shift for each text record, to measure with `clock` and `interface_elements`.
+
+Before it, version 12 of the record. The look of the system left the format: the grid of points is one `Rectangle` with a pattern placed on the surface, and the folded gap is a `Rectangle` and two `Line` records with the box of the gap, both drawn by elements of the interface package with the pixels of the kinds that they replaced. The words 6 and 7 of those kinds name no kind, and the border refuses them as unknown. The pixels can differ in three cases:
 
 - a folded gap narrower than 6 pixels, whose line the execution draws from the other end (the program `inspect` draws gaps of 16 pixels);
 - a grid of points in an area left of or above the pixel -10 of a surface, where the pattern has cells that the kind did not draw;

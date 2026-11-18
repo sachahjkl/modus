@@ -17,7 +17,8 @@ Record_View :: struct {
 	first, count:                   int, // The range of a text or of a grid in the text table; the first pixel of a picture.
 	scale:                          int, // A text.
 	weight:                         Font_Weight, // A text.
-	origin_x:                       i32, // An interface text, in 1/64 pixel.
+	origin_x:                       i32, // A text, in 1/64 pixel.
+	font:                           Font_Kind, // A text.
 	columns:                        int, // A grid.
 	memory, stride, generation:     int, // A picture.
 	start_x, start_y, end_x, end_y: int, // A line, in pixels.
@@ -46,10 +47,7 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 	case draw_record.Draw_Horizontal_Gradient:
 		view.kind, view.color, view.second_color = .Horizontal_Gradient, fields.left_color, fields.right_color
 	case draw_record.Draw_Text:
-		view.kind, view.color = .Text, fields.color
-		view.first, view.count, view.scale, view.weight = int(fields.first), int(fields.count), int(fields.scale), fields.weight
-	case draw_record.Draw_Interface_Text:
-		view.kind, view.color = .Interface_Text, fields.color
+		view.kind, view.color, view.font = .Text, fields.color, fields.font
 		view.first, view.count, view.scale, view.weight, view.origin_x = int(fields.first), int(fields.count), int(fields.scale), fields.weight, fields.origin_x
 	case draw_record.Draw_Picture:
 		view.kind = .Picture
@@ -79,6 +77,17 @@ is_pattern :: proc(view: Record_View) -> bool {
 // is_text_record says if a record is a text that the border reads, in the
 // font of the cells or in the interface font.
 is_text_record :: proc(record: Draw_Record) -> bool {
+	return record_view(record).kind == .Text
+}
+
+// is_interface_text says if a record is a text in the interface font.
+is_interface_text :: proc(record: Draw_Record) -> bool {
 	view := record_view(record)
-	return view.kind == .Text || view.kind == .Interface_Text
+	return view.kind == .Text && view.font == .Interface
+}
+
+// is_cells_text says if a record is a text in the font of the cells.
+is_cells_text :: proc(record: Draw_Record) -> bool {
+	view := record_view(record)
+	return view.kind == .Text && view.font == .Cells_8x16
 }
