@@ -7,17 +7,21 @@ import "modus:contract/draw_record"
 // record: a header and the fields of one kind"): the drawing module and the
 // compositor read the records of a draw table that another body of code
 // wrote, through one border. The input is records of 48 bytes, one after
-// the other.
+// the other; the same bytes are also read as the points of a path, 12
+// bytes each, through the border of the points.
 
 // fuzz_draw_record_execute: the border gives a problem of its enumeration;
 // a record that it reads has a box that is not inverted, inside the limit,
 // and on whole pixels but for a rectangle with no pattern and a gradient,
-// a gradient with valid points, keeps the canonical rule of its colors
-// (draw_color_problem),
+// a gradient with valid points, a path with valid fields, keeps the
+// canonical rule of its colors (draw_color_problem),
 // writes back to its own bytes, and keeps its bytes
 // when its range moves to its own first byte; a record that it refuses
-// changes no byte of the input.
+// changes no byte of the input. Then the points (fuzz_path_points_problem).
 fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
+	if points_problem := fuzz_path_points_problem(input); points_problem != "" {
+		return fuzz_broken(.Contract, "the points: %s", points_problem)
+	}
 	count := len(input) / draw_record.RECORD_SIZE
 	for index in 0 ..< count {
 		record: draw_record.Draw_Record
@@ -50,7 +54,11 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			if !draw_record.gradient_line_valid(value) {
 				return fuzz_broken(.Contract, "the record %d: read takes a gradient whose points are equal, past the limit or too far apart", index)
 			}
-		case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
+		case draw_record.Draw_Path:
+			if !draw_record.path_fields_valid(value) {
+				return fuzz_broken(.Contract, "the record %d: read takes a path whose range or stroke is out of its bounds", index)
+			}
+		case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
 		}
 		edges := [4]i32{record.left, record.top, record.right, record.bottom}
 		for edge in edges {
@@ -61,8 +69,8 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		if record.right < record.left || record.bottom < record.top {
 			return fuzz_broken(.Contract, "the record %d: read takes the inverted box %d, %d, %d, %d", index, record.left, record.top, record.right, record.bottom)
 		}
-		// A color that draws nothing has one form, and a line, whose
-		// squares overlap, is opaque.
+		// A color that draws nothing has one form, and no stroke has one
+		// form.
 		if color_problem := draw_color_problem(primitive); color_problem != "" {
 			return fuzz_broken(.Contract, "the record %d: read takes %s", index, color_problem)
 		}
@@ -83,7 +91,9 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 // draw_color_problem says how the colors of a primitive that the border read
 // break the canonical rule, or "": a rectangle of alpha 0 whose color is not
 // 0, a gradient whose two ends have alpha 0 and are not both 0, a text of
-// alpha 0 whose color is not 0, a line that is not opaque.
+// alpha 0 whose color is not 0, a path whose fill or stroke has alpha 0 and
+// is not 0, or whose stroke color and stroke width are not both 0 or both
+// set.
 draw_color_problem :: proc(primitive: draw_record.Draw_Primitive) -> string {
 	transparent :: proc(color: draw_record.Draw_Color) -> bool {
 		return draw_record.alpha_of(color) == 0
@@ -101,11 +111,95 @@ draw_color_problem :: proc(primitive: draw_record.Draw_Primitive) -> string {
 		if transparent(value.color) && value.color != 0 {
 			return "a text of alpha 0 whose color is not 0"
 		}
-	case draw_record.Draw_Line:
-		if draw_record.alpha_of(value.color) != draw_record.OPAQUE_ALPHA {
-			return "a line whose color is not opaque"
+	case draw_record.Draw_Path:
+		if (transparent(value.fill_color) && value.fill_color != 0) || (transparent(value.stroke_color) && value.stroke_color != 0) {
+			return "a path with a color of alpha 0 that is not 0"
+		}
+		if (value.stroke_color == 0) != (value.stroke_width == 0) {
+			return "a path whose stroke has a width and no color, or a color and no width"
 		}
 	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
+	}
+	return ""
+}
+
+// fuzz_path_points_problem reads the input as points of a path, as many as
+// the border takes and one more, and says how the border of the points
+// breaks its rules, or "": a problem out of its enumeration, a check with
+// no copy that gives another problem, a refusal that gives a count; and for
+// points that it reads, a first point that is not a Move, a command after
+// another that the order forbids, a point past the limit, a Close whose
+// place is not 0, a last point that ends no subpath, and a curve whose
+// segments are not 1 to CURVE_SEGMENT_LIMIT, leave the box of its three
+// points, or do not end at its end.
+fuzz_path_points_problem :: proc(input: []u8) -> string {
+	records: [draw_record.PATH_POINT_LIMIT + 1]draw_record.Path_Point_Record
+	count := min(len(input) / draw_record.PATH_POINT_SIZE, len(records))
+	if count > 0 {
+		mem.copy(&records[0], &input[0], count * draw_record.PATH_POINT_SIZE)
+	}
+	points: [draw_record.PATH_POINT_LIMIT + 1]draw_record.Path_Point
+	read_count, problem := draw_record.path_points_read(records[:count], points[:])
+	if problem > max(draw_record.Path_Problem) {
+		return "a problem out of its enumeration"
+	}
+	if draw_record.path_points_check(records[:count]) != problem {
+		return "the check with no copy gives another problem than the read"
+	}
+	if problem != .None {
+		return read_count == 0 ? "" : "a refusal that gives a count"
+	}
+	if read_count != count || count < 2 || count > draw_record.PATH_POINT_LIMIT {
+		return "a read of a count of points out of its bounds"
+	}
+	if points[0].command != .Move {
+		return "a path that does not start with a Move"
+	}
+	for point, index in points[:count] {
+		if !draw_record.inside_coordinate_limit(point.x) || !draw_record.inside_coordinate_limit(point.y) {
+			return "a point past the limit"
+		}
+		if point.command == .Close && (point.x != 0 || point.y != 0) {
+			return "a Close whose place is not 0"
+		}
+		next: draw_record.Path_Command = .Move
+		is_last := index + 1 == count
+		if !is_last {
+			next = points[index + 1].command
+		}
+		switch point.command {
+		case .Move:
+			if is_last || (next != .Line && next != .Curve_Control) {
+				return "a Move with no segment after it"
+			}
+		case .Curve_Control:
+			if is_last || next != .Line {
+				return "a Curve_Control with no Line after it"
+			}
+			start := points[index - 1]
+			if start.command == .Close {
+				return "a curve that starts at a Close"
+			}
+			end := points[index + 1]
+			segments := draw_record.curve_segment_count(start.x, start.y, point.x, point.y, end.x, end.y)
+			if segments < 1 || segments > draw_record.CURVE_SEGMENT_LIMIT {
+				return "a curve cut into a count of segments out of its bounds"
+			}
+			for step in 0 ..= segments {
+				x, y := draw_record.curve_point(start.x, start.y, point.x, point.y, end.x, end.y, step, segments)
+				if x < min(start.x, point.x, end.x) || x > max(start.x, point.x, end.x) || y < min(start.y, point.y, end.y) || y > max(start.y, point.y, end.y) {
+					return "a point of a curve outside the box of its three points"
+				}
+				if step == segments && (x != end.x || y != end.y) {
+					return "a curve whose last segment does not end at its end"
+				}
+			}
+		case .Close:
+			if points[index - 1].command != .Line || next != .Move {
+				return "a Close out of its place"
+			}
+		case .Line:
+		}
 	}
 	return ""
 }
@@ -131,7 +225,8 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		draw_record.Draw_Rectangle{color = opaque(6), repetition = {cell_x = pixel(12), cell_y = pixel(12), cell_width = 2 * draw_record.UNITS_PER_PIXEL, cell_height = 2 * draw_record.UNITS_PER_PIXEL, step_x = 24 * draw_record.UNITS_PER_PIXEL, step_y = 24 * draw_record.UNITS_PER_PIXEL}},
 		draw_record.Draw_Picture{first = 0, stride = 16, generation = 1},
 		draw_record.Draw_Text_Grid{first = 0, count = 32, columns = 2},
-		draw_record.Draw_Line{start_x = pixel(1), start_y = pixel(1), end_x = pixel(9), end_y = pixel(5), color = opaque(9), thickness = 2},
+		draw_record.Draw_Path{first = 0, count = 5 * draw_record.PATH_POINT_SIZE, fill_color = draw_record.with_alpha(9, 128), stroke_color = opaque(9), stroke_width = 2 * draw_record.UNITS_PER_PIXEL},
+		draw_record.Draw_Path{first = 4, count = 2 * draw_record.PATH_POINT_SIZE, fill_color = opaque(11)},
 		draw_record.Draw_Text{first = 0, count = 4, color = opaque(10), origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, font = .Interface, scale = 1, weight = .Bold},
 		draw_record.Draw_Rectangle{color = draw_record.with_alpha(0x00102030, 128)},
 		draw_record.Draw_Gradient{start_x = pixel(0), start_y = pixel(0) + half, end_x = pixel(0), end_y = pixel(15) + half, start_color = draw_record.Draw_Color(0x00405060), end_color = opaque(0x00405060)},
@@ -159,6 +254,20 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		add(seeds, all, &place, draw_record.record_of(primitive, u32(len(primitives) + index), 21, pixel(1) + 42, pixel(15) + 21, pixel(14) + 43))
 	}
 	append(seeds, all)
+	// The points of a path that the border of the points reads: a subpath
+	// with a line, a curve and a Close, then an open subpath of one line.
+	path := [?]draw_record.Path_Point_Record {
+		{command = u32(draw_record.Path_Command.Move), x = pixel(1), y = pixel(1)},
+		{command = u32(draw_record.Path_Command.Line), x = pixel(9), y = pixel(1) + 5},
+		{command = u32(draw_record.Path_Command.Curve_Control), x = pixel(30), y = pixel(-20)},
+		{command = u32(draw_record.Path_Command.Line), x = pixel(5), y = pixel(12)},
+		{command = u32(draw_record.Path_Command.Close)},
+		{command = u32(draw_record.Path_Command.Move), x = -draw_record.COORDINATE_UNIT_LIMIT, y = draw_record.COORDINATE_UNIT_LIMIT},
+		{command = u32(draw_record.Path_Command.Line), x = draw_record.COORDINATE_UNIT_LIMIT, y = -draw_record.COORDINATE_UNIT_LIMIT},
+	}
+	points := make([]u8, len(path) * draw_record.PATH_POINT_SIZE)
+	mem.copy(&points[0], &path[0], len(points))
+	append(seeds, points)
 }
 
 fuzz_draw_record_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {

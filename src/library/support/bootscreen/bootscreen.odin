@@ -34,7 +34,7 @@ import op "modus:contract/operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The size that the display needs.
-HEIGHT :: 708 // Pixels: a window of this height fits the screen of 768 lines under the bar and its title.
+HEIGHT :: 708 // Pixels: a window of this height fits the window bound of 768 lines under the bar and its title.
 PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
 PROCESS_ROWS :: 12 // The processes that the card of the processes shows.
 

@@ -129,7 +129,7 @@ CASE_CAPACITY :: 15 // The cases of cases_run, and one more after a key.
 CASES_HEIGHT :: CASE_CAPACITY * LINE + 9 * graphics.LINE_HEIGHT
 MEASURES_Y :: 16 + 2 * LINE + CASES_HEIGHT + LINE + LINE / 2
 HEIGHT :: MEASURES_Y + 3 * LINE + graphics.LINE_HEIGHT + 8 // The three measures, one of them on two lines.
-#assert(HEIGHT <= 712) // The screen of 768 lines, less the bar and the title of the window.
+#assert(HEIGHT <= 712) // The window bound of 768 lines, less the bar and the title of the window.
 
 
 Case :: struct {

@@ -49,9 +49,10 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 }
 
 // records_equal says if two records draw the same thing: their 48 bytes are
-// equal, except the places of their texts and grids in the two text tables,
-// and the bytes of their texts are equal. A text record whose range is not
-// inside its text table is equal to no record. Two Text_Grid records are
+// equal, except the places of their texts, grids and paths in the two text
+// tables, and the bytes of their texts and of the points of their paths are
+// equal. A text or a path whose range is not inside its text table is equal
+// to no record. Two Text_Grid records are
 // equal when their bytes are equal except their places: their cells are
 // compared one by one after it (grid_damage). The check is on the records
 // that it receives, the copies that it compares.
@@ -64,12 +65,14 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // that it reads canonical (each unused byte is 0, and a color with alpha 0
 // that draws nothing is 0), so two records whose bytes differ draw
 // different things, or one of them draws nothing: they are not equal, and
-// no read through the border is needed to know it. Where two records with
+// no read through the border is needed to know it. A text and a path
+// compare the bytes that they name too, and a path the rest of its first
+// byte and of the address of its points by 4 (points_places_agree). Where two records with
 // other bytes still draw the same pixels (a gradient of one line whose
 // second end, of alpha 0, is never drawn; rectangles of the color 0 with
 // other patterns; a rectangle of the color 0 against a None), the damage
 // is too large, never too small. The one exception is the first byte of the range of
-// a Text or a Text_Grid, which can move in the text table
+// a Text, a Text_Grid or a Path, which can move in the text table
 // with no change of what is drawn: those records are compared with that
 // word masked. Two refused records that are equal under the mask draw
 // nothing in both frames, or are damaged by the comparison of their texts
@@ -86,7 +89,10 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		case .Text:
 			range := transmute(Range_Fields)new.fields
 			return texts_equal(before, range.first, now, range.first, range.count)
-		case .None, .Rectangle, .Gradient, .Clip, .Picture, .Text_Grid, .Line:
+		case .Path:
+			range := transmute(Range_Fields)new.fields
+			return points_places_agree(before, range.first, now, range.first) && texts_equal(before, range.first, now, range.first, range.count)
+		case .None, .Rectangle, .Gradient, .Clip, .Picture, .Text_Grid:
 			return true
 		}
 		return true
@@ -95,7 +101,7 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		return false
 	}
 	switch kind {
-	case .Text, .Text_Grid:
+	case .Text, .Text_Grid, .Path:
 		old_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
 		new_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
 		if old_words != new_words {
@@ -106,15 +112,33 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		}
 		old_range := transmute(Range_Fields)old.fields
 		new_range := transmute(Range_Fields)new.fields
+		if kind == .Path && !points_places_agree(before, old_range.first, now, new_range.first) {
+			return false
+		}
 		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
-	case .None, .Rectangle, .Gradient, .Clip, .Picture, .Line:
+	case .None, .Rectangle, .Gradient, .Clip, .Picture:
 		return false
 	}
 	return false
 }
 
-// The first two fields of a Text and a Text_Grid: the
-// place of the range in the text table, and its count of bytes.
+// points_places_agree says if the points of two paths are at places that
+// the reader treats alike: the border of the record refuses a first byte
+// that is not a multiple of 4, and the execution draws nothing when the
+// address of the points is not a multiple of 4. So two paths with the same
+// points, of which one draws and the other does not, differ by the rest of
+// their first byte or of their address, and are not equal.
+@(private)
+points_places_agree :: proc "contextless" (before: ^Draw_Table, old_first: u32, now: ^Draw_Table, new_first: u32) -> bool {
+	ALIGNMENT :: align_of(draw_record.Path_Point_Record)
+	if old_first % ALIGNMENT != new_first % ALIGNMENT {
+		return false
+	}
+	return (uintptr(raw_data(before.text)) + uintptr(old_first)) % ALIGNMENT == (uintptr(raw_data(now.text)) + uintptr(new_first)) % ALIGNMENT
+}
+
+// The first two fields of a Text, a Text_Grid and a Path: the place of the
+// range in the text table, and its count of bytes.
 @(private)
 Range_Fields :: struct {
 	first:    u32,
@@ -135,6 +159,7 @@ RANGE_FIRST_MASK :: u64(0xFFFF_FFFF)
 #assert(size_of(Range_Fields) == draw_record.FIELDS_SIZE)
 #assert(offset_of(draw_record.Text_Fields, first) == 0 && offset_of(draw_record.Text_Fields, count) == 4)
 #assert(offset_of(draw_record.Text_Grid_Fields, first) == 0 && offset_of(draw_record.Text_Grid_Fields, count) == 4)
+#assert(offset_of(draw_record.Path_Fields, first) == 0 && offset_of(draw_record.Path_Fields, count) == 4)
 
 // texts_equal says if two ranges of count bytes, in the text tables of two
 // frames, hold the same bytes. A range outside its text table is equal to

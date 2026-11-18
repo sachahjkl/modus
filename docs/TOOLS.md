@@ -1020,7 +1020,8 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `vector_font` | raw | A font that `font_open` accepts gives each glyph, outline, pair and substitution, and draws a glyph |
 | `glyph_cache`, `font_outlines` | raw | A glyph cache that `validate` accepts gives each glyph in its line and its words; font outlines write again to the same fonts |
 | `pointer_pictures` | raw | A theme that `validate` accepts gives a picture of each shape, size and time, with its pixels in the file |
-| `draw_record` | raw | The border of a draw record gives a problem of its enumeration and changes nothing; a record that it reads has a box in its bounds, and writes back to its own bytes |
+| `draw_record` | raw | The border of a draw record gives a problem of its enumeration and changes nothing; a record that it reads has a box in its bounds, and writes back to its own bytes. The same bytes as the points of a path: the border of the points, with a copy and with none, gives one problem and a count of 0 on a refusal, and the points that it reads start with a `Move`, keep the order of the commands, and cut each curve inside the box of its three points |
+| `draw_path` | raw | A path of fuzzed points, with a stroke width and two alphas from the input, written by `draw_path` and drawn into a canvas framed by guard pixels: no pixel outside the canvas or the box of the record changes, and the path drawn whole and in damage rectangles across the bands of the accumulation gives the same pixels. The arithmetic of Odin wraps with no fault, so this is where a sum of the cells past its bound shows |
 | `firmware_tables` | raw | The tables DMAR, IVRS and MCFG that the readers accept keep their counts, ranges and units in their bounds |
 | `acpi_processors` | raw | The processors that the table APIC names stay in the table of the caller, and those of the identifiers of 8 bits are processors of the other mode too |
 | `sentences` | raw | The sentence of any error record is a valid text; in a small buffer it is the start of the whole sentence, then the cut mark with the count of the bytes that it lacks |
@@ -1595,7 +1596,7 @@ ffmpeg -f concat -safe 0 -i build/films/<name>/pictures.ffconcat
 
 Measured on the film of the palette (36.8 s): the MP4 file has 3 169 392 bytes and the WebM file 1 572 784 bytes, about half, with the text of the screen sharp.
 
-Each file is at a constant 30 pictures in one second. Each pixel of the screen is a square of 2 by 2 pixels of the film, with no filter: the screen of 1024 by 768 is a film of 2048 by 1536. The color planes of the pixel format `yuv420p` have half the size of the picture, so with this scale each pixel of the screen keeps its own color, and the squares of the design stay sharp. The colors are converted and named as those of a film in high definition, so that a player shows the colors of the screen. The tool makes no GIF and no WebP file: at this size and length, with a window that draws at each frame, such a file is many times larger than the MP4 file.
+Each file is at a constant 30 pictures in one second. Each pixel of the screen is a square of 2 by 2 pixels of the film, with no filter: the reference screen of 1920 by 1080 is a film of 3840 by 2160. The color planes of the pixel format `yuv420p` have half the size of the picture, so with this scale each pixel of the screen keeps its own color, and the squares of the design stay sharp. The colors are converted and named as those of a film in high definition, so that a player shows the colors of the screen. The tool makes no GIF and no WebP file: at this size and length, with a window that draws at each frame, such a file is many times larger than the MP4 file.
 
 ### The film of a document
 

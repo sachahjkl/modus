@@ -2,6 +2,7 @@
 package bar
 
 import "core:testing"
+import "modus:contract/reference_screen"
 
 // The frame of the compositor: borders of 2, a close button of 24, a title
 // of 24.
@@ -21,10 +22,11 @@ kept_on_screen :: proc(x, y: int, frame: Window_Frame, screen_width, screen_heig
 
 // The pointer at each edge, the window held at each pixel of its title:
 // the place keeps a part of the title on the screen. The widths 1280 and
-// 1366 (not a multiple of 8) and the heights 768 and 765.
+// 1366 (not a multiple of 8), the heights 768 and 765, and the reference
+// screen.
 @(test)
 dragged_window_stays_on_screen :: proc(t: ^testing.T) {
-	sizes := [?][2]int{{1280, 768}, {1366, 765}, {1024, 768}}
+	sizes := [?][2]int{{1280, 768}, {1366, 765}, {1024, 768}, {reference_screen.WIDTH, reference_screen.HEIGHT}}
 	for size in sizes {
 		screen_width, screen_height := size[0], size[1]
 		surface_widths := [?]int{100, 480, screen_width - 4, screen_width + 300}
@@ -99,4 +101,36 @@ new_window_places :: proc(t: ^testing.T) {
 	tall := frame_of(480)
 	_, y = new_window_place(64, 56, tall, 900, 1024, 768)
 	testing.expect_value(t, y, HEIGHT)
+}
+
+// The reference screen: a window wider and higher than the screen, with
+// the largest surface that display.open makes, shows its close button and
+// starts under the bar; the place where only the title bar shows, at the
+// bottom, is kept, and a place below it stops where TITLE_KEPT lines of
+// the title stay on the screen. A window of the window bound placed where
+// a screen of 1024 by 768 puts it keeps its place.
+@(test)
+new_window_places_on_the_reference_screen :: proc(t: ^testing.T) {
+	WIDTH_OF_SCREEN :: reference_screen.WIDTH
+	HEIGHT_OF_SCREEN :: reference_screen.HEIGHT
+	LARGEST_SURFACE :: 2048
+	largest := frame_of(LARGEST_SURFACE)
+	x, y := new_window_place(64, 56, largest, LARGEST_SURFACE, WIDTH_OF_SCREEN, HEIGHT_OF_SCREEN)
+	close_right := x + largest.outer_width - largest.border
+	testing.expectf(t, close_right <= WIDTH_OF_SCREEN && close_right - largest.close_size >= 0, "the close button of a window wider than the screen ends at %d", close_right)
+	testing.expect(t, x %% GRID == 0, "on the grid")
+	testing.expect_value(t, y, HEIGHT)
+
+	bound := frame_of(1000)
+	title_only := HEIGHT_OF_SCREEN - bound.title_height
+	_, kept_y := window_place_kept(64, title_only, bound, WIDTH_OF_SCREEN, HEIGHT_OF_SCREEN)
+	testing.expect_value(t, kept_y, title_only)
+	for below in ([]int{HEIGHT_OF_SCREEN - TITLE_KEPT + 1, HEIGHT_OF_SCREEN - 1, HEIGHT_OF_SCREEN, HEIGHT_OF_SCREEN + 1, max(int) / 2}) {
+		_, below_y := window_place_kept(64, below, bound, WIDTH_OF_SCREEN, HEIGHT_OF_SCREEN)
+		testing.expectf(t, below_y == HEIGHT_OF_SCREEN - TITLE_KEPT, "the place %d below the screen gives %d", below, below_y)
+	}
+
+	x, y = new_window_place(64, 56, bound, 708, WIDTH_OF_SCREEN, HEIGHT_OF_SCREEN)
+	testing.expect_value(t, x, 64)
+	testing.expect_value(t, y, 56)
 }
