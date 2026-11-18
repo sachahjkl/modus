@@ -73,6 +73,9 @@ measure_history_series := [?]Measure_History_Series {
 	{sentence = "A full frame of the compositor at 1920 x 1080 with 4 windows, on the processor", title = "A full frame of the compositor at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "A frame of the compositor at 1920 x 1080 in its damage, on the processor", title = "A frame of the compositor in its damage at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "The execution of a draw table of a desktop at 1920 x 1080, on the processor", title = "A draw table of a desktop at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
+	{sentence = "The time of a frame of the compositor, from the first record that it reads to the flip", title = "The time of a frame, from its first record to the flip, the least", before = QUALITY_LEAST, after = QUALITY_MEDIAN, unit = "microseconds", faster = .Lower},
+	{sentence = "The time of a key to the screen, through the console", title = "A key to the screen through the console, the least", before = QUALITY_LEAST, after = QUALITY_MEDIAN, unit = "microseconds", faster = .Lower},
+	{sentence = "The start of a window, from Program_Start to its first frame", title = "The start of the window of locks", before = QUALITY_WINDOW_START_TAIL, after = QUALITY_MICROSECONDS, unit = "microseconds", faster = .Lower},
 }
 
 // What the release command or the history command does with a record.

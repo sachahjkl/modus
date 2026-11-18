@@ -85,6 +85,11 @@ input_of_record_refuses_a_kind_that_names_no_input :: proc(t: ^testing.T) {
 	given, ok := input_of_record(key_record)
 	testing.expect(t, ok)
 	testing.expect_value(t, given, Input_Record{kind = .Key, key = {code = 0x1C, character = 0, modifiers = 2}})
+	// The serial of the compositor comes back as it is, the largest too.
+	key_record.values[2] = max(u64)
+	given, ok = input_of_record(key_record)
+	testing.expect(t, ok)
+	testing.expect_value(t, given.key.serial, max(u64))
 	list_record := ring.Record{kind = u32(Input.List_First)}
 	list_record.values[0] = max(u64)
 	given, ok = input_of_record(list_record)
@@ -94,6 +99,26 @@ input_of_record_refuses_a_kind_that_names_no_input :: proc(t: ^testing.T) {
 	given, ok = input_of_record(list_record)
 	testing.expect(t, ok)
 	testing.expect_value(t, given, Input_Record{kind = .List_First, list_first = 3})
+}
+
+// The key serial of an Edit record is kept only up to the newest serial
+// that the terminal forwarded: the largest word and one past it are
+// refused and change nothing; an older serial keeps the newer one; 0 is
+// taken and changes nothing.
+@(test)
+edit_key_serial_take_refuses_a_serial_that_was_not_forwarded :: proc(t: ^testing.T) {
+	kept: u64
+	testing.expect(t, edit_key_serial_take(&kept, max(u64), 10))
+	testing.expect_value(t, kept, 0)
+	testing.expect(t, edit_key_serial_take(&kept, 11, 10))
+	testing.expect_value(t, kept, 0)
+	testing.expect(t, edit_key_serial_take(&kept, 1, 0), "a serial with no key forwarded was taken")
+	testing.expect(t, !edit_key_serial_take(&kept, 0, 10))
+	testing.expect_value(t, kept, 0)
+	testing.expect(t, !edit_key_serial_take(&kept, 10, 10))
+	testing.expect_value(t, kept, 10)
+	testing.expect(t, !edit_key_serial_take(&kept, 4, 10))
+	testing.expect_value(t, kept, 10)
 }
 
 // The form of a hint line for a width: the long form when it fits, the

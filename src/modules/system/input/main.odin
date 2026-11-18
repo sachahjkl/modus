@@ -374,9 +374,12 @@ keyboard_byte :: proc "contextless" (value: u8) {
 
 // key_record_send writes one record `Key`. The loop of entry read the byte
 // of the key only when the ring had room for each record of the byte, and
-// this thread is the one writer of the ring: the record has a place.
+// this thread is the one writer of the ring: the record has a place. The
+// record holds the time of the system at the read of the byte, the start
+// of the measure of a key to the screen
+// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 key_record_send :: proc "contextless" (code: u32, character: rune, pressed: bool) {
-	if !system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers)}}) {
+	if !system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers), display.INPUT_KEY_READ_AT = system.nanoseconds()}}) {
 		key_records_refused += 1
 		system.log("input: the input ring refused a key record that had a place: ", key_records_refused, " key records are lost")
 	}
