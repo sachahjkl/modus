@@ -2505,3 +2505,96 @@ grid_of_and_picture_of_refuse_what_the_table_does_not_hold :: proc(t: ^testing.T
 	_, found := picture_of(&pictures, record_in_pixels(draw_record.Draw_Picture{memory = 0, stride = 4}, 0, 0, 4, 4))
 	testing.expect(t, found, "a picture of the memory 0 is read")
 }
+
+// The grid of points as the kind Point_Grid drew it, in version 11 of the
+// record: a point at 12 + 24 k of the surface for each k from 0, cut to
+// the area. The reference of the element.
+@(private = "file")
+point_grid_reference :: proc(canvas: graphics.Canvas, area: Rectangle, color: graphics.Color) {
+	view := graphics.view(canvas, area.left, area.top, area.right - area.left, area.bottom - area.top)
+	half := graphics.POINT_STEP / 2
+	first_x := half + max(0, (area.left - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
+	first_y := half + max(0, (area.top - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
+	for point_y := first_y; point_y < area.bottom; point_y += graphics.POINT_STEP {
+		for point_x := first_x; point_x < area.right; point_x += graphics.POINT_STEP {
+			graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, color)
+		}
+	}
+}
+
+// The folded gap as the kind Folded_Gap drew it, in version 11 of the
+// record: the track, then two lines from the given ends, cut to the gap.
+@(private = "file")
+folded_gap_reference :: proc(canvas: graphics.Canvas, x, y, width, height: int) {
+	view := graphics.view(canvas, x, y, width, height)
+	graphics.fill(view, 0, 0, width, height, graphics.colors.track)
+	graphics.line(view, 2, height - 4, width - 4, 4, 1, graphics.colors.dim)
+	graphics.line(view, 6, height - 4, width, 8, 1, graphics.colors.dim)
+}
+
+// The grid of points is one Rectangle with a pattern, cut to its area, and
+// draws the pixels of the kind that it replaced, in areas at each phase of
+// the grid: at the corner, inside a step, on a point, across a point, and
+// in a part of the surface only.
+@(test)
+the_grid_of_points_is_a_pattern_with_the_same_pixels :: proc(t: ^testing.T) {
+	WIDTH :: 120
+	HEIGHT :: 80
+	areas := [?]Rectangle{{0, 0, WIDTH, HEIGHT}, {5, 7, 105, 57}, {11, 11, 14, 14}, {13, 13, 50, 40}, {12, 12, 13, 13}, {36, 0, 37, HEIGHT}, {0, 0, 0, 0}}
+	for area, index in areas {
+		memory: Tables
+		table := table_of(&memory)
+		draw_point_grid(&table, area.left, area.top, area.right - area.left, area.bottom - area.top)
+		testing.expect_value(t, table.record_count, 1)
+		view := record_view(table.records[0])
+		testing.expect(t, view.read && view.kind == .Rectangle && view.repetition == POINT_GRID_PATTERN && view.color == graphics.colors.point)
+		drawn, expected: [WIDTH * HEIGHT]graphics.Color
+		canvas := graphics.Canvas{pixels = raw_data(drawn[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+		execute(&table, canvas)
+		point_grid_reference({pixels = raw_data(expected[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, area, graphics.colors.point)
+		testing.expectf(t, drawn == expected, "the area %d, %v: the grid of points draws other pixels", index, area)
+		// In each damage rectangle, the same pixels: the pattern is placed on
+		// the surface, not on the rectangle.
+		parts: [WIDTH * HEIGHT]graphics.Color
+		part_canvas := graphics.Canvas{pixels = raw_data(parts[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+		rectangles := [?]Rectangle{{0, 0, 30, HEIGHT}, {30, 0, 61, 33}, {30, 33, 61, HEIGHT}, {61, 0, WIDTH, HEIGHT}}
+		execute_in_rectangles(&table, part_canvas, rectangles[:])
+		testing.expectf(t, parts == expected, "the area %d: the grid in parts differs from the whole grid", index)
+	}
+}
+
+// The folded gap is a track and two lines, three records with the box of
+// the gap, and draws the pixels of the kind that it replaced at each width
+// from 6 pixels; the lines are cut to the gap as they were.
+@(test)
+the_folded_gap_is_three_records_with_the_same_pixels :: proc(t: ^testing.T) {
+	WIDTH :: 80
+	HEIGHT :: 40
+	for width in 6 ..< 64 {
+		for height in ([3]int{8, 16, 24}) {
+			memory: Tables
+			table := table_of(&memory)
+			draw_folded_gap(&table, 7, 5, width, height)
+			testing.expect_value(t, table.record_count, 3)
+			for record in table.records[:table.record_count] {
+				testing.expect_value(t, record_rectangle(record), Rectangle{7, 5, 7 + width, 5 + height})
+			}
+			testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Rectangle)
+			testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Line)
+			testing.expect_value(t, record_view(table.records[2]).kind, Draw_Kind.Line)
+			drawn, expected: [WIDTH * HEIGHT]graphics.Color
+			execute(&table, {pixels = raw_data(drawn[:]), width = WIDTH, height = HEIGHT, stride = WIDTH})
+			folded_gap_reference({pixels = raw_data(expected[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, 7, 5, width, height)
+			if drawn != expected {
+				testing.expectf(t, false, "a folded gap of %d by %d draws other pixels", width, height)
+				return
+			}
+		}
+	}
+	// No size: no record.
+	memory: Tables
+	table := table_of(&memory)
+	draw_folded_gap(&table, 7, 5, 0, 16)
+	draw_folded_gap(&table, 7, 5, 16, -1)
+	testing.expect_value(t, table.record_count, 0)
+}

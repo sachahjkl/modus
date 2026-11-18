@@ -82,7 +82,7 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		case .Text, .Interface_Text:
 			range := transmute(Range_Fields)new.fields
 			return texts_equal(before, range.first, now, range.first, range.count)
-		case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Point_Grid, .Folded_Gap, .Picture, .Text_Grid, .Line:
+		case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Picture, .Text_Grid, .Line:
 			return true
 		}
 		return true
@@ -103,7 +103,7 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		old_range := transmute(Range_Fields)old.fields
 		new_range := transmute(Range_Fields)new.fields
 		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
-	case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Point_Grid, .Folded_Gap, .Picture, .Line:
+	case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Picture, .Line:
 		return false
 	}
 	return false

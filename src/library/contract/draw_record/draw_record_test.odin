@@ -6,21 +6,31 @@ import "core:testing"
 // A record of each kind that the border reads, in a box of whole pixels.
 // The other cases break one field of one of them.
 @(private = "file")
-sample_primitives :: proc() -> [12]Draw_Primitive {
-	return [12]Draw_Primitive {
+sample_primitives :: proc() -> [11]Draw_Primitive {
+	return [11]Draw_Primitive {
 		Draw_Nothing{},
 		Draw_Rectangle{color = 0x00102030},
+		Draw_Rectangle{color = 0x0018212D, repetition = SAMPLE_PATTERN},
 		Draw_Vertical_Gradient{top_color = 0x00101010, bottom_color = 0x00202020},
 		Draw_Horizontal_Gradient{left_color = 0x00303030, right_color = 0x00404040},
 		Draw_Text{first = 3, count = 5, color = 0x00ABCDEF, scale = 2, weight = .Bold},
 		Draw_Clip{},
-		Draw_Point_Grid{color = 0x0018212D},
-		Draw_Folded_Gap{line_color = 0x00505050, track_color = 0x00606060},
 		Draw_Picture{memory = 1, first = 7, stride = 40, generation = 9},
 		Draw_Text_Grid{first = 8, count = 32, columns = 2},
 		Draw_Line{start_x = units_of_pixels(2), start_y = units_of_pixels(3), end_x = units_of_pixels(20), end_y = units_of_pixels(-4), color = 0x00708090, thickness = 3},
 		Draw_Interface_Text{first = 0, count = 4, color = 0x00FFFFFF, origin_x = units_of_pixels(12) + UNITS_PER_PIXEL / 3, scale = 1, weight = .Regular},
 	}
+}
+
+// The pattern of the grid of points of the background: cells of 2 pixels,
+// one each 24 pixels, the first at 12 pixels of the surface.
+SAMPLE_PATTERN :: Repetition {
+	cell_x      = 12 * UNITS_PER_PIXEL,
+	cell_y      = 12 * UNITS_PER_PIXEL,
+	cell_width  = 2 * UNITS_PER_PIXEL,
+	cell_height = 2 * UNITS_PER_PIXEL,
+	step_x      = 24 * UNITS_PER_PIXEL,
+	step_y      = 24 * UNITS_PER_PIXEL,
 }
 
 @(private = "file")
@@ -55,10 +65,6 @@ reserved_runs_of :: proc(kind: Draw_Kind) -> (runs: [2]Reserved_Run, count: int)
 		return {{int(offset_of(Horizontal_Gradient_Fields, reserved)), size_of(Horizontal_Gradient_Fields{}.reserved)}, {}}, 1
 	case .Text:
 		return {{int(offset_of(Text_Fields, reserved)), size_of(Text_Fields{}.reserved)}, {}}, 1
-	case .Point_Grid:
-		return {{int(offset_of(Point_Grid_Fields, reserved)), size_of(Point_Grid_Fields{}.reserved)}, {}}, 1
-	case .Folded_Gap:
-		return {{int(offset_of(Folded_Gap_Fields, reserved)), size_of(Folded_Gap_Fields{}.reserved)}, {}}, 1
 	case .Picture:
 		return {{int(offset_of(Picture_Fields, memory_reserved)), size_of(Picture_Fields{}.memory_reserved)}, {int(offset_of(Picture_Fields, reserved)), size_of(Picture_Fields{}.reserved)}}, 2
 	case .Text_Grid:
@@ -71,19 +77,87 @@ reserved_runs_of :: proc(kind: Draw_Kind) -> (runs: [2]Reserved_Run, count: int)
 	return {}, 0
 }
 
-// Each word that names no kind is refused: one past the largest kind and
-// every word after it, up to the largest word of the byte.
+// The words of the two kinds that left the format, the grid of points (6)
+// and the folded gap (7), name no kind: a record of the form of version 11
+// with one of them is refused, with each byte of its fields 0 and with
+// the color that it held.
+@(test)
+read_refuses_the_words_of_the_kinds_that_left :: proc(t: ^testing.T) {
+	POINT_GRID_WORD :: 6
+	FOLDED_GAP_WORD :: 7
+	words := [2]u8{POINT_GRID_WORD, FOLDED_GAP_WORD}
+	for word in words {
+		_, known := draw_kind_of_word(word)
+		testing.expectf(t, !known, "the word %d names a kind", word)
+		record := sample_record(Draw_Nothing{})
+		record.kind = word
+		primitive, problem := read(record)
+		testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word %d: %v", word, problem)
+		record.fields[0] = 0x2D
+		record.fields[1] = 0x21
+		record.fields[2] = 0x18
+		primitive, problem = read(record)
+		testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word %d with a color: %v", word, problem)
+	}
+}
+
+// Each word that names no kind is refused: the words between the kinds,
+// one past the largest kind and every word after it, up to the largest word
+// of the byte.
 @(test)
 read_refuses_each_unknown_kind :: proc(t: ^testing.T) {
-	refused := 0
-	for word in u64(max(Draw_Kind)) + 1 ..= u64(max(u8)) {
+	refused, read_count := 0, 0
+	for word in 0 ..= u64(max(u8)) {
 		record := sample_record(Draw_Nothing{})
 		record.kind = u8(word)
+		if _, known := draw_kind_of_word(u8(word)); known {
+			read_count += 1
+			continue
+		}
 		primitive, problem := read(record)
 		testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word %d names no kind, and the border gives %v", word, problem)
 		refused += 1
 	}
-	testing.expect_value(t, refused, int(max(u8)) - int(max(Draw_Kind)))
+	testing.expect_value(t, read_count, len(Draw_Kind))
+	testing.expect_value(t, refused, int(max(u8)) + 1 - len(Draw_Kind))
+}
+
+// The pattern of a Rectangle out of its bounds: one step at 0 and the other
+// not, fields of a pattern with both steps at 0, a cell of 0, a cell larger
+// than its step, a size or a place inside a pixel, a place past the limit.
+// Then the bounds themselves are read.
+@(test)
+read_refuses_a_pattern_past_its_bounds :: proc(t: ^testing.T) {
+	pixel :: UNITS_PER_PIXEL
+	refused := [?]Repetition {
+		{step_x = 24 * pixel, cell_width = 2 * pixel, cell_height = 2 * pixel},
+		{step_y = 24 * pixel, cell_width = 2 * pixel, cell_height = 2 * pixel},
+		{cell_x = pixel},
+		{cell_width = pixel},
+		{cell_x = 0, cell_y = 0, cell_width = 0, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = 25 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = 2 * pixel, cell_height = 25 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = 2 * pixel + 1, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel - 1, step_y = 24 * pixel},
+		{cell_x = 1, cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_y = COORDINATE_UNIT_LIMIT + pixel, cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_x = min(i32), cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = max(u16), cell_height = 2 * pixel, step_x = max(u16), step_y = 24 * pixel},
+	}
+	for pattern, index in refused {
+		_, problem := read(sample_record(Draw_Rectangle{color = 1, repetition = pattern}))
+		testing.expectf(t, problem == .Field_Past_Bound, "the pattern %d: %v", index, problem)
+	}
+	largest := u16(max(u16) / pixel * pixel)
+	accepted := [?]Repetition {
+		SAMPLE_PATTERN,
+		{cell_width = pixel, cell_height = pixel, step_x = pixel, step_y = pixel},
+		{cell_x = -COORDINATE_UNIT_LIMIT, cell_y = COORDINATE_UNIT_LIMIT, cell_width = largest, cell_height = largest, step_x = largest, step_y = largest},
+	}
+	for pattern, index in accepted {
+		_, problem := read(sample_record(Draw_Rectangle{color = 1, repetition = pattern}))
+		testing.expectf(t, problem == .None, "the pattern %d at its bounds: %v", index, problem)
+	}
 }
 
 // Each reserved byte of the header is refused, with the smallest and the
@@ -300,7 +374,8 @@ read_takes_each_bound :: proc(t: ^testing.T) {
 // read is the same bytes, and the kind is the kind of the primitive.
 @(test)
 a_record_of_each_kind_comes_back_from_the_border :: proc(t: ^testing.T) {
-	seen: [Draw_Kind]bool
+	// The values 6 and 7 name no kind, so the array of the kinds is sparse.
+	seen: #sparse[Draw_Kind]bool
 	for primitive in sample_primitives() {
 		record := sample_record(primitive)
 		kind, known := draw_kind_of_word(record.kind)
@@ -363,18 +438,16 @@ pixels_of_a_place :: proc(t: ^testing.T) {
 // reads is canonical.
 @(test)
 read_refuses_a_color_with_a_high_byte :: proc(t: ^testing.T) {
-	colored :: proc(color: u32) -> [11]Draw_Primitive {
+	colored :: proc(color: u32) -> [9]Draw_Primitive {
 		line := Draw_Line{start_x = units_of_pixels(1), start_y = units_of_pixels(1), end_x = units_of_pixels(9), end_y = units_of_pixels(1), color = color, thickness = 1}
-		return [11]Draw_Primitive {
+		return [9]Draw_Primitive {
 			Draw_Rectangle{color = color},
+			Draw_Rectangle{color = color, repetition = SAMPLE_PATTERN},
 			Draw_Vertical_Gradient{top_color = color},
 			Draw_Vertical_Gradient{bottom_color = color},
 			Draw_Horizontal_Gradient{left_color = color},
 			Draw_Horizontal_Gradient{right_color = color},
 			Draw_Text{count = 1, color = color, scale = 1},
-			Draw_Point_Grid{color = color},
-			Draw_Folded_Gap{line_color = color},
-			Draw_Folded_Gap{track_color = color},
 			line,
 			Draw_Interface_Text{count = 1, color = color, origin_x = units_of_pixels(12), scale = 1},
 		}
