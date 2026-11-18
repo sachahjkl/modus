@@ -324,7 +324,7 @@ Status: Decided.
 - **Rule**: "Reserve address space" and "commit pages" are two cheap operations. Programs build arenas on them.
 - **Rule**: The memory that a kernel object uses is charged to the program that created it.
 - **Rule**: A program that holds data with no known bound holds it in arenas: memory objects of its budget that grow by an explicit commit and end whole. A refused growth is the status `No_Budget`, which the program reads; it never stops the program.
-- **Forbids**: a kernel heap that a program can fill, a global user-space heap that the system imposes [Blow §12]; a growth of memory that a program does not ask for at a call: a commit by a fault, an allocator of the language in the code of the system.
+- **Forbids**: a kernel heap that a program can fill, a global user-space heap that the system imposes [Blow §12]; a growth of memory that a program does not ask for at a call: a commit that the kernel makes on a fault, an allocator of the language in the code of the system.
 - **Reuse**: The arena conventions of Odin, Zig and Jai. The seL4 model, where user space supplies the memory of kernel objects. [Notes `handmade_sphere_os.md` §4]
 - **Open**: the reservation size of each arena and the rule of the scratch arena (`src/md/features/memory_without_a_bound.md`, "The decision points").
 

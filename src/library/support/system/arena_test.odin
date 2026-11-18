@@ -24,6 +24,10 @@ Fake_Reservation :: struct {
 	decommit_calls:      int,
 	ranges:              [16]op.Page_Range, // The ranges of the commits that the fake paid, in order.
 	range_count:         int,
+	// The decommits that the fake accepts before it refuses each one, as
+	// the kernel refuses an object that another holder names. -1: all.
+	decommits_accepted:  int,
+	commit_refusal:      Status, // Not Ok: the fake refuses each commit with it, as a commit with a bad handle.
 }
 
 @(private = "file")
@@ -31,11 +35,23 @@ fake_page_change :: proc "contextless" (arena: ^Arena, range: op.Page_Range, fla
 	fake := (^Fake_Reservation)(rawptr(arena))
 	if .Decommit in flags {
 		fake.decommit_calls += 1
+		if fake.decommits_accepted >= 0 && fake.decommit_calls > fake.decommits_accepted {
+			if error != nil {
+				error^ = errors.error_make(.State, .None, 1)
+			}
+			return .Bad_State
+		}
 		fake.budget_pages += range.page_count
 		fake.pages_of_the_fake -= range.page_count
 		return .Ok
 	}
 	fake.commit_calls += 1
+	if fake.commit_refusal != .Ok {
+		if error != nil {
+			error^ = errors.error_make(.Handle_Kind, .None, 1)
+		}
+		return fake.commit_refusal
+	}
 	if range.page_count > fake.budget_pages {
 		if error != nil {
 			error^ = errors.error_make(.Budget, .Pages, 3, 0, i64(range.page_count), i64(fake.budget_pages))
@@ -53,7 +69,7 @@ fake_page_change :: proc "contextless" (arena: ^Arena, range: op.Page_Range, fla
 
 @(private = "file")
 fake_reservation :: proc(reserved_pages, budget_pages: u64) -> Fake_Reservation {
-	return {arena = arena_of_reservation(([^]u8)(rawptr(FAKE_BASE)), reserved_pages, fake_page_change), budget_pages = budget_pages}
+	return {arena = arena_of_reservation(([^]u8)(rawptr(FAKE_BASE)), reserved_pages, fake_page_change), budget_pages = budget_pages, decommits_accepted = -1}
 }
 
 @(private = "file")
@@ -90,8 +106,12 @@ arena_push_refuses_an_alignment_that_is_not_a_power_of_two :: proc(t: ^testing.T
 		testing.expect_value(t, result, nil)
 		testing.expect_value(t, record.kind, i64(errors.Kind.Bad_Value))
 		testing.expect_value(t, record.argument, 3)
-		testing.expect_value(t, record.value, i64(alignment))
+		// A record holds signed values: the largest alignment is written as
+		// the largest value of the record, never as a negative one.
+		testing.expect_value(t, record.value, alignment > u64(max(i64)) ? max(i64) : i64(alignment))
+		testing.expect(t, record.value >= 0)
 		testing.expect_value(t, record.limit, i64(ARENA_ALIGNMENT_LIMIT))
+		testing.expect_value(t, record.operation, i64(op.Operation.None))
 		testing.expect_value(t, fake.arena, before)
 		testing.expect_value(t, fake.commit_calls, 0)
 	}
@@ -113,6 +133,7 @@ arena_push_refuses_a_size_past_the_reservation :: proc(t: ^testing.T) {
 		testing.expect_value(t, status, Status.Bad_Operation)
 		testing.expect_value(t, result, nil)
 		testing.expect_value(t, record.kind, i64(errors.Kind.Too_Long))
+		testing.expect_value(t, record.value, size > u64(max(i64)) ? max(i64) : i64(size))
 		testing.expect_value(t, record.limit, i64(reserved_bytes))
 	}
 	testing.expect_value(t, fake.commit_calls, 0)
@@ -321,4 +342,159 @@ arena_reservation_pages_rounds_to_a_list_page :: proc(t: ^testing.T) {
 	testing.expect_value(t, arena_reservation_pages(op.MEMORY_PAGE_LIMIT), op.MEMORY_PAGE_LIMIT)
 	testing.expect_value(t, arena_reservation_pages(op.MEMORY_PAGE_LIMIT + 1), op.MEMORY_PAGE_LIMIT)
 	testing.expect_value(t, arena_reservation_pages(max(u64)), op.MEMORY_PAGE_LIMIT)
+}
+
+// A reservation past the largest object gives the zero arena, which
+// refuses each push, so its reserved bytes never wrap; the largest object
+// itself is taken.
+@(test)
+arena_of_reservation_refuses_more_than_the_largest_object :: proc(t: ^testing.T) {
+	refused := [?]u64{op.MEMORY_PAGE_LIMIT + 1, max(u64) / PAGE_SIZE + 1, max(u64)}
+	for pages in refused {
+		arena := arena_of_reservation(([^]u8)(rawptr(FAKE_BASE)), pages, fake_page_change)
+		testing.expect_value(t, arena, Arena{})
+		_, status := arena_push(&arena, 1, 1)
+		testing.expect_value(t, status, Status.Bad_Operation)
+	}
+	largest := arena_of_reservation(([^]u8)(rawptr(FAKE_BASE)), op.MEMORY_PAGE_LIMIT, fake_page_change)
+	testing.expect_value(t, largest.reserved_pages, op.MEMORY_PAGE_LIMIT)
+}
+
+// A commit refused with another status than No_Budget is given back with
+// its record and with no retry of the missing pages, and nothing changes.
+@(test)
+arena_push_gives_back_another_refusal_with_no_retry :: proc(t: ^testing.T) {
+	fake := fake_reservation(64, 100)
+	fake.commit_refusal = .Bad_Handle
+	before := fake.arena
+	record: errors.Error_Record
+	result, status := arena_push(&fake.arena, 1, 1, &record)
+	testing.expect_value(t, status, Status.Bad_Handle)
+	testing.expect_value(t, result, nil)
+	testing.expect_value(t, record.kind, i64(errors.Kind.Handle_Kind))
+	testing.expect_value(t, fake.commit_calls, 1)
+	testing.expect_value(t, fake.arena, before)
+	testing.expect_value(t, fake.budget_pages, 100)
+}
+
+// A push of the whole reservation into an empty arena is the bound: it is
+// taken. Then a push aligned on a page, with the used bytes at the end of
+// the reservation, and with one byte left before the end: each one is
+// refused with Full, and nothing changes.
+@(test)
+arena_push_of_the_whole_reservation_then_a_page_alignment_at_the_end :: proc(t: ^testing.T) {
+	RESERVED_PAGES :: 4
+	reserved_bytes := u64(RESERVED_PAGES * PAGE_SIZE)
+	whole := fake_reservation(RESERVED_PAGES, 100)
+	result, status := arena_push(&whole.arena, reserved_bytes, 1)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, offset_of_address(result), 0)
+	testing.expect_value(t, whole.used_bytes, reserved_bytes)
+	testing.expect_value(t, whole.committed_pages, RESERVED_PAGES)
+	before := whole.arena
+	record: errors.Error_Record
+	result, status = arena_push(&whole.arena, 1, PAGE_SIZE, &record)
+	testing.expect_value(t, status, Status.No_Slot)
+	testing.expect_value(t, result, nil)
+	testing.expect_value(t, record.kind, i64(errors.Kind.Full))
+	testing.expect_value(t, whole.arena, before)
+
+	one_left := fake_reservation(RESERVED_PAGES, 100)
+	_, filled := arena_push(&one_left.arena, reserved_bytes - 1, 1)
+	testing.expect_value(t, filled, Status.Ok)
+	before = one_left.arena
+	result, status = arena_push(&one_left.arena, 1, PAGE_SIZE)
+	testing.expect_value(t, status, Status.No_Slot)
+	testing.expect_value(t, result, nil)
+	testing.expect_value(t, one_left.arena, before)
+}
+
+// The step after a retry: a step that the budget refused is followed by
+// the missing page alone, and the next step halves, down to the first
+// step; it never doubles. An accepted step doubles it again.
+@(test)
+arena_growth_step_halves_after_a_retry :: proc(t: ^testing.T) {
+	fake := fake_reservation(200, ARENA_GROWTH_STEP_FIRST_PAGES + 4)
+	_, status := arena_push(&fake.arena, PAGE_SIZE, PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.growth_step_pages, 2 * ARENA_GROWTH_STEP_FIRST_PAGES)
+
+	// The step of 32 pages is refused: the missing page alone, and the
+	// step halves to 16.
+	_, status = arena_push(&fake.arena, ARENA_GROWTH_STEP_FIRST_PAGES * PAGE_SIZE, PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.growth_step_pages, ARENA_GROWTH_STEP_FIRST_PAGES)
+	// The step of 16 pages is refused: the step stays at the first step.
+	_, status = arena_push(&fake.arena, PAGE_SIZE, PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.growth_step_pages, ARENA_GROWTH_STEP_FIRST_PAGES)
+	testing.expect_value(t, fake.commit_calls, 5)
+
+	// A budget that pays: the step of 16 pages, then 32, each accepted.
+	fake.budget_pages = 1000
+	_, status = arena_push(&fake.arena, PAGE_SIZE, PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	_, status = arena_push(&fake.arena, ARENA_GROWTH_STEP_FIRST_PAGES * PAGE_SIZE, PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.growth_step_pages, 4 * ARENA_GROWTH_STEP_FIRST_PAGES)
+	// A step of 64 pages refused: the missing page alone, and the step
+	// halves to 32.
+	fake.budget_pages = 1
+	_, status = arena_push(&fake.arena, 2 * ARENA_GROWTH_STEP_FIRST_PAGES * PAGE_SIZE, PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.growth_step_pages, 2 * ARENA_GROWTH_STEP_FIRST_PAGES)
+
+	expected := [?]op.Page_Range{{0, 16}, {16, 1}, {17, 1}, {18, 16}, {34, 32}, {66, 1}}
+	testing.expect_value(t, fake.range_count, len(expected))
+	for expected_range, index in expected {
+		testing.expect_value(t, fake.ranges[index], expected_range)
+	}
+	testing.expect_value(t, fake.commit_count, u64(len(expected)))
+	testing.expect_value(t, fake.committed_pages, 67)
+	testing.expect_value(t, fake.pages_of_the_fake, 67)
+}
+
+// The undo of a refused push of several calls, whose decommit is refused:
+// the push gives Bad_State with the record of the decommit, and the arena
+// counts the pages that stay committed, as the fake does. With three
+// calls, the undo gives back the last call first, so the pages that stay
+// follow the committed end. The arena then still serves a push inside
+// those pages.
+@(test)
+arena_push_with_a_refused_undo_keeps_the_committed_pages :: proc(t: ^testing.T) {
+	LIMIT :: op.RANGE_TABLE_PAGE_LIMIT
+	// Two calls, and the one decommit of the undo is refused.
+	two := fake_reservation(3 * LIMIT, LIMIT + 1)
+	two.decommits_accepted = 0
+	record: errors.Error_Record
+	result, status := arena_push(&two.arena, (LIMIT + 2) * PAGE_SIZE, 1, &record)
+	testing.expect_value(t, status, Status.Bad_State)
+	testing.expect_value(t, result, nil)
+	testing.expect_value(t, record.kind, i64(errors.Kind.State))
+	testing.expect_value(t, two.committed_pages, LIMIT)
+	testing.expect_value(t, two.pages_of_the_fake, LIMIT)
+	testing.expect_value(t, two.used_bytes, 0)
+	testing.expect_value(t, two.commit_count, 0)
+	testing.expect_value(t, two.decommit_calls, 1)
+
+	// Three calls: the undo gives back the second call, then its decommit
+	// of the first call is refused.
+	three := fake_reservation(3 * LIMIT, 2 * LIMIT + 1)
+	three.decommits_accepted = 1
+	record = {}
+	result, status = arena_push(&three.arena, (2 * LIMIT + 2) * PAGE_SIZE, 1, &record)
+	testing.expect_value(t, status, Status.Bad_State)
+	testing.expect_value(t, result, nil)
+	testing.expect_value(t, record.kind, i64(errors.Kind.State))
+	testing.expect_value(t, three.committed_pages, LIMIT)
+	testing.expect_value(t, three.pages_of_the_fake, LIMIT)
+	testing.expect_value(t, three.budget_pages, LIMIT + 1)
+	testing.expect_value(t, three.decommit_calls, 2)
+
+	// A push inside the pages that stay committed needs no commit.
+	calls := three.commit_calls
+	result, status = arena_push(&three.arena, PAGE_SIZE, 1)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, offset_of_address(result), 0)
+	testing.expect_value(t, three.commit_calls, calls)
 }

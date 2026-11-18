@@ -79,12 +79,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	_, again := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
 	unchanged := again == .No_Budget && arena == kept
 
-	// The same pushes after a reset: the same first address, and no commit.
+	// The same pushes after a reset: each address the one of its page
+	// before the reset, and no commit.
 	system.arena_reset(&arena)
 	reused := true
 	for index in 0 ..< pushes {
 		page, status := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
-		if status != .Ok || index == 0 && page != first {
+		if status != .Ok || uintptr(page) != uintptr(first) + uintptr(index * system.PAGE_SIZE) {
 			reused = false
 			break
 		}
