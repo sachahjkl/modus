@@ -201,6 +201,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "monitor_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The monitor in the light appearance: the pages in the color of memory, the share of each program in the color of a program."},
 	{file = "rings_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The rings in the light appearance: each node a card, each record in the series color of its number, in its light value."},
 	{file = "clock_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The clock in the light appearance: the time page in the color of memory, the kernel entry in the kernel blue."},
+	{file = "clock_resized.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The clock after a drag of its corner: its program made the surface of the new size, paid by its budget, and drew its next frame in it."},
 	{file = "action_bar.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "The action bar of a window: each key combination drawn as keycaps, then the name of its action, a thin divider between items."},
 	{file = "action_bar_more.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "A narrow action bar: the items of lowest priority wait in the list of the more button, which opens upward at the right edge of the bar."},
 	{file = "keys_french.png", group = .Interface, guide = "docs/FONTS.md", caption = "The layout of France in the console: é from its key, ê from the dead key ^, € from AltGr with e, each drawn from the glyph cache with no box."},

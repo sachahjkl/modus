@@ -51,6 +51,9 @@ console_echo_note_step :: proc(echo: ^Console_Echo, step: Step) {
 		echo.console_in_front = step.text == CONSOLE_TITLE
 	case .Launch, .Move, .Close, .Click, .Drag:
 		echo.console_in_front = false
+	case .Resize:
+		// The resized window comes to the front.
+		echo.console_in_front = step.text == CONSOLE_TITLE
 	case .Click_Element:
 		// A press in a window brings it to the front; a press in the
 		// palette leaves the keys to the palette.

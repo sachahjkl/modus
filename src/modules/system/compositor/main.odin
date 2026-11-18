@@ -30,6 +30,9 @@
 //   program or brings the chosen window to the front (palette.odin);
 // - drag a title bar: the window moves; a press on a window brings it to the
 //   front and gives it the [focus](term:focus);
+// - drag an edge or a corner of a
+//   [resizable window](term:resizable-window): its program draws it at
+//   the new size (window_resize.odin);
 // - press the close button: the root service stops the program.
 //
 // The keys go to the window in front, unless the palette is open.
@@ -176,6 +179,19 @@ Client :: struct {
 	// the window: client_remove clears the slot.
 	act_names:   palette.Act_Name_Set,
 	act_name_sets_logged: int, // The sets that the log named: the first ACT_NAME_SETS_LOGGED only.
+	// A resizable window (src/md/features/window_resize.md): the limits of
+	// the last Resizable that the border took. With none, the window is
+	// fixed and its edges give no resize.
+	resizable:   bool,
+	size_limits: display.Size_Limits,
+	resizable_refusal_logged: bool, // The line of a refused Resizable is on the log: a window writes it one time.
+	// The surface of a new size that the program gave with Surface_Resize:
+	// nil until then, and again from the first Present after it, when it
+	// becomes the surface of the window.
+	resize_pictures: [^]graphics.Color,
+	resize_width, resize_height: int,
+	resize_edges: bar.Resize_Edges, // The edges that the last drag held: the opposite ones stay in place when the window takes its new surface.
+	resizes_refused: u64, // The Surface_Resize records that the compositor refused.
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -220,6 +236,13 @@ Menu :: enum {
 menu_open: Menu // The menu that is on the screen.
 menu_line := -1 // The line of the menu under the pointer.
 drag_x, drag_y: int
+// The drag of the edges of a window: the client, or -1. The compositor
+// draws the outline of the new frame until the release, then sends the
+// event Resized (src/md/features/window_resize.md).
+resizing := -1
+resize_start: bar.Resize_Start
+resize_outline: Rectangle // The new frame, as the outline shows it.
+RESIZE_OUTLINE_THICKNESS :: 2
 damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next frame draws again.
 damage_count: int
 frames: u64
@@ -520,7 +543,8 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 //    records that wait for a window whose ring was full go to it, in order
 //    (window_events.odin).
 // 4. The ring of each window: `Surface_Create`, `Present` (the changed
-//    rectangle becomes damage), and `Pointer_Shape`.
+//    rectangle becomes damage), `Pointer_Shape`, `Resizable` and
+//    `Surface_Resize`.
 // 5. The calls of `pointer`, `windows` and `screen`, after the input and
 //    after the rings of the windows, so that they give the place of now
 //    and count each `Present` that a program sent before the call.
@@ -714,7 +738,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 							client.presents_refused += 1
 							continue
 						}
-						if client.presents > 0 && int(picture) == client.shown {
+						// The first Present after a Surface_Resize names a
+						// picture of the new surface: the window takes it
+						// now, and the old surface ends.
+						resized := client.resize_pictures != nil
+						if resized {
+							resize_surface_take(&client)
+						} else if client.presents > 0 && int(picture) == client.shown {
 							client.pictures_drawn_again += 1
 						}
 						client.shown = int(picture)
@@ -729,12 +759,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						// that menu waits for this line, not for the line of
 						// the surface, which comes before any picture.
 						if client.presents == 0 {
-							left, top = 0, 0
 							system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " is shown")
+						}
+						// The first picture of a new surface: each pixel
+						// of it changed too.
+						whole := client.presents == 0 || resized
+						if whole {
+							left, top = 0, 0
 						}
 						// Width 0: from (left, top) to the end of the surface.
 						changed_width, changed_height := client.surface.width - left, client.surface.height - top
-						if record.values[3] != 0 && client.presents > 0 {
+						if record.values[3] != 0 && !whole {
 							changed_width = int(min(record.values[3], u64(client.surface.width - left)))
 							changed_height = int(min(record.values[4], u64(client.surface.height - top)))
 						}
@@ -750,6 +785,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					pointer_shape_request(&client, record) // pointer_picture.odin
 				case .Act_Names:
 					palette_act_names_take(&client, record) // palette.odin
+				case .Resizable:
+					resizable_take(&client, record)
+				case .Surface_Resize:
+					surface_resize_take(&client, record)
 				}
 			}
 			// The program can wait until this loop took its last picture
@@ -873,10 +912,17 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if dragging == index {
 			dragging = -1
 		}
+		if resizing == index {
+			resize_outline_damage()
+			resizing = -1
+		}
 		damage_window(&client)
 		damage_focus()
 		if client.surface.pixels != nil {
 			system.memory_unmap(client.pictures)
+		}
+		if client.resize_pictures != nil {
+			system.memory_unmap(client.resize_pictures)
 		}
 		if client.commands_refused != 0 {
 			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
@@ -1014,6 +1060,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 		return
 	}
+	if resizing >= 0 {
+		resize_pointer_moved(buttons & display.BUTTON_LEFT != 0) // window_resize.odin
+		return
+	}
 	// The menu of the programs: its button opens it. A press on a line
 	// starts the program. Any press closes the menu.
 	// The menu of the windows: its button opens it, and a press on a line
@@ -1057,6 +1107,12 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			damage_menu()
 		}
 		if was_open != .None || pointer_y < BAR_HEIGHT {
+			return
+		}
+		// An edge of a resizable window, before the window under the
+		// pointer: the band of an edge lies outside the frame.
+		if index, edges := resize_edges_under_pointer(); edges != {} {
+			resize_begin(index, edges) // window_resize.odin
 			return
 		}
 		for position := order_count - 1; position >= 0; position -= 1 {
@@ -1435,8 +1491,9 @@ Screen_Part :: struct {
 	bounded:        bool,
 }
 
-// The parts of the screen: one for each window, then one for the bar.
-screen_parts: [CLIENT_CAPACITY + 1]Screen_Part
+// The parts of the screen: one for each window, one for the outline of a
+// resize, then one for the bar.
+screen_parts: [CLIENT_CAPACITY + 2]Screen_Part
 screen_part_count: int
 // The list of one picture memory that the table has while it appends the
 // Picture record of one part: the record then names memory 0.
@@ -1577,6 +1634,15 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		}
 		outer := Rectangle{client.x, client.y, client.x + client.surface.width + 2 * BORDER, client.y + client.surface.height + TITLE_HEIGHT + BORDER}
 		screen_part_end(first, memory, outer, true)
+	}
+	// The outline of the frame that a drag of the edges gives, over the
+	// windows: the window keeps its picture until its program draws the
+	// new size.
+	if resizing >= 0 {
+		first := table.record_count
+		outline := resize_outline
+		interface.draw_outline(table, outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top, RESIZE_OUTLINE_THICKNESS, graphics.colors.title)
+		screen_part_end(first, nil, outline, true)
 	}
 
 	// The bar: the mark of the system, the two buttons, the date and the time
