@@ -91,7 +91,7 @@ Why not the others:
 
 - **`contract`**: the records, the constants and the pure procedures that two bodies of code compile in so that they agree: the kernel and a module, two modules, a module and the tool, the boot program and the kernel. A contract package holds no kernel operation call, and imports no support package.
 - **`support`**: the code that two modules or more compile in to use the contracts: `system` (the kernel entry, the rings, the loader), `interface`, `graphics`, `display`, `tcp`, `quic`, `storage`, `sentence`.
-- **`private`**: the private parts. `src/library/private/<module>/<part>` is a package that the module `<module>` alone compiles in, with its host tests. The folder of a module is named by the name of the module, not by its path, so the move of a module to another module group changes no import line of a private part.
+- **`private`**: the private parts. `src/library/private/<module>/<part>` is a package that the module `<module>` alone compiles in, with its host tests. The folder of a module is named by the name of the module, not by its path, so the move of a module to another module group changes no import line of a private part. The boot program is a body of code that is no module: its private parts are in `src/library/private/boot_program/<part>`, a name that no module takes, because a module `boot` exists.
 
 A format that only the kernel reads is not a contract, even when the hardware or the firmware writes it: a contract exists so that two bodies of code compile the same definition, and the hardware compiles nothing. Such a package is a kernel part.
 

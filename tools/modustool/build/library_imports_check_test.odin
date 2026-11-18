@@ -469,6 +469,51 @@ library_support_package_with_one_owner_is_refused :: proc(t: ^testing.T) {
 	testing.expectf(t, len(accepted_owners) == 0, "%v", accepted_owners)
 }
 
+// The boot program, which is no module, owns the private parts under
+// private/boot_program. Refused: a module that imports such a part, and a
+// part that the boot program does not reach. The last case: the boot
+// program imports its part, which then has its one owner.
+@(test)
+library_private_part_of_the_boot_program :: proc(t: ^testing.T) {
+	part :: foundation.SOURCE_FOLDER_PRIVATE + "/" + PRIVATE_PART_OF_THE_BOOT_PROGRAM + "/memory_map"
+	unused :: foundation.SOURCE_FOLDER_PRIVATE + "/" + PRIVATE_PART_OF_THE_BOOT_PROGRAM + "/unused"
+	import_line :: "import \"" + foundation.PRIVATE_IMPORT_START + PRIVATE_PART_OF_THE_BOOT_PROGRAM + "/memory_map\"\n"
+	root := library_tree_make(t)
+	defer os.remove_all(root)
+	for folder in ([]string{part, unused, foundation.SOURCE_FOLDER_BOOT, foundation.SYSTEM_MODULE_SOURCES + "console"}) {
+		library_tree_folder_make(root, folder)
+	}
+	library_tree_file_write(root, part + "/memory_map.odin", "package memory_map\n")
+	library_tree_file_write(root, unused + "/unused.odin", "package unused\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\n" + import_line)
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\n" + import_line)
+	reading, read_ok := library_import_breaches_of_tree(root)
+	testing.expect(t, read_ok)
+	module_breach, module_found := breach_of_file(reading.breaches[:], foundation.SYSTEM_MODULE_SOURCES + "console/main.odin")
+	testing.expectf(t, module_found && module_breach.reason == .Private_Part_Of_Another_Module, "a module that imports a part of the boot program is not refused: %v", reading.breaches[:])
+	_, boot_refused := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_BOOT + "/main.odin")
+	testing.expect(t, !boot_refused, "the boot program is refused its own private part")
+	owners := library_owner_breaches(reading)
+	unused_breach, unused_found := breach_of_file(owners, unused)
+	testing.expectf(t, unused_found && unused_breach.reason == .Private_Part_Without_Its_Module, "a part that the boot program does not reach is not refused: %v", owners)
+
+	// The last case.
+	clean := library_tree_make(t)
+	defer os.remove_all(clean)
+	for folder in ([]string{part, foundation.SOURCE_FOLDER_BOOT}) {
+		library_tree_folder_make(clean, folder)
+	}
+	library_tree_file_write(clean, part + "/memory_map.odin", "package memory_map\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\n" + import_line)
+	accepted, accepted_ok := library_import_breaches_of_tree(clean)
+	testing.expect(t, accepted_ok)
+	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
+	// The tree of the test has a support package that no body reaches; only
+	// the part of the boot program matters here.
+	_, part_refused := breach_of_file(library_owner_breaches(accepted), part)
+	testing.expect(t, !part_refused, "the part that the boot program reaches is refused")
+}
+
 // A source of a kernel part keeps no state and reaches no machine. Each
 // impure construct is refused with its line: a package variable with no
 // @(rodata), a variable marked @(static) or @(thread_local) (also beside

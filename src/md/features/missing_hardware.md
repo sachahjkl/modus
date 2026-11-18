@@ -36,7 +36,7 @@ The places, by the risk for a user:
 
 ## The stop of the boot program
 
-The boot program cannot run a smaller system: with no memory for the kernel, or no map of the memory, no kernel starts. Its stop is needed; the fault was its silence. The code is `stop` and `boot_stop` in `src/boot/main.odin`, and the arithmetic of the map in `src/library/support/firmware_memory_map`, which the host tests run.
+The boot program cannot run a smaller system: with no memory for the kernel, or no map of the memory, no kernel starts. Its stop is needed; the fault was its silence. The code is `stop` and `boot_stop` in `src/boot/main.odin`, and the arithmetic of the map in `src/library/private/boot_program/firmware_memory_map`, which the host tests run.
 
 - **One stop for each failure.** A refusal of trust and a stop for memory, for the map or for the kernel module take the same path: the line on the log, the failure in red on the boot display with its step, the watchdog off, then a wait. With no screen, or before the boot record has its pages, the line stays on the console of the firmware, and a second line says so. A power off is refused: it removes the message before anyone reads it, and a machine whose firmware restarts it would run the same failure again.
 - **The buffer of the map.** The first read of the map asks its size with a buffer of no byte. The buffer then gets that size and a margin of 8 descriptors, because its own allocation, and the free of a smaller buffer, split ranges of the map. Each read that is too small again gets a larger buffer, up to 4 reads; then the boot program stops. A size past 4 MiB, a step between descriptors below the 40 bytes of the specification, and a size of 0 stop it too.

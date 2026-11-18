@@ -28,9 +28,11 @@
 //     @(rodata), and the memory of the machine refuses a write through a
 //     pointer to it: the check needs only the attributes.
 //   - A private part ("modus:private/storage/storage_tree", a folder of
-//     src/library/private/<module>) is what one module alone compiles in. It
-//     is imported from the folder of its module, or from another private
-//     part of the same module, and from no other source of src/; a host
+//     src/library/private/<module>) is what one module alone compiles in.
+//     The boot program, a body of code that is no module, has its private
+//     parts in src/library/private/boot_program. A part is imported from the folder
+//     of its owner, or from another private part of the same owner, and
+//     from no other source of src/; a host
 //     test may import one of a module of the group libraries (below). The
 //     tool, outside src/, reads some of them too: it is not a part of the
 //     system.
@@ -544,7 +546,7 @@ library_private_import_is_allowed :: proc(file, path: string, form: Library_Sour
 	if !named {
 		return false
 	}
-	source, found := library_module_source_of_name(module_name)
+	source, found := library_private_owner_source(module_name)
 	if !found {
 		return false
 	}
@@ -552,6 +554,22 @@ library_private_import_is_allowed :: proc(file, path: string, form: Library_Sour
 		return true
 	}
 	return form.test && strings.has_prefix(source, foundation.LIBRARY_MODULE_SOURCES)
+}
+
+// PRIVATE_PART_OF_THE_BOOT_PROGRAM is the name, after private/, of the
+// private parts of the boot program: it is a body of code that is no module,
+// and the code that it alone compiles in has a host test there.
+PRIVATE_PART_OF_THE_BOOT_PROGRAM :: "boot_program"
+
+// library_private_owner_source gives the folder of the one owner of a
+// private part from the name after private/: a module of the table, or the
+// boot program. found: the name names one of them.
+@(private = "file")
+library_private_owner_source :: proc(owner_name: string) -> (source: string, found: bool) {
+	if owner_name == PRIVATE_PART_OF_THE_BOOT_PROGRAM {
+		return foundation.SOURCE_FOLDER_BOOT, true
+	}
+	return library_module_source_of_name(owner_name)
 }
 
 // library_package_node gives the package of the library that a path inside
@@ -669,7 +687,9 @@ library_owner_breaches :: proc(reading: Library_Import_Reading) -> []Library_Imp
 			}
 		case strings.has_prefix(node, foundation.LIBRARY_PART_PRIVATE + "/"):
 			module_name, _, _ := library_private_part_parts(node)
-			if len(node_owners) != 1 || node_owners[0] != module_name {
+			// The boot program is counted as its folder, a module as its name.
+			owner := module_name == PRIVATE_PART_OF_THE_BOOT_PROGRAM ? foundation.SOURCE_FOLDER_BOOT : module_name
+			if len(node_owners) != 1 || node_owners[0] != owner {
 				append(&list, Library_Import_Breach{file = folder, text = text, reason = .Private_Part_Without_Its_Module})
 			}
 		}

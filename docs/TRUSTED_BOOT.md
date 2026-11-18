@@ -274,7 +274,7 @@ The machines with this firmware run with four processors, as every other machine
 | The format, its reader and its checks | `src/library/contract/system_description/system_description.odin` |
 | The trust record | `src/library/contract/boot_info/boot_info.odin` (`Boot_Trust`) |
 | The checks and the measure of the boot program | `src/boot/trust.odin` |
-| The stop of the boot program, on the boot display, and the read of the memory map | `src/boot/main.odin` (`stop`, `boot_stop`, `read_memory_map`), `src/library/support/firmware_memory_map` |
+| The stop of the boot program, on the boot display, and the read of the memory map | `src/boot/main.odin` (`stop`, `boot_stop`, `read_memory_map`), `src/library/private/boot_program/firmware_memory_map` |
 | The check of the root service | `src/modules/system/root/trust.odin` |
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |

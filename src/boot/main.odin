@@ -18,7 +18,7 @@ package boot
 import info "modus:contract/boot_info"
 import "modus:contract/enum_word"
 import "modus:support/bootscreen"
-import "modus:support/firmware_memory_map"
+import "modus:private/boot_program/firmware_memory_map"
 import "modus:support/graphics"
 import op "modus:contract/operation"
 import module "modus:contract/module"
