@@ -1,4 +1,4 @@
-// A process that is not in the boot image: the test of a disk process
+// A module that is not in the boot image: the test of a disk process
 // (docs/MODULE_CONTRACT.md, "A process from a disk").
 //
 // **What it is for.** The root service starts a process from a module file
@@ -95,7 +95,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 // sleep_for_ever sleeps until the process is stopped. It and sleep_once are
 // never inlined, so the entry keeps a frame at its call of sleep_for_ever,
-// in the source of this process: the test of the debug object of a disk
+// in the source of this module: the test of the debug object of a disk
 // process waits for that frame of the entry, with its line.
 sleep_for_ever :: #force_no_inline proc "contextless" () -> ! {
 	for {

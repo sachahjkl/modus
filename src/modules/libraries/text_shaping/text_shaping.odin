@@ -16,7 +16,7 @@
 // gives that work through the call form, in batches, so one call places a
 // whole text or measures all the labels of a window. Because the spacing
 // comes from the caller, the module holds no font and no state, and an
-// isolated call gives the same answer as a direct call. A process in the
+// isolated call gives the same answer as a direct call. A module in the
 // system calls the package `src/library/support/text_shaping` directly; this module is
 // the same code for a caller that loads it or isolates it.
 //

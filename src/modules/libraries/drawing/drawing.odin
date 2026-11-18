@@ -7,7 +7,7 @@
 // of that code: the system has one copy.
 //
 // **What it is for.** It is the first [library module](term:library-module):
-// code that each process with a window compiled into its own file. The
+// code that each module with a window compiled into its own file. The
 // [interface package](term:interface-package) keeps, in the process, what a
 // process calls many times for each frame: the elements, the layout, the
 // input. The [drawing module](term:drawing-module) takes what a process

@@ -24,8 +24,8 @@
 // (`src/library/support/bootscreen/collect`), and **Image**, the boot image, read-only,
 // for the names and the kinds of its files. It changes nothing.
 //
-// **What it shows of the design.** One picture, three processes: the boot
-// program, the root service and this process draw the same record
+// **What it shows of the design.** One picture, three parts of the system
+// that draw it: the boot program, the root service and this process draw the same record
 // (`bootscreen.Data`) with the same package; the kernel draws nothing. The
 // rules of the picture are in docs/DESIGN.md.
 package boot

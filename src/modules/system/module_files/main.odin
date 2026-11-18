@@ -1,6 +1,6 @@
 // The module file service: it stores a module file that a web server
 // gives in the store `module_files` of its principal, and lists the files of
-// that store with the hash of their bytes. A developer then adds a process
+// that store with the hash of their bytes. A developer then adds a module
 // to a machine that runs, with no disk from the tool
 // (docs/MODULE_CONTRACT.md, "A process from a disk").
 //

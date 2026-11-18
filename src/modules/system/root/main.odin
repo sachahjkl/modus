@@ -10,7 +10,7 @@
 // it at its start, or it asks this service on its *root ring*, and this
 // service answers by the tables of this file:
 //
-// - `process_roles` (roles.odin): the role of each process of the boot
+// - `process_roles` (roles.odin): the role of each module of the boot
 //   image, by its name, in one row: its start grants and the other terms
 //   of its role (the services that a process with the grant `Connect` can
 //   reach, the blocks of a private store, the log with Give, the size of a
@@ -124,7 +124,7 @@ Grant :: start_grant.Grant
 
 // The context of the input service: the slots that src/modules/system/input
 // names GRANT_RING, GRANT_PORTS, GRANT_KEYBOARD_INTERRUPT and
-// GRANT_MOUSE_INTERRUPT. A process is no package that this service
+// GRANT_MOUSE_INTERRUPT. The input service is no package that this service
 // imports, so the numbers are written on both sides.
 INPUT_GRANT_RING :: 0 // The input ring, which the compositor reads.
 INPUT_GRANT_PORTS :: 1 // The ports of the PS/2 controller.
@@ -1312,7 +1312,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		return .Ok
 	case .Palette:
 		// The table and the ring end in the process, and the compositor
-		// unmaps its side: the palette keeps the processes and the windows.
+		// unmaps its side: the palette keeps the modules and the windows.
 		count := palette_provider_end(item, true)
 		item.granted -= {which}
 		item.revoked += {which}

@@ -56,7 +56,7 @@ disk_imports_files :: proc "contextless" () -> []system.Source_File {
 	return disk_imports.files[:disk_imports.scan.wanted_count]
 }
 
-// disk_imports_begin notes the imports of the process file that the boot
+// disk_imports_begin notes the imports of the module file that the boot
 // image does not hold. With none, the process starts as before; else the
 // list of the store starts.
 disk_imports_begin :: proc "contextless" (wait: ^system.Wait) {
@@ -237,7 +237,7 @@ disk_import_entry_skip :: proc "contextless" (wait: ^system.Wait) {
 
 // disk_import_size_answer makes the memory of the entry, from the budget
 // of the disk processes, and asks for its first bytes. The size is checked
-// one time, here, as the size of the process file is.
+// one time, here, as the size of the module file is.
 disk_import_size_answer :: proc "contextless" (value: i64, wait: ^system.Wait) {
 	load := &disk_load
 	imports := &disk_imports
@@ -271,7 +271,7 @@ disk_import_size_answer :: proc "contextless" (value: i64, wait: ^system.Wait) {
 }
 
 // disk_import_bytes_answer copies the bytes of one answer, as the load of
-// the process file does. When the entry is whole, its hash is computed on
+// the module file does. When the entry is whole, its hash is computed on
 // the bytes that this service holds: bytes whose hash an import names are
 // kept for the load source, and their imports are noted; the others are
 // freed.

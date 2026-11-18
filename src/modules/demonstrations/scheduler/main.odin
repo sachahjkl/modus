@@ -1987,7 +1987,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok && random.generator_from_context(&process_generator, ctx) {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
-	// A process scheduler that was stopped with the share policy on left
+	// A process `scheduler` that was stopped with the share policy on left
 	// each thread under a weight limit: they get the full limit back.
 	policy_weights_give_back()
 	report := system_report()

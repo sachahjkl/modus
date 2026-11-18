@@ -62,7 +62,7 @@ line_value: Value // The value of the line that ran last, for the answer to the 
 // palette_provider_start asks the root service for the entry table and the
 // ring, and writes the first table. The first thread calls it once, before
 // a line runs. Without the grant the console has no provider part, and the
-// palette lists the processes and the windows only.
+// palette lists the modules and the windows only.
 palette_provider_start :: proc "contextless" () {
 	// The root service answers when it reaches its loop, after its boot
 	// passes: the bound only ends a hang.

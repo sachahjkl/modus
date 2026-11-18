@@ -24,10 +24,10 @@
 // [pointer](term:pointer). The input can:
 //
 // - press a line of the start menu: the compositor asks the root
-//   service to start that process;
+//   service to start that module;
 // - press the key super: the palette opens; typed letters narrow one list
-//   of the processes and of the windows, and Enter starts the chosen
-//   process or brings the chosen window to the front (palette.odin);
+//   of the modules and of the windows, and Enter starts the chosen
+//   module or brings the chosen window to the front (palette.odin);
 // - drag a title bar: the window moves; a press on a window brings it to the
 //   front and gives it the [focus](term:focus);
 // - drag an edge or a corner of a

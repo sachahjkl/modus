@@ -13,7 +13,7 @@ import terminal "modus:support/terminal"
 // The role of each process is one row of the table `process_roles`: its
 // start grants and the other terms of its role. The site reads the table
 // for its table "The grants of each process", and the tool stops each build
-// when a process of the boot image has no row (process_roles_check.odin).
+// when a module of the boot image has no row (process_roles_check.odin).
 Process_Role :: struct {
 	grants:      bit_set[Grant],
 	using terms: Process_Role_Terms,
@@ -46,10 +46,10 @@ Process_Role_Row :: struct {
 	terms:  Process_Role_Terms,
 }
 
-// The role of each process of the boot image, with the reason of each
+// The role of each module of the boot image, with the reason of each
 // grant and each term. The table is whole: the tool refuses a build where a
-// process of the boot image has no row, or a row names no module of it, so
-// a new process never starts with a role that nobody wrote. The form of a
+// module of the boot image has no row, or a row names no module of it, so
+// a new module never starts with a role that nobody wrote. The form of a
 // row is the form that the site reads: a record literal with no type, its
 // name a string, its grants a set of members, its terms a record, and the
 // reason in the comment lines above it.
@@ -381,7 +381,7 @@ name_is_a_system_part :: proc "contextless" (name: string) -> bool {
 
 // role_of gives the role of a process of the boot image by its name: the
 // grants and the terms of its row. A name with no row has the zero role:
-// it names no process of the boot image, as the tool checks. Only a start
+// it names no module of the boot image, as the tool checks. Only a start
 // reads it.
 role_of :: proc "contextless" (name: string) -> (role: Process_Role) {
 	for &row in process_roles {
@@ -399,7 +399,7 @@ role_of :: proc "contextless" (name: string) -> (role: Process_Role) {
 // name would carry an authority that the principal did not give. A row
 // with no grant and no term carries none, so it reserves no nickname: a
 // nickname of a module of the boot image is refused for that module
-// (disk_processes.odin), and a nickname of a process that this image does
+// (disk_processes.odin), and a nickname of a module that this image does
 // not hold is free.
 role_names_the_process :: proc "contextless" (name: string) -> bool {
 	for &row in process_roles {

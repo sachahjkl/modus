@@ -14,7 +14,7 @@ import "modus:support/system"
 import "modus:support/vector_font"
 
 // The text state of the graphics package and the text of the module are
-// one for the test process, and the tests run on several threads: each
+// one for the host process of the tests, and the tests run on several threads: each
 // test that draws holds this lock, so the proof of the same pixels changes
 // the fonts with no other draw at that time.
 @(private = "file")

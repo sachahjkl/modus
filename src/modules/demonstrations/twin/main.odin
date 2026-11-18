@@ -1,4 +1,4 @@
-// A process that the process `frames` starts several times, to show the
+// A module that the process `frames` starts several times, to show the
 // shared code of a module and a page that two processes share (package
 // modus:support/twins). The value MODE of its context says what it does.
 //
