@@ -639,7 +639,9 @@ line_points :: proc "contextless" (start_x, start_y, end_x, end_y, side: int) ->
 // each pixel that it draws: the box of its points, control points too,
 // grown by half the width of its stroke, rounded out to whole pixels and
 // cut to COORDINATE_LIMIT. fill and stroke are colors with alpha, 0 for no
-// fill or no stroke; a stroke_width in units of 0 or below is no stroke.
+// fill or no stroke; a stroke_width in units of 0 or below is no stroke. A
+// stroke color of alpha 0 is no stroke whatever the width, also a width past
+// STROKE_WIDTH_LIMIT: the record has the stroke color 0 and the width 0.
 // Points that the border of the points refuses (draw_record.path_points_read),
 // a stroke wider than STROKE_WIDTH_LIMIT pixels, and a table whose text does
 // not start at a multiple of 4 are refused: no record, and refused is set.

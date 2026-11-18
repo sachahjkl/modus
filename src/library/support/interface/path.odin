@@ -33,17 +33,27 @@ PATH_BAND_ROWS :: 8
 PATH_BAND_COLUMNS :: 256
 
 // The value of a cell for a pixel covered whole: a height of 64 units
-// times twice a width of 64 units. A piece of a segment adds at most this
-// to the cells of its row, and a path has at most 7 pieces in one row for
-// each segment of its stroke (a band of 4 edges and a join of 3), at most
-// 8 704 segments: so each sum stays below 7 * 8 704 * 8 192, under 2^29,
-// which an i32 holds.
+// times twice a width of 64 units. An edge of the outline gives one piece
+// to each row, and a piece adds at most this to the sums of its row.
 @(private)
 PATH_FULL_PIXEL :: draw_record.UNITS_PER_PIXEL * 2 * draw_record.UNITS_PER_PIXEL
 @(private)
 PATH_FULL_PIXEL_SHIFT :: 13
 
 #assert(PATH_FULL_PIXEL == 1 << PATH_FULL_PIXEL_SHIFT)
+
+// The most edges of the outline of one pass of a path, for the bound of
+// the sums (src/md/api/draw_table.md, "The kinds"): the stroke of a curve
+// gives the most edges for each point, 16 segments of 4 edges for its band
+// and 3 for its join, over its 2 points: 56 for each point. A Line gives 7,
+// a Close 10 (its band and the joins at its two ends), a Move none, and the
+// fill gives at most 8 edges for each point and one more for each subpath.
+@(private)
+PATH_EDGE_LIMIT :: draw_record.CURVE_SEGMENT_LIMIT * (4 + 3) / 2 * draw_record.PATH_POINT_LIMIT
+
+// Each sum of a row is at most the edges times a pixel covered whole, so
+// the cells are i32 with no wrap.
+#assert(PATH_EDGE_LIMIT * PATH_FULL_PIXEL < 1 << 31)
 
 // The two passes of a path: the fill, then the stroke over it.
 @(private)
@@ -63,9 +73,11 @@ Path_Band :: struct {
 // path_draw draws a Path that the border read, cut to area, a rectangle of
 // the surface that the view shows from its top left corner. A range of
 // points outside the text table, at an address that is not a multiple of
-// 4, or whose points the border of the points refuses, draws nothing.
+// 4, or whose points the border of the points refuses, draws nothing. It is
+// never inlined: its scratch of 21 KiB stays in its own frame, and the
+// caller, which draws each other kind, keeps a small one.
 @(private)
-path_draw :: proc "contextless" (table: ^Draw_Table, view: graphics.Canvas, area: Rectangle, path: draw_record.Draw_Path) {
+path_draw :: #force_no_inline proc "contextless" (table: ^Draw_Table, view: graphics.Canvas, area: Rectangle, path: draw_record.Draw_Path) {
 	start, count := u64(path.first), u64(path.count)
 	if count == 0 || start + count > u64(table.text_count) || start + count > u64(len(table.text)) {
 		return
@@ -303,6 +315,10 @@ near_band :: proc "contextless" (band: ^Path_Band, left, top, bottom: i64) -> bo
 // width of at most STROKE_WIDTH_UNIT_LIMIT times a coordinate fits too.
 @(private)
 segment_normal :: proc "contextless" (direction_x, direction_y, width: i64) -> (normal_x, normal_y: i64) {
+	// A direction of no length has no normal; the loop below would not end.
+	if direction_x == 0 && direction_y == 0 {
+		return 0, 0
+	}
 	x, y := direction_x, direction_y
 	for max(abs(x), abs(y)) < 1 << 29 {
 		x, y = x * 2, y * 2

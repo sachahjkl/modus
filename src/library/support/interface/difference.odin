@@ -66,7 +66,8 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // that draws nothing is 0), so two records whose bytes differ draw
 // different things, or one of them draws nothing: they are not equal, and
 // no read through the border is needed to know it. A text and a path
-// compare the bytes that they name too. Where two records with
+// compare the bytes that they name too, and a path the rest of its first
+// byte and of the address of its points by 4 (points_places_agree). Where two records with
 // other bytes still draw the same pixels (a gradient of one line whose
 // second end, of alpha 0, is never drawn; rectangles of the color 0 with
 // other patterns; a rectangle of the color 0 against a None), the damage
@@ -85,9 +86,12 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 			return true
 		}
 		switch kind {
-		case .Text, .Path:
+		case .Text:
 			range := transmute(Range_Fields)new.fields
 			return texts_equal(before, range.first, now, range.first, range.count)
+		case .Path:
+			range := transmute(Range_Fields)new.fields
+			return points_places_agree(before, range.first, now, range.first) && texts_equal(before, range.first, now, range.first, range.count)
 		case .None, .Rectangle, .Gradient, .Clip, .Picture, .Text_Grid:
 			return true
 		}
@@ -108,11 +112,29 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		}
 		old_range := transmute(Range_Fields)old.fields
 		new_range := transmute(Range_Fields)new.fields
+		if kind == .Path && !points_places_agree(before, old_range.first, now, new_range.first) {
+			return false
+		}
 		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
 	case .None, .Rectangle, .Gradient, .Clip, .Picture:
 		return false
 	}
 	return false
+}
+
+// points_places_agree says if the points of two paths are at places that
+// the reader treats alike: the border of the record refuses a first byte
+// that is not a multiple of 4, and the execution draws nothing when the
+// address of the points is not a multiple of 4. So two paths with the same
+// points, of which one draws and the other does not, differ by the rest of
+// their first byte or of their address, and are not equal.
+@(private)
+points_places_agree :: proc "contextless" (before: ^Draw_Table, old_first: u32, now: ^Draw_Table, new_first: u32) -> bool {
+	ALIGNMENT :: align_of(draw_record.Path_Point_Record)
+	if old_first % ALIGNMENT != new_first % ALIGNMENT {
+		return false
+	}
+	return (uintptr(raw_data(before.text)) + uintptr(old_first)) % ALIGNMENT == (uintptr(raw_data(now.text)) + uintptr(new_first)) % ALIGNMENT
 }
 
 // The first two fields of a Text, a Text_Grid and a Path: the place of the

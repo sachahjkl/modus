@@ -329,6 +329,58 @@ a_path_at_the_bound_of_its_points :: proc(t: ^testing.T) {
 	testing.expect(t, slice.equal(whole, parts), "the path of the most points in parts differs from the path drawn whole")
 }
 
+// The bound of the sums of the cells: 511 curves, the most that a path
+// holds, each cut into its 16 segments, out and back on one row of the
+// canvas, stroked 64 pixels wide, so that every band lies over the same
+// pixels. The curves are on one line, so each band is a rectangle across
+// the canvas and the result is known with no rasterizer: each pixel right
+// of the first point is covered whole, the color, and each pixel left of
+// it is the background. A sum of the cells that wrapped would give other
+// pixels. Two forms: a control point inside the canvas, which keeps every
+// segment over the canvas, and a control point at the coordinate limit,
+// the largest bend, whose segments reach 2^22 pixels away.
+@(test)
+the_sums_of_a_stroke_of_the_most_curves_do_not_wrap :: proc(t: ^testing.T) {
+	_ = blend_table()
+	CURVES :: (draw_record.PATH_POINT_LIMIT - 1) / 2
+	controls := [2]i32{at(150 + 64), draw_record.COORDINATE_UNIT_LIMIT}
+	for control, form in controls {
+		memory := new(Path_Tables)
+		defer free(memory)
+		table := path_table_of(memory)
+		row := at(20)
+		start, end := at(10), at(290)
+		points := make([]Path_Point, 1 + 2 * CURVES)
+		defer delete(points)
+		points[0] = point(.Move, start, row)
+		for curve in 0 ..< CURVES {
+			points[1 + 2 * curve] = point(.Curve_Control, control, row)
+			points[2 + 2 * curve] = point(.Line, curve % 2 == 0 ? end : start, row)
+		}
+		testing.expect_value(t, draw_record.curve_segment_count(start, row, control, row, end, row), draw_record.CURVE_SEGMENT_LIMIT)
+		draw_path(&table, points, 0, draw_record.opaque(0x00FFFFFF), draw_record.STROKE_WIDTH_UNIT_LIMIT)
+		testing.expectf(t, table.record_count == 1 && !table.refused, "the form %d: the path is not written", form)
+		whole, parts := drawn_whole_and_in_parts(&table)
+		defer delete(whole)
+		defer delete(parts)
+		background := make([]graphics.Color, PATH_WIDTH * PATH_HEIGHT)
+		defer delete(background)
+		path_background(background)
+		// The last point of the form inside the canvas ends at the last
+		// point: right of it the canvas keeps its background.
+		right := form == 0 ? 290 : PATH_WIDTH
+		wrong := 0
+		for y in 0 ..< PATH_HEIGHT {
+			for x in 0 ..< PATH_WIDTH {
+				index := y * PATH_WIDTH + x
+				expected := x >= 10 && x < right ? graphics.Color(0x00FFFFFF) : background[index]
+				wrong += int(whole[index] != expected) + int(parts[index] != expected)
+			}
+		}
+		testing.expectf(t, wrong == 0, "the form %d: %d pixels are not the pixels of the bands", form, wrong)
+	}
+}
+
 // A path with no area: a line out and back, filled, draws no pixel.
 @(test)
 a_path_with_no_area_draws_nothing :: proc(t: ^testing.T) {
@@ -491,6 +543,62 @@ a_path_record_written_by_hand_that_names_wrong_points_draws_nothing :: proc(t: ^
 	damage: Damage
 	damage_by_difference(&before, &past_table, &damage)
 	testing.expect(t, damage.count == 1 && damage.rectangles[0] == record_rectangle(valid), "the path that names points past its table does not damage its box")
+}
+
+// A path that moves to a place that the reader refuses, with the same
+// points, draws other pixels, so the difference damages its box: the
+// record at the first byte 4 and then 5 with the same bytes there, and the
+// same record over a text table one byte further, whose bytes at its range
+// are the same.
+@(test)
+a_path_whose_points_leave_their_alignment_is_damaged :: proc(t: ^testing.T) {
+	before_memory, now_memory := new(Path_Tables), new(Path_Tables)
+	defer free(before_memory)
+	defer free(now_memory)
+	before := path_table_of(before_memory)
+	triangle := [4]Path_Point{point(.Move, at(10), at(10)), point(.Line, at(60, 3), at(12)), point(.Line, at(20), at(35)), point(.Close)}
+	// Four bytes of text first, so the points start at the byte 4.
+	draw_text(&before, 0, 0, "four", 0x00FFFFFF)
+	draw_path(&before, triangle[:], draw_record.opaque(0x00FFFFFF), 0, 0)
+	testing.expect_value(t, before.record_count, 2)
+	before.records[0] = before.records[1]
+	before.record_count = 1
+	valid := before.records[0]
+	fields := transmute(draw_record.Path_Fields)valid.fields
+	testing.expect_value(t, fields.first, u32(4))
+	size := int(fields.count)
+
+	// The first byte 5, with the same points at the byte 5 of the table now.
+	moved := fields
+	moved.first = 5
+	moved_record := valid
+	moved_record.fields = transmute([draw_record.FIELDS_SIZE]u8)moved
+	copy(now_memory.text[5:][:size], before_memory.text[4:][:size])
+	now_records := [1]Draw_Record{moved_record}
+	now := Draw_Table{records = now_records[:], record_count = 1, text = now_memory.text[:], text_count = 5 + size}
+	_, problem := draw_record.read(moved_record)
+	testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect(t, damage.count == 1 && damage.rectangles[0] == record_rectangle(valid), "a path moved to the first byte 5 damages nothing")
+
+	// The same record, over a text table one byte further: its 48 bytes and
+	// the bytes of its range are equal, and its points are at an address
+	// off a multiple of 4.
+	copy(now_memory.text[1:][:4 + size], before_memory.text[:4 + size])
+	same_records := [1]Draw_Record{valid}
+	shifted := Draw_Table{records = same_records[:], record_count = 1, text = now_memory.text[1:], text_count = 4 + size}
+	damage = {}
+	damage_by_difference(&before, &shifted, &damage)
+	testing.expect(t, damage.count == 1 && damage.rectangles[0] == record_rectangle(valid), "a path over a text table one byte further damages nothing")
+
+	// The control: the same record over a text table four bytes further is
+	// equal, and damages nothing.
+	copy(now_memory.text[4:][:4 + size], before_memory.text[:4 + size])
+	aligned := Draw_Table{records = same_records[:], record_count = 1, text = now_memory.text[4:], text_count = 4 + size}
+	damage = {}
+	damage_by_difference(&before, &aligned, &damage)
+	testing.expect_value(t, damage.count, 0)
 }
 
 // The difference of two frames: the same path at another place of the
