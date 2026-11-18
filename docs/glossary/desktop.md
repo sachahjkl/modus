@@ -120,6 +120,16 @@ The design: `docs/DESIGN.md`, "Windows".
 
 Do not use: header, caption, decoration.
 
+### Resizable window
+
+A resizable window is a window whose program states its size limits, so that the principal can drag its edges to give it another size.
+
+A window is fixed unless its program calls `display.resizable_set` with the least and the largest size of its surface. The principal then drags an edge or a corner; at the release the program gets the event `Resized`, makes the surface of the new size with its own budget (`display.surface_resize`), and draws its next frame in it. The compositor shows the old surface until that frame. A resizable window is not a stretched picture: the compositor never scales the pixels of a program.
+
+The design: `src/md/features/window_resize.md`.
+
+Do not use: live resize, size hint, stretchable window.
+
 ### Bar
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.

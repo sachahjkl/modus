@@ -397,6 +397,12 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		if event.kind == .Go_To {
 			act_go_to(drawing, window, event.act)
 		}
+		// The principal resized the window: the surface of the new size
+		// has no picture known, so the next frame draws it whole. A
+		// refused surface keeps the old one, whose pictures stay known.
+		if event.kind == .Resized && display.surface_resize(window, event.width, event.height) == .Ok {
+			draw_whole_window_next(drawing)
+		}
 	}
 	return came
 }

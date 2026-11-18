@@ -363,6 +363,7 @@ KERNEL_RING_FIRST_TAG :: u32(1)
 // kernel_ring_check fills the completion queue of the kernel ring of this
 // thread and checks that no answer is lost
 // (src/md/api/kernel_ring_completion_room.md). The commands are None, which
+// names no operation: the kernel refuses each one with Bad_Operation and
 // changes nothing, so each answer differs by its tag only; they leave one
 // place. The next entry holds a Word_Wait on a word that keeps its value,
 // which takes the last place, then a close of a handle: the kernel must
@@ -408,12 +409,13 @@ kernel_ring_check :: proc "contextless" () {
 	refused &&= ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
 	waited := system.word_wait(&unchanged, 0, deadline)
 	wait_ended := waited < deadline && ring.count(&kernel.commands) == 1 && ring.full(&kernel.completions)
-	// Each answer once, in the order of the commands: the None commands,
-	// then the Word_Wait.
+	// Each answer once, in the order of the commands: the refusals of the
+	// None commands, then the Word_Wait.
 	answers_in_order := true
 	for number in 0 ..< capacity {
 		answer, popped := ring.pop(&kernel.completions)
-		answers_in_order &&= popped && answer.tag == KERNEL_RING_FIRST_TAG + number && answer.kind == u32(system.Status.Ok)
+		expected := number < capacity - 1 ? system.Status.Bad_Operation : system.Status.Ok
+		answers_in_order &&= popped && answer.tag == KERNEL_RING_FIRST_TAG + number && answer.kind == u32(expected)
 	}
 	answers_in_order &&= ring.empty(&kernel.completions)
 	// The held command runs at the next entry, once.
@@ -1308,7 +1310,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					chosen = case_at(event.y)
 				}
 				pressed = down
-			case .None, .Settings_Changed, .Go_To:
+			case .None, .Settings_Changed, .Go_To, .Resized:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 			if chosen >= 0 {

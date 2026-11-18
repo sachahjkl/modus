@@ -51,8 +51,23 @@ ENTERED_READS_CHECKED :: 100_000
 PAGE_CHANGES_COMPARED :: 16
 
 LINE :: interface.TABLE_LINE
+// The size of the window at its start, and its least size: each text of
+// the window fits in this width. The principal can make it larger, up to
+// LARGEST_WIDTH by LARGEST_HEIGHT (src/md/features/window_resize.md).
 WIDTH :: 816
 HEIGHT :: 312 + LINE
+LARGEST_WIDTH :: 1216
+LARGEST_HEIGHT :: 640
+
+// The window is counted at its largest size: 1216 x 640 pixels, 4 bytes
+// each, two pictures, 6 225 920 bytes, 1520 pages. A resize holds the old
+// surface and the new one together until the compositor shows the new one,
+// so the working memory holds a second surface at the largest size: 1520
+// pages. It also holds what clock used before it stated a budget: the
+// least budget of 2048 pages less its window of 816 x 336 (2 193 408
+// bytes, 536 pages), 1512 pages, for its module, its stack, the glyphs
+// that it draws itself and its tables. 1520 + 1512 = 3032.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3032, programs = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
 Measure :: struct {
 	name:    string,
@@ -149,11 +164,14 @@ sentence :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, p
 }
 
 // draw builds the window with the interface package: a card, the time since
-// boot, a table of the two ways with their bars, the checks.
+// boot, a table of the two ways with their bars, the checks. The card fills
+// the surface, whose size the principal can change: the share column of
+// the table takes the width that the window gains.
 draw :: proc "contextless" (window: ^display.Window) {
+	width, height := window.canvas.width, window.canvas.height
 	frame := interface.window_frame_start(&window_memory, window)
-	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.colors.kernel)
+	interface.background(&frame, {0, 0, width, height})
+	content := interface.card(&frame, {8, 8, width - 16, height - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.colors.kernel)
 	column := interface.column_of(content)
 	interface.cell_text(&frame, interface.column_take(&column, LINE), "the kernel writes the time in one page. each program reads it: no kernel entry.", graphics.colors.dim)
 	builder: interface.Text_Builder
@@ -223,6 +241,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "clock")
 	if !ok {
 		system.stop(1)
+	}
+	// The limits are constants of this program that size_limits_of_words
+	// takes: a refusal is a fault of this source, which the line says.
+	// The ring holds the one record of the surface: a full ring is a fault
+	// of the compositor, which the line says too.
+	if problem, sent := display.resizable_set(&window, {least_width = WIDTH, least_height = HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT}); problem != .None {
+		system.log("clock: the window stays fixed: ", display.SIZE_LIMITS_PROBLEM_SENTENCES[problem])
+	} else if !sent {
+		system.log("clock: the window stays fixed: the command ring of the window is full")
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
