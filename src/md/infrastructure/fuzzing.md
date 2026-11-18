@@ -112,7 +112,7 @@ The corpus of one target holds at most 512 inputs and 1 MiB; the whole corpus ho
 
 - `fuzz <target> [executions] [processes]`: runs a target for a count of executions: by default the count of the check, and a count of 0 is refused, so that a forgotten argument never starts a run with no end; with several processes, each process runs a child, and the children share the kept inputs through the folder of the run in `build/fuzzing/`.
 - `fuzz all [executions]`: each host target in turn.
-- `fuzz operations <executions> [machines]`: the kernel operations in test machines ([kernel_fuzzing.md](kernel_fuzzing.md)).
+- `fuzz operations <executions> [<seed>]`: the kernel operations in a test machine, one machine at a time, with no default count ([kernel_fuzzing.md](kernel_fuzzing.md), "The loop and the speed").
 - `fuzz list`: the targets and the inputs of their corpus.
 - `fuzz show <target> <file>`, `fuzz minimize <target> <file>`: one input again, with its outcome and its bytes as an Odin array; the smallest input with the same signature.
 - `fuzz regression <target> <file>`: adds a fixed fuzz finding to the regression inputs, and refuses one that still breaks an oracle.

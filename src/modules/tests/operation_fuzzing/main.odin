@@ -98,6 +98,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			continue
 		}
 		execute()
+		// Before the count: the tool reads the results at the count, then
+		// waits for this line, which comes after each line of the kernel
+		// that the sequence caused.
+		system.log(operation_sequence.SEQUENCE_END_LINE_START, executions + 1, operation_sequence.SEQUENCE_END_LINE_END)
 		intrinsics.atomic_store(&header.executions, executions + 1)
 	}
 }

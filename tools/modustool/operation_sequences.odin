@@ -544,41 +544,63 @@ operation_mailbox_write_word :: proc(mailbox: ^Operation_Mailbox, offset: uintpt
 // and reads the header and the results. The wait ends a hang only: a
 // count that stays still for HANG_BOUND is a stall of the machine.
 operation_execute :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results) -> (problem: string) {
+	_, _, problem = operation_execute_watched(mailbox, bytes, header, results, nil)
+	return problem
+}
+
+// How the wait for one execution ended.
+Operation_Wait_End :: enum u8 {
+	Counted,        // The service counted the sequence: the header and the results are read.
+	Machine_Ended,  // QEMU ended before the service counted the sequence.
+	Stalled,        // The count of executions stayed still for HANG_BOUND.
+	Mailbox_Broken, // The mailbox counts what the tool did not write: the machine wrote it.
+	Tool_Error,     // The tool cannot read or write the memory file, or its sequence is larger than its place: never a fault of the machine.
+}
+
+// operation_execute_watched is operation_execute that also watches QEMU,
+// when process is not nil: a machine that stopped ends the wait at once,
+// not at the hang bound, with the state of its end.
+operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, process: ^os.Process) -> (end: Operation_Wait_End, ended: os.Process_State, problem: string) {
 	if len(bytes) > operation_sequence.SEQUENCE_BYTES_MOST {
-		return "the sequence is larger than its place in the mailbox"
+		return .Tool_Error, {}, "the sequence is larger than its place in the mailbox"
 	}
 	if !operation_mailbox_write(mailbox, operation_sequence.MAILBOX_SEQUENCE_OFFSET, bytes) || !operation_mailbox_write_word(mailbox, offset_of(operation_sequence.Mailbox_Header, sequence_bytes), u64(len(bytes))) {
-		return "cannot write the sequence in the mailbox"
+		return .Tool_Error, {}, "cannot write the sequence in the mailbox"
 	}
 	// The count last: the service reads the sequence only after it.
 	mailbox.written += 1
 	if !operation_mailbox_write_word(mailbox, offset_of(operation_sequence.Mailbox_Header, sequences_written), mailbox.written) {
-		return "cannot write the count of the sequences"
+		return .Tool_Error, {}, "cannot write the count of the sequences"
 	}
 	started := time.now()
 	for {
 		if !operation_mailbox_read(mailbox, 0, ([^]u8)(header)[:size_of(header^)]) {
-			return "cannot read the mailbox"
+			return .Tool_Error, {}, "cannot read the mailbox"
 		}
 		if header.executions == mailbox.written {
 			break
 		}
 		if header.executions != mailbox.executions {
-			return fmt.tprintf("the mailbox counts %d executions after %d, and the tool wrote %d sequences", header.executions, mailbox.executions, mailbox.written)
+			return .Mailbox_Broken, {}, fmt.tprintf("the mailbox counts %d executions after %d, and the tool wrote %d sequences", header.executions, mailbox.executions, mailbox.written)
+		}
+		if process != nil {
+			// A wait of 0 does not block: Timeout says that QEMU runs.
+			if state, wait_error := os.process_wait(process^, 0); wait_error == nil && state.exited {
+				return .Machine_Ended, state, fmt.tprintf("QEMU ended with the status %d before the service counted the sequence", state.exit_code)
+			}
 		}
 		if time.since(started) > HANG_BOUND {
-			return fmt.tprintf("a stall: the service took no sequence within %v; the runner had started its step %d", HANG_BOUND, operation_runner_step_started(mailbox))
+			return .Stalled, {}, fmt.tprintf("a stall: the service took no sequence within %v; the runner had started its step %d", HANG_BOUND, operation_runner_step_started(mailbox))
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	mailbox.executions = header.executions
 	if !operation_mailbox_read(mailbox, operation_sequence.MAILBOX_RESULTS_OFFSET, ([^]u8)(results)[:size_of(results^)]) {
-		return "cannot read the results"
+		return .Tool_Error, {}, "cannot read the results"
 	}
-	return ""
+	return .Counted, {}, ""
 }
 
-@(private = "file")
 operation_runner_step_started :: proc(mailbox: ^Operation_Mailbox) -> u64 {
 	results: operation_sequence.Runner_Results
 	_ = operation_mailbox_read(mailbox, operation_sequence.MAILBOX_RESULTS_OFFSET, ([^]u8)(&results)[:size_of(results)])
