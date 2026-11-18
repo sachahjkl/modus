@@ -21,6 +21,7 @@ import op "modus:contract/operation"
 import "modus:contract/start_grant"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 SITE_TYPES_FOLDER :: SITE_REFERENCE_FOLDER + "/types"
 SITE_TYPES_FILE :: "tools/modustool/site_types.odin"
@@ -28,7 +29,7 @@ SITE_MODULE_CONTRACT_DOCUMENT :: "docs/MODULE_CONTRACT.md"
 // The packages whose types the site documents: the packages whose files the
 // reference tables read, and the module contract, whose types the
 // descriptions of the exports use.
-SITE_TYPE_PACKAGES :: [?]string{foundation.SOURCE_FOLDER_CONTRACT + "/operation", foundation.SOURCE_FOLDER_CONTRACT + "/errors", FIXED_ADDRESSES_FOLDER, foundation.SOURCE_FOLDER_CONTRACT + "/module", foundation.SOURCE_FOLDER_CONTRACT + "/start_grant"}
+SITE_TYPE_PACKAGES :: [?]string{foundation.SOURCE_FOLDER_CONTRACT + "/operation", foundation.SOURCE_FOLDER_CONTRACT + "/errors", checks.FIXED_ADDRESSES_FOLDER, foundation.SOURCE_FOLDER_CONTRACT + "/module", foundation.SOURCE_FOLDER_CONTRACT + "/start_grant"}
 // A short card shows at most this many fields, members or bits; the page of
 // the types shows them all.
 SITE_TYPE_CARD_ROWS :: 8

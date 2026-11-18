@@ -2,6 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
+import "modustool:checks"
 
 // A site with one release and one news entry: the pages of the releases
 // and of the news, as the command writes them.
@@ -9,15 +10,15 @@ import "core:testing"
 subscribe_test_site :: proc() -> Site {
 	site := test_site()
 	site.release = "0.1.0"
-	releases := make([]Changelog_Release, 1, context.temp_allocator)
-	entries := make([]Changelog_Entry, 1, context.temp_allocator)
+	releases := make([]checks.Changelog_Release, 1, context.temp_allocator)
+	entries := make([]checks.Changelog_Entry, 1, context.temp_allocator)
 	lines := make([]string, 1, context.temp_allocator)
 	lines[0] = "**A thing**: it works."
-	entries[0] = Changelog_Entry{type_index = 0, lines = lines}
-	releases[0] = Changelog_Release{number = Release_Number{0, 1, 0}, date = "2026-11-12", entries = entries}
+	entries[0] = checks.Changelog_Entry{type_index = 0, lines = lines}
+	releases[0] = checks.Changelog_Release{number = checks.Release_Number{0, 1, 0}, date = "2026-11-12", entries = entries}
 	site.changelog.releases = releases
 	news := make([]Site_News, 1, context.temp_allocator)
-	news[0] = Site_News{entry = News_Entry{file_name = "2026-11-12-a.md", title = "A thing", date = "2026-11-12", release = NEWS_NEXT_RELEASE, guide = NEWS_NONE, kind = .Shown, text = "A thing works. More text."}, anchor = "news-2026-11-12-a"}
+	news[0] = Site_News{entry = checks.News_Entry{file_name = "2026-11-12-a.md", title = "A thing", date = "2026-11-12", release = checks.NEWS_NEXT_RELEASE, guide = checks.NEWS_NONE, kind = .Shown, text = "A thing works. More text."}, anchor = "news-2026-11-12-a"}
 	site.news = news
 	site_news_add(&site)
 	site_releases_add(&site)
@@ -93,7 +94,7 @@ site_subscribe_menu_on_the_pages_of_the_changes :: proc(t: ^testing.T) {
 		testing.expect(t, strings.contains(test_case.text, "<entry>"))
 
 		// The releases of the repository.
-		testing.expect(t, strings.contains(menu, "<a href=\"" + SITE_REPOSITORY_ADDRESS + "/releases\">" + SITE_SUBSCRIBE_WATCH_LABEL + SITE_SUBSCRIBE_ARROW + "</a>"))
+		testing.expect(t, strings.contains(menu, "<a href=\"" + checks.SITE_REPOSITORY_ADDRESS + "/releases\">" + SITE_SUBSCRIBE_WATCH_LABEL + SITE_SUBSCRIBE_ARROW + "</a>"))
 
 		lower := strings.to_lower(menu, context.temp_allocator)
 		for refused in ([]string{"rss", "x.com", "twitter"}) {

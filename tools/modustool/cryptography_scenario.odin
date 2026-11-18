@@ -1,13 +1,11 @@
 package modustool
 
-import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // The module `cryptography` as it ships: the process cryptography_vectors
 // imports it and runs the published vectors of each primitive through its
 // exports, on the machine (docs/CRYPTOGRAPHY.md).
-
-TEST_OUTPUT_CRYPTOGRAPHY :: foundation.BUILD_FOLDER + "/test_output_cryptography.txt"
 
 scenario_cryptography := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
@@ -33,5 +31,5 @@ scenario_cryptography := [?]Step {
 }
 
 cryptography_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_cryptography[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_CRYPTOGRAPHY, exit_status = build.MACHINE_STOP_OK})
+	return machine_test(part, scenario_cryptography[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_CRYPTOGRAPHY, exit_status = build.MACHINE_STOP_OK})
 }

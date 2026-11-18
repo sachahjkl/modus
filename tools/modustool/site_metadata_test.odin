@@ -7,6 +7,7 @@ import "core:testing"
 import "modus:support/mark"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:checks"
 
 @(private = "file")
 TEST_ADDRESS :: "https://example.invalid/modus"
@@ -32,17 +33,17 @@ metadata_test_site :: proc(address: string) -> Site {
 	site.readme.lead = "A small operating system."
 	site.readme.mark_description = "The heron and the name"
 	site.author = "Ada Example"
-	releases := make([]Changelog_Release, 1, context.temp_allocator)
-	entries := make([]Changelog_Entry, 1, context.temp_allocator)
+	releases := make([]checks.Changelog_Release, 1, context.temp_allocator)
+	entries := make([]checks.Changelog_Entry, 1, context.temp_allocator)
 	// Made with an allocator: a slice literal would live on the stack of
 	// this procedure, and the site outlives it.
 	lines := make([]string, 1, context.temp_allocator)
 	lines[0] = "**A thing**: it works."
-	entries[0] = Changelog_Entry{type_index = 0, lines = lines}
-	releases[0] = Changelog_Release{number = Release_Number{0, 1, 0}, date = "2026-11-12", time_of_day = "18:48", entries = entries}
+	entries[0] = checks.Changelog_Entry{type_index = 0, lines = lines}
+	releases[0] = checks.Changelog_Release{number = checks.Release_Number{0, 1, 0}, date = "2026-11-12", time_of_day = "18:48", entries = entries}
 	site.changelog.releases = releases
 	news := make([]Site_News, 1, context.temp_allocator)
-	news[0] = Site_News{entry = News_Entry{file_name = "2026-11-12-a.md", title = "A thing", date = "2026-11-12", kind = .Shown, text = "A thing works. More text."}, anchor = "news-2026-11-12-a"}
+	news[0] = Site_News{entry = checks.News_Entry{file_name = "2026-11-12-a.md", title = "A thing", date = "2026-11-12", kind = .Shown, text = "A thing works. More text."}, anchor = "news-2026-11-12-a"}
 	site.news = news
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 	append(&site.guides, Site_Guide{source = "docs/A.md", path = TEST_GUIDE_A, title = "Guide A"})
@@ -180,7 +181,7 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(site_robots(&site), "Sitemap: " + TEST_ADDRESS + "/sitemap.xml\n"))
 	feed := site_releases_feed(&site)
 	testing.expect(t, strings.contains(feed, "<link rel=\"self\" type=\"application/atom+xml\" href=\"" + TEST_ADDRESS + "/releases.xml\"/>"))
-	testing.expect(t, strings.contains(feed, "<id>" + SITE_REPOSITORY_ADDRESS + "/blob/master/" + CHANGELOG_FILE + "#release-"))
+	testing.expect(t, strings.contains(feed, "<id>" + checks.SITE_REPOSITORY_ADDRESS + "/blob/master/" + checks.CHANGELOG_FILE + "#release-"))
 	testing.expect(t, strings.contains(feed, "href=\"" + TEST_ADDRESS + "/releases/#release-"))
 	// The feed gives the release time, not the start of its day.
 	testing.expect(t, strings.contains(feed, "<published>2026-11-12T18:48:00Z</published>\n<updated>2026-11-12T18:48:00Z</updated>"), feed)
@@ -232,12 +233,12 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_copyright_holder(""), "")
 	// The line of LICENSE of the repository gives a name, not a year.
 	if text, read := foundation.site_read_quiet(resources.SITE_LICENSE_FILE); read {
-		holder := site_copyright_holder(site_line_after(text, "Copyright "))
+		holder := site_copyright_holder(checks.site_line_after(text, "Copyright "))
 		testing.expect(t, holder != "")
 		testing.expect(t, len(holder) > 0 && (holder[0] < '0' || holder[0] > '9') && holder[0] != '(')
 	}
 	testing.expect(t, strings.has_prefix(site_account_address(), "https://github.com/"))
-	testing.expect(t, strings.has_prefix(SITE_REPOSITORY_ADDRESS, strings.concatenate({site_account_address(), "/"}, context.temp_allocator)))
+	testing.expect(t, strings.has_prefix(checks.SITE_REPOSITORY_ADDRESS, strings.concatenate({site_account_address(), "/"}, context.temp_allocator)))
 
 	// With an address: the author, and the nodes that name it.
 	site := metadata_test_site(TEST_ADDRESS)

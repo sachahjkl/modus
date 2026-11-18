@@ -2,6 +2,7 @@ package modustool
 
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // TCP: two machines of their own (docs/NETWORK.md, "The tests").
 //
@@ -16,7 +17,6 @@ import "modustool:build"
 // the tool (guestfwd).
 
 TEST_OUTPUT_TCP :: foundation.BUILD_FOLDER + "/test_output_tcp.txt"
-TEST_OUTPUT_TCP_REAL :: foundation.BUILD_FOLDER + "/test_output_tcp_real.txt"
 
 scenario_tcp := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
@@ -208,9 +208,9 @@ scenario_tcp_real := [?]Step {
 }
 
 tcp_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	if !machine_test(part, scenario_tcp[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_TCP, exit_status = build.MACHINE_STOP_OK}) || !machine_test(part, scenario_tcp_real[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_TCP_REAL, exit_status = build.MACHINE_STOP_OK, user_network = true}) {
+	if !machine_test(part, scenario_tcp[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_TCP, exit_status = build.MACHINE_STOP_OK}) || !machine_test(part, scenario_tcp_real[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_TCP_REAL, exit_status = build.MACHINE_STOP_OK, user_network = true}) {
 		return false
 	}
-	frames_of_the_fetch_report(TEST_OUTPUT_TCP_REAL)
+	frames_of_the_fetch_report(checks.TEST_OUTPUT_TCP_REAL)
 	return true
 }

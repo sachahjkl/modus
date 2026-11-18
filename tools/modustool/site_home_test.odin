@@ -8,6 +8,7 @@ import "modus:support/graphics"
 import "modus:support/mark"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:checks"
 
 // The stages of the start as a run of the main machine test logged them.
 @(private = "file")
@@ -177,7 +178,7 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 		// One unit for a chart, and its measure is in the table.
 		testing.expect(t, chart.unit != "" && chart.title != "" && chart.kind != .None)
 		in_table := false
-		for measure in site_measures {
+		for measure in checks.site_measures {
 			in_table ||= measure.pattern == chart.pattern
 		}
 		testing.expectf(t, in_table, "the chart %q names no measure of the table", chart.title)
@@ -216,8 +217,8 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 	// The markup.
 	site := home_test_site()
 	measured := make([]Site_Measured, 2, context.temp_allocator)
-	measured[0] = {measure = site_measures[0], found = true, text = locks_line}
-	measured[1] = {measure = site_measures[4], found = true, text = "compositor: a full frame of 1024x768 with 17 windows in 1747 us"}
+	measured[0] = {measure = checks.site_measures[0], found = true, text = locks_line}
+	measured[1] = {measure = checks.site_measures[4], found = true, text = "compositor: a full frame of 1024x768 with 17 windows in 1747 us"}
 	site.measured = measured
 	b := strings.builder_make(context.temp_allocator)
 	site_measure_charts_write(&site, &b, site_section_page(.Home))
@@ -242,13 +243,13 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 @(test)
 site_home_release_band :: proc(t: ^testing.T) {
 	site := home_test_site()
-	entries := make([]Changelog_Entry, 6, context.temp_allocator)
+	entries := make([]checks.Changelog_Entry, 6, context.temp_allocator)
 	for &entry, index in entries {
 		lines := make([]string, 1, context.temp_allocator)
 		lines[0] = fmt.tprintf("**The change %d**: what it gives.", index + 1)
-		entry = Changelog_Entry{type_index = index < 5 ? 0 : 1, lines = lines}
+		entry = checks.Changelog_Entry{type_index = index < 5 ? 0 : 1, lines = lines}
 	}
-	releases := make([]Changelog_Release, 1, context.temp_allocator)
+	releases := make([]checks.Changelog_Release, 1, context.temp_allocator)
 	releases[0] = {date = "2026-11-12", time_of_day = "18:48", entries = entries}
 	site.changelog.releases = releases
 	b := strings.builder_make(context.temp_allocator)
@@ -257,13 +258,13 @@ site_home_release_band :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "<span class=\"value value-version release-number\">0.91.0</span>"), html)
 	testing.expect(t, strings.contains(html, "<time datetime=\"2026-11-12T18:48Z\">2026-11-12 18:48 UTC</time>, <strong>6</strong> changes</span>"), html)
 	testing.expect_value(t, strings.count(html, "<li><span class=\"release-change-type\">"), SITE_RELEASE_BAND_CHANGE_COUNT)
-	types := CHANGE_TYPES
+	types := checks.CHANGE_TYPES
 	first := fmt.tprintf("<li><span class=\"release-change-type\">%s</span> <a href=\"releases/index.html#release-0-91-0-change-1\">The change 1</a></li>", types[0])
 	testing.expect(t, strings.contains(html, first), html)
 	testing.expect(t, strings.contains(html, "And <strong>2</strong> more changes in this release. <a href=\"releases/index.html\">All 1 releases</a>"), html)
 	testing.expect_value(t, site_change_id("0.91.0", 3), "release-0-91-0-change-3")
 	// A change with no bold summary gives its first sentence.
-	plain := Changelog_Entry{lines = []string{"A plain change. More words."}}
+	plain := checks.Changelog_Entry{lines = []string{"A plain change. More words."}}
 	testing.expect_value(t, site_change_summary(plain), "A plain change.")
 	testing.expect_value(t, site_change_summary(entries[0]), "The change 1")
 }
@@ -284,8 +285,8 @@ site_card_content_starts_at_the_top :: proc(t: ^testing.T) {
 		testing.expectf(t, strings.contains(sheet, rule), "the style sheet has no %q", rule)
 	}
 	site: Site
-	with_picture := Site_News{entry = News_Entry{title = "With", date = "2026-11-11"}, anchor = "news-with", picture = "pictures/console.png", picture_width = 1024, picture_height = 768, picture_alt = "A picture"}
-	without_picture := Site_News{entry = News_Entry{title = "Without", date = "2026-11-12"}, anchor = "news-without"}
+	with_picture := Site_News{entry = checks.News_Entry{title = "With", date = "2026-11-11"}, anchor = "news-with", picture = "pictures/console.png", picture_width = 1024, picture_height = 768, picture_alt = "A picture"}
+	without_picture := Site_News{entry = checks.News_Entry{title = "Without", date = "2026-11-12"}, anchor = "news-without"}
 	site.news = []Site_News{with_picture, without_picture}
 	b := strings.builder_make(context.temp_allocator)
 	site_news_home(&site, &b)

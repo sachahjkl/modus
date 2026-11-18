@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // The download section of the home and of the page of the releases: the
 // files of the newest release, the release signing key, and the steps that
@@ -68,7 +69,7 @@ site_download_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string)
 	// gives the release number, and each link holds the tag: the list
 	// alone says what each file is.
 	tag := strings.concatenate({"v", site.release}, context.temp_allocator)
-	address := strings.concatenate({SITE_REPOSITORY_ADDRESS, "/releases/download/", tag, "/"}, context.temp_allocator)
+	address := strings.concatenate({checks.SITE_REPOSITORY_ADDRESS, "/releases/download/", tag, "/"}, context.temp_allocator)
 	image_name := build.release_image_file_name(site.release)
 	strings.write_string(b, "<ul class=\"download-files\">\n")
 	Download_File :: struct {

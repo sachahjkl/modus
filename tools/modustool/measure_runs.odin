@@ -2,9 +2,9 @@ package modustool
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // The measure runs of the processes
 // (docs/TOOLS.md, "A check by count, a measure by time").
@@ -33,11 +33,6 @@ measure_processes := [?]Measure_Process {
 	{name = "limits", lines = {"limits: processor time of one second, used of limit: ", ""}, done = "limits: ok, 4 budgets within their processor time, "},
 }
 
-// The logs of the measure runs whose lines the measure record holds.
-TEST_OUTPUT_MEASURE_CLOCK :: foundation.BUILD_FOLDER + "/test_output_measure_clock.txt"
-TEST_OUTPUT_MEASURE_DISK :: foundation.BUILD_FOLDER + "/test_output_measure_disk.txt"
-TEST_OUTPUT_MEASURE_SCHEDULER :: foundation.BUILD_FOLDER + "/test_output_scheduler_1.txt"
-
 // measure_process_output gives the log of the measure run of a process.
 // The text is in memory of its own: a scenario frees the temporary memory
 // after each step.
@@ -53,19 +48,6 @@ measure_process_find :: proc(name: string) -> (process: Measure_Process, found: 
 		}
 	}
 	return {}, false
-}
-
-// measure_process_lines gives the lines of a log that a process wrote: the
-// lines that hold "name: ".
-measure_process_lines :: proc(log: string, name: string) -> []string {
-	mark := strings.concatenate({name, ": "}, context.temp_allocator)
-	lines := make([dynamic]string, context.temp_allocator)
-	for line in strings.split_lines(log, context.temp_allocator) {
-		if strings.contains(line, mark) {
-			append(&lines, strings.trim_right(line, "\r"))
-		}
-	}
-	return lines[:]
 }
 
 // measure_process_steps adds the scenario of the measure run of one
@@ -102,7 +84,7 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 		return false
 	}
 	fmt.printfln("modustool: the measure run of %s (%s):", process.name, output)
-	for line in measure_process_lines(string(log), process.name) {
+	for line in checks.measure_process_lines(string(log), process.name) {
 		fmt.println(line)
 	}
 	return true
@@ -116,13 +98,13 @@ measure_runs_of_the_record :: proc() -> bool {
 	part := test_part_run_make(build.MEASURE_COMMAND)
 	defer test_part_run_free(&part)
 	test_part_run_start(&part) or_return
-	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
+	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = checks.TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !checks.processor_frame_lines_check(checks.TEST_OUTPUT_MEASURE) || !checks.quality_lines_check(checks.TEST_OUTPUT_MEASURE) {
 		return false
 	}
 	for name in ([]string{"clock", "disk"}) {
 		process := measure_process_find(name) or_return
 		measure_process_run(&part, process) or_return
 	}
-	part.passed = machine_test(&part, scenario_measure_scheduler[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_SCHEDULER, exit_status = build.MACHINE_STOP_OK})
+	part.passed = machine_test(&part, scenario_measure_scheduler[:], {volume = build.BOOT_VOLUME_MEASURE, output = checks.TEST_OUTPUT_MEASURE_SCHEDULER, exit_status = build.MACHINE_STOP_OK})
 	return part.passed
 }

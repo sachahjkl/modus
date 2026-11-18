@@ -12,6 +12,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:checks"
 
 SITE_DEMONSTRATIONS_FILE :: "docs/DEMONSTRATIONS.md"
 
@@ -136,8 +137,8 @@ site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Ren
 site_status_add :: proc(site: ^Site) -> bool {
 	path := site_section_page(.Status)
 	properties := site.principles.properties
-	principles := site_document_render(site, SITE_PROPERTIES_FILE) or_return
-	properties_page := site.documents[SITE_PROPERTIES_FILE]
+	principles := site_document_render(site, checks.SITE_PROPERTIES_FILE) or_return
+	properties_page := site.documents[checks.SITE_PROPERTIES_FILE]
 
 	demonstrations_text := foundation.site_read(SITE_DEMONSTRATIONS_FILE) or_return
 	demonstrations, removals, demonstrations_problem := site_demonstrations_read(demonstrations_text)
@@ -179,7 +180,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	}
 	site_table_end(&b, properties_table)
 	strings.write_string(&b, "<p class=\"source\">The status is the column \"Status\" of the summary of the properties.</p>\n")
-	site_source_line(site, &b, SITE_PROPERTIES_FILE)
+	site_source_line(site, &b, checks.SITE_PROPERTIES_FILE)
 
 	// Each property in prose: the promise from its first rule, then the
 	// demonstration. The page states what is not done as plainly as what is.
@@ -236,12 +237,12 @@ site_status_add :: proc(site: ^Site) -> bool {
 		}
 		strings.write_string(&b, "</section>\n")
 	}
-	site_source_line(site, &b, SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE)
+	site_source_line(site, &b, checks.SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE)
 
 	// The planned work is not on this page: it has its own, from its own file.
 	strings.write_string(&b, "<h2 id=\"planned\">What is planned</h2>\n")
 	site_roadmap_link_line(site, &b, path)
 
-	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s: what it promises, what the machine test shows of it, and what is not done.", len(properties), SITE_SYSTEM_NAME)), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
+	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s: what it promises, what the machine test shows of it, and what is not done.", len(properties), SITE_SYSTEM_NAME)), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(checks.SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
 	return true
 }

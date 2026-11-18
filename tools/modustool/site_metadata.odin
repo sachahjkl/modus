@@ -18,6 +18,7 @@ import "core:slice"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:checks"
 
 SITE_SITEMAP :: "sitemap.xml"
 SITE_ROBOTS :: "robots.txt"
@@ -118,7 +119,7 @@ site_copyright_holder :: proc(line: string) -> string {
 // repository: the repository address without its last part.
 site_account_address :: proc() -> string {
 	// A constant string cannot be sliced by a variable: a copy can.
-	repository: string = SITE_REPOSITORY_ADDRESS
+	repository: string = checks.SITE_REPOSITORY_ADDRESS
 	slash := strings.last_index_byte(repository, '/')
 	return repository[:slash]
 }
@@ -128,7 +129,7 @@ site_account_address :: proc() -> string {
 // system and its repository when LICENSE names no holder.
 site_feed_author :: proc(site: ^Site, b: ^strings.Builder) {
 	name := site.author != "" ? site.author : SITE_SYSTEM_NAME
-	address := site.author != "" ? site_account_address() : SITE_REPOSITORY_ADDRESS
+	address := site.author != "" ? site_account_address() : checks.SITE_REPOSITORY_ADDRESS
 	strings.write_string(b, "<author><name>")
 	site_xml_escape(b, name)
 	strings.write_string(b, "</name><uri>")
@@ -405,7 +406,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "SoftwareSourceCode", source_id)
 		site_json_text(&node, "name", SITE_SYSTEM_NAME)
-		site_json_text(&node, "codeRepository", SITE_REPOSITORY_ADDRESS)
+		site_json_text(&node, "codeRepository", checks.SITE_REPOSITORY_ADDRESS)
 		site_json_key(&node, "programmingLanguage")
 		language := site_json_open(&b, "ComputerLanguage")
 		site_json_text(&language, "name", "Odin")
@@ -612,7 +613,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 			// the date of its head.
 			site_json_text(&post, "datePublished", item.entry.date)
 			site_json_text(&post, "dateModified", item.entry.date)
-			site_json_text(&post, "articleSection", news_kind_names[item.entry.kind])
+			site_json_text(&post, "articleSection", checks.news_kind_names[item.entry.kind])
 			site_json_reference(&post, "isPartOf", main_entity)
 			site_json_reference(&post, "mainEntityOfPage", page_id)
 			site_json_reference(&post, "about", system_id)
@@ -677,15 +678,15 @@ site_robots :: proc(site: ^Site) -> string {
 // master: a release is never renamed, so the id never changes, also when
 // the site gets an address.
 site_releases_feed :: proc(site: ^Site) -> string {
-	types := CHANGE_TYPES
+	types := checks.CHANGE_TYPES
 	releases := site.changelog.releases
-	changelog_address := strings.concatenate({SITE_REPOSITORY_ADDRESS, "/blob/master/", CHANGELOG_FILE}, context.temp_allocator)
+	changelog_address := strings.concatenate({checks.SITE_REPOSITORY_ADDRESS, "/blob/master/", checks.CHANGELOG_FILE}, context.temp_allocator)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n")
 	fmt.sbprintf(&b, "<title>Releases of %s</title>\n<subtitle>Every release of %s, newest first, with the changes of each one.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
 	fmt.sbprintf(&b, "<id>%s</id>\n", changelog_address)
 	if len(releases) > 0 {
-		fmt.sbprintf(&b, "<updated>%s</updated>\n", release_moment_atom(releases[0]))
+		fmt.sbprintf(&b, "<updated>%s</updated>\n", checks.release_moment_atom(releases[0]))
 	}
 	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
@@ -698,16 +699,16 @@ site_releases_feed :: proc(site: ^Site) -> string {
 	}
 	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_192))
 	for changelog_release in releases {
-		number := release_number_text(changelog_release.number)
+		number := checks.release_number_text(changelog_release.number)
 		anchor := site_release_id(number)
 		fmt.sbprintf(&b, "<entry>\n<title>%s %s</title>\n<id>%s#%s</id>\n", SITE_SYSTEM_NAME, number, changelog_address, anchor)
 		strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
 		site_xml_escape(&b, site_feed_page_address(site, strings.concatenate({site_section_page(.Releases), "#", anchor}, context.temp_allocator)))
-		moment := release_moment_atom(changelog_release)
+		moment := checks.release_moment_atom(changelog_release)
 		fmt.sbprintf(&b, "\"/>\n<published>%s</published>\n<updated>%s</updated>\n", moment, moment)
 		if len(changelog_release.entries) > 0 {
 			strings.write_string(&b, "<summary>")
-			site_plain(&b, entry_joined(changelog_release.entries[0].lines))
+			site_plain(&b, checks.entry_joined(changelog_release.entries[0].lines))
 			strings.write_string(&b, "</summary>\n")
 		}
 		// The content is the HTML of the page of the releases for this
@@ -723,7 +724,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 				fmt.sbprintf(&html, "<h3>%s</h3><ul>", types[type_index])
 			}
 			strings.write_string(&html, "<li>")
-			site_inline(&html, entry_joined(entry.lines))
+			site_inline(&html, checks.entry_joined(entry.lines))
 			strings.write_string(&html, "</li>")
 		}
 		if type_index >= 0 {
@@ -784,7 +785,7 @@ site_manifest :: proc(site: ^Site) -> string {
 site_language_model_index :: proc(site: ^Site) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "# %s\n\n> %s\n\n", SITE_SYSTEM_NAME, site_plain_text(site.readme.lead))
-	fmt.sbprintf(&b, "The documentation of %s, generated from the repository %s at the release %s.\n", SITE_SYSTEM_NAME, SITE_REPOSITORY_ADDRESS, site.release)
+	fmt.sbprintf(&b, "The documentation of %s, generated from the repository %s at the release %s.\n", SITE_SYSTEM_NAME, checks.SITE_REPOSITORY_ADDRESS, site.release)
 	line :: proc(site: ^Site, b: ^strings.Builder, page: Site_Page) {
 		address := site_feed_page_address(site, page.path)
 		fmt.sbprintf(b, "- [%s](%s): %s\n", page.title, address, page.description)

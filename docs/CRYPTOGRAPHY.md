@@ -54,7 +54,7 @@ A reader must be able to trust that the cryptography is the code of its origin, 
 - the origin file, under `ODIN_ROOT` of the compiler that built the tool, has the BLAKE3 hash of the manifest. If not, the compiler of the flake changed;
 - the origin with the listed changes is the file of the repository, byte for byte.
 
-The listed changes, all in `tools/modustool/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
+The listed changes, all in `tools/modustool/checks/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
 1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its imports changed (...)".
 2. `"core:crypto"` becomes `crypto "modus:support/cryptography/compatibility_crypto"`.
 3. `"core:crypto/hash"` becomes `hash "modus:support/cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
@@ -73,7 +73,7 @@ A new file comes with `modustool cryptography-take <origin> <file>`, which write
 
 ### Listed adjustments
 
-A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/modustool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
+A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/modustool/checks/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
 
 There are two groups of adjustments.
 

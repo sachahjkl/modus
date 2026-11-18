@@ -1,12 +1,13 @@
 // The roadmap on the site (docs/SITE.md, "The roadmap"): the page of the
 // planned work, beside the page of the releases, which lists the work that
-// is done. The entries are those of ROADMAP.md (tools/modustool/roadmap.odin);
+// is done. The entries are those of ROADMAP.md (tools/modustool/checks/roadmap.odin);
 // the site adds no sentence to them.
 package modustool
 
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:checks"
 
 SITE_ROADMAP_FOLDER :: "roadmap"
 
@@ -15,7 +16,7 @@ SITE_ROADMAP_FOLDER :: "roadmap"
 // what comes next has the color of the kernel, the color of a decision;
 // what comes later has no accent: the dim color (SITE_ROADMAP_RULES); what
 // may be done one day is not decided either, and has the same dim color.
-site_roadmap_section_classes := [Roadmap_Section]string {
+site_roadmap_section_classes := [checks.Roadmap_Section]string {
 	.Now   = "accent-process",
 	.Next  = "accent-kernel",
 	.Later = "roadmap-later",
@@ -23,7 +24,7 @@ site_roadmap_section_classes := [Roadmap_Section]string {
 }
 
 // What a section holds, in a few words under its heading.
-site_roadmap_section_words := [Roadmap_Section]string {
+site_roadmap_section_words := [checks.Roadmap_Section]string {
 	.Now   = "In work.",
 	.Next  = "Decided. It comes after the work of now.",
 	.Later = "Wanted. It has no order.",
@@ -54,15 +55,15 @@ SITE_ROADMAP_RULES :: `
 `
 
 // site_roadmap_section_id gives the id of the heading of a section on the page.
-site_roadmap_section_id :: proc(section: Roadmap_Section) -> string {
-	return strings.to_lower(roadmap_section_names[section], context.temp_allocator)
+site_roadmap_section_id :: proc(section: checks.Roadmap_Section) -> string {
+	return strings.to_lower(checks.roadmap_section_names[section], context.temp_allocator)
 }
 
 // site_roadmap_entry_id gives the id of an entry on the page: from its
 // summary, which no other entry has (roadmap_parse refuses two entries
 // with one key).
-site_roadmap_entry_id :: proc(entry: Roadmap_Entry) -> string {
-	return strings.concatenate({"roadmap-", roadmap_summary_key(entry.summary)}, context.temp_allocator)
+site_roadmap_entry_id :: proc(entry: checks.Roadmap_Entry) -> string {
+	return strings.concatenate({"roadmap-", checks.roadmap_summary_key(entry.summary)}, context.temp_allocator)
 }
 
 // site_roadmap_entry_words gives the count of entries in words: "1 entry",
@@ -75,10 +76,10 @@ site_roadmap_entry_words :: proc(count: int) -> string {
 // written: a fault of its form stops the command with its line.
 site_roadmap_read :: proc(site: ^Site) -> bool {
 	problems := make([dynamic]string, context.temp_allocator)
-	roadmap, read_ok := roadmap_read(&problems)
+	roadmap, read_ok := checks.roadmap_read(&problems)
 	if !read_ok || len(problems) > 0 {
-		problems_print(problems[:])
-		fmt.eprintfln("modustool: site: %s does not have its form; `modustool roadmap check` says the same", ROADMAP_FILE)
+		checks.problems_print(problems[:])
+		fmt.eprintfln("modustool: site: %s does not have its form; `modustool roadmap check` says the same", checks.ROADMAP_FILE)
 		return false
 	}
 	site.roadmap = roadmap
@@ -88,11 +89,11 @@ site_roadmap_read :: proc(site: ^Site) -> bool {
 // site_roadmap_section_write writes one section: its heading with its
 // count, the line of what it holds, and its cards. The cards of the section
 // Maybe go in a grid of their own, because that section is not a column.
-site_roadmap_section_write :: proc(site: ^Site, b: ^strings.Builder, renderer: ^Site_Renderer, section: Roadmap_Section) {
+site_roadmap_section_write :: proc(site: ^Site, b: ^strings.Builder, renderer: ^Site_Renderer, section: checks.Roadmap_Section) {
 	roadmap := site.roadmap
 	section_id := site_roadmap_section_id(section)
-	count := roadmap_section_count(roadmap, section)
-	fmt.sbprintf(b, "<section class=\"roadmap-column\" aria-labelledby=\"%s\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n<p class=\"source\">%s</p>\n", section_id, section_id, roadmap_section_names[section], site_roadmap_entry_words(count), site_roadmap_section_words[section])
+	count := checks.roadmap_section_count(roadmap, section)
+	fmt.sbprintf(b, "<section class=\"roadmap-column\" aria-labelledby=\"%s\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n<p class=\"source\">%s</p>\n", section_id, section_id, checks.roadmap_section_names[section], site_roadmap_entry_words(count), site_roadmap_section_words[section])
 	if count == 0 {
 		strings.write_string(b, "<p class=\"missing\">No entry.</p>\n")
 	}
@@ -131,28 +132,28 @@ site_roadmap_add :: proc(site: ^Site) {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "<h1>Roadmap</h1>\n<p>The planned work of %s: %s. <strong>Now</strong> is the work that is in progress, <strong>Next</strong> the work that is decided and comes after, <strong>Later</strong> the work that is wanted and has no order. <strong>Maybe</strong> is what may be done one day and is not decided. An entry says what the work gives a user of the system, or a developer who builds on it. It gives no date.</p>\n", SITE_SYSTEM_NAME, site_roadmap_entry_words(len(roadmap.entries)))
 	fmt.sbprintf(&b, "<p>An entry leaves this page when its work is done: the work is then a change of a release, on the page <a href=\"%s\">Releases</a>. The state of each property of the system, and the gaps of what is built, are on the page <a href=\"%s\">Status</a>.</p>\n", site_page_link(site, path, site_section_page(.Releases)), site_page_link(site, path, site_section_page(.Status)))
-	site_source_line(site, &b, ROADMAP_FILE)
+	site_source_line(site, &b, checks.ROADMAP_FILE)
 	// One renderer for the page: the ids of the page stay unique, and each
 	// term of the glossary links once.
-	renderer := site_renderer_make(site, path, ROADMAP_FILE)
+	renderer := site_renderer_make(site, path, checks.ROADMAP_FILE)
 	// The ids of the sections and of the entries first: an id that the
 	// text makes cannot take one.
-	for section in Roadmap_Section {
+	for section in checks.Roadmap_Section {
 		renderer.ids[site_roadmap_section_id(section)] = true
 	}
 	for entry in roadmap.entries {
 		renderer.ids[site_roadmap_entry_id(entry)] = true
 	}
 	strings.write_string(&b, "<div class=\"roadmap-columns\">\n")
-	for section in Roadmap_Section {
+	for section in checks.Roadmap_Section {
 		if section != .Maybe {
 			site_roadmap_section_write(site, &b, &renderer, section)
 		}
 	}
 	strings.write_string(&b, "</div>\n")
 	site_roadmap_section_write(site, &b, &renderer, .Maybe)
-	description := fmt.tprintf("The planned work of %s: %d entries in work now, %d that come next, %d that come later and %d that may come, each with what it gives a user.", SITE_SYSTEM_NAME, roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later), roadmap_section_count(roadmap, .Maybe))
-	site_page_add(site, Site_Page{path = path, title = "Roadmap", description = site_description_cut(description), section = .Roadmap, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(ROADMAP_FILE)})
+	description := fmt.tprintf("The planned work of %s: %d entries in work now, %d that come next, %d that come later and %d that may come, each with what it gives a user.", SITE_SYSTEM_NAME, checks.roadmap_section_count(roadmap, .Now), checks.roadmap_section_count(roadmap, .Next), checks.roadmap_section_count(roadmap, .Later), checks.roadmap_section_count(roadmap, .Maybe))
+	site_page_add(site, Site_Page{path = path, title = "Roadmap", description = site_description_cut(description), section = .Roadmap, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(checks.ROADMAP_FILE)})
 }
 
 // site_roadmap_link_line writes one line that leads to the page of the
@@ -160,7 +161,7 @@ site_roadmap_add :: proc(site: ^Site) {
 // status).
 site_roadmap_link_line :: proc(site: ^Site, b: ^strings.Builder, from_page: string) {
 	roadmap := site.roadmap
-	fmt.sbprintf(b, "<p>What is planned: the <a href=\"%s\">roadmap</a>, with %s in work now, %d next and %d later.</p>\n", site_page_link(site, from_page, site_section_page(.Roadmap)), site_roadmap_entry_words(roadmap_section_count(roadmap, .Now)), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later))
+	fmt.sbprintf(b, "<p>What is planned: the <a href=\"%s\">roadmap</a>, with %s in work now, %d next and %d later.</p>\n", site_page_link(site, from_page, site_section_page(.Roadmap)), site_roadmap_entry_words(checks.roadmap_section_count(roadmap, .Now)), checks.roadmap_section_count(roadmap, .Next), checks.roadmap_section_count(roadmap, .Later))
 }
 
 // site_roadmap_search_add adds each entry of the roadmap to the index of
@@ -168,6 +169,6 @@ site_roadmap_link_line :: proc(site: ^Site, b: ^strings.Builder, from_page: stri
 site_roadmap_search_add :: proc(site: ^Site, entries: ^[dynamic]Site_Search_Entry) {
 	page := site_section_page(.Roadmap)
 	for entry in site.roadmap.entries {
-		site_search_add(entries, entry.summary, page, site_roadmap_entry_id(entry), .Roadmap_Entry, strings.concatenate({roadmap_section_names[entry.section], ": ", entry.text}, context.temp_allocator))
+		site_search_add(entries, entry.summary, page, site_roadmap_entry_id(entry), .Roadmap_Entry, strings.concatenate({checks.roadmap_section_names[entry.section], ": ", entry.text}, context.temp_allocator))
 	}
 }

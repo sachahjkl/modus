@@ -8,6 +8,7 @@ import "core:testing"
 import "modus:support/line_editor"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:checks"
 
 // The matcher of the console over the table that the script also carries:
 // a change of the score or of the order in src/library/support/line_editor fails here
@@ -93,7 +94,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	headings := []Site_Heading{{level = 1, text = "Network", id = "network"}, {level = 2, text = "The `frames`", id = "the-frames", first_paragraph = "The **first** paragraph."}}
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", headings = headings})
-	entry, _ := news_parse("2026-11-11-a-thing.md", "title: A \"thing\" </script>\ndate: 2026-11-11\nrelease: next\npicture: none\nkind: Shown\nguide: none\n\nIt runs. More.\n")
+	entry, _ := checks.news_parse("2026-11-11-a-thing.md", "title: A \"thing\" </script>\ndate: 2026-11-11\nrelease: next\npicture: none\nkind: Shown\nguide: none\n\nIt runs. More.\n")
 	site.news = []Site_News{{entry = entry, anchor = site_news_anchor(entry)}}
 
 	written := make(map[string]string, context.temp_allocator)

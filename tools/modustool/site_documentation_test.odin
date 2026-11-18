@@ -3,6 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "modustool:build"
+import "modustool:checks"
 
 // The check of the layout: a documentation page has one tree and one list
 // "On this page" whose links name ids of the page; a presentation page has
@@ -274,7 +275,7 @@ site_documentation_versions_of_files :: proc(t: ^testing.T) {
 // to the file in the repository: no link to a page that does not exist.
 @(test)
 site_documentation_working_record_links :: proc(t: ^testing.T) {
-	records := SITE_WORKING_RECORDS
+	records := checks.SITE_WORKING_RECORDS
 	found := false
 	for record in records {
 		found ||= record == "SITE.md"
@@ -285,6 +286,6 @@ site_documentation_working_record_links :: proc(t: ^testing.T) {
 	renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
 	site_render_markdown(&renderer, "See `docs/SITE.md` and [the record](SITE.md).\n")
 	html := strings.to_string(renderer.builder)
-	testing.expect_value(t, strings.count(html, "href=\"" + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md\""), 2)
+	testing.expect_value(t, strings.count(html, "href=\"" + checks.SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md\""), 2)
 	testing.expect(t, !strings.contains(html, "guides/SITE"))
 }

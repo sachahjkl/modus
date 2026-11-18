@@ -9,6 +9,7 @@ import "core:thread"
 import "core:time"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // The parts of the machine test (src/md/infrastructure/machine_test_parts.md).
 // One table holds each part: `test <part>` finds its row, the whole test
@@ -373,11 +374,11 @@ test_parts_worker :: proc(pool: ^Test_Parts_Pool) {
 // The procedures of the parts whose machines no other file runs.
 
 main_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT, exit_status = build.MACHINE_STOP_OK})
+	return machine_test(part, scenario[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT, exit_status = build.MACHINE_STOP_OK})
 }
 
 network_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_network[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NETWORK, exit_status = build.MACHINE_STOP_OK})
+	return machine_test(part, scenario_network[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT_NETWORK, exit_status = build.MACHINE_STOP_OK})
 }
 
 shortage_tests_run :: proc(part: ^Test_Part_Run) -> bool {

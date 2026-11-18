@@ -1,7 +1,7 @@
 // The news on the site (docs/SITE.md, "The news"): the page of the news, the
 // newest entries on the home, the Atom feed news.xml, the film of an entry
 // that has one, and a link from each release to the entries that name it. The entries are the files of news/
-// (tools/modustool/news.odin); the site adds no sentence to them.
+// (tools/modustool/checks/news.odin); the site adds no sentence to them.
 package modustool
 
 import "core:fmt"
@@ -9,6 +9,7 @@ import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
+import "modustool:checks"
 
 SITE_NEWS_FEED :: "news.xml"
 // The entries that the home shows.
@@ -28,7 +29,7 @@ SITE_FILM_CODEC :: "av01.0.12M.08"
 SITE_FILM_SOURCE_TYPE :: "type='" + SITE_FILM_TYPE + "; codecs=\"" + SITE_FILM_CODEC + "\"'"
 
 // The class of the accent of a kind: the colored mark of its card.
-site_news_kind_classes := [News_Kind]string {
+site_news_kind_classes := [checks.News_Kind]string {
 	.Shown    = "accent-process",
 	.Measured = "accent-memory",
 	.Decided  = "accent-kernel",
@@ -37,7 +38,7 @@ site_news_kind_classes := [News_Kind]string {
 
 // One entry as the site shows it.
 Site_News :: struct {
-	entry:          News_Entry,
+	entry:          checks.News_Entry,
 	anchor:         string, // Its id on the page of the news.
 	body:           string, // The HTML of its text, rendered once for the page and the feed.
 	picture:        string, // Its path in the site, or "".
@@ -52,24 +53,24 @@ Site_News :: struct {
 
 // site_news_anchor gives the id of an entry on the page of the news: from its file
 // name, which no other entry has.
-site_news_anchor :: proc(entry: News_Entry) -> string {
+site_news_anchor :: proc(entry: checks.News_Entry) -> string {
 	return strings.concatenate({"news-", foundation.site_slug(strings.trim_suffix(entry.file_name, ".md"))}, context.temp_allocator)
 }
 
 // site_news_read reads and checks the entries, before any page is written.
 site_news_read :: proc(site: ^Site) -> bool {
 	problems := make([dynamic]string, context.temp_allocator)
-	entries := news_read(NEWS_FOLDER, &problems)
-	news_files_problems(entries, site.changelog, &problems)
+	entries := checks.news_read(checks.NEWS_FOLDER, &problems)
+	checks.news_files_problems(entries, site.changelog, &problems)
 	if len(problems) > 0 {
-		problems_print(problems[:])
+		checks.problems_print(problems[:])
 		fmt.eprintln("modustool: site: the news does not have its form; `modustool news check` says the same")
 		return false
 	}
 	news := make([dynamic]Site_News, context.temp_allocator)
 	for entry in entries {
 		item := Site_News{entry = entry, anchor = site_news_anchor(entry)}
-		if entry.picture != NEWS_NONE {
+		if entry.picture != checks.NEWS_NONE {
 			data := foundation.read_file(entry.picture) or_return
 			item.picture_width, item.picture_height, _ = foundation.site_png_size(data)
 			item.picture = strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", build.site_file_name(entry.picture)}, context.temp_allocator)
@@ -84,10 +85,10 @@ site_news_read :: proc(site: ^Site) -> bool {
 				item.picture_alt = entry.title
 			}
 		}
-		if news_entry_has_film(entry) && item.picture != "" {
+		if checks.news_entry_has_film(entry) && item.picture != "" {
 			// The site copies the file as it is: it needs no encoder.
 			data := foundation.read_file(entry.film) or_return
-			film_width, film_height, sized := film_document_picture_size(data)
+			film_width, film_height, sized := checks.film_document_picture_size(data)
 			if !sized {
 				fmt.eprintfln("modustool: site: the film %s states no width and no height of its pictures", entry.film)
 				return false
@@ -104,7 +105,7 @@ site_news_read :: proc(site: ^Site) -> bool {
 
 // site_news_lead gives the first sentence of the first paragraph of an
 // entry: its line on the home and its summary in the feed.
-site_news_lead :: proc(entry: News_Entry) -> string {
+site_news_lead :: proc(entry: checks.News_Entry) -> string {
 	paragraphs := site_paragraphs(foundation.site_lines(entry.text))
 	if len(paragraphs) == 0 {
 		return entry.title
@@ -114,18 +115,18 @@ site_news_lead :: proc(entry: News_Entry) -> string {
 
 // site_news_meta writes the line under the title of an entry: its kind, its
 // date, its release and its guide.
-site_news_meta :: proc(site: ^Site, b: ^strings.Builder, from_page: string, entry: News_Entry, with_links: bool) {
-	fmt.sbprintf(b, "<p class=\"news-meta\"><span class=\"news-kind\">%s</span> <time datetime=\"%s\">%s</time>", news_kind_names[entry.kind], entry.date, entry.date)
+site_news_meta :: proc(site: ^Site, b: ^strings.Builder, from_page: string, entry: checks.News_Entry, with_links: bool) {
+	fmt.sbprintf(b, "<p class=\"news-meta\"><span class=\"news-kind\">%s</span> <time datetime=\"%s\">%s</time>", checks.news_kind_names[entry.kind], entry.date, entry.date)
 	if !with_links {
 		strings.write_string(b, "</p>\n")
 		return
 	}
-	if entry.release == NEWS_NEXT_RELEASE {
+	if entry.release == checks.NEWS_NEXT_RELEASE {
 		strings.write_string(b, " - in the next release")
 	} else {
 		fmt.sbprintf(b, " - <a href=\"%s#%s\">release %s</a>", site_page_link(site, from_page, site_section_page(.Releases)), site_release_id(entry.release), entry.release)
 	}
-	if entry.guide != NEWS_NONE {
+	if entry.guide != checks.NEWS_NONE {
 		if page, is_page := site.documents[entry.guide]; is_page {
 			title := entry.guide
 			for guide in site.guides {
@@ -200,20 +201,20 @@ site_news_add :: proc(site: ^Site) {
 	// The same entries as a feed: the subscribe menu names it, so the text
 	// does not.
 	site_subscribe_menu_html(&b, path, SITE_NEWS_FEED)
-	fmt.sbprintf(&b, "<p>What a reader can now see or use in %s, newest first: %d entries. Each entry is one file of <code>%s/</code>, written in the step that made the thing, and never moved or merged. The technical list of the changes of each release is on the page <a href=\"%s\">Releases</a>.</p>\n<p>Each entry has a kind, which its color shows: <strong>Shown</strong>, a new thing runs in the system; <strong>Measured</strong>, a number about a thing that exists, with its conditions; <strong>Decided</strong>, a choice that a reader sees, as a name, a mark or a font; <strong>Fixed</strong>, a thing that failed now works. An entry links to its release and to the guide that explains the thing.</p>\n", SITE_SYSTEM_NAME, len(site.news), NEWS_FOLDER, site_page_link(site, path, site_section_page(.Releases)))
+	fmt.sbprintf(&b, "<p>What a reader can now see or use in %s, newest first: %d entries. Each entry is one file of <code>%s/</code>, written in the step that made the thing, and never moved or merged. The technical list of the changes of each release is on the page <a href=\"%s\">Releases</a>.</p>\n<p>Each entry has a kind, which its color shows: <strong>Shown</strong>, a new thing runs in the system; <strong>Measured</strong>, a number about a thing that exists, with its conditions; <strong>Decided</strong>, a choice that a reader sees, as a name, a mark or a font; <strong>Fixed</strong>, a thing that failed now works. An entry links to its release and to the guide that explains the thing.</p>\n", SITE_SYSTEM_NAME, len(site.news), checks.NEWS_FOLDER, site_page_link(site, path, site_section_page(.Releases)))
 	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-process\">Shown</span> a reader can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> a choice of design that a reader sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a reader saw fail now works.</p>\n")
 	// One renderer for the page: the ids of the page stay unique, and each
 	// term of the glossary links once.
-	renderer := site_renderer_make(site, path, NEWS_FOLDER + "/" + NEWS_FOLDER_GUIDE)
+	renderer := site_renderer_make(site, path, checks.NEWS_FOLDER + "/" + checks.NEWS_FOLDER_GUIDE)
 	sources := make([dynamic]string, context.temp_allocator)
-	append(&sources, NEWS_FOLDER + "/" + NEWS_FOLDER_GUIDE)
+	append(&sources, checks.NEWS_FOLDER + "/" + checks.NEWS_FOLDER_GUIDE)
 	// The anchors of the entries first: an id that the text makes cannot take one.
 	for item in site.news {
 		renderer.ids[item.anchor] = true
 	}
 	for &item in site.news {
 		entry := item.entry
-		renderer.source = strings.concatenate({NEWS_FOLDER, "/", entry.file_name}, context.temp_allocator)
+		renderer.source = strings.concatenate({checks.NEWS_FOLDER, "/", entry.file_name}, context.temp_allocator)
 		strings.builder_reset(&renderer.builder)
 		site_render_markdown(&renderer, entry.text, entry.text_line)
 		item.body = strings.clone(strings.to_string(renderer.builder), context.temp_allocator)
@@ -240,7 +241,7 @@ site_news_add :: proc(site: ^Site) {
 		} else {
 			site_news_picture(&b, path, item, "news-picture")
 		}
-		fmt.sbprintf(&b, "</div>\n<p class=\"source\">From <a href=\"%s\"><code>%s/%s</code></a>.</p>\n</article>\n", site_repository_file(site, renderer.source), NEWS_FOLDER, entry.file_name)
+		fmt.sbprintf(&b, "</div>\n<p class=\"source\">From <a href=\"%s\"><code>%s/%s</code></a>.</p>\n</article>\n", site_repository_file(site, renderer.source), checks.NEWS_FOLDER, entry.file_name)
 	}
 	newest := site.news[0].entry
 	site_page_add(site, Site_Page{path = path, title = "News", description = site_description_cut(fmt.tprintf("What a reader can now see or use in %s, newest first: %d dated reports, the newest on %s.", SITE_SYSTEM_NAME, len(site.news), newest.date)), section = .News, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = sources[:]})
@@ -335,7 +336,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n")
 	fmt.sbprintf(&b, "<title>News of %s</title>\n<subtitle>What a reader can now see or use in %s, newest first.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
-	fmt.sbprintf(&b, "<id>%s/tree/master/%s</id>\n", SITE_REPOSITORY_ADDRESS, NEWS_FOLDER)
+	fmt.sbprintf(&b, "<id>%s/tree/master/%s</id>\n", checks.SITE_REPOSITORY_ADDRESS, checks.NEWS_FOLDER)
 	fmt.sbprintf(&b, "<updated>%sT00:00:00Z</updated>\n", site.news[0].entry.date)
 	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
@@ -351,7 +352,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 		entry := item.entry
 		strings.write_string(&b, "<entry>\n<title>")
 		site_xml_escape(&b, entry.title)
-		fmt.sbprintf(&b, "</title>\n<id>%s/blob/master/%s/%s</id>\n", SITE_REPOSITORY_ADDRESS, NEWS_FOLDER, entry.file_name)
+		fmt.sbprintf(&b, "</title>\n<id>%s/blob/master/%s/%s</id>\n", checks.SITE_REPOSITORY_ADDRESS, checks.NEWS_FOLDER, entry.file_name)
 		strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
 		site_xml_escape(&b, site_feed_page_address(site, strings.concatenate({site_section_page(.News), "#", item.anchor}, context.temp_allocator)))
 		strings.write_string(&b, "\"/>\n")
@@ -363,7 +364,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 			fmt.sbprintf(&b, "\" length=\"%d\"/>\n", item.film_bytes)
 		}
 		fmt.sbprintf(&b, "<published>%sT00:00:00Z</published>\n<updated>%sT00:00:00Z</updated>\n", entry.date, entry.date)
-		fmt.sbprintf(&b, "<category term=\"%s\"/>\n<summary>", news_kind_names[entry.kind])
+		fmt.sbprintf(&b, "<category term=\"%s\"/>\n<summary>", checks.news_kind_names[entry.kind])
 		plain := strings.builder_make(context.temp_allocator)
 		site_plain(&plain, site_news_lead(entry))
 		// The summary is text: site_plain escaped it for HTML, which is

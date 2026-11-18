@@ -6,6 +6,7 @@ import "core:testing"
 import "modus:support/mark"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:checks"
 
 test_site :: proc() -> Site {
 	site: Site
@@ -315,23 +316,23 @@ site_size_of_the_pictures_of_the_mark :: proc(t: ^testing.T) {
 @(test)
 site_licenses_readers :: proc(t: ^testing.T) {
 	font := "Copyright 2025 The Paper Mono Project Authors (https://github.com/paper-design/paper-mono)\n\nThe subset carries the name \"Paper Mono ASCII\".\nLicense of the source: SIL OFL 1.1, no Reserved Font Name.\n"
-	parsed, problem := site_font_license_parse("a.license", font)
+	parsed, problem := checks.site_font_license_parse("a.license", font)
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, parsed.address, "https://github.com/paper-design/paper-mono")
 	testing.expect_value(t, parsed.copyright, "Copyright 2025 The Paper Mono Project Authors")
 	testing.expect_value(t, parsed.family, "Paper Mono ASCII")
 	testing.expect_value(t, site_spdx(parsed.license), "OFL-1.1")
 	no_name, _ := strings.replace_all(font, "carries the name", "has the name", context.temp_allocator)
-	_, no_name_problem := site_font_license_parse("a.license", no_name)
+	_, no_name_problem := checks.site_font_license_parse("a.license", no_name)
 	testing.expect(t, no_name_problem != "")
 	no_license, _ := strings.replace_all(font, "License of the source: ", "Source: ", context.temp_allocator)
-	_, no_license_problem := site_font_license_parse("a.license", no_license)
+	_, no_license_problem := checks.site_font_license_parse("a.license", no_license)
 	testing.expect(t, no_license_problem != "")
 
 	for name in ([]string{"paper_mono", "b612", "dejavu_sans_mono", "ibm_mono"}) {
-		data, err := os.read_entire_file(strings.concatenate({SITE_FONT_FOLDER, "/", name, ".license"}, context.temp_allocator), context.temp_allocator)
+		data, err := os.read_entire_file(strings.concatenate({checks.SITE_FONT_FOLDER, "/", name, ".license"}, context.temp_allocator), context.temp_allocator)
 		testing.expect(t, err == nil)
-		_, real_problem := site_font_license_parse(name, string(data))
+		_, real_problem := checks.site_font_license_parse(name, string(data))
 		testing.expect_value(t, real_problem, "")
 	}
 
@@ -359,10 +360,10 @@ site_licenses_readers :: proc(t: ^testing.T) {
 	_, empty_lock_problem := site_flake_lock_revision("{}")
 	testing.expect(t, empty_lock_problem != "")
 
-	manifest, manifest_problem := site_pointer_manifest_parse("m", "# x\ntheme System\nlicense MIT\nattribution A.\n")
+	manifest, manifest_problem := checks.site_pointer_manifest_parse("m", "# x\ntheme System\nlicense MIT\nattribution A.\n")
 	testing.expect_value(t, manifest_problem, "")
 	testing.expect_value(t, manifest.license, "MIT")
-	_, no_theme_problem := site_pointer_manifest_parse("m", "license MIT\n")
+	_, no_theme_problem := checks.site_pointer_manifest_parse("m", "license MIT\n")
 	testing.expect(t, no_theme_problem != "")
 }
 

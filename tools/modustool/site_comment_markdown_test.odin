@@ -3,6 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "modustool:build"
+import "modustool:checks"
 
 @(private = "file")
 render_comment :: proc(site: ^Site, markdown: string, form: Site_Comment_Form = .Paragraphs) -> string {
@@ -107,7 +108,7 @@ comment_markdown_link_targets :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "data-declaration-card=\"declaration-") && strings.contains(html, "<strong>wait</strong></a>"), html)
 	testing.expect(t, strings.contains(html, "<a href=\"https://example.org\">the site</a>"), html)
 	// The target of a link is not a pointer to a document.
-	testing.expect_value(t, len(site_document_pointers("[the ring](docs/ARCHITECTURE.md#kernel-systems)")), 0)
+	testing.expect_value(t, len(checks.site_document_pointers("[the ring](docs/ARCHITECTURE.md#kernel-systems)")), 0)
 }
 
 // The check of the links names the file and the line of a link that names

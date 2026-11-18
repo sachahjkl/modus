@@ -8,6 +8,7 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "modus:support/graphics"
+import "modustool:checks"
 
 // The level of graphics.mix for a percent.
 site_percent :: proc(percent: u32) -> u32 {
@@ -1011,7 +1012,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, site_home_rules())
 	// The charts of the measure history, on the page of the measured
 	// numbers, which take the cards of the charts of the home.
-	strings.write_string(&builder, SITE_MEASURE_HISTORY_RULES)
+	strings.write_string(&builder, checks.SITE_MEASURE_HISTORY_RULES)
 	// The byte layouts of the guides: their colors are the tokens above,
 	// so they follow the light form with no rule of their own.
 	strings.write_string(&builder, byte_layout_rules())

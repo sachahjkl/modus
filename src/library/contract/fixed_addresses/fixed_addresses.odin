@@ -17,7 +17,7 @@
 // An address of the band has no other source than this table. No other
 // file computes an address from BAND_START or SLOT: `modustool check`
 // refuses a file of kernel, contract, support, private or modules outside this
-// folder that names them (tools/modustool/fixed_addresses_check.odin).
+// folder that names them (tools/modustool/checks/fixed_addresses_check.odin).
 //
 // A mapping that a process places by its own choice goes outside the
 // band, at OWN_CHOICE_START or after. The modules that a process loads

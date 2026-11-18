@@ -3,7 +3,7 @@
 # under the root of Odin, the BLAKE3 hash of that origin file. The check
 # `modustool cryptography-origin` (also in `modustool check`) proves that
 # each file is its origin with the import changes of
-# tools/modustool/cryptography_origin.odin and nothing else. A new line
+# tools/modustool/checks/cryptography_origin.odin and nothing else. A new line
 # comes from `modustool cryptography-take <origin> <file>`.
 src/library/support/cryptography/_subtle/subtle.odin core/crypto/_subtle/subtle.odin 8aad340c7d5e46a52329ed143ffb58c0a867e078c744f688b4e825d21b160c44
 src/library/support/cryptography/_chacha20/chacha20.odin core/crypto/_chacha20/chacha20.odin 56b808ec73700917864ab7f74f5c8a1f2ba6293eec994a40de939f2e0267cc53
