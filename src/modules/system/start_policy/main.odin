@@ -78,7 +78,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(u32(Stop_Code.Parts_Page_Refused))
 	}
 	rows: [start_list.ROW_CAPACITY]start_list.Start_Row
-	bytes := ([^]u8)(uintptr(start_list.START_LIST_ADDRESS))[:list_size]
+	list_start := ([^]u8)(uintptr(start_list.START_LIST_ADDRESS))
+	bytes := list_start[:list_size]
 	count, problem, place := start_list.list_read(bytes, &rows)
 	if problem != .None {
 		system.log_in("processes", .Error, "start_policy: the start list is refused: ", start_list.LIST_PROBLEM_TEXTS[problem], ", at its row ", u64(place), ": no row starts")

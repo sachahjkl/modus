@@ -1,8 +1,9 @@
 package boot
 
 // The two ways to ask for the rescue start policy at one start, with no
-// change on the disk (src/md/features/start_policy.md, "The rescue key"
-// and "The rescue boot entry"): the key R held while the machine starts,
+// change on the disk (src/md/features/start_policy.md, "The rescue key";
+// src/md/features/start_policy.md, "The rescue boot entry"): the key R held
+// while the machine starts,
 // and the boot entry "modus (rescue)", whose load options hold a tagged
 // record. Both give the same Rescue in the boot record.
 

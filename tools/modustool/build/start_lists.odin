@@ -239,7 +239,9 @@ start_policy_source_problems :: proc(sources: [][2]string) -> []string {
 		lines += strings.count(text, "\n")
 		for line in strings.split_lines(text, context.temp_allocator) {
 			trimmed := strings.trim_space(line)
-			if !strings.has_prefix(trimmed, "import ") {
+			// A bare `import` and a grouped `import (` are imports too: the
+			// path check below refuses each one, so no import escapes it.
+			if trimmed != "import" && !strings.has_prefix(trimmed, "import ") && !strings.has_prefix(trimmed, "import(") {
 				continue
 			}
 			first := strings.index_byte(trimmed, '"')
