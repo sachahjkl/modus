@@ -86,8 +86,8 @@ a_damaged_regression_input_is_refused :: proc(t: ^testing.T) {
 	record :: fuzz.Operation_Expectation_Record
 	_ = expect_refused(t, nil, .Too_Small, -1)
 	_ = expect_refused(t, bytes[:size_of(header) - 1], .Too_Small, -1)
-	_ = expect_refused(t, with_word(bytes, int(offset_of(header, magic)), OPERATION_REGRESSION_MAGIC + 1), .Magic, -1)
-	_ = expect_refused(t, with_word(bytes, int(offset_of(header, format)), OPERATION_REGRESSION_FORMAT + 1), .Format, -1)
+	_ = expect_refused(t, with_word(bytes, int(offset_of(header, magic)), fuzz.OPERATION_REGRESSION_MAGIC + 1), .Magic, -1)
+	_ = expect_refused(t, with_word(bytes, int(offset_of(header, format)), fuzz.OPERATION_REGRESSION_FORMAT + 1), .Format, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), 0), .Sequence_Count, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), fuzz.OPERATION_REGRESSION_SEQUENCES_MOST + 1), .Sequence_Count, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), max(u64)), .Sequence_Count, -1)

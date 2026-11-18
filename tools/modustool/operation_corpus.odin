@@ -29,9 +29,6 @@ OPERATION_CORPUS_FOLDER :: fuzz.FUZZ_CORPUS_FOLDER + "/" + fuzz.OPERATION_CORPUS
 OPERATION_REGRESSION_FOLDER :: OPERATION_CORPUS_FOLDER + "/" + fuzz.FUZZ_REGRESSION_PART
 OPERATION_REACH_FOLDER :: OPERATION_CORPUS_FOLDER + "/" + fuzz.FUZZ_REACH_PART
 
-OPERATION_REGRESSION_MAGIC :: u64(0x5247_4552_5245_504F) // The bytes "OPERREGR".
-OPERATION_REGRESSION_FORMAT :: 1 // The format of the bytes. The reader refuses another.
-
 #assert(fuzz.OPERATION_REGRESSION_BYTES_MOST <= fuzz.FUZZ_CORPUS_TARGET_BYTE_LIMIT)
 
 // operation_regression_write writes a regression input. It refuses only a
@@ -51,8 +48,8 @@ operation_regression_write :: proc(regression: fuzz.Operation_Regression, alloca
 	size += len(regression.expectations) * size_of(fuzz.Operation_Expectation_Record)
 	bytes = make([]u8, size, allocator)
 	header := fuzz.Operation_Regression_Header {
-		magic             = OPERATION_REGRESSION_MAGIC,
-		format            = OPERATION_REGRESSION_FORMAT,
+		magic             = fuzz.OPERATION_REGRESSION_MAGIC,
+		format            = fuzz.OPERATION_REGRESSION_FORMAT,
 		sequence_count    = u64(len(regression.life)),
 		signature_bytes   = u64(len(regression.signature)),
 		expectation_count = u64(len(regression.expectations)),

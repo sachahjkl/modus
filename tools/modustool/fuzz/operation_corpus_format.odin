@@ -24,6 +24,9 @@ OPERATION_REGRESSION_SEQUENCES_MOST :: 16
 // The bytes of the signature that a regression input keeps for its reader.
 OPERATION_REGRESSION_SIGNATURE_BYTES_MOST :: 512
 
+OPERATION_REGRESSION_MAGIC :: u64(0x5247_4552_5245_504F) // The bytes "OPERREGR".
+OPERATION_REGRESSION_FORMAT :: 1 // The format of the bytes. The reader refuses another.
+
 // The first bytes of a regression input. Then: the signature, the
 // sequences, each with its count of bytes, each part padded to 8 bytes, and
 // one Operation_Expectation_Record for each step of the last sequence that
