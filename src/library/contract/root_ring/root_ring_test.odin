@@ -113,6 +113,11 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, !sender_allowed(.Revoke, {.Start_Policy}))
 	testing.expect(t, !sender_allowed(.Start_From_Disk, {.Start_Policy}))
 	testing.expect(t, !sender_allowed(.Connect, {.Start_Policy}))
+	// A start policy never chooses the start policy of the next start:
+	// only the console of principal 0 does.
+	testing.expect(t, !sender_allowed(.Start_Policy_Choice, {.Start_Policy}))
+	testing.expect(t, !sender_allowed(.Start_Policy_Choice, {.Connect, .Principals, .Debugger, .Start_Policy}))
+	testing.expect(t, sender_allowed(.Start_Policy_Choice, {.Root_Ring}))
 	testing.expect(t, sender_allowed(.Start, {.Start_Policy}))
 	testing.expect(t, sender_allowed(.Stop, {.Start_Policy}))
 	testing.expect(t, sender_allowed(.Machine_Usable, {.Start_Policy}))

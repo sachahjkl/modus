@@ -6,15 +6,16 @@ import "core:testing"
 // A record of each kind that the border reads, in a box of whole pixels.
 // The other cases break one field of one of them.
 @(private = "file")
-sample_primitives :: proc() -> [11]Draw_Primitive {
-	return [11]Draw_Primitive {
+sample_primitives :: proc() -> [12]Draw_Primitive {
+	return [12]Draw_Primitive {
 		Draw_Nothing{},
 		Draw_Rectangle{color = 0xFF102030},
 		Draw_Rectangle{color = 0xFF18212D, repetition = SAMPLE_PATTERN},
 		Draw_Gradient{start_x = units_of_pixels(10), start_y = units_of_pixels(20) + 32, end_x = units_of_pixels(10), end_y = units_of_pixels(43) + 32, start_color = 0xFF101010, end_color = 0xFF202020},
 		Draw_Gradient{start_x = units_of_pixels(10) + 5, start_y = units_of_pixels(25), end_x = units_of_pixels(90) + 7, end_y = units_of_pixels(40) + 1, start_color = 0xFF303030, end_color = 0x80404040},
 		Draw_Text{origin_x = units_of_pixels(10), first = 3, count = 5, color = 0xFFABCDEF, scale = 2, weight = .Bold},
-		Draw_Clip{},
+		Draw_Clip_Push{},
+		Draw_Clip_Pop{},
 		Draw_Picture{memory = 1, first = 7, stride = 40, generation = 9},
 		Draw_Text_Grid{first = 8, count = 32, columns = 2},
 		Draw_Path{first = 12, count = 3 * PATH_POINT_SIZE, fill_color = 0x80708090, stroke_color = 0xFF102030, stroke_width = 3 * UNITS_PER_PIXEL / 2},
@@ -36,8 +37,13 @@ SAMPLE_PATTERN :: Repetition {
 // An opaque color of the cases that test another field.
 SAMPLE_COLOR :: Draw_Color(OPAQUE_ALPHA << ALPHA_SHIFT | 1)
 
+// The record of a sample in its box; a pop of a clip has the box of zeros,
+// the one box that the border reads for it.
 @(private = "file")
 sample_record :: proc(primitive: Draw_Primitive) -> Draw_Record {
+	if _, is_pop := primitive.(Draw_Clip_Pop); is_pop {
+		return record_of(primitive, 77, 0, 0, 0, 0)
+	}
 	return record_of(primitive, 77, units_of_pixels(10), units_of_pixels(20), units_of_pixels(110), units_of_pixels(44))
 }
 
@@ -58,7 +64,7 @@ Reserved_Run :: struct {
 @(private = "file")
 reserved_runs_of :: proc(kind: Draw_Kind) -> (runs: [2]Reserved_Run, count: int) {
 	switch kind {
-	case .None, .Clip:
+	case .None, .Clip_Push, .Clip_Pop:
 		return {{0, FIELDS_SIZE}, {}}, 1
 	case .Rectangle:
 		return {{int(offset_of(Rectangle_Fields, reserved)), size_of(Rectangle_Fields{}.reserved)}, {}}, 1
@@ -444,7 +450,7 @@ named_bytes_of :: proc(kind: Draw_Kind) -> int {
 			named = ends[index]
 		}
 		return named
-	case .None, .Rectangle, .Text, .Clip, .Picture, .Text_Grid, .Path:
+	case .None, .Rectangle, .Text, .Clip_Push, .Clip_Pop, .Picture, .Text_Grid, .Path:
 	}
 	return 0
 }
@@ -531,7 +537,11 @@ read_takes_a_box_inside_a_pixel_for_a_rectangle_and_a_gradient :: proc(t: ^testi
 			inside = value.repetition == (Repetition{})
 		case Draw_Gradient:
 			inside = true
-		case Draw_Nothing, Draw_Clip, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Path:
+		case Draw_Clip_Pop:
+			// Its box is 0: an edge moved inward inverts it. Its own test
+			// gives it each box.
+			continue
+		case Draw_Nothing, Draw_Clip_Push, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Path:
 		}
 		for part in parts {
 			for side in 0 ..< 4 {
@@ -703,7 +713,7 @@ read_takes_each_bound :: proc(t: ^testing.T) {
 	}
 	edges := [?][4]i32 {
 		{-COORDINATE_UNIT_LIMIT, -COORDINATE_UNIT_LIMIT, COORDINATE_UNIT_LIMIT, COORDINATE_UNIT_LIMIT},
-		{0, 0, 0, 0}, // An empty box: a record that draws nothing, and a Clip that ends the cut.
+		{0, 0, 0, 0}, // An empty box: a record that draws nothing.
 	}
 	for box in edges {
 		record := record_of(Draw_Rectangle{color = SAMPLE_COLOR}, 0, box[0], box[1], box[2], box[3])

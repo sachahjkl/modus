@@ -69,6 +69,10 @@ Disk_Load :: struct {
 	memory:         system.Handle, // The memory of the file, from the budget of this service. 0: none yet.
 	bytes:          []u8, // That memory, mapped.
 	deadline:       u64, // The time at which the load ends with no answer.
+	// The load of the start policy that principal 0 chose: no process
+	// asked for it, and its end starts it, or the rescue
+	// (start_policy_choice.odin).
+	for_start_policy: bool,
 }
 
 disk_load: Disk_Load
@@ -205,7 +209,7 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	}
 	file, _, problem_of_the_nickname := disk_process.start_file(table, name, hash)
 	switch problem_of_the_nickname {
-	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key:
+	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Start_Policy_Row, .Holds_Store:
 		// start_file gives only None, No_File and Other_File: the start goes on.
 	case .No_File:
 		values^ = disk_refused(name, errors.ring_fail(kind, .Absent, .Grants, 2), "the nickname has no row in the disk grant table of principal ", asker.principal, ": name the hash of its file")
@@ -311,7 +315,11 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 	if load.asker != nil && load.asker.process != 0 && load.asker.requests.head != nil {
 		system.send(&load.asker.requests.completions, ring.Record{kind = u32(status), tag = load.tag, values = values})
 	}
+	for_start_policy := load.for_start_policy
 	load^ = {}
+	if for_start_policy {
+		start_policy_chosen_load_ended(status)
+	}
 	return values
 }
 
@@ -337,7 +345,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	name := string(load.name[:load.name_length])
 	refused_status := errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-	if load.asker == nil {
+	if load.asker == nil && !load.for_start_policy {
 		disk_load_end(.Bad_State, disk_refused(name, refused_status, "the process that asked for it stopped"))
 		return
 	}
@@ -482,6 +490,22 @@ disk_load_start :: proc "contextless" () {
 	name := string(load.name[:load.name_length])
 	found := load.hash
 	principal := load.principal
+	// The chosen start policy starts with the grant Start_Policy only, and
+	// never with the grants of a disk process.
+	if load.for_start_policy {
+		chosen_error: module.Load_Error
+		chosen_status := start_policy_chosen_run(name, load.bytes, found, disk_imports_files(), &chosen_error)
+		if chosen_status != .Ok && chosen_error.stage != .None {
+			buffer: [512]u8
+			writer := system.Writer{buffer = buffer[:]}
+			system.load_error_text(&writer, &chosen_error)
+			_ = disk_refused(name, {}, "the loader refused its file: ", system.written(&writer))
+		} else if chosen_status != .Ok {
+			_ = disk_refused(name, {}, "it does not start: status ", chosen_status)
+		}
+		disk_load_end(chosen_status, {})
+		return
+	}
 	// The grants are read now, not at the command: a change of the table
 	// during the load is the table of this start.
 	table := disk_grant_table_of(principal)
@@ -764,7 +788,13 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 	case .Full:
 		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
 		return .No_Slot
-	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key:
+	case .Start_Policy_Row:
+		// The chosen start policy holds its one start grant and nothing
+		// else (src/md/features/start_policy.md).
+		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
+		system.log_in("processes", .Warning, "root: refused the grant ", grant_name, " to the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy, which holds the grant Start_Policy and nothing else")
+		return .Bad_Operation
+	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
@@ -803,6 +833,13 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 	}
 	if hash == {} || hash == row.hash {
 		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2)
+		return .Bad_Operation
+	}
+	// The chosen start policy names the file that principal 0 chose: only
+	// a new choice changes it.
+	if .Start_Policy in row.grants {
+		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
+		system.log_in("processes", .Warning, "root: refused the move of the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy; start_policy_choose names another file")
 		return .Bad_Operation
 	}
 	system.log_in("processes", .Info, "root: the file ", system.Hash{hash[:]}, " will get the data of ", system.Module_Name{nickname})
@@ -851,7 +888,13 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	if disk_process.table_persistence_set(table, nickname, persistence) != .None {
+	switch disk_process.table_persistence_set(table, nickname, persistence) {
+	case .None:
+	case .Start_Policy_Row:
+		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
+		system.log_in("processes", .Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy, which persists until start_policy_default ends the choice")
+		return .Bad_Operation
+	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		system.log_in("processes", .Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
 		return .Bad_Handle

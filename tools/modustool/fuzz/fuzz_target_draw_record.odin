@@ -17,10 +17,14 @@ import "modus:contract/draw_record"
 // canonical rule of its colors (draw_color_problem),
 // writes back to its own bytes, and keeps its bytes
 // when its range moves to its own first byte; a record that it refuses
-// changes no byte of the input. Then the points (fuzz_path_points_problem).
+// changes no byte of the input. Then the points (fuzz_path_points_problem),
+// and the order of the clips of the records (fuzz_clip_order_problem).
 fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if points_problem := fuzz_path_points_problem(input); points_problem != "" {
 		return fuzz_broken(.Contract, "the points: %s", points_problem)
+	}
+	if order_problem := fuzz_clip_order_problem(input); order_problem != "" {
+		return fuzz_broken(.Contract, "the order of the clips: %s", order_problem)
 	}
 	count := len(input) / draw_record.RECORD_SIZE
 	for index in 0 ..< count {
@@ -58,7 +62,11 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			if !draw_record.path_fields_valid(value) {
 				return fuzz_broken(.Contract, "the record %d: read takes a path whose range or stroke is out of its bounds", index)
 			}
-		case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
+		case draw_record.Draw_Clip_Pop:
+			if record.left != 0 || record.top != 0 || record.right != 0 || record.bottom != 0 {
+				return fuzz_broken(.Contract, "the record %d: read takes a pop of a clip whose box is not 0", index)
+			}
+		case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
 		}
 		edges := [4]i32{record.left, record.top, record.right, record.bottom}
 		for edge in edges {
@@ -118,7 +126,64 @@ draw_color_problem :: proc(primitive: draw_record.Draw_Primitive) -> string {
 		if (value.stroke_color == 0) != (value.stroke_width == 0) {
 			return "a path whose stroke has a width and no color, or a color and no width"
 		}
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
+	}
+	return ""
+}
+
+// fuzz_clip_order_problem reads the input as records, and says how the
+// border of the order of the clips breaks its rules, or "": a problem out of
+// its enumeration, an index past the records, a change of a byte of the
+// input, and a verdict other than a walk of the kind words that counts the
+// pushes open and stops at the first fault: a pop with no push open, a push
+// with CLIP_DEPTH_LIMIT open, or pushes open at the end, with the index of
+// the outermost one.
+fuzz_clip_order_problem :: proc(input: []u8) -> string {
+	count := len(input) / draw_record.RECORD_SIZE
+	records := make([]draw_record.Draw_Record, count, context.temp_allocator)
+	if count > 0 {
+		mem.copy(&records[0], &input[0], count * draw_record.RECORD_SIZE)
+	}
+	kept := make([]draw_record.Draw_Record, count, context.temp_allocator)
+	copy(kept, records)
+	problem, index := draw_record.clip_order_check(records)
+	if problem > max(draw_record.Clip_Order_Problem) {
+		return "a problem out of its enumeration"
+	}
+	for record, place in records {
+		if record != kept[place] {
+			return "the check changed a record"
+		}
+	}
+	expected := draw_record.Clip_Order_Problem.None
+	expected_index, depth, outermost := 0, 0, 0
+	walk: for record, place in records {
+		switch record.kind {
+		case u8(draw_record.Draw_Kind.Clip_Push):
+			if depth == draw_record.CLIP_DEPTH_LIMIT {
+				expected, expected_index = .Push_Past_Depth_Limit, place
+				break walk
+			}
+			if depth == 0 {
+				outermost = place
+			}
+			depth += 1
+		case u8(draw_record.Draw_Kind.Clip_Pop):
+			if depth == 0 {
+				expected, expected_index = .Pop_Without_Push, place
+				break walk
+			}
+			depth -= 1
+		}
+	}
+	if expected == .None && depth > 0 {
+		expected, expected_index = .Push_Without_Pop, outermost
+	}
+	if problem != expected {
+		return "a verdict other than the walk of the kind words"
+	}
+	if problem != .None && (index != expected_index || index >= count) {
+		return "the index of another record"
 	}
 	return ""
 }
@@ -220,7 +285,7 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		draw_record.Draw_Gradient{start_x = pixel(1), start_y = pixel(2) + 5, end_x = pixel(14) + 17, end_y = pixel(13), start_color = opaque(3), end_color = draw_record.with_alpha(4, 60)},
 		draw_record.Draw_Text{first = 0, count = 4, color = draw_record.with_alpha(5, 128), scale = 1},
 		draw_record.Draw_Text{first = 0, count = 4, color = opaque(5), scale = 1},
-		draw_record.Draw_Clip{},
+		draw_record.Draw_Clip_Push{},
 		// The grid of points: a pattern of cells of 2 pixels each 24 pixels.
 		draw_record.Draw_Rectangle{color = opaque(6), repetition = {cell_x = pixel(12), cell_y = pixel(12), cell_width = 2 * draw_record.UNITS_PER_PIXEL, cell_height = 2 * draw_record.UNITS_PER_PIXEL, step_x = 24 * draw_record.UNITS_PER_PIXEL, step_y = 24 * draw_record.UNITS_PER_PIXEL}},
 		draw_record.Draw_Picture{first = 0, stride = 16, generation = 1},
@@ -254,6 +319,19 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		add(seeds, all, &place, draw_record.record_of(primitive, u32(len(primitives) + index), 21, pixel(1) + 42, pixel(15) + 21, pixel(14) + 43))
 	}
 	append(seeds, all)
+	// The clips: a pop alone, and a push, a rectangle and a pop, in order.
+	pop := draw_record.record_of(draw_record.Draw_Clip_Pop{}, 0, 0, 0, 0, 0)
+	one_pop := make([]u8, draw_record.RECORD_SIZE)
+	mem.copy(&one_pop[0], &pop, draw_record.RECORD_SIZE)
+	append(seeds, one_pop)
+	nested := [3]draw_record.Draw_Record {
+		draw_record.record_of(draw_record.Draw_Clip_Push{}, 0, pixel(2), pixel(2), pixel(10), pixel(10)),
+		draw_record.record_of(draw_record.Draw_Rectangle{color = opaque(12)}, 0, 0, 0, pixel(16), pixel(16)),
+		pop,
+	}
+	in_order := make([]u8, len(nested) * draw_record.RECORD_SIZE)
+	mem.copy(&in_order[0], &nested[0], len(in_order))
+	append(seeds, in_order)
 	// The points of a path that the border of the points reads: a subpath
 	// with a line, a curve and a Close, then an open subpath of one line.
 	path := [?]draw_record.Path_Point_Record {

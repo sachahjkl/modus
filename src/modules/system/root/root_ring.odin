@@ -191,6 +191,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = remote_client_command(item, record, &answer.values)
 	case .Machine_Usable:
 		answer.status = start_policy_usable(item, &answer.values)
+	case .Start_Policy_Choice:
+		answer.status = start_policy_choice_command(item, record, &answer.values)
 	}
 	return answer
 }
@@ -228,7 +230,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	// starts it: a Start of its name is refused as one.
 	of_the_system := name_is_a_system_part(name) || .Start_Policy in role_of(name).grants
 	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
 		// A grant of the role that the command needs, and that the process

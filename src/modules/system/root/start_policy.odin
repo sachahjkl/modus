@@ -13,6 +13,7 @@ import info "modus:contract/boot_info"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
 import "modus:private/root/start_policy_rules"
+import "modus:support/disk_process"
 import "modus:support/pci"
 import "modus:support/principals"
 import "modus:support/system"
@@ -22,17 +23,29 @@ import "modus:support/system"
 // which the host tests.
 Start_Policy_Stage :: start_policy_rules.Stage
 
-// The list of a start policy: the module is the same, the resource of the
-// boot image differs.
+// The start policy that runs: the module of the boot image with one of its
+// two lists, or the module of the store that principal 0 chose, with no
+// list (start_policy_choice.odin).
 Start_Policy_List :: enum u8 {
 	Default, // start_list.START_LIST_RESOURCE.
 	Rescue,  // start_list.RESCUE_LIST_RESOURCE.
+	Chosen,  // No list: the module from the disk holds its own order.
 }
 
+// The resource of the list of each start policy of the boot image.
 @(rodata)
 START_POLICY_LIST_NAMES := [Start_Policy_List]string {
 	.Default = start_list.START_LIST_RESOURCE,
 	.Rescue  = start_list.RESCUE_LIST_RESOURCE,
+	.Chosen  = "",
+}
+
+// The words of each start policy in a line of the log.
+@(rodata)
+START_POLICY_LIST_WORDS := [Start_Policy_List]string {
+	.Default = "of the list " + start_list.START_LIST_RESOURCE,
+	.Rescue  = "of the list " + start_list.RESCUE_LIST_RESOURCE,
+	.Chosen  = "chosen by principal 0, from the disk",
 }
 
 START_POLICY_NAME :: "start_policy"
@@ -138,29 +151,68 @@ start_policy_pages_give :: proc "contextless" (work: ^Start_Work) {
 	system.range_mapped_put(&work.values, .Start_Policy_Pages)
 }
 
+// What the boot record asks of this start, through its border: the start
+// policy that principal 0 chose, or the rescue for one of three causes.
+Start_Policy_Request :: enum u8 {
+	Chosen, // The chosen start policy, or the default one with no choice.
+	Rescue_By_Key, // The key R was held.
+	Rescue_By_Boot_Entry, // The boot entry "modus (rescue)" started the machine.
+	Rescue_By_Refused_Record, // The border refused the words of the boot record.
+}
+
+start_policy_request: Start_Policy_Request
+
 // start_policy_begin reads the start request of the boot record, through
-// its border, and starts the start policy that it asks for, or the rescue.
+// its border, then the choice of principal 0 (start_policy_choice.odin),
+// which starts the start policy that the request asks for. A rescue still
+// reads the choice: the table holds the client keys of remote.
 start_policy_begin :: proc "contextless" () {
 	show("the root service starts the start policy", .Running, .Root)
 	report := &trust_boot_report
 	request, source, known := info.start_request_of_words(report.start_request, report.start_request_source)
+	start_policy_request = .Chosen
 	if !known {
-		system.log_in("processes", .Warning, "root: the boot record names the start request ", report.start_request, " with the source ", report.start_request_source, ", which the border refuses: the rescue start policy starts in place of the start policy ", start_policy_hash_text_of_image())
-		start_policy_launch(.Rescue)
-		return
-	}
-	switch request {
-	case .Chosen:
-		start_policy_launch(.Default)
-	case .Rescue:
-		switch source {
-		case .Key:
-			system.log_in("processes", .Info, "root: the key R was held at the start: the rescue start policy starts in place of the start policy ", start_policy_hash_text_of_image())
-		case .Boot_Entry:
-			system.log_in("processes", .Info, "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy ", start_policy_hash_text_of_image())
-		case .None:
-			// The border refuses Rescue with no source.
+		system.log_in("processes", .Warning, "root: the boot record names the start request ", report.start_request, " with the source ", report.start_request_source, ", which the border refuses: the rescue start policy starts")
+		start_policy_request = .Rescue_By_Refused_Record
+	} else {
+		switch request {
+		case .Chosen:
+		case .Rescue:
+			switch source {
+			case .Key:
+				start_policy_request = .Rescue_By_Key
+			case .Boot_Entry:
+				start_policy_request = .Rescue_By_Boot_Entry
+			case .None:
+				// The border refuses Rescue with no source.
+				start_policy_request = .Rescue_By_Refused_Record
+			}
 		}
+	}
+	start_policy_choice_read_begin()
+}
+
+// start_policy_after_the_choice starts the start policy of this start, once
+// the choice of principal 0 is read or known to be absent. replaced is the
+// hash text of the start policy that a rescue replaces: the chosen one, or
+// the default one.
+start_policy_after_the_choice :: proc "contextless" (chosen: ^disk_process.Grant_Row) {
+	replaced := chosen != nil ? start_policy_hash_text(chosen.hash) : start_policy_hash_text_of_image()
+	switch start_policy_request {
+	case .Chosen:
+		if chosen != nil {
+			start_policy_chosen_load_begin(chosen)
+			return
+		}
+		start_policy_launch(.Default)
+	case .Rescue_By_Key:
+		system.log_in("processes", .Info, "root: the key R was held at the start: the rescue start policy starts in place of the start policy ", replaced)
+		start_policy_launch(.Rescue)
+	case .Rescue_By_Boot_Entry:
+		system.log_in("processes", .Info, "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy ", replaced)
+		start_policy_launch(.Rescue)
+	case .Rescue_By_Refused_Record:
+		system.log_in("processes", .Warning, "root: the rescue start policy starts in place of the start policy ", replaced, ": the boot record asks for it with words that the border refuses")
 		start_policy_launch(.Rescue)
 	}
 }
@@ -202,6 +254,21 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 		}
 		return
 	}
+	// The measure before Process_Start: an attestation sees each start
+	// policy that ran, the rescue too.
+	module_hash, list_hash: [32]u8
+	for &item in system.image_entries(image) {
+		if system.name_of(item.name[:]) == START_POLICY_NAME {
+			module_hash = item.hash
+		}
+	}
+	if list_entry := system.image_resource_find(image, START_POLICY_LIST_NAMES[list]); list_entry != nil {
+		list_hash = list_entry.hash
+	}
+	// A start policy of the boot image starts unmeasured, with the line of
+	// the cause: it is signed and measured with the system in PCR 11.
+	_ = start_policy_measure(module_hash, list_hash, START_POLICY_LIST_WORDS[list])
+	start_policy_from_disk = false
 	start_policy_starting = true
 	status := start(START_POLICY_NAME, principals.MACHINE)
 	start_policy_starting = false
@@ -307,6 +374,8 @@ root_stop_ask :: proc "contextless" (item: ^Started) {
 // processes of a failed start policy are gone, and at the hang bound of a
 // start policy that never said that the machine is usable.
 start_policy_step :: proc "contextless" () {
+	// Before any start policy: the read of the choice of principal 0.
+	start_policy_choice_step()
 	switch start_policy_stage {
 	case .None, .Usable, .No_Policy:
 	case .Stopping:
@@ -344,7 +413,8 @@ start_policy_step :: proc "contextless" () {
 // start_policy_wake gives the time at which the loop must run
 // start_policy_step even with no event.
 start_policy_wake :: proc "contextless" () -> u64 {
-	return start_policy_stage == .Running || start_policy_stage == .Stopping ? start_policy_deadline : system.WAIT_FOREVER
+	wake := start_policy_stage == .Running || start_policy_stage == .Stopping ? start_policy_deadline : system.WAIT_FOREVER
+	return min(wake, start_policy_choice_wake())
 }
 
 // start_policy_usable runs Machine_Usable: only from the start policy that
@@ -359,7 +429,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start.
 	budget_pages_note()
-	system.log("root: the machine is usable, by the start policy ", start_policy_hash_text(start_policy_hash), " of the list ", START_POLICY_LIST_NAMES[start_policy_list], ": the budget of this service holds ", budget_pages_now, " free pages, ", budget_pages_lowest, " at the lowest")
+	system.log("root: the machine is usable, by the start policy ", start_policy_hash_text(start_policy_hash), " ", START_POLICY_LIST_WORDS[start_policy_list], ": the budget of this service holds ", budget_pages_now, " free pages, ", budget_pages_lowest, " at the lowest")
 	return .Ok
 }
 
@@ -381,6 +451,15 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 		values^ = start_policy_rules.start_record(refusal, facts)
 		written^ = true
 		return refusal
+	}
+	// A start policy from the disk has the bound of a start row on the
+	// restarts of each name that it asks for: no loop of starts.
+	restart_status, restart_record, counted := start_policy_rules.restart_check(&start_policy_name_counts, start_policy_from_disk, name)
+	if restart_status != .Ok {
+		values^ = restart_record
+		written^ = true
+		system.log_in("processes", .Warning, "root: refused a start of ", system.Module_Name{name}, " by the start policy from the disk: past its ", u64(start_list.RESTART_LIMIT), " restarts, or past the ", u64(start_policy_rules.RESTARTED_NAME_CAPACITY), " names whose starts the root service counts, it stays stopped")
+		return restart_status
 	}
 	status: system.Status
 	switch name {
@@ -404,6 +483,9 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 	}
 	if status != .Ok {
 		return status
+	}
+	if counted != nil {
+		counted.starts += 1
 	}
 	slot := find_running(name)
 	if slot == nil {

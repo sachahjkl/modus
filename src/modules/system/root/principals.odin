@@ -164,6 +164,20 @@ unlock_values_write :: proc "contextless" (values: ^system.Context_Values) {
 	system.values_put(values, system.GRANT_VALUE_UNLOCK_NAME, packed[:])
 }
 
+// unlock_without_window says if a start of a name is the start of `unlock`
+// that reads the machine key before the start policy: it gets no window.
+unlock_without_window :: proc "contextless" (name: string) -> bool {
+	return name == "unlock" && unlock_run.stage == .Starting && unlock_run.mode == .Machine_Key_Without_Window
+}
+
+// unlock_without_window_running says if a place of the table holds the run
+// of `unlock` that reads the machine key before the start policy. It is
+// read before unlock_stopped changes the stage.
+unlock_without_window_running :: proc "contextless" (item: ^Started) -> bool {
+	running := unlock_run.stage == .Running || unlock_run.stage == .Stop_Asked
+	return running && unlock_run.mode == .Machine_Key_Without_Window && !item.is_terminal && system.name_of(item.name[:]) == "unlock"
+}
+
 // unlock_stop_ask says that this service asks the stop of the `unlock`
 // that runs: its stop does not count.
 unlock_stop_ask :: proc "contextless" () {

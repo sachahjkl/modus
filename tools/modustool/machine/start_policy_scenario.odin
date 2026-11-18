@@ -112,7 +112,8 @@ start_policy_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// machine with no screen (-display none).
 	machine_test(part, scenario_start_policy_key[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_START_POLICY_KEY, exit_status = 0, serial_input = true}) or_return
 	machine_test(part, scenario_start_policy_missing_console[:], {volume = build.BOOT_VOLUME_MISSING_CONSOLE, output = TEST_OUTPUT_START_POLICY_MISSING_CONSOLE, exit_status = 0}) or_return
-	return start_policy_boot_entry_tests_run(part)
+	start_policy_boot_entry_tests_run(part) or_return
+	return start_policy_from_disk_tests_run(part)
 }
 
 // start_policy_boot_entry_tests_run runs the three machines of the boot

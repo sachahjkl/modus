@@ -79,7 +79,7 @@ records_reference :: proc(canvas: graphics.Canvas, table: ^Draw_Table, square_ro
 				case draw_record.Draw_Gradient:
 					level := draw_record.gradient_level(fields, i64(x) * draw_record.UNITS_PER_PIXEL + HALF, i64(y) * draw_record.UNITS_PER_PIXEL + HALF)
 					pixel_reference(canvas, record, x, y, graphics.mix_with_alpha(u32(fields.start_color), u32(fields.end_color), level), square_root)
-				case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
+				case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
 					// The tests of this file draw rectangles and gradients only.
 				}
 			}

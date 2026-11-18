@@ -636,6 +636,30 @@ commands_start :: proc "contextless" () {
 	// Errors: the machine has a record of its key already; no TPM service
 	// runs; Secure Boot did not verify the boot program; unlock runs.
 	command("machine_seal", {}, .None, "seal a machine key to the measure of the system with the TPM: the window of unlock shows its recovery key one time", machine_seal)
+	// Asks the root service to run a start policy of the store
+	// module_files at the next start of the machine, with the grant
+	// Start_Policy only. It gives nothing. The choice is a row of the disk
+	// grant table of principal 0, and the TPM measures the start policy
+	// into PCR 12 before it runs (`PRINCIPALS.md`, "The start policy of
+	// principal 0").
+	//
+	// - `nickname`: the nickname of the module file, as for
+	//   `start_from_disk`.
+	// - `hash`: the BLAKE3 hash of the file, 64 hexadecimal digits, or
+	//   empty for the hash of the row of the nickname.
+	//
+	// ```
+	// > start_policy_choose("tiny", "5f0c...")
+	// ```
+	//
+	// Errors: the console acts for a named principal; the machine has no
+	// machine key, or its machine key needs a passphrase; the nickname has
+	// no row and no hash is given; the row names another file, or holds
+	// the grant store.
+	command("start_policy_choose", {.Text, .Text}, .None, "run a start policy of the store module_files at the next start of the machine", start_policy_choose)
+	// Ends the choice of a start policy: the next start runs the default
+	// start policy of the boot image. The row of the nickname stays.
+	command("start_policy_default", {}, .None, "run the default start policy at the next start of the machine", start_policy_default)
 	// Asks the root service to change the passphrase of the named principal
 	// of the session of this console, and gives what changed when the
 	// window of unlock ends the change.
@@ -2800,6 +2824,49 @@ machine_seal :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	if system.Status(completion.kind) != .Ok {
 		return fail_root("", completion)
+	}
+	return {}
+}
+
+// start_policy_choose asks the root service to run a start policy from the
+// disk at the next start. The nickname and the hash are checked here
+// first, as for start_from_disk: a record holds 23 bytes and 32.
+start_policy_choose :: proc "contextless" (arguments: []Value) -> Value {
+	nickname := arguments[0].text
+	if refusal, refused := nickname_check("start_policy_choose", nickname); refused {
+		return refusal
+	}
+	// An empty hash: the root service takes the hash of the row of the
+	// nickname in the disk grant table.
+	hash: [disk_process.HASH_SIZE]u8
+	if arguments[1].text != "" {
+		parsed: bool
+		hash, parsed = disk_process.hash_parse(arguments[1].text)
+		if !parsed {
+			return fail("start_policy_choose: the hash must be ", u64(disk_process.HASH_DIGITS), " hexadecimal digits, or empty for the hash of the row of the nickname; the argument has ", u64(len(arguments[1].text)), " bytes, or a byte that is no digit")
+		}
+	}
+	hash_values := transmute([4]u64)hash
+	packed := disk_process.name_pack(nickname)
+	completion, answered := disk_request(.Start_Policy_Choice, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = packed[0], 5 = packed[1], 6 = packed[2]}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("start_policy_choose: ", completion)
+	}
+	return {}
+}
+
+// start_policy_default asks the root service to end the choice of a start
+// policy: a nickname of no byte.
+start_policy_default :: proc "contextless" (arguments: []Value) -> Value {
+	completion, answered := disk_request(.Start_Policy_Choice, {}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("start_policy_default: ", completion)
 	}
 	return {}
 }

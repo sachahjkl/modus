@@ -10,7 +10,7 @@ A new graphical module follows these rules. The modules of the desktop that came
 
 **Read before.** Nothing. `INTERFACE.md` gives the package that draws the elements; `FONTS.md` the fonts.
 
-**The map of this guide.** Sections 1 to 8: what is on the screen, forms, surfaces, color, text, the grid, cost, decoration. Section 9: the desktop. Section 10: the elements. Section 11: the mark. Section 12: the card of the boot image. "State": which modules follow the rules.
+**The map of this guide.** Sections 1 to 8: what is on the screen, forms, surfaces, color, text, spacing, cost, decoration. Section 9: the desktop. Section 10: the elements. Section 11: the mark. Section 12: the card of the boot image. "State": which modules follow the rules.
 
 ![The boot display, the model of the rules: the stages of the start on a line of time, the memory, the machine, the boot image, the processes](screenshots/boot.png)
 
@@ -198,14 +198,26 @@ The desktop lists four kinds of things that are not values (`kind_icons.Desktop_
 - **Two fonts** (`docs/FONTS.md`, section 12.6):
   - **The interface font, B612** (proportional): each text that names or explains: the title and the caption of a card, a label, the name of a button, a line of a list or a menu, the title of a column, a sentence of help.
   - **The font of the cells, Paper Mono** (monospace): each value, and each text that a reader compares character by character or copies: a number in a column, a hash, an address, a text that is typed, code, the console, the terminal, a text grid.
-  - Both draw in the line of 16 pixels of the grid, at the scales 1, 2 and 3. The places of the elements stay on the grid of 8; the letters of the interface font do not.
+  - Both draw at one text size: the height of a line. A label and its value at one text size share one line.
   - A text is measured in the font that draws it, and an element cuts a text to its box: no text passes its element in either font.
   - With no interface font (absent, refused, or the setting `font` is Spleen 8x16), each text is in the font of the cells, with the same layout rules.
   - The compositor follows the same rule: the buttons of the bar, the lines of its menus, the titles of the windows, the names, the sentences and the hints of the palette are in the interface font; the clock, the date, the text that is typed in the palette and the counts of the menus and of the palette are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
-  - **The boot display, by design, in Spleen only**: the boot program holds no glyph cache, so the display is in Spleen, a bitmap font drawn for several sizes, as a text grid is, and the root service and the process `boot` draw the same pixels. Its titles, its names and its values are in that one font. It is laid out in logical pixels, a panel of 976 x 708, and its scale snaps to the sizes of Spleen, as the console of Linux takes a font by the resolution: 1 (8x16), 1.5 (12x24), 2 (16x32) or 4 (32x64), the largest whose panel fits the screen with a margin of 8 pixels, in the middle of the screen; on the reference screen, 1.5. Each letter fills its cell (`src/md/features/boot_display_scale.md`).
+  - **The boot display, by design, in Spleen only**: the boot program holds no glyph cache, so the display is in Spleen, a bitmap font drawn for several sizes, as a text grid is, and the root service and the process `boot` draw the same pixels. Its titles, its names and its values are in that one font. It is laid out in logical pixels, a panel of 976 x 708, and its scale is one of the sizes of Spleen, as the console of Linux takes a font by the resolution: 1 (8x16), 1.5 (12x24), 2 (16x32) or 4 (32x64), the largest whose panel fits the screen with a margin of 8 pixels, in the middle of the screen; on the reference screen, 1.5. Each letter fills its cell (`src/md/features/boot_display_scale.md`).
 - The font of the cells: the vector font by default, drawn with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
-- Three sizes: lines of 1, 2 and 3 times 16 logical pixels; cells of 1, 2 and 3 times 8 x 16 for the font of the cells. No other size. A scale factor multiplies them on the screen, as it does each place; the boot display snaps its scale to the sizes of Spleen (above).
-- The font of the cells is monospace: its advance is the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
+- **The text sizes of the desktop are tokens**, in logical pixels:
+
+| Token | Text size | Use |
+|---|---|---|
+| `text_caption` | 14 | The caption of a card, the detail of a row of a list, the hash prefix after a nickname in the menu of the windows |
+| `text_body` | 16 | Each other text |
+| `text_heading` | 24 | A heading of a page of `manual`, the heading of a group of a list |
+| `text_large` | 32 | The one number of a card |
+| `text_largest` | 48 | The one number that a whole window is about |
+
+- A process can draw a text at any size from 4 to 256 pixels (`src/md/features/text_rendering.md`). The desktop and the elements of the interface package use the tokens only, so the texts of two windows line up.
+- 14 is the smallest size at which both fonts keep an x-height of 6 whole rows; 24 is a whole count of pixels at each scale factor.
+- The font of the cells is monospace: its advance is half the text size, the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
+- The boot display takes no text size token and is not drawn by the text rendering module: its text is Spleen in cells of 8 x 16 logical pixels, at the size of Spleen of its scale (above).
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
 - The title of a card is in capital letters, in the bold weight of the interface font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - The system has no italic face. Where a text has italics (the documentation of a module in `manual`), the words have a line of 1 pixel under them, in the dim color, and keep their color. A link in such a text is a name in the color of a link; a link that a click opens also has a line of 1 pixel under it, in its color.
@@ -214,13 +226,20 @@ The desktop lists four kinds of things that are not values (`kind_icons.Desktop_
 - Numbers of one column are aligned on the right, each with its unit.
 - A sentence follows the language rules of the project: short, exact, one term for one concept.
 
-## 6. Grid
+## 6. Spacing
 
-Every place and size sits on a grid of 8 pixels, so that the elements of different processes line up and a reader's eye can follow a column.
+The spaces between the elements come from a few named lengths, the spacing tokens, so that the elements of different processes line up and a reader's eye can follow a column. A place and a size are any count of logical pixels; no grid binds them.
 
-- The unit is 8 pixels. A position and a size are multiples of 8, or of 4 inside a form.
-- A line of text is 16 pixels.
-- The space between two cards is 8 pixels. The margin inside a card is 16 pixels. The title of a card takes 40 pixels.
+| Token | Length | Use |
+|---|---|---|
+| `gap` | 8 | The space between two cards, between two buttons, between a name and its value |
+| `margin` | 16 | The space inside a card, from its border to its content |
+| `title` | 40 | The height of the title of a card |
+
+- A space between two elements of the desktop is a token, or a sum of tokens. A size that a content gives (the width of a text, of a picture, of a column of values) is that size, with no round up.
+- A line of text is its text size (section 5).
+- The tokens are in logical pixels. At a scale factor in eighths, each token is a whole count of pixels of the screen (`docs/glossary/desktop.md`, "Scale factor").
+- A window is placed where the principal puts it, to the pixel. The compositor places a new window at steps of tokens (section 9).
 
 ## 7. Cost
 
@@ -729,7 +748,8 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 ## State
 
 - The boot display follows all rules.
-- The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of both pointer themes are the one exception of their own (section 9, "Pointer"). New windows and windows that the pointer drags are on the grid of 8.
+- The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of both pointer themes are the one exception of their own (section 9, "Pointer").
+- Sections 5 and 6 are not built yet: the text draws at the three sizes 16, 32 and 48 only, with no caption and no heading size, and the places and the sizes of the desktop sit on a grid of 8 pixels, to which the compositor moves each new window, each window that the pointer drags and each edge of a resize. The steps that build them are in `ROADMAP.md`.
 - `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`.
 - Each other process takes each of its colors from `src/library/support/graphics`, by its meaning (`src/md/features/appearance.md`, "The colors of the processes"): an expected answer and a failure, the kernel entries in the kernel blue, the pages in the color of memory, the levels of the log, the states of `rings` and `threads`, the members of a series. The terminal has its tones in both appearances.
 - The appearances (section 4, "The appearances"): the desktop, the palette, each window of a process, the terminal with its tones, the console and its results follow the light appearance. The paper of `paint` is light in both. The boot display, the process `boot` that shows it, and the stage of `heron` are dark in both.

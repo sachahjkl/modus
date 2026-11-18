@@ -119,6 +119,10 @@ fuzz_grant_table_rules :: proc(table: ^disk_process.Grant_Table) -> Fuzz_Verdict
 		if disk_process.table_find(table, nickname) != &row {
 			return fuzz_broken(.Contract, "the nickname %q has two rows", nickname)
 		}
+		// The chosen start policy holds its one grant, in one row at most.
+		if .Start_Policy in row.grants && (row.grants != {.Start_Policy} || disk_process.table_start_policy_row(table) != &row) {
+			return fuzz_broken(.Contract, "the row %d holds the grant Start_Policy with %v, or a row before it holds it too", index, row.grants)
+		}
 	}
 	for item, index in table.client_keys[:table.client_key_count] {
 		if item == ([disk_process.CLIENT_KEY_SIZE]u8{}) || disk_process.table_client_key_find(table, item) != index {

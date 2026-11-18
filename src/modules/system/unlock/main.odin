@@ -69,7 +69,10 @@
 //
 // **Start**: the root service starts it; no line of the console does.
 //
-// - At boot, and again after `lock()` in the console.
+// - At boot, two times on a machine with a TPM service and a data disk:
+//   first before the start policy, with no window, to unseal the machine
+//   key (Unlock_Mode.Machine_Key_Without_Window), then as a row of the
+//   start list; and again after `lock()` in the console.
 // - With a name, after `principal_create("alice")` in the console: the
 //   window asks for the passphrase two times.
 // - During a session, after `passphrase_change()` or
@@ -861,6 +864,10 @@ tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, st
 		// The caller says it, with the name of the principal.
 	case .Bad_Command:
 		system.log("unlock: the TPM service refuses the ", what, ": the command or a value is out of its range")
+	case .Measure_Limit:
+		// Only a command of the measure ring of the root service gets it:
+		// from the TPM ring it is no answer to this request.
+		system.log("unlock: the TPM service gave the ", what, " the status of the measure of a start policy, which answers no request of unlock")
 	}
 }
 
@@ -2492,6 +2499,44 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 	return true
 }
 
+// machine_key_without_window runs the mode Machine_Key_Without_Window: the
+// root service reads the choice of a start policy of principal 0 before
+// any window can open (src/md/features/start_policy.md, "What the root
+// service keeps in code"). It reports the record of the machine key as an
+// unlock does, has the TPM release a key sealed with no passphrase, and
+// stops. It asks for no passphrase and no recovery key: the run of unlock
+// of the start list does, in its window.
+machine_key_without_window :: proc "contextless" () -> ! {
+	switch machine_record_read() {
+	case .Absent:
+		system.log("unlock: no record of the machine key: the disk grants of principal 0 last until the machine stops, and the start policy of the boot image runs")
+		system.stop(0)
+	case .Unreadable:
+		completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
+		if !answered || system.Status(completion.kind) != .Ok {
+			system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
+		}
+		system.log("unlock: the record of the machine key cannot be read: the disk grants of principal 0 stay absent, and the start policy of the boot image runs")
+		system.stop(0)
+	case .Present:
+	}
+	sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
+	key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
+	completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
+	if !answered || system.Status(completion.kind) != .Ok {
+		system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
+		system.stop(0)
+	}
+	if !sealed_by_the_tpm {
+		system.log("unlock: the machine key opens with the machine passphrase: the window of unlock asks for it after the start policy starts")
+		system.stop(0)
+	}
+	if machine_tpm_unseal() != .Opened {
+		system.log("unlock: the TPM did not release the machine key before the start policy: the window of unlock asks for its recovery key after the start policy starts")
+	}
+	system.stop(0)
+}
+
 // The entry of unlock: it reads or creates the record of a named principal,
 // asks for the passphrase, and stops when the session starts.
 //
@@ -2572,6 +2617,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	switch start_mode {
+	case .Machine_Key_Without_Window:
+		machine_key_without_window()
 	case .Seal_Machine_Key:
 		// The root service refuses this mode with no TPM service, or with a
 		// record of the machine key; the store is read again here, as the
