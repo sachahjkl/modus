@@ -63,7 +63,11 @@ import "modus:support/system"
 Command :: enum u32 {
 	None           = 0, // Not a command.
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
-	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1), then the rectangle that changed: x, y, width, height (width 0: the whole surface)
+	// The pixels of the surface changed. values: the picture to show (0 or
+	// 1), then the rectangle that changed: x, y, width, height (width 0: the
+	// whole surface), then at PRESENT_KEY_SERIAL the serial of the newest
+	// key that the picture shows, or 0 (key_shown).
+	Present        = 2,
 	Pointer_Shape  = 3, // The pointer shape over this surface (docs/POINTERS.md). values: a number of pointer_pictures.Pointer_Shape
 	// The act names of the window: what its elements act on, so that the
 	// palette offers to go there (docs/INTERFACE.md, "4.2 Act names").
@@ -233,7 +237,7 @@ act_names_send :: proc "contextless" (window: ^Window, hashes: []u64) -> bool {
 // its ring, and as the kind of an `Event`.
 Event_Kind :: enum u32 {
 	None             = 0, // No event.
-	Key              = 1, // values: code, character, 1 when pressed, modifiers
+	Key              = 1, // values: code, character, 1 when pressed, modifiers, then at KEY_EVENT_SERIAL the serial of the key (0: the compositor does not measure it)
 	Pointer          = 2, // values: x, y in the surface (signed), buttons, wheel notches (signed: WHEEL_TOWARD_THE_END for each notch toward the end of the content)
 	// The settings of the owner changed (modus:contract/settings): next_event
 	// already gave the new font to src/library/support/graphics; the program draws its
@@ -277,14 +281,27 @@ Control :: enum u32 {
 	// (modus:contract/palette_table), both in the compositor.
 	Palette_Provider_Add    = 5,
 	Palette_Provider_Remove = 6, // root to compositor: the palette provider ended. values: the same two handles.
+	// root to compositor: the program of a window started. values: the
+	// handle of Client_Add, then the time of the system, in nanoseconds,
+	// when the root service called system.program_start: the start of the
+	// measure of the start of a window
+	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
+	Client_Started          = 7,
 }
 
 // The ring from the input service to the compositor.
 Input :: enum u32 {
 	None    = 0, // Not a command.
-	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers
+	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers, then at INPUT_KEY_READ_AT the time of the system, in nanoseconds, when the input service read the key
 	Pointer = 2, // values: x motion, y motion (signed), buttons, wheel notches (signed)
 }
+
+// The places of the values of the measure of a key to the screen, in the
+// records that carry it: the input record Key, the event Key and the
+// command Present. The values before them are the values of each record.
+INPUT_KEY_READ_AT :: 4
+KEY_EVENT_SERIAL :: 4
+PRESENT_KEY_SERIAL :: 5
 
 // The sign of the wheel notches of a pointer record and of an `Event`: a
 // notch toward the principal (the wheel turned down) moves a view toward
@@ -393,6 +410,7 @@ Event :: struct {
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
 	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
 	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
+	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A program that shows the key names it (key_shown).
 }
 
 // One window of a program: its ring to the compositor and its surface.
@@ -417,6 +435,7 @@ Window :: struct {
 	resize_asked_width, resize_asked_height: int,
 	copy_asked: bool, // A Copy_Asked came, and no answer went: copy_send or copy_decline answers it.
 	copy_serial: u64, // The serial of the newest Copy_Asked, which the answer names.
+	key_shown_serial: u64, // The newest key that the pictures of the window show (key_shown): each Present names it.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
@@ -551,7 +570,7 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 		return false
 	}
 	picture_end(window)
-	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
+	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0)), PRESENT_KEY_SERIAL = window.key_shown_serial}}
 	if !system.send(&window.ring.commands, record) {
 		return false
 	}
@@ -567,6 +586,16 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 		system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
 	}
 	return true
+}
+
+// key_shown says that the next picture of the window shows the key of a
+// serial (Event.key_serial) and each key before it: the program calls it
+// when the key changed what it draws, as the console when a character goes
+// into its line. Each Present names the newest serial, and the compositor
+// measures the time of those keys to the screen at the flip of that
+// picture. A serial of 0, or one older than the newest, changes nothing.
+key_shown :: proc "contextless" (window: ^Window, serial: u64) {
+	window.key_shown_serial = max(window.key_shown_serial, serial)
 }
 
 // resizable_set makes the window resizable within limits: the principal
@@ -898,6 +927,7 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		event.character = key_character_of(record.values[1])
 		event.pressed = record.values[2] != 0
 		event.modifiers = u32(record.values[3])
+		event.key_serial = record.values[KEY_EVENT_SERIAL]
 	case .Pointer:
 		event.x = int(i64(record.values[key_path.POINTER_RECORD_X]))
 		event.y = int(i64(record.values[key_path.POINTER_RECORD_Y]))

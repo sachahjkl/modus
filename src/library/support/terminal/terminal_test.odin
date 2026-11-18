@@ -85,6 +85,11 @@ input_of_record_refuses_a_kind_that_names_no_input :: proc(t: ^testing.T) {
 	given, ok := input_of_record(key_record)
 	testing.expect(t, ok)
 	testing.expect_value(t, given, Input_Record{kind = .Key, key = {code = 0x1C, character = 0, modifiers = 2}})
+	// The serial of the compositor comes back as it is, the largest too.
+	key_record.values[2] = max(u64)
+	given, ok = input_of_record(key_record)
+	testing.expect(t, ok)
+	testing.expect_value(t, given.key.serial, max(u64))
 	list_record := ring.Record{kind = u32(Input.List_First)}
 	list_record.values[0] = max(u64)
 	given, ok = input_of_record(list_record)

@@ -36,6 +36,46 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 
 Each value comes from the first measure below, on the test machine (one processor of the host under KVM, a host load of about 19): a clear and a present, median 268.8 us; a full frame of the compositor with 4 windows, median 953.9 us; a frame in its damage, median 86.2 us; a draw table of 339 records that fills the screen, with alpha, median 2043.0 us (`processor_frame: measure:` lines of the measure record). The heaviest part takes a quarter of the 8.3 ms of a frame at 120 Hz, so the processor profile keeps the resolution and the rate of the GPU profile. The two profiles then differ in the effects only: a blur costs a pass over each pixel under it, which no measure gives yet, so it stays out of the processor profile until a measure says it fits. A change that brings a part past 8.3 ms is a regression to read to its cause, and the table changes only from a new measure.
 
+### The three measures on the path of the system
+
+The compositor measures all three, with `system.nanoseconds()`, the clock of the system that the kernel keeps for each program: never a clock of the host. Each measure is one sentence of the log, and the tool keeps it in the measure record; no test reads a time.
+
+| Measure | From | To | Its line |
+|---|---|---|---|
+| The time of a frame | The read of the first record (of the root service, of the input service or of a window) of a turn that left damage, when no earlier record waits for a frame | The end of the copy into the screen page and of its page flip | Each 16 keys of the next measure, over the last 64 such frames |
+| The time of a key to the screen | The read of the byte of the key by the input service, which writes the time in its record | The flip of the frame that draws the Present that names the key | Each 16 keys that a window named |
+| The start of a window | The call of `system.program_start` by the root service, which loads the module and makes `Program_Start` | The flip of the first frame that draws the first Present of the window | One line for each window |
+
+```
+compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least <t> us, median <t> us, over <n> frames
+compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least <t> us, median <t> us, over <n> keys
+compositor: measure: the start of the window <name>, from Program_Start to its first frame: <t> us
+```
+
+**The tie of a key to its effect.** A frame shows a key only when the program says so. The path:
+
+1. The input service writes the time of the system in the record of the key.
+2. The compositor gives each key with a character a serial, sends it in the event `Key`, and keeps the serial, the window and the time in a table of 32 keys.
+3. The console marks the serial of each key that it puts in its edit line, and gives the newest one with the record `Edit` to its terminal.
+4. The terminal gives the serial of the edit line that its picture shows to the window layer (`display.key_shown`). Its next `Present` names it.
+5. The compositor ties each key of that window up to that serial, and measures each one at the flip of the frame that draws that Present.
+
+So the key is measured to the frame that shows its character, not to a frame that only came after it. One case ties late: a key that the console takes with no change of its line (a character of the history search) stays sent, and the next edit of the line ties it. Its time is then too long, never too short. A window that names no serial ties none. A serial that the compositor did not send to that window ties nothing. A key that stays untied leaves the table when 32 newer keys take its place: the table holds measures, not records of input.
+
+**The start of a window.** The root service writes the time before it calls `system.program_start`, and sends it to the compositor after the start, in the control record `Client_Started`, for the ring of the window. The time holds the load of the module, its hash and `Program_Start`, as the principal waits for them. A window whose first frame comes before the record has no line.
+
+**The profile at the start.** The compositor writes one line at its start: `compositor: the quality profile is the processor profile: the system drives no GPU device`. The system drives no GPU today, so the decision is one pure procedure of the private part `quality` of the compositor, which the GPU path changes.
+
+**The checks.** The measure run waits for the line of the profile, the start of the window `locks`, and a line of the frames and of the keys after the console takes 16 keys. After the machine, the tool checks their form only, as for `processor_frame`.
+
+**The refused forms.**
+
+- **The first flip after the key.** A frame of a clock, or of a window that ignores the key, would count as its effect, and the number would be too small.
+- **The time in the event, sent back by the program.** A program would then write the time that the compositor reads. With a serial, the compositor keeps the time.
+- **A line for each frame and each key.** The log would hold thousands of lines in a test; a line for each 16 keys holds the least and the median.
+- **The time of the `Client_Add` record.** It goes before the budget and the mappings are made, so it is not the start that the design names. A new control record says when the start ended.
+- **The profile in the root service.** The compositor owns the screen, and it is the part that a GPU changes first.
+
 ### The first measure: a frame at 1920 × 1080 on the processor
 
 **Its purpose.** It gives the numbers from which the thresholds above come: what a frame of the desktop at the reference screen costs on the processor, with no GPU, split into the parts that a later change moves one by one.
@@ -268,4 +308,6 @@ Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
 Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form.
 
-Left: the measure of a key to the screen and of the start of a window; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size, the clipboard and sound come next.
+Built: the three measures of the standard of quality on the path of the system (the time of a frame, of a key to the screen through the console, of the start of a window), the line of the quality profile at the start of the compositor, and the check of the form of their lines in the measure run.
+
+Left: the measures of the GPU profile, which wait for the GPU path; a key to the screen in a window other than the console, which must name its serial; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size, the clipboard and sound come next.

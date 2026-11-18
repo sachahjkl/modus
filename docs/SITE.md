@@ -702,6 +702,9 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | A full frame of the compositor at 1920 × 1080 with 4 windows, on the processor | `test_output_measure.txt` | `processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows` | yes |
 | A frame of the compositor at 1920 × 1080 in its damage, on the processor | `test_output_measure.txt` | `processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage` | yes |
 | The execution of a draw table of a desktop at 1920 × 1080, on the processor | `test_output_measure.txt` | `processor_frame: measure: the execution of a draw table of 1920x1080 with ` | yes |
+| The time of a frame of the compositor, from its first record to the flip (the last line) | `test_output_measure.txt` | `compositor: measure: the time of a frame, from the first record that the compositor reads to the flip` | yes |
+| The time of a key to the screen, through the console (the last line) | `test_output_measure.txt` | `compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it` | yes |
+| The start of the window of `locks` | `test_output_measure.txt` | `compositor: measure: the start of the window locks, from Program_Start to its first frame: ` | yes |
 | Blocks read in one second, 32 in flight | `test_output_measure_disk.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
 | 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` | yes |
 | The header and the checksum of a UDP datagram, in the program that sends it | `test_output_network.txt` | `net: the header and the checksum of a datagram` | yes |

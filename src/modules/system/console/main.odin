@@ -276,6 +276,8 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			case .Wait:
 				pending[pending_count] = pressed
 				pending_count += 1
+				// The edit line shows each key that waits.
+				key_serial_in_line = max(key_serial_in_line, pressed.serial)
 			case .Drop:
 				// The console must read each key to find an Escape that
 				// stops the call, and it has no place for this one.
@@ -394,6 +396,7 @@ key :: proc "contextless" (pressed: Key) {
 	case:
 		edit_key := edit_key_of(pressed)
 		if line_editor.line_key(&line, edit_key, pressed.character) {
+			key_serial_in_line = max(key_serial_in_line, pressed.serial)
 			completion_after_edit(edit_key)
 		}
 	}
@@ -459,6 +462,11 @@ shown_cursor: u64
 // before it takes a picture of the line.
 pasted_characters: u64
 paste_shown: bool
+// The serial of the newest key that changed the edit line
+// (terminal.Key.serial): each Edit record names it, and the terminal names
+// it with the picture that shows the line, for the measure of a key to the
+// screen (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
+key_serial_in_line: u64
 
 edit_show :: proc "contextless" () {
 	buffer: [terminal.RUN_LIMIT]u8
@@ -509,7 +517,7 @@ edit_show :: proc "contextless" () {
 			run_count := edit_runs(text, int(cursor), runs[:])
 			terminal.code_runs_send(&output, .Edit, 0, runs[:run_count])
 		}
-		terminal.edit(&output, text, cursor, style)
+		terminal.edit(&output, text, cursor, style, key_serial_in_line)
 		// The terminal has the line now: its next picture shows it.
 		if !running && pasted_characters > 0 {
 			pasted_characters = 0

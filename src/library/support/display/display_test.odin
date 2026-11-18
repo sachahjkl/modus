@@ -68,6 +68,29 @@ event_of_record_refuses_a_kind_that_names_no_event :: proc(t: ^testing.T) {
 	}
 }
 
+// The serial of a key reaches its event, the largest word too: it is a
+// number of the compositor that the program only names back. key_shown
+// keeps the newest serial: 0 and an older serial change nothing.
+@(test)
+key_serial_reaches_the_event_and_key_shown_keeps_the_newest :: proc(t: ^testing.T) {
+	key := ring.Record{kind = u32(Event_Kind.Key)}
+	key.values = {KEY_TAB, 'a', 1, 0, 0, 0, 0}
+	key.values[KEY_EVENT_SERIAL] = max(u64)
+	event, ok := event_of_record(key)
+	testing.expect(t, ok)
+	testing.expect_value(t, event.key_serial, max(u64))
+
+	window: Window
+	key_shown(&window, 0)
+	testing.expect_value(t, window.key_shown_serial, 0)
+	key_shown(&window, 5)
+	key_shown(&window, 3)
+	key_shown(&window, 0)
+	testing.expect_value(t, window.key_shown_serial, 5)
+	key_shown(&window, 6)
+	testing.expect_value(t, window.key_shown_serial, 6)
+}
+
 // The notches of the wheel are cut at the limit, on both sides: the edges
 // are the limit, one past it and the largest counts of the word.
 @(test)

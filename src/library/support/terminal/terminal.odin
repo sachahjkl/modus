@@ -129,8 +129,9 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           terminal shows it after the last line. A new one replaces the
 //           one before. tag: the count of bytes of its text. values[0]: a
 //           Style. values[1]: the place of the cursor, in bytes from the
-//           start of the text, or NO_CURSOR. No text and no cursor: the
-//           terminal shows no such line.
+//           start of the text, or NO_CURSOR. values[2]: the serial of the
+//           newest key (Key.serial) whose character the line shows, or 0.
+//           No text and no cursor: the terminal shows no such line.
 //   Hint    One line under the edit line, in the dim color: what the
 //           program says about the line (the signature of the call at the
 //           cursor). It has a long form, and a short form for a terminal
@@ -209,6 +210,8 @@ List_Icon :: enum u8 {
 //   Key     A key was pressed. tag: the code of the key
 //           (display.KEY_*). values[0]: its character, or 0. values[1]:
 //           the modifiers that were held (display.MODIFIER_*).
+//           values[2]: the serial that the compositor gave the key, or 0
+//           (display.Event.key_serial); an Edit record names it back.
 //           Control-R gives the character 'r' with MODIFIER_CONTROL.
 //   List_First  The pointer moved the scroll bar of the completion list.
 //           values[0]: the first row of the whole list that the scroll
@@ -237,6 +240,7 @@ Key :: struct {
 	code:      u32, // The code of the key (display.KEY_*).
 	character: rune, // Its character as a code point, or 0. A program that keeps it writes its UTF-8.
 	modifiers: u32, // The modifiers held (display.MODIFIER_*).
+	serial:    u64, // The serial that the compositor gave the key, or 0: a program that shows the key names it with edit.
 }
 
 // What a run of text is. The terminal chooses the color of each tone.
@@ -389,12 +393,15 @@ status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u
 }
 
 // edit sets the line that the program changes, with the place of its
-// cursor. edit(terminal, "") removes the line.
-edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}) {
+// cursor. edit(terminal, "") removes the line. key_serial: the newest key
+// (Key.serial) whose character the line shows, or 0; the terminal names it
+// with the picture that shows the line, for the measure of a key to the
+// screen.
+edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}, key_serial: u64 = 0) {
 	marked: [RUN_LIMIT]u8
 	part := record_text(text, &marked)
 	append(terminal, part)
-	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor}})
+	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor, 2 = key_serial}})
 	system.wake_reader(&terminal.ring.commands)
 }
 
@@ -652,7 +659,7 @@ input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Rec
 	case .None:
 		return {}, false
 	case .Key:
-		return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}}, true
+		return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1]), serial = record.values[2]}}, true
 	case .List_First:
 		// The number is the number of another program: the reader
 		// cuts it to its own list.
