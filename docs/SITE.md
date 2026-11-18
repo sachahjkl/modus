@@ -1863,8 +1863,8 @@ The site workflow (`glossary/project.md`), `.github/workflows/site.yml`, runs at
 | Job | Step | What it does |
 |---|---|---|
 | build | `actions/checkout@v7.0.1` | The repository at the pushed commit, with its `.git`: `HEAD` is the commit, which the foot of each page names |
-| build | `DeterminateSystems/nix-installer-action@v23` | Nix, for the flake and its FlakeHub inputs |
-| build | `DeterminateSystems/magic-nix-cache-action@v15` | The store paths of the development shell, kept in the cache of GitHub Actions between runs |
+| build | `nixbuild/nix-quick-install-action@v35` | Nix, for the flake and its FlakeHub inputs |
+| build | `nix-community/cache-nix-action@v7` | The store of the development shell, with the LLVM, the QEMU and the Odin that the flake builds, back from the cache of GitHub Actions; its key is the hash of `flake.nix` and `flake.lock` |
 | build | `nix develop -c modustool build` | The modules and `build/boot.image` |
 | build | `nix develop -c modustool site` | The site in `build/site`; a failed check stops the run, and the site of the last run stays online |
 | build | `actions/upload-pages-artifact@v5.0.0` | `build/site` as the artifact of GitHub Pages |
