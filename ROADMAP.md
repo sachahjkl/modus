@@ -6,7 +6,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **Paths in the draw record.** A path of lines and quadratic curves is filled and stroked with antialiased edges, and the line of today becomes a stroke. A window then draws an icon or a chart from outlines in place of rectangles. [Design](src/md/api/draw_table.md)
 - **A clip stack in the draw record.** A clip is pushed and popped, so an element that clips inside a clipped area keeps the outer clip. A list inside a scrolled card then needs no intersection by hand. [Design](src/md/api/draw_table.md)
 - **The text grid measured against text runs.** The terminal draws a full grid both ways through the drawing module, and the kind `Text_Grid` stays only if the runs cost more than 1 ms more for a frame or more than 4 096 records. The format then has one text form, or a measured reason for two. [Design](src/md/api/draw_table.md)
 - **The counted kernel.** A test kernel counts the edges of the kernel code that each operation sequence reaches, which only the tool reads, and the engine keeps the sequences that reach new code, which become the reach inputs of the corpus. The release refuses it by its hash, its signature and its bytes. [Design](src/md/infrastructure/kernel_fuzzing.md)

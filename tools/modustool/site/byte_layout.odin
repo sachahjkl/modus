@@ -119,7 +119,8 @@ byte_layout_draw_record_sources :: proc() -> []Byte_Layout_Source {
 		{key = "draw_record.Text_Fields", file = file, declaration = "Text_Fields", info = type_info_of(draw_record.Text_Fields), what = "the fields of a Text"},
 		{key = "draw_record.Picture_Fields", file = file, declaration = "Picture_Fields", info = type_info_of(draw_record.Picture_Fields), what = "the fields of a Picture"},
 		{key = "draw_record.Text_Grid_Fields", file = file, declaration = "Text_Grid_Fields", info = type_info_of(draw_record.Text_Grid_Fields), what = "the fields of a Text_Grid"},
-		{key = "draw_record.Line_Fields", file = file, declaration = "Line_Fields", info = type_info_of(draw_record.Line_Fields), what = "the fields of a Line"},
+		{key = "draw_record.Path_Fields", file = file, declaration = "Path_Fields", info = type_info_of(draw_record.Path_Fields), what = "the fields of a Path"},
+		{key = "draw_record.Path_Point_Record", file = file, declaration = "Path_Point_Record", info = type_info_of(draw_record.Path_Point_Record), what = "one point of a path in the text table"},
 	}
 	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
 	copy(list, sources[:])

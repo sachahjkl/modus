@@ -284,7 +284,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each process that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_15` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_15` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 15 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
+It is the first library module. A window calls `damage_of_draw_table_16` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_16` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 16 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each process, the drawing in a module".
 
@@ -292,7 +292,7 @@ Do not use: renderer module, graphics library, render service.
 
 ### Draw record
 
-A draw record is one thing to draw, in 48 bytes: a rectangle or a pattern of rectangles, a gradient, a run of text, a clip, a picture, a text grid or a line, with its box and the fields of its kind.
+A draw record is one thing to draw, in 48 bytes: a rectangle or a pattern of rectangles, a gradient, a run of text, a clip, a picture, a text grid or a path, with its box and the fields of its kind.
 
 Records of one fixed size make a frame plain data: a table that can be compared, drawn again in a part, or tested. A record is a header (its kind, its element identity, its box in 1/64 pixel) and 24 bytes of the fields of its kind only. The contract package `draw_record` holds the form, its version and its one border, `draw_record.read`, which refuses a byte past its bound. A draw record is not a command to a graphics processor: it is drawn on the processor, in the memory of the process.
 
@@ -342,7 +342,7 @@ Do not use: antialiasing value, edge alpha, opacity.
 
 ### Draw table
 
-A draw table is the draw records of one frame of a window, the bytes of their texts and the cells of their text grids, and the picture memories that they name, in the memory of the process.
+A draw table is the draw records of one frame of a window, the bytes of their texts, the cells of their text grids and the points of their paths, and the picture memories that they name, in the memory of the process.
 
 It is the one 2D interface of the system: each window and the compositor draw through it, and a GPU later draws the same table through WebGPU. The process owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, to find the damage by difference. A full table sets `full`; a record that names memory outside the table sets `refused`. A draw table is not a tree: two tables compare record by record at the same index.
 
@@ -352,9 +352,9 @@ Do not use: display list, command buffer, render tree.
 
 ### Byte table
 
-The byte table is the bytes of a draw table that its records name by an offset: the UTF-8 of the texts, the cells of the text grids and, in the rationalised form, the points of the paths.
+The byte table is the bytes of a draw table that its records name by an offset: the UTF-8 of the texts, the cells of the text grids and the points of the paths.
 
-A record holds no address, so its variable part goes here, and the record keeps a fixed size. The difference ignores the offset of a record and compares the bytes that it names. Today it is the field `text` of `Draw_Table`, the text table; the rationalised form names it `bytes`. A byte table is not a heap: it is filled in the order of the records and emptied at each frame.
+A record holds no address, so its variable part goes here, and the record keeps a fixed size. The difference ignores the offset of a record and compares the bytes that it names. It is the field `text` of `Draw_Table`, the text table. A byte table is not a heap: it is filled in the order of the records and emptied at each frame.
 
 The design: `src/md/api/draw_table.md`, "The byte table".
 
@@ -402,15 +402,55 @@ The design: `src/md/api/picture.md`.
 
 Do not use: picture buffer, pixel pool.
 
-### Line record
+### Path record
 
-A line record is a draw record of a straight line between two points, with a thickness of 1 to 32 pixels and one color.
+A path record is a draw record of lines and quadratic curves, from points in the byte table, that is filled, then stroked, with antialiased edges, cut to its box.
 
-A line record draws the lines at an angle that the design rules allow, sparingly: a folded gap, a chart. `draw_line(table, from_x, from_y, to_x, to_y, thickness, color)` writes it. The execution in a damage rectangle draws the same pixels as a whole frame, and the damage is the rectangle that holds the whole path. A line record has no rounded ends, no antialiasing and no dashes. It is not a path with curves.
+A window draws an icon, an arrow or a chart from outlines with it: `draw_path(table, points, fill, stroke, stroke_width)`. A line is a path record of one segment, stroked: `draw_line` writes it. The coverage of each pixel is its exact area, so the pixels are the same in each damage rectangle. A path record has at most 1 024 points. It is not a clip, and it has no cubic curve, no dash and no round join.
 
-The design: `docs/INTERFACE.md`, "2.5 Line".
+The design: `src/md/api/draw_table.md`, "The kinds".
 
-Do not use: stroke, path, polyline.
+Do not use: line record, shape record, vector record, polyline.
+
+### Path point
+
+A path point is one point of a path record in the byte table, 12 bytes: the word of its command, then its x and its y in 1/64 pixel of the surface.
+
+The command is a `Path_Command`: `Move` starts a subpath, `Line` adds a segment, `Curve_Control` is the control point of a quadratic curve whose end is the next point, `Close` closes the subpath. The border of the points, `draw_record.path_points_read`, loads each point once and refuses a word that names no command, a point past the coordinate limit and an order that the contract forbids. A path point is not a pixel: it lies inside a pixel.
+
+The design: `src/md/api/draw_table.md`, "The kinds".
+
+Do not use: vertex, control vertex.
+
+### Subpath
+
+A subpath is the part of a path record from one `Move` to the next one, or to the end: one outline, open or closed.
+
+The fill closes each subpath. The stroke closes only a subpath that ends with a `Close`: its last segment goes back to its `Move`, and its two ends are joins. Example: the folded gap is one path record of two subpaths, its two lines. A subpath is not a path record: one record holds many subpaths.
+
+The design: `src/md/api/draw_table.md`, "The kinds".
+
+Do not use: sub-path, path part.
+
+### Fill rule
+
+The fill rule says which pixels are inside a path record: the nonzero rule, by which a place is inside when the outline goes round it a number of times other than 0.
+
+Two subpaths in one direction that overlap fill their overlap once; two in the two directions leave a hole there. A pixel inside is covered whole, so a translucent fill blends once; a pixel on an edge is covered by its part inside. The even-odd rule is not built: no process needs it yet.
+
+The design: `src/md/api/draw_table.md`, "The kinds".
+
+Do not use: winding mode, fill mode.
+
+### Stroke
+
+A stroke is the band of a width along each segment of a path record, with butt ends and a bevel join between two segments, drawn after the fill in its own color.
+
+Its width is in 1/64 pixel, from 1 unit to 64 pixels; a path with no stroke has the stroke color 0 and the width 0. A pixel covered by two segments of one stroke blends once. A line of `draw_line` is a stroke whose two points go half the thickness past its two ends. A stroke is not an outline of a rectangle: `draw_outline` writes four rectangles.
+
+The design: `src/md/api/draw_table.md`, "The kinds".
+
+Do not use: line width, pen.
 
 ### Element
 
