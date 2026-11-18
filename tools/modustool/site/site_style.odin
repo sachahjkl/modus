@@ -595,12 +595,13 @@ figcaption { padding-top: 8px; font-size: 14px; }
 .news-body.with-picture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 384px); gap: 16px; align-items: start; }
 .news-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .news-card figure { margin-bottom: 8px; padding: 4px; }
-/* The film of an entry: under the text, over the width of the card, and
-   at most 1024 pixels wide, the width of the screen of the system: one
-   pixel of the screen is never wider than one pixel of the page. Its width
-   and its height in the page give its ratio, so the page keeps its room.
-   On a narrow screen it takes the width of the column. */
-.news-film { margin-top: 16px; max-width: 1024px; }
+/* The film of an entry: under the text, over the width of the card. Its
+   largest width is the width of the reference screen, in the rules of the
+   gallery (site_gallery_rules): one pixel of the screen is never wider than
+   one pixel of the page. Its width and its height in the page give its
+   ratio, so the page keeps its room. On a narrow screen it takes the width
+   of the column. */
+.news-film { margin-top: 16px; }
 .news-film video { display: block; width: 100%; height: auto; background: var(--track); }
 /* The link of the caption is a word of its line, not a block as the link
    around a picture is. */

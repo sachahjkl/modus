@@ -148,7 +148,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2385, processes = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
-WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.
+WIDTH :: 1000 // The window and its borders fit the window bound of 1024 columns.
 HEIGHT :: 604
 ROWS_IN_THE_FIRST_COLUMN :: 18
 COLUMN_GAP :: 16

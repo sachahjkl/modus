@@ -20,7 +20,8 @@ SITE_FILM_FOLDER :: "films"
 SITE_FILM_TYPE :: "video/webm"
 // The codec of a film, as a browser reads it before it asks for the file:
 // AV1, the main profile (0), the level 5.0 (12, the first level that holds
-// a picture of 2048 by 1536, twice the screen of the system), the main
+// a picture of 3840 by 2160, twice the reference screen of the system, and
+// of 2048 by 1536, twice a screen of 1024 by 768), the main
 // tier (M), 8 bits a channel. A browser that does not play it never asks
 // for the file.
 SITE_FILM_CODEC :: "av01.0.12M.08"

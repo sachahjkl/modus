@@ -764,13 +764,43 @@ Do not use: performance mode, power profile, quality setting.
 
 ### Reference screen
 
-The reference screen is the screen for which the desktop is laid out and on which the test machines take their pictures: 1920 × 1080, with a scale factor from 1.25 to 2.
+The reference screen is the screen for which the desktop is laid out and on which the test machines take their pictures: 1920 × 1080.
 
-A layout is made in logical pixels, on the grid of 8; the scale factor turns them into pixels of the screen. The screenshots, the sizes of the windows, the glyph caches and the pointers follow the reference screen. It was 1024 × 768 at scale 1 before.
+The contract package `reference_screen` holds its size: the boot program asks the firmware for that mode, and the tool checks the screenshots and the video memory of its machines against it. The desktop draws on it at scale 1: a logical pixel is a pixel of the screen. A firmware with no mode of this size gets the largest mode inside it, and the boot program names the mode on one line.
 
-The design: `src/md/features/desktop_to_browser.md`.
+The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
 Do not use: default resolution, target screen.
+
+### Logical pixel
+
+A logical pixel is the unit in which a process places and sizes what it draws; the scale factor turns it into pixels of the screen.
+
+The grid of 8 is 8 logical pixels, and a window states its size in logical pixels. At scale 1 a logical pixel is one pixel of the screen. At a scale of 1.25 the grid is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a picture, which keeps its own pixels.
+
+The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
+
+Do not use: device-independent pixel, virtual pixel.
+
+### Scale factor
+
+The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
+
+It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps the grid of 8 on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. It is not built: the desktop draws at scale 1.
+
+The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
+
+Do not use: interface zoom, DPI setting, scaling percentage.
+
+### Window bound
+
+The window bound is the largest size of a window with its frame: 1024 × 768 under the bar, so at most 1000 × 708 for the surface.
+
+It keeps each window inside a screen of 1024 × 768, and inside the logical screen of the reference screen at each scale up to 1.375. A window larger than the bound is a fault of its layout. The range of the scale factor sets the bound: a scale above 1.375 needs a smaller bound or resizable windows.
+
+The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
+
+Do not use: maximum window size.
 
 ### WebGPU subset
 

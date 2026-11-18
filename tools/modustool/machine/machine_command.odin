@@ -6,8 +6,10 @@ package machine
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modus:contract/reference_screen"
 import "modus:contract/remote"
 import "modus:contract/timed_stream"
+import "modus:support/bochs_display"
 import "modus:support/pci"
 import "modustool:build"
 import "modustool:foundation"
@@ -108,6 +110,16 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 // The memory of a test machine, in MiB. Below the hole of PCI of q35, so an
 // offset in the memory file of a machine is a physical address.
 MACHINE_MEMORY_MIB :: 1024
+
+// The video memory of the standard VGA of a test machine, in MiB: the
+// amount of QEMU with no option, stated so that the check below reads it.
+// The machine passes no option for it: with `-global VGA.vgamem_mb`, the
+// firmware gives no graphics output, and the boot program finds no screen.
+// The compositor flips between two screen pages of the reference screen in
+// it (src/md/infrastructure/whole_frame.md); a screen whose two pages do
+// not fit stops the build of the tool, not a machine test.
+MACHINE_VIDEO_MEMORY_MIB :: 16
+#assert(bochs_display.PAGE_COUNT * reference_screen.WIDTH * reference_screen.HEIGHT * bochs_display.BITS_PER_PIXEL / 8 <= MACHINE_VIDEO_MEMORY_MIB << 20)
 
 // memory_file: "", or a file of the host that holds the memory of the
 // machine, which the tool reads and writes (operation_sequences.odin); such
