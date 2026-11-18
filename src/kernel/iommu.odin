@@ -282,26 +282,38 @@ domain_batch :: proc "contextless" (domain: u16, context_changed: bool, context_
 // invalidate_unit gives a batch to the queue of a unit, then a wait, and
 // waits until the unit wrote the number of the wait: the unit then did each
 // descriptor before it, and no device of the unit uses an entry that the
-// kernel cleared. The caller holds the frame lock, or runs at the start:
-// one writer of the queue at a time. Each batch waits for its end, so the
-// queue holds one batch at most and never fills. A unit that does not
-// reach the wait, or that refuses a descriptor, stops the machine: a page
-// that a device can still reach must not become free.
+// kernel cleared. The caller holds the frame lock: one writer of the queue
+// at a time. Each batch waits for its end, so the queue holds one batch at
+// most and never fills. A unit that does not reach the wait, or that
+// refuses a descriptor, stops the machine: a page that a device can still
+// reach must not become free.
 @(private)
 invalidate_unit :: proc "contextless" (unit: ^Iommu_Unit, batch: Descriptor_Batch) {
-	done: bool
+	if !invalidate_unit_at_start(unit, batch) {
+		fault_report_begin()
+		log("kernel: the IOMMU did not finish an invalidation, or refused one: the machine stops")
+		machine_stop(.Fault)
+	}
+}
+
+// invalidate_unit_at_start is invalidate_unit with no stop: false, the unit
+// did not finish the batch. Only the start of the units calls it. The
+// start runs before the root service, so no device service holds memory,
+// and no page that a device reached becomes free: the start turns every
+// unit off and the machine runs with no IOMMU (src/md/infrastructure/iommu.md).
+@(private)
+invalidate_unit_at_start :: proc "contextless" (unit: ^Iommu_Unit, batch: Descriptor_Batch) -> (done: bool) {
 	switch iommu_vendor {
 	case .Intel:
 		done = invalidation_queue_run(unit, batch)
 	case .Amd:
 		done = amd_commands_run(unit, batch)
 	}
-	if !done {
-		fault_report_begin()
-		log("kernel: the IOMMU did not finish an invalidation, or refused one: the machine stops")
-		machine_stop(.Fault)
-	}
+	return done
 }
+
+// The line of a unit that did not finish an invalidation at the start.
+IOMMU_FIRST_INVALIDATION_LINE :: "kernel: no IOMMU in use: a unit did not finish its first invalidation; each device reaches all memory"
 
 // invalidation_queue_run gives a batch of descriptors to the queue of
 // invalidations of a unit of VT-d, then a wait descriptor, and waits for
@@ -1130,16 +1142,17 @@ remapping_units_start :: proc "contextless" () -> (started: bool, round_trip_cyc
 			register_write_64(unit, iommu.REGISTER_ROOT_TABLE, unit.root)
 			unit_started = global_set(unit, iommu.GLOBAL_ROOT_TABLE)
 		}
+		invalidated := true
 		if unit_started {
 			global: Descriptor_Batch
 			batch_add(&global, iommu.descriptor_context(0, true))
 			batch_add(&global, iommu.descriptor_iotlb(0, true))
 			before := cycles_now()
-			invalidate_unit(unit, global)
+			invalidated = invalidate_unit_at_start(unit, global)
 			if index == 0 {
 				round_trip_cycles = cycles_now() - before
 			}
-			unit_started = global_set(unit, iommu.GLOBAL_TRANSLATION)
+			unit_started = invalidated && global_set(unit, iommu.GLOBAL_TRANSLATION)
 		}
 		if !unit_started {
 			// A machine with a part of its units on would let a device of
@@ -1147,7 +1160,11 @@ remapping_units_start :: proc "contextless" () -> (started: bool, round_trip_cyc
 			for &before in iommu_units[:index + 1] {
 				translation_off(&before)
 			}
-			log("kernel: no IOMMU in use: a unit did not take its queue or its root table, or did not turn translation on; each device reaches all memory")
+			if !invalidated {
+				log(IOMMU_FIRST_INVALIDATION_LINE)
+			} else {
+				log("kernel: no IOMMU in use: a unit did not take its queue or its root table, or did not turn translation on; each device reaches all memory")
+			}
 			return false, 0
 		}
 	}
@@ -1167,15 +1184,28 @@ interrupt_remapping_start :: proc "contextless" () {
 		unit := &iommu_units[index]
 		register_write_64(unit, iommu.REGISTER_INTERRUPT_TABLE, iommu.interrupt_table_register(iommu_interrupt_table))
 		started := global_set(unit, iommu.GLOBAL_INTERRUPT_TABLE)
+		invalidated := true
 		if started {
 			global: Descriptor_Batch
 			batch_add(&global, iommu.descriptor_interrupt_entry(0, true))
-			invalidate_unit(unit, global)
-			started = global_set(unit, iommu.GLOBAL_INTERRUPT_REMAPPING)
+			invalidated = invalidate_unit_at_start(unit, global)
+			started = invalidated && global_set(unit, iommu.GLOBAL_INTERRUPT_REMAPPING)
 		}
 		if !started {
 			for &before in iommu_units[:index + 1] {
 				interrupt_remapping_off(&before)
+			}
+			if !invalidated {
+				// The queue of this unit does not finish: each later
+				// invalidation would stop the machine. Translation is on,
+				// but the root service has not started: no device service
+				// holds memory, so every unit goes off.
+				for &each_unit in iommu_units[:iommu_unit_count] {
+					translation_off(&each_unit)
+				}
+				iommu_in_use = false
+				log(IOMMU_FIRST_INVALIDATION_LINE)
+				return
 			}
 			log("kernel: IOMMU: no interrupt remapping: a unit did not take its interrupt table or did not turn remapping on; a device can send any interrupt")
 			return
