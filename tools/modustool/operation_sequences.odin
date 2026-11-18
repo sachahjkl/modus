@@ -556,7 +556,7 @@ operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^
 	// change. The forms once said that a budget of 0 is not read.
 	{
 		commit := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Memory_Commit)}
-		commit.arguments[0] = {source = .Machine}
+		commit.arguments[0] = {source = .Value, value = 0}
 		commit.arguments[3] = {source = .Value, value = max(u64)}
 		decommit := commit
 		decommit.arguments[4] = {source = .Value, value = transmute(u64)operation.Commit_Flags{.Decommit}}
@@ -577,8 +577,10 @@ operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^
 		control.arguments[5] = {source = .Area_Address, area = 0}
 		steps := [?]operation_sequence.Sequence_Step{budget_read, control, budget_read}
 		add(&list, operation_seed_sequence(steps[:]), allocator)
-		// The diagnosis has no record of its own for this state: Refused
-		// with the status.
+		// The diagnosis of the kernel explains no state of Thread_Control
+		// yet, so the record is Refused. That is a gap, not the contract:
+		// the roadmap entry on the records of the states of Thread_Control
+		// changes this expectation to a State record.
 		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Bad_State, record_kind = .Refused})
 	}
 	// A budget and a program from the budget of the runner, with their
