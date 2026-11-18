@@ -58,6 +58,9 @@ READ_REGION_CAPACITY :: 8 // The places of read regions of one client.
 SERVICE_RING :: 0
 // The role of the frame ring in the context of a client of a frame service.
 GRANT_RING :: 6
+// The role of the frame service in the context of its client: the process,
+// with the right Read. Its stop ends a wait of the client for a completion.
+GRANT_SERVICE :: 10
 
 // A command of a client, as the kind of a command record of the frame ring.
 Command :: enum u32 {

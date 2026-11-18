@@ -113,7 +113,13 @@ MACHINE_MEMORY_MIB :: 1024
 // machine, which the tool reads and writes (operation_sequences.odin); such
 // a machine has one processor, so that a sequence gives the same answers at
 // each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "") -> (command: []string, ok: bool) {
+// no_network_device leaves the network device out: the root service then
+// starts no frame service (src/md/features/missing_hardware.md).
+// data_disk_without_ioevent gives the data disk no ioevent file: QEMU then
+// takes each request in the thread of its notify, and does not drain the
+// requests of the disk when the root service turns its bus master off, so a
+// request that the disk never answers stops no processor (silent_disk.odin).
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", no_network_device := false, data_disk_without_ioevent := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -236,10 +242,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// (web_host.odin, frames_of_the_fetch_report).
 		append(&list, "-object", strings.concatenate({"filter-dump,id=frames,netdev=network,file=", frames_of_user_network_file(test_output)}, context.temp_allocator))
 	}
+	if !no_network_device {
+		append(&list, "-device", fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu))
+	}
 	append(
 		&list,
-		"-device",
-		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
@@ -264,7 +271,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
 		"-device",
-		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s", pci.DATA_DISK_DEVICE, virtio_iommu),
+		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s%s", pci.DATA_DISK_DEVICE, data_disk_without_ioevent ? ",ioeventfd=off" : "", virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=none,id=scratch,format=raw,file=", scratch_disk}, context.temp_allocator),
 	)

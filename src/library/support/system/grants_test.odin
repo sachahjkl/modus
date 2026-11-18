@@ -41,6 +41,7 @@ grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 		{GRANT_NETWORK_CONTROL, GRANT_SETTINGS_PAGE},
 		{GRANT_TPM_SERVICE, GRANT_CLIENT_TABLE},
 		{GRANT_DATAGRAM_REGION, GRANT_TPM_REGION},
+		{GRANT_REPLACEMENTS, GRANT_DEVICE_SERVICE},
 		{op.CONTEXT_LOG, op.CONTEXT_LOG},
 	}
 	for pair in shared {
@@ -218,6 +219,8 @@ a_role_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		{{.Network, .Tpm}, GRANT_DATAGRAM_RING},
 		{{.Settings, .Remote_Clients}, GRANT_SETTINGS_PAGE},
 		{{.Terminal, .Log_Records}, GRANT_LOG_RECORDS},
+		{{.Replacements, .Data_Disk}, GRANT_DEVICE_SERVICE},
+		{{.Replacements, .Network_Device}, GRANT_DEVICE_SERVICE},
 	}
 	for case_of in meeting {
 		slot, twice := role_slot_taken_twice(case_of.role)

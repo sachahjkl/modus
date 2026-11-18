@@ -53,7 +53,8 @@
 // **Grants**, as the root service gives them:
 //
 // - **Network_Device**: the frame ring of the frame service of the network
-//   device, and a control ring from the root service. The root service
+//   device, the frame service with the right Read, and a control ring from
+//   the root service. The root service
 //   sends on the control ring the endpoint of each process that it starts
 //   with the grant **Network**, with the grant of that endpoint.
 //
@@ -76,6 +77,7 @@
 // (docs/NETWORK.md, "The listen grant of UDP").
 package network_service
 
+import "base:intrinsics"
 import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:contract/errors"
@@ -202,6 +204,12 @@ Endpoint :: struct {
 frames: ring.Ring
 frames_memory: system.Handle
 frames_changed: bool // A command was written in the frame ring: wake the frame service.
+// The frame service, with the right Read: its stop is an event of this
+// process (frame.GRANT_SERVICE). The loop reads its state again only after
+// an event, so a pass costs no kernel call while it runs.
+frame_service: system.Handle
+frame_service_events: u32
+frame_service_state_read: bool // Until the first read in the loop, the state is not known.
 region: []u8
 free_sends: [PLACE_COUNT - RECEIVE_PLACES]int
 free_send_count: int
@@ -1152,18 +1160,54 @@ data_passes_log :: proc "contextless" (endpoint: ^Endpoint) {
 	system.log("network: the endpoint of ", name, ", ", protocol, ": this service read each payload byte one time on receive, for the copy, and on send only the ", u64(SEND_HEADER_COPIED), " bytes of each header that it checks, and ", left.data_bytes_read, " bytes of the data; it computed no checksum", right ? ": as it must" : " (WRONG)")
 }
 
+// frame_service_stopped_fail writes the line of a frame service that
+// stopped, and stops this service: no frame moves, and the root service
+// then refuses each process that needs an endpoint.
+frame_service_stopped_fail :: proc "contextless" () -> ! {
+	fail("the frame service stopped: the network device moves no frame, and this service stops")
+}
+
 // call sends one command to the frame service and waits for its completion.
-// Only at the start: no other request is in flight.
+// Only at the start: no other request is in flight. The wait ends at the
+// stop of the frame service, or at system.ANSWER_BOUND_MILLISECONDS, and
+// this service then stops with its line.
 call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {}) -> ring.Record {
 	frame_command(command, tag, values)
 	system.wake_reader(&frames.commands)
+	deadline := system.answer_deadline(system.time())
 	for {
+		wait := system.wait_begin() // The stop of the frame service is an event.
 		if record, ok := system.receive(&frames.completions); ok && record.tag == tag {
 			return record
 		}
-		wait: system.Wait
+		state, _ := system.process_state(frame_service)
+		switch system.answer_wait_of(system.time(), deadline, state) {
+		case .Waits:
+		case .Stopped:
+			frame_service_stopped_fail()
+		case .Silent:
+			system.log_in("network", .Error, "network: the frame service did not answer the command ", frame.command_name(i64(command)), " in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: this service stops")
+			system.stop(1)
+		}
 		system.wait_records(&wait, &frames.completions)
-		system.wait_end(&wait)
+		system.wait_end(&wait, deadline)
+	}
+}
+
+// frame_service_check stops this service when the frame service stopped.
+// It reads the state only after an event of this process: the stop of a
+// process that it holds is one, so no stop is missed and a pass with no
+// event makes no kernel call. The word is read before the state: a stop
+// after the read changes it again.
+frame_service_check :: proc "contextless" () {
+	events := intrinsics.volatile_load(system.events())
+	if frame_service_state_read && events == frame_service_events {
+		return
+	}
+	frame_service_events = events
+	frame_service_state_read = true
+	if state, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+		frame_service_stopped_fail()
 	}
 }
 
@@ -1189,6 +1233,14 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 // completion slows only itself. The loop then wakes the rings that changed,
 // and waits for a record or for the deadline of the oldest request that
 // waits for an answer (an ARP request, an echo).
+//
+// **The stop of the frame service.** This service holds the frame service
+// with the right Read, so its stop is an event. At the start, at that stop
+// or when the frame service does not answer a command in
+// system.ANSWER_BOUND_MILLISECONDS, and in the loop at that stop, it writes
+// "network: the frame service stopped: ..." (or the command that had no
+// answer) and stops with the code 1. The root service then refuses each
+// process that needs an endpoint (src/md/features/missing_hardware.md).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	frames_memory = ctx.handles[frame.GRANT_RING]
@@ -1196,6 +1248,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	status: system.Status
 	if frames, status = system.ring_open(frames_memory); status != .Ok {
 		fail("no frame ring")
+	}
+	frame_service = ctx.handles[frame.GRANT_SERVICE]
+	if kind, rights, _ := system.handle_state(frame_service); kind != .Process || .Read not_in rights {
+		fail("no handle of the frame service with the right Read: a wait for the device would have no end")
 	}
 	if control, status = system.ring_open(control_memory); status != .Ok {
 		fail("no control ring")
@@ -1213,6 +1269,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	give_status := system.Status.Bad_Handle
 	for attempt := 0; attempt < 2000 && give_status != .Ok; attempt += 1 {
 		if given, give_status = system.give(frames_memory, memory, {.Read, .Write}); give_status != .Ok {
+			if state, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+				frame_service_stopped_fail()
+			}
 			system.sleep(system.time() + 1)
 		}
 	}
@@ -1256,6 +1315,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	for {
 		wait := system.wait_begin()
+		// After wait_begin: a stop after this check ends the wait of this
+		// pass, and the next pass finds it.
+		frame_service_check()
 		now := system.time()
 		// The frame service: frames that arrived, frames sent, statistics.
 		for record in system.receive(&frames.completions) {

@@ -236,6 +236,12 @@ start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if work.device_ring != 0 {
 		start_grant_put(work, .Device_Ring, {work.device_ring, {.Read, .Write}})
 	}
+	// The device service with Read: its stop is an event of the client, so
+	// a client that waits for its answer learns of the stop at once
+	// (src/md/features/missing_hardware.md).
+	if work.driver != nil && work.driver.process != 0 {
+		start_grant_put(work, .Device_Service, {work.driver.process, {.Read}})
+	}
 	start_values_of_the_name(work)
 	if .Tpm in work.role.grants {
 		tpm_grants_give(work)

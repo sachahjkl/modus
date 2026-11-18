@@ -9,8 +9,8 @@
 // **Grants**, as the root service gives them:
 //
 // - **Serve**: each process with the grant **Store** reaches its private store through a connection.
-// - **Data_Disk**: the block service of the data disk and its block ring. The storage service is the one client of
-//   that disk: no other process reads its blocks.
+// - **Data_Disk**: the block service of the data disk, with the right Read, and its block ring. The storage service is
+//   the one client of that disk: no other process reads its blocks.
 //
 // **Start**: no line starts it. The root service starts it when a process asks for a connection to `storage`, or
 // before a process with a private store. From the console: `connect("storage")`, then for example
@@ -1189,6 +1189,13 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 //
 // Then one loop runs for ever. It waits on the service ring and on each share, and runs the calls that wait. When
 // no call waits, it frees one step of a tree that a removal left: a large removal never makes a caller wait.
+//
+// **A disk that stops to answer.** Each wait for the block service ends when that service stops, or after
+// `system.ANSWER_BOUND_MILLISECONDS` with no completion; a completion with the record `No_Answer` of the device ends
+// it too. The disk is then silent: the service writes "storage: the disk does not answer: <the cause>; the service
+// reads and changes nothing on the disk until its next start, and refuses each call that needs the disk", sends no
+// request to the block service again, and answers each call that needs a block with `Device`. Before the open is
+// done, it stops with the code 1 instead (src/md/features/missing_hardware.md).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
@@ -1216,6 +1223,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_in("storage", .Error, "storage: no block ring")
 		system.stop(1)
 	}
+	block_service = ctx.handles[block.GRANT_SERVICE]
+	if kind, rights, _ := system.handle_state(block_service); kind != .Process || .Read not_in rights {
+		system.log_in("storage", .Error, "storage: no handle of the block service with the right Read: a wait for the disk would have no end")
+		system.stop(1)
+	}
 	memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
@@ -1232,13 +1244,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if give_status != .Ok || block.Status(command(.Attach, {0 = u64(given)}).kind) != .Ok {
-		system.log_in("storage", .Error, "storage: the block service refused the data region")
+		// A silent disk wrote its own line: the block service stopped
+		// before it served, or did not answer.
+		if !disk_silent {
+			system.log_in("storage", .Error, "storage: the block service refused the data region")
+		}
 		system.stop(1)
 	}
 	info := command(.Info)
+	if disk_silent {
+		system.stop(1)
+	}
 	start := system.time()
 	mounted := mount(info.values[0])
 	elapsed := system.time() - start
+	// The open read nothing that it can trust: it serves nothing, and the
+	// line of the silence says why.
+	if disk_silent {
+		system.stop(1)
+	}
 	switch {
 	case mounted.failed:
 		system.log_in("storage", .Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")

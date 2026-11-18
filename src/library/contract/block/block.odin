@@ -39,6 +39,9 @@ RING_CAPACITY :: 256 // The capacity of the block ring.
 SERVICE_RING :: 0
 // The role of the block ring in the context of a client of a block service.
 GRANT_RING :: 6
+// The role of the block service in the context of its client: the process,
+// with the right Read. Its stop ends a wait of the client for a completion.
+GRANT_SERVICE :: 10
 
 // A command of a client, as the kind of a command record of the block ring.
 Command :: enum u32 {

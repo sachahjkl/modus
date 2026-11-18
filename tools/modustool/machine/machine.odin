@@ -127,6 +127,7 @@ Step_Kind :: enum {
 	// the cut (power_loss.odin).
 	Power_Loss_Arm,
 	Power_Loss, // Wait until the disk of the last Power_Loss_Arm loses its power: it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
+	Disk_Disconnect, // The disk that the tool serves closes its connection: QEMU fails each request that waits for an answer, so a machine whose disk went silent can end (silent_disk.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
@@ -4070,6 +4071,8 @@ Machine_Options :: struct {
 	// The memory of the machine in this file, and one processor: the
 	// machine of the operation sequences (operation_sequences.odin). "": none.
 	memory_file:    string,
+	no_network_device: bool, // The machine has no network device (silent_disk.odin).
+	data_disk_without_ioevent: bool, // The data disk has no ioevent file (machine_command).
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4126,7 +4129,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "")
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.no_network_device, options.data_disk_without_ioevent)
 		if !ok {
 			return false
 		}
@@ -5033,6 +5036,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("modustool: the power of the disk went off at its write %d, the write of the root %d after the start of the count (seed %d)", writes, roots, POWER_LOSS_SEED)
+		case .Disk_Disconnect:
+			if machine.disk_server == nil {
+				fmt.eprintfln("modustool: test failed: step %d: the tool does not serve the data disk", index + 1)
+				return false
+			}
+			disk_server_disconnect(machine.disk_server)
 		case .Shot:
 			if !screen_save(machine, step.text) {
 				return false
