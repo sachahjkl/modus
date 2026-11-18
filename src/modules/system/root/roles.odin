@@ -241,7 +241,7 @@ process_roles := [?]Process_Role_Row {
 	// it, so no grant differs from the limit on the disk; a client grant
 	// of TCP to one web server, 10.0.2.100 port 80; and its exports for the
 	// console. It starts nothing: this service checks the hash of each file
-	// that a principal starts (docs/MODULE_CONTRACT.md, "A process from a
+	// that a principal starts (docs/MODULE_CONTRACT.md, "A module from a
 	// disk"). It starts when a principal connects to it.
 	{name = "module_files", grants = {.Store, .Network, .Serve}, terms = {store_blocks = disk_process.STORE_BLOCKS_LIMIT, on_demand = true}},
 	// A listen grant of UDP: QUIC in the process, the module cryptography

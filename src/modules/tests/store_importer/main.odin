@@ -1,5 +1,5 @@
 // A disk process that imports a library module of the store `module_files`:
-// the test of the import scan (docs/MODULE_CONTRACT.md, "A process from a
+// the test of the import scan (docs/MODULE_CONTRACT.md, "A module from a
 // disk").
 //
 // **What it is for.** Its import names the hash of the module
