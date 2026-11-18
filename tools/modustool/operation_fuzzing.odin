@@ -938,6 +938,12 @@ operation_protected_names_changed :: proc(sequence: ^operation_sequence.Sequence
 // check: each sequence that it builds is one that check accepts. It then
 // changes each protected program name.
 operation_sequence_generate_random :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence) {
+	operation_sequence_generate_random_written(random, sequence, nil)
+}
+
+// operation_sequence_generate_random_written is the same, and `written`
+// receives each record that the generator wrote, for a host test.
+operation_sequence_generate_random_written :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence, written: ^[dynamic]Fuzz_Record_Written) {
 	choice_bytes: [OPERATION_CHOICE_BYTES]u8
 	for place := 0; place < len(choice_bytes); place += 8 {
 		word := fuzz_random_next(random)
@@ -946,7 +952,7 @@ operation_sequence_generate_random :: proc(random: ^Fuzz_Random, sequence: ^oper
 		}
 	}
 	choices := fuzz_choices_of(choice_bytes[:])
-	fuzz_operation_sequence_generate(&choices, sequence)
+	fuzz_operation_sequence_generate(&choices, sequence, written)
 	_ = operation_protected_names_changed(sequence)
 }
 

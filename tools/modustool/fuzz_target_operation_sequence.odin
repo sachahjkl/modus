@@ -22,7 +22,6 @@ fuzz_operation_reference := #load("../../src/library/contract/operation/operatio
 
 // The first address of the upper half, which only the kernel maps: a
 // canonical address that a program never reaches.
-@(private = "file")
 FUZZ_KERNEL_HALF_FIRST :: u64(0xFFFF_8000_0000_0000)
 
 // What the first value of the completion of an operation is, from the
@@ -41,14 +40,19 @@ Fuzz_Address_Parameter :: struct {
 	// The address is code that a thread of the runner runs: the generator
 	// names a thread entry of the runner first.
 	code:      bool,
-	// The record that the operation reads at the address, for the field
-	// mutator. nil: plain bytes, until its record type is described.
-	record:    typeid,
+	// The record that the operation reads at the address, which the
+	// generator writes there (fuzz_operation_records.odin). Plain_Bytes
+	// until its record type is described.
+	record:    Fuzz_Address_Record,
 }
 
 // The address parameters of `OPERATIONS`, one row each. The start of the
 // generator refuses an address parameter with no row, so a new operation
-// stops the generator until its addresses are described.
+// stops the generator until its addresses are described. The addresses
+// that read a record with no writer yet stay plain bytes: the address
+// ranges of Memory_Protect name mappings, whose addresses a sequence knows
+// only at run time; the event rules, the guest registers, the schedules
+// and the placements wait for their writers.
 @(rodata)
 fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Log, parameter = 1},
@@ -65,10 +69,10 @@ fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Word_Wait, parameter = 0},
 	{operation = .Word_Wake, parameter = 0},
 	{operation = .Program_Module, parameter = 1},
-	{operation = .Memory_Commit, parameter = 2},
+	{operation = .Memory_Commit, parameter = 2, record = .Page_Range_Table},
 	{operation = .Memory_Protect, parameter = 0},
 	{operation = .Events_Set, parameter = 2},
-	{operation = .Thread_Control, parameter = 3},
+	{operation = .Thread_Control, parameter = 3, record = .Thread_Control_Command},
 	{operation = .Thread_Control, parameter = 5},
 	{operation = .Guest_Run, parameter = 1},
 	{operation = .Log_Read, parameter = 4},
@@ -146,12 +150,24 @@ fuzz_operation_result_of :: proc(text: string) -> Fuzz_Operation_Result {
 
 // fuzz_address_parameters_problem says what is wrong in a table of the
 // address parameters: an address parameter of `OPERATIONS` with no row or
-// with two, or a row that names no address parameter. "" when the table
-// is whole.
+// with two, a row that names no address parameter, a table of ranges whose
+// next parameter is not its count, or the records of the commands of
+// Thread_Control on another operation. "" when the table is whole.
 fuzz_address_parameters_problem :: proc(rows: []Fuzz_Address_Parameter) -> string {
 	for row in rows {
 		if row.parameter < 0 || row.parameter >= operation_sequence.ARGUMENTS || operation.OPERATIONS[row.operation].parameters[row.parameter].form != .Address {
 			return fmt.tprintf("the row %s %d names no address parameter of OPERATIONS", operation.OPERATIONS[row.operation].name, row.parameter)
+		}
+		switch row.record {
+		case .Plain_Bytes:
+		case .Page_Range_Table:
+			if row.parameter + 1 >= operation_sequence.ARGUMENTS || operation.OPERATIONS[row.operation].parameters[row.parameter + 1].form != .Count {
+				return fmt.tprintf("the row %s %d names a table of ranges, and the parameter after it is not its count", operation.OPERATIONS[row.operation].name, row.parameter)
+			}
+		case .Thread_Control_Command:
+			if row.operation != .Thread_Control || operation_parameter_place(row.operation, "command") < 0 {
+				return fmt.tprintf("the row %s %d names the records of the commands of Thread_Control", operation.OPERATIONS[row.operation].name, row.parameter)
+			}
 		}
 	}
 	for candidate in operation.Operation {
@@ -222,7 +238,12 @@ fuzz_member_at :: proc($Enum: typeid, place: int) -> Enum {
 // The count of the steps is a choice drawn before each step, so a zero
 // choice ends the steps there (src/md/infrastructure/fuzzing.md, "The
 // subtle points").
-fuzz_operation_sequence_generate :: proc(choices: ^Fuzz_Choices, sequence: ^operation_sequence.Sequence) {
+//
+// Where an address of a step reads a record, the generator writes that
+// record in the content of the area of the address (fuzz_step_records_write).
+// When `written` is not nil, it receives each record that the generator
+// wrote, for a host test.
+fuzz_operation_sequence_generate :: proc(choices: ^Fuzz_Choices, sequence: ^operation_sequence.Sequence, written: ^[dynamic]Fuzz_Record_Written = nil) {
 	sequence^ = {}
 	sequence.area_count = 1 + fuzz_choice_below(choices, operation_sequence.AREAS_MOST)
 	content_place := 0
@@ -257,6 +278,9 @@ fuzz_operation_sequence_generate :: proc(choices: ^Fuzz_Choices, sequence: ^oper
 			fuzz_step_append(sequence, fuzz_planted_budget_read())
 		}
 		index := sequence.step_count
+		if known {
+			fuzz_step_records_write(choices, sequence, chosen, &item, index, written)
+		}
 		fuzz_step_append(sequence, item)
 		if same_entry {
 			entry_steps += 1
@@ -317,12 +341,69 @@ fuzz_operation_step_generate :: proc(choices: ^Fuzz_Choices, sequence: ^operatio
 	// The member None is the first of the words above.
 	chosen = fuzz_member_at(operation.Operation, 1 + fuzz_choice_below(choices, fuzz_member_count(operation.Operation) - 1))
 	item.operation = u32(chosen)
+	written_record := Fuzz_Thread_Control_Write.As_Chosen
+	written_area := 0
+	if chosen == .Thread_Control {
+		written_record, written_area = fuzz_thread_control_write_choose(choices, sequence)
+	}
 	for parameter, index in operation.OPERATIONS[chosen].parameters {
 		argument, broken := fuzz_argument_generate(choices, sequence, results_before, chosen, index, parameter)
+		if written_record != .As_Chosen {
+			argument, broken = fuzz_thread_control_write_argument(written_record, written_area, sequence, parameter, argument, broken)
+		}
 		item.arguments[index] = argument
 		refused = refused || broken
 	}
 	return chosen, true, refused
+}
+
+// The commands of Thread_Control that read a record whose writer exists.
+// The choice of the command alone gives each of them about once in 57
+// steps of Thread_Control, so half of these steps name one of them, with
+// the start of an area as the address and the bytes of the area as the
+// size: the record then reaches the checks of its fields.
+@(private = "file")
+Fuzz_Thread_Control_Write :: enum u8 {
+	As_Chosen, // The command, the address and the size of their forms.
+	Write_Registers,
+	Write_Extended_State,
+	Write_Breakpoints,
+}
+
+// fuzz_thread_control_write_choose gives the command that a step of
+// Thread_Control writes a record for, and its area; the zero choice keeps
+// the arguments of their forms.
+@(private = "file")
+fuzz_thread_control_write_choose :: proc(choices: ^Fuzz_Choices, sequence: ^operation_sequence.Sequence) -> (written_record: Fuzz_Thread_Control_Write, area: int) {
+	if !fuzz_choice_rare(choices, 2) {
+		return .As_Chosen, 0
+	}
+	written_record = fuzz_member_at(Fuzz_Thread_Control_Write, 1 + fuzz_choice_below(choices, fuzz_member_count(Fuzz_Thread_Control_Write) - 1))
+	return written_record, fuzz_choice_below(choices, sequence.area_count)
+}
+
+@(private = "file")
+fuzz_thread_control_write_argument :: proc(written_record: Fuzz_Thread_Control_Write, area: int, sequence: ^operation_sequence.Sequence, parameter: operation.Parameter_Form, chosen: operation_sequence.Argument, chosen_broken: bool) -> (argument: operation_sequence.Argument, broken: bool) {
+	switch parameter.name {
+	case "command":
+		command: operation.Thread_Control_Command
+		switch written_record {
+		case .As_Chosen:
+			return chosen, chosen_broken
+		case .Write_Registers:
+			command = .Write_Registers
+		case .Write_Extended_State:
+			command = .Write_Extended_State
+		case .Write_Breakpoints:
+			command = .Write_Breakpoints
+		}
+		return {source = .Value, value = u64(command)}, false
+	case "address":
+		return {source = .Area_Address, area = area}, false
+	case "size":
+		return {source = .Value, value = u64(sequence.areas[area].pages * operation.PAGE_SIZE)}, false
+	}
+	return chosen, chosen_broken
 }
 
 @(private = "file")
