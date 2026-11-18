@@ -235,7 +235,7 @@ a_late_line_of_isolation_belongs_to_the_sequence_that_caused_it :: proc(t: ^test
 // not exist gives no line.
 @(test)
 the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
-	folder := BUILD_FOLDER + "/operation_log_lines_test"
+	folder :: BUILD_FOLDER + "/operation_log_lines_test"
 	defer {
 		_ = os.remove_all(folder)
 	}
