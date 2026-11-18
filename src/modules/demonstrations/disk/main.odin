@@ -40,8 +40,9 @@
 //   command word 0 of the block ring: refused with Bad_Command and the
 //   record Unsupported of the word, and the next Info is served: as it
 //   must`;
-// - `disk: the window sent the command words 0, 6 and 4294967295: the
-//   compositor read the three: as it must`; the compositor writes its own
+// - `disk: the window sent the command words 0, <the first word past the
+//   last display command> and 4294967295: the compositor read the three:
+//   as it must`; the compositor writes its own
 //   line at the first one, and the count when the window closes;
 // - `disk: ok, 5 runs, 0 errors, write then read back: 0 wrong`, or
 //   `disk: wrong: ...`.

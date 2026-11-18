@@ -2827,7 +2827,9 @@ scenario := [?]Step {
 	// sends no answer there; it writes one line at the first word, and the
 	// count when the window closes.
 	{kind = .Wait, text = "compositor: a window sent the word 0, which names no command; the next ones are counted, and the count comes when the window closes", any_order = true},
-	{kind = .Wait, text = "disk: the window sent the command words 0, 6 and 4294967295: the compositor read the three: as it must"},
+	// The middle word is the first past the last display command, which
+	// grows with the commands: the wait names the rest of the line.
+	{kind = .Wait, text = "and 4294967295: the compositor read the three: as it must"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
 	// using memory.
