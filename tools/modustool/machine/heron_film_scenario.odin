@@ -44,8 +44,8 @@ scenario_heron_film := [?]Step {
 	// The desktop of the film. The console goes to the left first: a drag
 	// brings its window to the front, and the window of heron must be the
 	// one in front, with the keys. The window of heron is 644 by 514
-	// pixels with its frame: at (368, 144) it ends 12 pixels before the
-	// right edge of the screen and 110 above its bottom edge.
+	// pixels with its frame: at (368, 144) it ends at (1012, 658), far from
+	// the lower right corner of the screen.
 	{kind = .Move, text = "console", to_x = 8, to_y = 40},
 	{kind = .Launch, text = "heron"},
 	{kind = .Wait, text = "heron: ok", any_order = true},
@@ -54,7 +54,7 @@ scenario_heron_film := [?]Step {
 	// The pointer leaves the window: a press on the background, in the
 	// corner of the screen, which no window covers. A press on the
 	// background brings no window to the front: heron keeps the keys.
-	{kind = .Click, x = 1018, y = 762},
+	{kind = .Click, x = SCREEN_CORNER_X, y = SCREEN_CORNER_Y},
 	// The play stops until the film starts.
 	{kind = .Key, text = "spc"},
 	{kind = .Wait, text = "heron: paused"},

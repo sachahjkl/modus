@@ -2,6 +2,7 @@ package kernel
 
 import info "modus:contract/boot_info"
 import "kernel:acpi_processors"
+import "kernel:time_base"
 import "base:intrinsics"
 
 // The interrupt controller of each processor (local APIC): the timer, and
@@ -52,18 +53,37 @@ apic_id :: proc "contextless" () -> u32 {
 	return apic_msr ? apic_read(APIC_ID) : apic_read(APIC_ID) >> 24
 }
 
+// The bit of the send register that says that the controller has not sent
+// the interrupt yet. The x2APIC has no such bit: its write sends.
+APIC_SEND_PENDING :: 1 << 12
+// How long a send waits for that bit. A controller sends in a few
+// microseconds; one that has not sent in this time is broken, and a wake
+// path that waits for it for ever would stop its processor with its locks.
+APIC_SEND_BOUND_MICROSECONDS :: 10_000
+// The sends that did not leave in their bound. A sender can hold the run
+// lock, which comes after the log lock, so it cannot write a line: the
+// tick writes the count (delivery_faults_log).
+apic_sends_not_sent: u64
+
 // apic_send sends an interrupt to the processor with this identifier.
-// value is a vector, or a start command.
-apic_send :: proc "contextless" (id: u32, value: u32) {
+// value is a vector, or a start command. false: the controller did not
+// send it within APIC_SEND_BOUND_MICROSECONDS, and the send is counted.
+apic_send :: proc "contextless" (id: u32, value: u32) -> (sent: bool) {
 	if apic_msr {
 		model_specific_register_write(0x800 + APIC_SEND_LOW >> 4, u64(id) << 32 | u64(value))
-		return
+		return true
 	}
 	apic_write(APIC_SEND_HIGH, id << 24)
 	apic_write(APIC_SEND_LOW, value)
-	for apic_read(APIC_SEND_LOW) & (1 << 12) != 0 {
+	end := time_base.deadline(cycles_now(), APIC_SEND_BOUND_MICROSECONDS, cycle_frequency)
+	for apic_read(APIC_SEND_LOW) & APIC_SEND_PENDING != 0 {
+		if cycles_now() >= end {
+			intrinsics.atomic_add(&apic_sends_not_sent, 1)
+			return false
+		}
 		intrinsics.cpu_relax()
 	}
+	return true
 }
 
 // apic_start finds the registers. The first processor runs it once.
@@ -90,30 +110,112 @@ apic_setup :: proc "contextless" (cpu: ^Processor) {
 	apic_write(APIC_LINE_0, cpu.index == 0 ? 0x700 : APIC_MASKED)
 }
 
-// pit_wait waits with the 8254 timer, channel 2. At most 50000 microseconds.
-pit_wait :: proc "contextless" (microseconds: u64) {
+// The bit of the port 0x61 that is the output of channel 2 of the 8254.
+PIT_OUTPUT :: 0x20
+// The bound of a wait for the 8254: one second at the highest frequency
+// that the kernel takes, so a hundred times the wait of the calibration on
+// any processor. A host that stops the machine for a while then does not
+// make the kernel call a working 8254 absent.
+PIT_WAIT_BOUND_MICROSECONDS :: 1_000_000
+// The starts of a count before the kernel takes a high output as no 8254.
+// A real 8254 does not count while its gate is low, so its output is low
+// at the read. An emulation that ignores the gate in this mode, such as
+// QEMU or the 8254 of KVM, counts from the write of the count: a host that
+// stops the machine for the whole count before the read gives a high
+// output once. An absent 8254 gives it at each start.
+PIT_START_ATTEMPTS :: 3
+
+// pit_wait waits with the 8254 timer, channel 2. At most 50000
+// microseconds. false: the 8254 does not count. Its output is high before
+// the count starts, as a read of a port with no device gives, or it is not
+// high after PIT_WAIT_BOUND_MICROSECONDS. At each start it also starts the
+// timer of the processor from its largest count, just after the gate goes
+// high, and gives the cycle counter of that moment: a start that is tried
+// again puts none of the time of the earlier start in the measures.
+pit_wait :: proc "contextless" (microseconds: u64) -> (counted: bool, cycles_at_start: u64) {
 	count := microseconds * 1193182 / 1_000_000
-	port_write_8(0x61, port_read_8(0x61) &~ 3) // The gate is low: the count does not run.
-	port_write_8(0x43, 0xB0) // Channel 2, one count, then the output goes high.
-	port_write_8(0x42, u8(count))
-	port_write_8(0x42, u8(count >> 8))
-	port_write_8(0x61, port_read_8(0x61) &~ 2 | 1)
-	for port_read_8(0x61) & 0x20 == 0 {
+	for _ in 0 ..< PIT_START_ATTEMPTS {
+		port_write_8(0x61, port_read_8(0x61) &~ 3) // The gate is low: the count does not run.
+		port_write_8(0x43, 0xB0) // Channel 2, one count, then the output goes high.
+		port_write_8(0x42, u8(count))
+		port_write_8(0x42, u8(count >> 8))
+		// The write of the mode makes the output low until the end of the count.
+		if port_read_8(0x61) & PIT_OUTPUT != 0 {
+			continue
+		}
+		port_write_8(0x61, port_read_8(0x61) &~ 2 | 1)
+		apic_write(APIC_TIMER_START, max(u32))
+		cycles_at_start = cycles_now()
+		end := time_base.deadline(cycles_at_start, PIT_WAIT_BOUND_MICROSECONDS, cycle_frequency)
+		for port_read_8(0x61) & PIT_OUTPUT == 0 {
+			if cycles_now() >= end {
+				return false, 0
+			}
+			intrinsics.cpu_relax()
+		}
+		return true, cycles_at_start
+	}
+	return false, 0
+}
+
+// cycles_wait waits with the cycle counter, after the calibration.
+cycles_wait :: proc "contextless" (microseconds: u64) {
+	end := time_base.deadline(cycles_now(), microseconds, cycle_frequency)
+	for cycles_now() < end {
 		intrinsics.cpu_relax()
 	}
 }
 
-// timer_calibrate measures the timer of the processor against the 8254.
+// time_base_identification reads the leaves of CPUID that state the
+// frequency of the cycle counter; a leaf above the highest is not read,
+// and neither is a leaf of a processor that is not of Intel.
+time_base_identification :: proc "contextless" () -> (identification: time_base.Identification) {
+	vendor_b, vendor_c, vendor_d: u32
+	identification.highest_leaf, vendor_b, vendor_c, vendor_d = intrinsics.x86_cpuid(0, 0)
+	identification.vendor_is_intel = time_base.is_intel_signature(vendor_b, vendor_c, vendor_d)
+	if !identification.vendor_is_intel {
+		return
+	}
+	if identification.highest_leaf >= time_base.FREQUENCY_RATIO_LEAF {
+		identification.ratio_denominator, identification.ratio_numerator, identification.crystal_hertz, _ = intrinsics.x86_cpuid(time_base.FREQUENCY_RATIO_LEAF, 0)
+	}
+	if identification.highest_leaf >= time_base.BASE_FREQUENCY_LEAF {
+		identification.base_frequency, _, _, _ = intrinsics.x86_cpuid(time_base.BASE_FREQUENCY_LEAF, 0)
+	}
+	return
+}
+
+// timer_calibrate measures the timer of the processor and the cycle
+// counter against the 8254. When the 8254 does not count, the time base is
+// the frequency of the cycle counter that the processor states, and the
+// timer is measured against the cycle counter. With neither, the kernel
+// cannot keep time, and stops.
 timer_calibrate :: proc "contextless" () {
 	MEASURE_TICKS :: 10
+	MEASURE_MICROSECONDS :: MEASURE_TICKS * 1_000_000 / TICKS_PER_SECOND
 	apic_write(APIC_TIMER_DIVIDE, 3) // Divide by 16.
 	apic_write(APIC_TIMER, APIC_MASKED)
-	apic_write(APIC_TIMER_START, max(u32))
-	cycles := cycles_now()
-	pit_wait(MEASURE_TICKS * 1_000_000 / TICKS_PER_SECOND)
-	timer_count = (max(u32) - apic_read(APIC_TIMER_NOW)) / MEASURE_TICKS
-	// The same wait measures the cycle counter: the boot record uses it.
-	cycle_frequency = (cycles_now() - cycles) * TICKS_PER_SECOND / MEASURE_TICKS
+	// pit_wait starts the timer of the processor at the start of its count.
+	if counted, cycles := pit_wait(MEASURE_MICROSECONDS); counted {
+		timer_count = (max(u32) - apic_read(APIC_TIMER_NOW)) / MEASURE_TICKS
+		// The same wait measures the cycle counter: the boot record uses it.
+		cycle_frequency = (cycles_now() - cycles) * TICKS_PER_SECOND / MEASURE_TICKS
+	} else {
+		hertz, absence := time_base.stated_frequency(time_base_identification())
+		if absence != .None {
+			log("kernel: the 8254 does not count, and the processor states no frequency of its cycle counter (", time_base.ABSENCE_TEXTS[absence], "): the kernel has no time base")
+			machine_stop(.Start_Failed)
+		}
+		// The timer starts again: the failed wait ran it for up to its bound.
+		apic_write(APIC_TIMER_START, max(u32))
+		end := time_base.deadline(cycles_now(), MEASURE_MICROSECONDS, hertz)
+		for cycles_now() < end {
+			intrinsics.cpu_relax()
+		}
+		timer_count = (max(u32) - apic_read(APIC_TIMER_NOW)) / MEASURE_TICKS
+		cycle_frequency = hertz
+		log("kernel: the 8254 does not count: the time base is the cycle counter, at ", hertz, " Hz, which the processor states in CPUID")
+	}
 	apic_write(APIC_TIMER_START, 0)
 	if timer_count == 0 {
 		log("kernel: the timer of the processor does not count")
@@ -189,15 +291,17 @@ acpi_table :: proc "contextless" (root: u64, signature: string) -> (table: [^]u8
 }
 
 // processors_find reads the identifiers of the processors that the firmware
-// lists as usable. The reader of the table is a contract package, so that
-// the host reads the same bytes in its tests and its fuzz target.
+// lists as usable, and why the table gives none. The reader of the table is
+// a kernel part, so that the host reads the same bytes in its tests and its
+// fuzz target.
 @(private = "file")
-processors_find :: proc "contextless" (root: u64, ids: []u32) -> (count: int) {
+processors_find :: proc "contextless" (root: u64, ids: []u32) -> (count: int, absence: acpi_processors.Table_Absence) {
 	table, size := acpi_table(root, "APIC")
 	if table == nil {
-		return 0
+		return 0, acpi_processors.table_absence(false, nil, 0)
 	}
-	return acpi_processors.processors_read(table[:size], apic_msr, ids)
+	count = acpi_processors.processors_read(table[:size], apic_msr, ids)
+	return count, acpi_processors.table_absence(true, table[:size], count)
 }
 
 // The parameters at the end of the start code: see processor.asm.
@@ -225,7 +329,13 @@ foreign _ {
 processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	direct_map_size = boot.direct_map_size
 	ids: [PROCESSOR_CAPACITY]u32
-	count := processors_find(boot.acpi_root, ids[:])
+	count, absence := processors_find(boot.acpi_root, ids[:])
+	if absence != .None {
+		log("kernel: ", acpi_processors.TABLE_ABSENCE_TEXTS[absence], ": one processor")
+		return
+	}
+	// One listed processor is this one: a machine of one processor, with
+	// no line.
 	if count <= 1 {
 		return
 	}
@@ -275,13 +385,27 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		parameters.stack = cpu.stack_top
 		parameters.parameter = u64(uintptr(cpu))
 		before := intrinsics.atomic_load(&started_count)
-		apic_send(id, 0x4500) // Reset.
-		pit_wait(10_000)
+		// The waits use the cycle counter: the 8254 can be absent, and the
+		// calibration measured the counter, or took the frequency that the
+		// processor states.
+		// Reset. A controller that does not send it sends no start either:
+		// no other processor starts. No start was sent, so nothing ran from
+		// the record and the stacks of this processor, and they are freed.
+		if !apic_send(id, 0x4500) {
+			log("kernel: the interrupt controller did not send the reset of the processor ", u64(id), ": no other processor starts")
+			stacks_free(cpu.index)
+			frames_free(physical_of(cpu), (size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
+			break
+		}
+		cycles_wait(10_000)
 		started := false
 		start: for _ in 0 ..< 2 {
+			// The result does not decide: a start that the controller sent
+			// late can still start the processor, and started_count, then
+			// the reset below, decide.
 			apic_send(id, 0x4600 | AP_BASE >> 12) // Start at the page.
 			for _ in 0 ..< 100 {
-				pit_wait(1_000)
+				cycles_wait(1_000)
 				if intrinsics.atomic_load(&started_count) != before {
 					started = true
 					break start
@@ -295,8 +419,16 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			log("kernel: the processor ", u64(id), " did not start")
 		}
 		if !started {
-			apic_send(id, 0x4500) // It stays in reset: its record ends.
-			pit_wait(10_000)
+			// It stays in reset: its record ends. A reset that the controller
+			// did not send leaves a processor that can still run from its
+			// record, from the stacks of its index and from the page table
+			// of the start: they stay taken for ever, and no other processor
+			// starts, since the next one would take the same index.
+			if !apic_send(id, 0x4500) {
+				log("kernel: the interrupt controller did not send the reset of the processor ", u64(id), ": its record, its stacks and the page table of the start stay taken, and no other processor starts")
+				return
+			}
+			cycles_wait(10_000)
 			stacks_free(cpu.index)
 			frames_free(physical_of(cpu), (size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
 			continue

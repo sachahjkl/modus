@@ -1,0 +1,3 @@
+type: Added
+
+**Paths in the draw record.** Version 16 of the draw record has a `Path` kind: lines and quadratic curves from points in the text table, filled by the nonzero rule and stroked with butt ends and bevel joins, each pixel by the exact part of it that the shape covers, the same pixels in each damage rectangle. A line is now the stroke of a path: across or down it keeps its pixels, at an angle it has antialiased edges, as in the rings of `rings` and the folded gaps of `inspect`, and the kind `Line` and its word 10 leave the format. The window of `rings` draws an arrow on each ring from an outline. The exports of the drawing module are `damage_of_draw_table_16` and `execute_draw_table_in_rectangles_16`.

@@ -12,7 +12,7 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 		"[clock] clock: the time page: 1106119202 reads in one second, 0 kernel entries for one million reads",
 		"[scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 200581 wakes in one second (80106 turns ended on the processor of the waker, 85 by an interrupt, 430 moves)",
 		"[vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3887 ns, scale 2 8568 ns, scale 3 16922 ns; from the glyph cache: 201 ns; Spleen 8x16: 22 ns",
-		"[compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2272 us",
+		"[compositor:surfaces] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 2272 us",
 		"[disk] disk: read, 1 block in each request, 32 in flight: 429355 blocks in one second, kernel entries for 100 requests: 10 of this process, 18 of the block service, 0 errors",
 		"[notes] notes: count 1000, stopped: 1000 commits in 8215 ms",
 		"[net] net: the header and the checksum of a datagram of 1472 bytes: 331 ns, in this process (no offload)",
@@ -58,6 +58,34 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 	end_text, _, end_ok := measure_history_value(sentence_end, "a count 12.")
 	testing.expect(t, end_ok)
 	testing.expect_value(t, end_text, "12")
+}
+
+// The full frame of the compositor at another size of the screen is another
+// measure: a log of a screen of 1024 x 768, or of a size that starts as the
+// reference screen does, gives the measure no line, and a log with both
+// sizes gives the line of the reference screen only. The series of the
+// releases at 1024 x 768 had another sentence, so no chart joins the two.
+@(test)
+measure_full_frame_takes_the_reference_screen_only :: proc(t: ^testing.T) {
+	testing.expect(t, strings.contains(COMPOSITOR_FULL_FRAME, "1920x1080"))
+	OLD_SIZE :: "[compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2272 us\n"
+	LONGER_HEIGHT :: "[compositor:surfaces] compositor: a full frame of 1920x10800 with 17 windows in 2272 us\n"
+	OTHER_HEIGHT :: "[compositor:surfaces] compositor: a full frame of 1920x1200 with 17 windows in 2272 us\n"
+	REFERENCE_LINE :: "[compositor:surfaces] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 3305 us"
+	for log_text in ([]string{"", OLD_SIZE, LONGER_HEIGHT, OTHER_HEIGHT, OLD_SIZE + LONGER_HEIGHT + OTHER_HEIGHT}) {
+		found, found_number, found_count := log_line_choose(log_text, COMPOSITOR_FULL_FRAME, .Last)
+		testing.expectf(t, found == "" && found_number == 0 && found_count == 0, "the log %q gave the full frame the line %q", log_text, found)
+	}
+	line, line_number, matching_lines := log_line_choose(OLD_SIZE + REFERENCE_LINE + "\n" + OTHER_HEIGHT, COMPOSITOR_FULL_FRAME, .Last)
+	testing.expect_value(t, line_number, 2)
+	testing.expect_value(t, matching_lines, 1)
+	testing.expect_value(t, line, REFERENCE_LINE)
+	held := false
+	for series in measure_history_series {
+		testing.expectf(t, series.sentence != "A full frame of the compositor", "a series still follows the measure of a screen of 1024 x 768")
+		held = held || series.sentence == COMPOSITOR_FULL_FRAME_SENTENCE
+	}
+	testing.expect(t, held, "no series follows the full frame of the reference screen")
 }
 
 @(test)

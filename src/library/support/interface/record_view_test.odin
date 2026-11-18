@@ -11,22 +11,23 @@ Record_View :: struct {
 	kind:                           Draw_Kind,
 	read:                           bool, // The border read the record: false for a record that it refuses.
 	x, y, width, height:            int, // The box, in pixels.
-	color:                          graphics.Color, // The channels of the color of a rectangle, a text, a line; of the first color of a gradient.
+	color:                          graphics.Color, // The channels of the color of a rectangle, a text, the stroke of a path; of the first color of a gradient.
 	second_color:                   graphics.Color, // The channels of the second color of a gradient.
 	axis:                           Gradient_Axis, // The line of a gradient.
 	gradient:                       draw_record.Draw_Gradient, // A gradient, with its points in 1/64 pixel.
 	alpha, second_alpha:            u8, // The alpha of each color.
 	format:                         Picture_Format, // A picture.
 	repetition:                     draw_record.Repetition, // The pattern of a rectangle; zero for one rectangle.
-	first, count:                   int, // The range of a text or of a grid in the text table; the first pixel of a picture.
+	first, count:                   int, // The range of a text, of a grid or of the points of a path in the text table; the first pixel of a picture.
 	scale:                          int, // A text.
 	weight:                         Font_Weight, // A text.
 	origin_x:                       i32, // A text, in 1/64 pixel.
 	font:                           Font_Kind, // A text.
 	columns:                        int, // A grid.
 	memory, stride, generation:     int, // A picture.
-	start_x, start_y, end_x, end_y: int, // A line, in pixels.
-	thickness:                      int, // A line.
+	fill_color:                     graphics.Color, // The channels of the fill of a path.
+	fill_alpha:                     u8, // The alpha of the fill of a path.
+	stroke_width:                   int, // The stroke of a path, in 1/64 pixel.
 }
 
 // The line of a gradient in a view: the writers of the package write a
@@ -78,11 +79,11 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 	case draw_record.Draw_Text_Grid:
 		view.kind = .Text_Grid
 		view.first, view.count, view.columns = int(fields.first), int(fields.count), int(fields.columns)
-	case draw_record.Draw_Line:
-		view.kind, view.thickness = .Line, int(fields.thickness)
-		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)
-		view.start_x, view.start_y = draw_record.pixels_floor(fields.start_x), draw_record.pixels_floor(fields.start_y)
-		view.end_x, view.end_y = draw_record.pixels_floor(fields.end_x), draw_record.pixels_floor(fields.end_y)
+	case draw_record.Draw_Path:
+		view.kind, view.stroke_width = .Path, int(fields.stroke_width)
+		view.first, view.count = int(fields.first), int(fields.count)
+		view.color, view.alpha = draw_record.channels_of(fields.stroke_color), draw_record.alpha_of(fields.stroke_color)
+		view.fill_color, view.fill_alpha = draw_record.channels_of(fields.fill_color), draw_record.alpha_of(fields.fill_color)
 	}
 	return view
 }

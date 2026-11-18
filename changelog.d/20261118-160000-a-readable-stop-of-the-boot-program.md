@@ -1,0 +1,3 @@
+type: Fixed
+
+**A readable stop of the boot program.** When the boot program cannot go on, for memory, for the memory map of the firmware or for a kernel module that it cannot load, its message stays on the boot display with the watchdog of the firmware off, in place of a power off at once; with no screen it stays on the console of the firmware. The buffer of the memory map takes the size that the firmware asks with a margin of 8 descriptors, in place of 16 fixed pages, and a map whose reserved ranges pass the 1024 ranges of the boot record gives one line with their count and their pages, while each usable range is kept.

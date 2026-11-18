@@ -216,9 +216,49 @@ PROOF_XMM0 :: 0x0123_4567_89AB_CDEF
 PROOF_YMM0_HIGH :: 0xFEDC_BA98_7654_3210
 XMM0_OFFSET :: 160
 
-// extended_state_prove runs two proofs on the first processor, after its
-// setup and before any process runs. A failed proof stops the machine with
-// a sentence; a restore that the processor refuses faults here, at boot.
+// A proof of xsaveopt failed on the first processor, and the kernel saves
+// with fxsave in its place. The sentence of the proof gave the cause.
+// Read-only after its setup.
+extended_state_xsaveopt_proof_failed: bool
+
+// extended_state_prove runs the proofs on the first processor, after its
+// setup and before any process runs. A failed proof of xsaveopt writes its
+// sentence, then the kernel takes the form fxsave with x87 and SSE, which
+// each processor of x86-64 has, and proves that form once. A failed proof
+// of fxsave stops the machine: no form is left. A restore that the
+// processor refuses faults here, at boot.
+extended_state_prove :: proc "contextless" () {
+	if !extended_state_proof() {
+		if extended_state_form == .Fxsave {
+			machine_stop(.Start_Failed)
+		}
+		extended_state_fxsave_take()
+		log("kernel: extended state: the kernel proves fxsave now, with x87 and SSE only")
+		if !extended_state_proof() {
+			machine_stop(.Start_Failed)
+		}
+	}
+	extended_state_mxcsr_mask = extended_state_mxcsr_mask_measure(&start_state_proof[1])
+}
+
+// extended_state_fxsave_take makes the first processor save with fxsave,
+// x87 and SSE only. XCR0 first: xsetbv faults once OSXSAVE is clear. With
+// OSXSAVE clear, CPUID tells each process that the kernel saves no AVX.
+// Each other processor then takes fxsave too (extended_state_other_setup).
+@(private = "file")
+extended_state_fxsave_take :: proc "contextless" () {
+	extended_control_register_write(0, transmute(u64)LEGACY_COMPONENTS)
+	control_register_4_write(control_register_4_read() &~ CR4_OSXSAVE)
+	extended_state_components = LEGACY_COMPONENTS
+	extended_state_size = LEGACY_AREA_SIZE
+	extended_state_layout = {}
+	extended_state_form = .Fxsave
+	extended_state_xsaveopt_proof_failed = true
+}
+
+// extended_state_proof runs the two proofs in the form that the first
+// processor chose, and writes the sentence of a failed one. false: a proof
+// failed.
 //
 // 1. The offsets: it restores an area with an x87 control word, an MXCSR,
 // xmm0 and the high half of ymm0 that are not their init state, and reads
@@ -230,7 +270,8 @@ XMM0_OFFSET :: 160
 // SSE in the start state are their init state, and xsaveopt does not write
 // a component in its init state; the save goes over a copy of the start
 // state, so the bytes that it does not write are the right ones.
-extended_state_prove :: proc "contextless" () {
+@(private = "file")
+extended_state_proof :: proc "contextless" () -> (proved: bool) {
 	first := &start_state_proof[0]
 	second := &start_state_proof[1]
 
@@ -251,7 +292,7 @@ extended_state_prove :: proc "contextless" () {
 	extended_state_restore(first, extended_state_form) // The registers go back to the start state.
 	if read[0] & 0xFFFF != PROOF_X87_CONTROL || read[1] & 0xFFFF_FFFF != PROOF_MXCSR || read[2] != PROOF_XMM0 || (with_avx && read[3] != PROOF_YMM0_HIGH) {
 		log("kernel: extended state: the processor does not read the area where the kernel writes it: x87 control ", Hex(read[0] & 0xFFFF), ", MXCSR ", Hex(read[1] & 0xFFFF_FFFF), ", xmm0 ", Hex(read[2]), ", ymm0 high ", Hex(read[3]))
-		machine_stop(.Start_Failed)
+		return false
 	}
 
 	extended_state_start(first)
@@ -263,10 +304,9 @@ extended_state_prove :: proc "contextless" () {
 	header := (^u64)(&second.bytes[HEADER_OFFSET])^
 	if control != X87_CONTROL_START || mxcsr != MXCSR_START || (extended_state_form != .Fxsave && header &~ transmute(u64)extended_state_components != 0) {
 		log("kernel: extended state: the processor does not give back the start state of a thread: x87 control ", Hex(u64(control)), ", MXCSR ", Hex(u64(mxcsr)), ", XSTATE_BV ", Hex(header))
-		machine_stop(.Start_Failed)
+		return false
 	}
-
-	extended_state_mxcsr_mask = extended_state_mxcsr_mask_measure(second)
+	return true
 }
 
 // extended_state_mxcsr_mask_measure gives the bits of MXCSR that the
@@ -292,6 +332,11 @@ extended_state_write_refusal :: proc "contextless" (area: ^Extended_State_Area) 
 extended_state_log :: proc "contextless" () {
 	avx := .Avx in extended_state_components ? ", AVX" : ""
 	avx_512 := AVX_512_COMPONENTS <= extended_state_components ? ", AVX-512" : ""
-	how := extended_state_form == .Fxsave ? "fxsave: the processor has no xsave or no xsaveopt" : "xsaveopt"
+	how := "xsaveopt"
+	if extended_state_xsaveopt_proof_failed {
+		how = "fxsave: a proof of xsaveopt failed"
+	} else if extended_state_form == .Fxsave {
+		how = "fxsave: the processor has no xsave or no xsaveopt"
+	}
 	log("kernel: extended state: x87, SSE", avx, avx_512, "; one save writes at most ", Size{extended_state_size, .Bytes}, ", in an area of ", Size{EXTENDED_STATE_CAPACITY, .Bytes}, " in each thread entry; saved at a switch of threads with ", how)
 }

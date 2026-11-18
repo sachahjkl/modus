@@ -109,7 +109,7 @@ Test_Times_Summary :: struct {
 // text of the log that the step waits for.
 step_kind_waits_for_a_line :: proc(kind: Step_Kind) -> bool {
 	#partial switch kind {
-	case .Wait, .Date, .Generation, .Trace, .Remember, .Quic_Key, .Remote_Key:
+	case .Wait, .Date, .Screen_Size, .Generation, .Trace, .Remember, .Quic_Key, .Remote_Key:
 		return true
 	}
 	return false

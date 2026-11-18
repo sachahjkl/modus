@@ -74,8 +74,8 @@ foreign _ {
 	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> i64 ---
 	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> i64 ---
 	// The two exports of the drawing module.
-	damage_of_draw_table_15 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
-	execute_draw_table_in_rectangles_15 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 ---
+	damage_of_draw_table_16 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
+	execute_draw_table_in_rectangles_16 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 ---
 }
 
 WIDTH :: 816
@@ -305,7 +305,7 @@ present :: proc "contextless" (window: ^display.Window) {
 		before_bytes := system.Bytes_To_Read{bytes = &text_before[0], count = before_text_count, capacity = before_text_count}
 		found: [interface.DAMAGE_CAPACITY]Damage_Rectangle
 		buffer := found[:]
-		count := min(damage_of_draw_table_15(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
+		count := min(damage_of_draw_table_16(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
 		// The module refused the tables: no picture is known.
 		changed_known = count >= 0
 		for index in 0 ..< max(count, 0) {
@@ -329,7 +329,7 @@ present :: proc "contextless" (window: ^display.Window) {
 	}
 	places := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(to_draw.count), capacity = interface.DAMAGE_CAPACITY}
 	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.colors.background)}
-	execute_draw_table_in_rectangles_15(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
+	execute_draw_table_in_rectangles_16(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
 	shown.draw_time = system.nanoseconds() - start
 	// The canvas is the frame now. With nothing to present, the screen
 	// shows the frame already, and the canvas stays the one to draw.
@@ -377,7 +377,7 @@ canvases_compare :: proc "contextless" (table: ^interface.Draw_Table, refused: ^
 	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.colors.background)}
 	whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
 	places := system.Table_To_Read(Damage_Rectangle){records = &whole[0], count = 1, capacity = 1}
-	if execute_draw_table_in_rectangles_15(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {
+	if execute_draw_table_in_rectangles_16(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {
 		return 0, false
 	}
 	for index in 0 ..< len(package_pixels) {

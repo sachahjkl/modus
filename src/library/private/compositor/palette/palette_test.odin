@@ -2325,7 +2325,7 @@ the_match_of_an_act_name :: proc(t: ^testing.T) {
 rectangle_of_record :: proc(record: interface.Draw_Record) -> (place: interface.Rectangle, color: graphics.Color, is_rectangle: bool) {
 	primitive, problem := draw_record.read(record)
 	fields, is_kind := primitive.(draw_record.Draw_Rectangle)
-	if problem != .None || !is_kind || fields.repetition != (draw_record.Repetition{}) || !draw_record.color_opaque(fields.color) {
+	if problem != .None || !is_kind || fields.repetition != (draw_record.Repetition{}) || draw_record.alpha_of(fields.color) != 255 {
 		return {}, 0, false
 	}
 	return interface.record_rectangle(record), draw_record.channels_of(fields.color), true

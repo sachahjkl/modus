@@ -82,9 +82,10 @@ pattern_reference :: proc(canvas: graphics.Canvas, box: Rectangle, color: graphi
 // Each record with opaque colors draws the pixels that the drawing before
 // alpha gave: a rectangle is fill, a vertical gradient a fill of the mix of
 // each line, a horizontal gradient the mix of each column, the grid of
-// points its cells, a line the squares of graphics.line. Each record is
-// partly outside the canvas, and each reference is cut to the canvas. The
-// frame is drawn whole and in the parts of a damage.
+// points its cells, a line across the squares of graphics.line: its stroke
+// covers whole pixels. Each record is partly outside the canvas, and each
+// reference is cut to the canvas. The frame is drawn whole and in the parts
+// of a damage.
 @(test)
 opaque_records_keep_their_pixels :: proc(t: ^testing.T) {
 	_ = blend_table()
@@ -95,7 +96,7 @@ opaque_records_keep_their_pixels :: proc(t: ^testing.T) {
 	draw_vertical_gradient(&table, 50, 30, 40, 30, 0x00102030, 0x00F0E0D0)
 	draw_horizontal_gradient(&table, -10, 14, 75, 9, 0x00FF0000, 0x000000FF)
 	draw_point_grid(&table, 2, 24, 80, 30)
-	draw_line(&table, 3, 40, 66, 2, 3, 0x0000FF80)
+	draw_line(&table, 66, 42, 3, 42, 3, 0x0000FF80)
 	drawn := make([]graphics.Color, ALPHA_WIDTH * ALPHA_HEIGHT)
 	parts := make([]graphics.Color, ALPHA_WIDTH * ALPHA_HEIGHT)
 	expected := make([]graphics.Color, ALPHA_WIDTH * ALPHA_HEIGHT)
@@ -128,7 +129,7 @@ opaque_records_keep_their_pixels :: proc(t: ^testing.T) {
 		}
 	}
 	pattern_reference(canvas, {2, 24, 82, 54}, graphics.colors.point)
-	start_x, start_y, end_x, end_y := line_ends_in_order(3, 40, 66, 2)
+	start_x, start_y, end_x, end_y := line_ends_in_order(66, 42, 3, 42)
 	graphics.line(canvas, start_x, start_y, end_x, end_y, 3, 0x0000FF80)
 	testing.expect(t, slice.equal(drawn, expected), "the opaque records draw other pixels than before alpha")
 	testing.expect(t, slice.equal(parts, expected), "the opaque records in parts draw other pixels than before alpha")

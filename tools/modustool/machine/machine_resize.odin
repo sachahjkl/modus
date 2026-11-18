@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modus:contract/reference_screen"
 import "modustool:foundation"
 
 // The step Resize: the pointer drags the bottom left corner of a window,
@@ -17,6 +18,27 @@ import "modustool:foundation"
 
 // The line of the compositor at its start: "compositor: ok 1280x800".
 SCREEN_SIZE_LINE :: "compositor: ok "
+// The line on a test machine: the reference screen. The step Screen_Size
+// of the main scenario checks it; a host test reads its size back
+// (scenario_places_test.odin).
+REFERENCE_SCREEN_LINE :: SCREEN_SIZE_LINE + "1920x1080"
+#assert(reference_screen.WIDTH == 1920 && reference_screen.HEIGHT == 1080, "REFERENCE_SCREEN_LINE names 1920x1080")
+
+// reference_screen_problem gives "" when the last line of the compositor
+// at its start names the reference screen, else the sentence of the fault:
+// the size that the firmware gave, or that the line is missing or has no
+// size. A machine on another screen fails at its first check, not at the
+// hang bound of a later step.
+reference_screen_problem :: proc(log: string) -> string {
+	width, height, known := screen_size_of_log(log)
+	if !known {
+		return fmt.tprintf("the log has no line \"%s<width>x<height>\"", SCREEN_SIZE_LINE)
+	}
+	if width != reference_screen.WIDTH || height != reference_screen.HEIGHT {
+		return fmt.tprintf("the firmware gave %dx%d, not the reference screen %dx%d", width, height, reference_screen.WIDTH, reference_screen.HEIGHT)
+	}
+	return ""
+}
 
 // screen_size_of_log gives the size of the screen of the machine, from the
 // line of the compositor at its start.

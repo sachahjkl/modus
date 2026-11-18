@@ -11,7 +11,7 @@ import "core:image/png"
 // by the encoder of the standard library (core:image/png: a row filter
 // chosen for each row, then the deflate of core:compress/deflate at its
 // default level). The screen pictures of the repository are stored with no
-// compression, about 2.3 MB for 1024 by 768. The encoder reads no clock, no
+// compression, about 6.2 MB for 1920 by 1080. The encoder reads no clock, no
 // random number and no thread, so the same pixels give the same bytes at
 // each build of the same compiler. Only 8 bits a channel: the pictures of
 // the repository have no other depth.

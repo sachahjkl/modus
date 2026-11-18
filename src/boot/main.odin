@@ -17,7 +17,9 @@ package boot
 
 import info "modus:contract/boot_info"
 import "modus:contract/enum_word"
+import "modus:contract/reference_screen"
 import "modus:support/bootscreen"
+import "modus:private/boot_program/firmware_memory_map"
 import "modus:support/graphics"
 import op "modus:contract/operation"
 import module "modus:contract/module"
@@ -46,14 +48,29 @@ PAGE_NO_EXECUTE :: u64(1) << 63
 LARGE_PAGE_SIZE :: 2 << 20
 TABLE_SPAN :: 1 << 30 // The memory that one table of large pages maps.
 MINIMUM_DIRECT_MAP :: 4 << 30 // Device memory, such as the framebuffer, is below this.
-MEMORY_RANGE_CAPACITY :: 1024
-FIRMWARE_MAP_PAGES :: 16
 
-PREFERRED_WIDTH :: 1024
-PREFERRED_HEIGHT :: 768
+// The mode that the boot program asks the firmware for: the reference
+// screen. A firmware with no such mode keeps the mode that it set.
+PREFERRED_WIDTH :: reference_screen.WIDTH
+PREFERRED_HEIGHT :: reference_screen.HEIGHT
+// The graphics modes that the boot program reads: the firmware of QEMU
+// offers about 30. A firmware with more says so on one line.
+MODE_CAPACITY :: 256
 
 system: ^Efi_System_Table
 image_handle: rawptr
+
+// The record and the step that a stop shows on the boot display (stop): a
+// stop can come from a procedure that has no record, such as allocate. The
+// record is nil until its own pages exist.
+stop_record: ^info.Boot_Info
+stop_step := bootscreen.Step.Firmware
+
+// Set before the first call of ExitBootServices. After a call that fails,
+// the specification allows only the services of the memory: GetMemoryMap,
+// to read the map again, and the allocation of pages. So no line goes
+// through the console of the firmware, and no stop calls the watchdog.
+firmware_services_exit_tried := false
 
 @(export, link_name = "efi_main")
 efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi_Status {
@@ -64,6 +81,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	print("boot program: started\r\n")
 
 	boot := (^info.Boot_Info)(allocate(1))
+	stop_record = boot
 	boot.magic = info.MAGIC
 	boot.cycles_start = cycles_start
 	boot.self_test = BOOT_SELF_TEST_WORD
@@ -86,6 +104,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	// The boot image goes to its own pages: the kernel gives it to the root
 	// service as memory. The checks read this copy, the one that the kernel
 	// receives.
+	stop_step = .Boot_Image
 	image_copy := allocate((u64(len(boot_image)) + PAGE_SIZE - 1) / PAGE_SIZE)
 	intrinsics.mem_copy_non_overlapping(image_copy, raw_data(boot_image), len(boot_image))
 	image_bytes := ([^]u8)(image_copy)[:len(boot_image)]
@@ -94,18 +113,19 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	measure(boot, description)
 
 	// The kernel module.
+	stop_step = .Kernel_Module
 	if module.validate(kernel_file) != .None {
-		stop("boot program: the kernel module is not valid\r\n")
+		stop("the kernel module is not valid")
 	}
 	head, _ := module.header(kernel_file)
 	kernel := ([^]u8)(allocate(head.memory_size / PAGE_SIZE))[:head.memory_size]
 	module.copy_segments(kernel_file, kernel)
 	if module.rebase(kernel_file, kernel, info.KERNEL_BASE) != .None || module.count(kernel_file, .Imports) > 1 {
-		stop("boot program: the kernel module cannot be loaded\r\n")
+		stop("the kernel module cannot be loaded")
 	}
 	entry, has_entry := module.export_address(kernel_file, info.KERNEL_BASE, head.entry_export)
 	if !has_entry {
-		stop("boot program: the kernel module has no entry\r\n")
+		stop("the kernel module has no entry")
 	}
 	boot.kernel_address = u64(uintptr(raw_data(kernel)))
 	boot.kernel_size = head.memory_size
@@ -115,23 +135,24 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot.boot_image_size = u64(len(boot_image))
 	boot.cycles_loaded = u64(intrinsics.read_cycle_counter())
 
+	stop_step = .Memory_Map
 	stack := u64(uintptr(allocate(info.BOOT_STACK_PAGES))) + info.BOOT_STACK_PAGES * PAGE_SIZE
-	ranges := ([^]info.Memory_Range)(allocate((MEMORY_RANGE_CAPACITY * size_of(info.Memory_Range) + PAGE_SIZE - 1) / PAGE_SIZE))
-	firmware_map := allocate(FIRMWARE_MAP_PAGES)
+	ranges := ([^]info.Memory_Range)(allocate((firmware_memory_map.RANGE_CAPACITY * size_of(info.Memory_Range) + PAGE_SIZE - 1) / PAGE_SIZE))
+	firmware_map: Firmware_Map
 
 	// The page tables need the size of physical memory, so the memory map is
 	// read once now, and once more after the last allocation.
 	top := u64(MINIMUM_DIRECT_MAP)
 	{
-		count, _ := read_memory_map(firmware_map, ranges)
-		for range in ranges[:count] {
+		list, _ := read_memory_map(&firmware_map, ranges)
+		for range in ranges[:list.count] {
 			op.boot_range_add(&display_data.boot, range.start, range.page_count, u64(range.kind))
 			if range.kind != .Reserved {
 				top = max(top, range.start + range.page_count * PAGE_SIZE)
 			}
 		}
 	}
-	display(boot, "the boot program starts the kernel")
+	_ = display(boot, "the boot program starts the kernel")
 	top = (top + TABLE_SPAN - 1) / TABLE_SPAN * TABLE_SPAN
 	boot.direct_map_size = top
 	boot.page_table = build_page_tables(top, kernel, head.memory_size)
@@ -143,15 +164,19 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	// page tables map all memory, its pages too.
 	boot.debug_image, boot.debug_image_size = debug_image_read()
 	print("boot program: ok\r\n")
+	stop_step = .Kernel
 	for attempt in 0 ..< 2 {
-		count, key := read_memory_map(firmware_map, ranges)
-		boot.memory_range_count = u64(count)
+		list, key := read_memory_map(&firmware_map, ranges)
+		boot.memory_range_count = u64(list.count)
+		firmware_services_exit_tried = true
 		if services.exit_boot_services(image_handle, key) == 0 {
+			// After the end of the firmware services: the serial port only.
+			dropped_ranges_line(&list)
 			boot_jump(boot.page_table, u64(entry), u64(info.DIRECT_MAP_BASE) + u64(uintptr(boot)), u64(info.DIRECT_MAP_BASE) + stack)
 		}
 		_ = attempt
 	}
-	stop("boot program: the firmware refused to end its services\r\n")
+	stop("the firmware refused to end its services")
 }
 
 // build_page_tables gives the address of the top level table.
@@ -203,28 +228,158 @@ build_page_tables :: proc "contextless" (top: u64, kernel: []u8, kernel_size: u6
 	return u64(uintptr(root))
 }
 
-// read_memory_map reads the memory map of the firmware into ranges.
-read_memory_map :: proc "contextless" (firmware_map: rawptr, ranges: [^]info.Memory_Range) -> (count: int, key: uint) {
-	size := uint(FIRMWARE_MAP_PAGES * PAGE_SIZE)
+// The buffer of the memory map of the firmware. It has no pages before the
+// first read; each read that the firmware finds too small gives it the size
+// that the firmware asks, with a margin (package firmware_memory_map).
+Firmware_Map :: struct {
+	address: rawptr,
+	pages:   u64,
+}
+
+// read_memory_map reads the memory map of the firmware into ranges: each
+// usable range, and the reserved ranges that the room still takes
+// (firmware_memory_map.Range_List). It does not return when the firmware
+// refuses the read, when the map grows at each read, or when the usable
+// ranges pass the room.
+read_memory_map :: proc "contextless" (firmware_map: ^Firmware_Map, ranges: [^]info.Memory_Range) -> (list: firmware_memory_map.Range_List, key: uint) {
+	size: uint
 	descriptor_size: uint
 	version: u32
-	if system.boot_services.get_memory_map(&size, firmware_map, &key, &descriptor_size, &version) != 0 {
-		stop("boot program: cannot read the memory map\r\n")
-	}
-	for offset := uint(0); offset < size && count < MEMORY_RANGE_CAPACITY; offset += descriptor_size {
-		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map) + uintptr(offset))
-		kind := info.Memory_Kind.Reserved
-		switch descriptor.type {
-		case .Conventional:
-			kind = .Free
-		case .Loader_Code, .Loader_Data:
-			kind = .Boot
-		case .Reserved, .Boot_Services_Code, .Boot_Services_Data, .Runtime_Services_Code, .Runtime_Services_Data, .Unusable, .Acpi_Reclaim, .Acpi_Storage, .Device, .Device_Ports, .Processor_Code, .Persistent:
+	map_read := false
+	for read_number := 1; !map_read; read_number += 1 {
+		size = uint(firmware_map.pages * PAGE_SIZE)
+		status := system.boot_services.get_memory_map(&size, firmware_map.address, &key, &descriptor_size, &version)
+		switch firmware_memory_map.read_outcome(read_number, u64(status)) {
+		case .Read:
+			map_read = true
+		case .Larger_Buffer:
+			pages, problem := firmware_memory_map.buffer_pages(u64(size), u64(descriptor_size))
+			if problem != .None {
+				text: bootscreen.Text
+				bootscreen.put(&text, "the firmware asks a buffer of ")
+				bootscreen.put_number(&text, u64(size))
+				bootscreen.put(&text, " bytes for its memory map, with descriptors of ")
+				bootscreen.put_number(&text, u64(descriptor_size))
+				bootscreen.put(&text, " bytes")
+				stop(string(text.bytes[:text.count]))
+			}
+			// The free and the allocation change the map: the next read
+			// gives its new size.
+			if firmware_map.pages != 0 {
+				_ = system.boot_services.free_pages(u64(uintptr(firmware_map.address)), uint(firmware_map.pages))
+			}
+			firmware_map^ = {address = allocate(pages), pages = pages}
+		case .Refused:
+			text: bootscreen.Text
+			bootscreen.put(&text, "the firmware refused to give its memory map: status ")
+			bootscreen.put_hex(&text, u64(status), 16)
+			stop(string(text.bytes[:text.count]))
+		case .Still_Growing:
+			text: bootscreen.Text
+			bootscreen.put(&text, "the memory map of the firmware grew at each of ")
+			bootscreen.put_number(&text, firmware_memory_map.READ_TRY_LIMIT)
+			bootscreen.put(&text, " reads")
+			stop(string(text.bytes[:text.count]))
 		}
-		ranges[count] = {start = descriptor.physical_start, page_count = descriptor.page_count, kind = kind}
-		count += 1
+	}
+	buffer_bytes := firmware_map.pages * PAGE_SIZE
+	if !firmware_memory_map.map_size_valid(u64(size), buffer_bytes) {
+		text: bootscreen.Text
+		bootscreen.put(&text, "the firmware says that its memory map has ")
+		bootscreen.put_number(&text, u64(size))
+		bootscreen.put(&text, " bytes, in a buffer of ")
+		bootscreen.put_number(&text, buffer_bytes)
+		stop(string(text.bytes[:text.count]))
+	}
+	if !firmware_memory_map.descriptor_size_valid(u64(descriptor_size), u64(size)) {
+		text: bootscreen.Text
+		bootscreen.put(&text, "the memory map of the firmware has descriptors of ")
+		bootscreen.put_number(&text, u64(descriptor_size))
+		bootscreen.put(&text, " bytes in a map of ")
+		bootscreen.put_number(&text, u64(size))
+		stop(string(text.bytes[:text.count]))
+	}
+	// By index: each descriptor that the walk reads ends inside the map,
+	// and no offset wraps.
+	descriptor_count := firmware_memory_map.descriptor_count(u64(size), u64(descriptor_size))
+	usable_count := 0
+	for index in 0 ..< descriptor_count {
+		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map.address) + uintptr(index * u64(descriptor_size)))
+		if memory_kind_of(descriptor) != .Reserved && descriptor.page_count != 0 {
+			usable_count += 1
+		}
+	}
+	fits: bool
+	list, fits = firmware_memory_map.list_begin(ranges[:firmware_memory_map.RANGE_CAPACITY], usable_count)
+	if !fits {
+		text: bootscreen.Text
+		bootscreen.put(&text, "the memory map of the firmware has ")
+		bootscreen.put_number(&text, u64(usable_count))
+		bootscreen.put(&text, " ranges of usable memory; the boot record holds ")
+		bootscreen.put_number(&text, firmware_memory_map.RANGE_CAPACITY)
+		stop(string(text.bytes[:text.count]))
+	}
+	for index in 0 ..< descriptor_count {
+		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map.address) + uintptr(index * u64(descriptor_size)))
+		status := firmware_memory_map.list_add(&list, descriptor.physical_start, descriptor.page_count, memory_kind_of(descriptor))
+		text: bootscreen.Text
+		switch status {
+		case .Added:
+			continue
+		case .No_Room:
+			// The two walks read one buffer: this is a fault of the count.
+			stop("the usable ranges of the memory map do not fit the room that the boot program counted for them")
+		case .Not_On_Page:
+			bootscreen.put(&text, "the memory map of the firmware has a usable range that starts inside a page, at ")
+		case .Past_Address_Limit:
+			bootscreen.put(&text, "the memory map of the firmware has a usable range that ends past the physical addresses, at ")
+		}
+		bootscreen.put_hex(&text, descriptor.physical_start, 16)
+		stop(string(text.bytes[:text.count]))
 	}
 	return
+}
+
+// memory_kind_of gives what a descriptor of the firmware holds for the
+// kernel. The specification keeps the types past Persistent for the vendor
+// of the firmware and for the operating system: the kernel does not know
+// such memory, so it is reserved, as each type that the kernel must not
+// take.
+memory_kind_of :: proc "contextless" (descriptor: ^Efi_Memory_Descriptor) -> info.Memory_Kind {
+	type, known := enum_word.member_of_word(Efi_Memory_Type, u64(descriptor.type))
+	if !known {
+		return .Reserved
+	}
+	switch type {
+	case .Conventional:
+		return .Free
+	case .Loader_Code, .Loader_Data:
+		return .Boot
+	case .Reserved, .Boot_Services_Code, .Boot_Services_Data, .Runtime_Services_Code, .Runtime_Services_Data, .Unusable, .Acpi_Reclaim, .Acpi_Storage, .Device, .Device_Ports, .Processor_Code, .Persistent:
+		return .Reserved
+	}
+	return .Reserved
+}
+
+// dropped_ranges_line writes, on the serial port, the reserved ranges that
+// the list left out. It runs after the end of the firmware services, when
+// the console of the firmware is gone; the kernel reads the address of no
+// range as it reads a reserved one.
+dropped_ranges_line :: proc "contextless" (list: ^firmware_memory_map.Range_List) {
+	if list.dropped_count == 0 {
+		return
+	}
+	text: bootscreen.Text
+	bootscreen.put(&text, "boot program: the memory map has more ranges than the ")
+	bootscreen.put_number(&text, firmware_memory_map.RANGE_CAPACITY)
+	bootscreen.put(&text, " of the boot record: ")
+	serial_port_print(string(text.bytes[:text.count]))
+	text.count = 0
+	bootscreen.put_number(&text, list.dropped_count)
+	bootscreen.put(&text, " reserved ranges of ")
+	bootscreen.put_number(&text, list.dropped_pages)
+	bootscreen.put(&text, " pages are left out, and the kernel reads them as reserved\r\n")
+	serial_port_print(string(text.bytes[:text.count]))
 }
 
 // framebuffer chooses a graphics mode and gives its description.
@@ -235,18 +390,65 @@ framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
 		print("boot program: no graphics output\r\n")
 		return
 	}
-	for mode in 0 ..< graphics.mode.mode_count {
+	// The modes of the firmware, then the choice of the reference screen,
+	// or of the largest mode inside it (reference_screen.mode_choose).
+	modes: [MODE_CAPACITY]reference_screen.Screen_Mode
+	count := 0
+	mode_count := graphics.mode != nil ? graphics.mode.mode_count : 0
+	if mode_count > MODE_CAPACITY {
+		print("boot program: the firmware offers ")
+		print_number(u64(mode_count))
+		print(" graphics modes; the boot program reads the first ")
+		print_number(MODE_CAPACITY)
+		print("\r\n")
+	}
+	for mode in 0 ..< min(mode_count, MODE_CAPACITY) {
 		size: uint
 		mode_info: ^Efi_Graphics_Mode_Info
-		if graphics.query_mode(graphics, mode, &size, &mode_info) != 0 {
+		if graphics.query_mode(graphics, mode, &size, &mode_info) != 0 || mode_info == nil {
 			continue
 		}
-		if mode_info.width == PREFERRED_WIDTH && mode_info.height == PREFERRED_HEIGHT && mode_info.format <= .Blue_Green_Red {
-			graphics.set_mode(graphics, mode)
-			break
-		}
+		modes[count] = {number = mode, width = mode_info.width, height = mode_info.height, drawable = pixel_format_drawable(mode_info.format)}
+		count += 1
+	}
+	chosen, choice := reference_screen.mode_choose(modes[:count])
+	set_status: Efi_Status
+	switch choice {
+	case .Exact, .Smaller:
+		set_status = graphics.set_mode(graphics, chosen.number)
+	case .None:
+	}
+	if graphics.mode == nil || graphics.mode.info == nil {
+		print("boot program: the graphics output gives no mode\r\n")
+		return
 	}
 	mode_info := graphics.mode.info
+	if mode_info.width != PREFERRED_WIDTH || mode_info.height != PREFERRED_HEIGHT {
+		// One line, so that a screen of another size is never silent
+		// (src/md/features/desktop_to_browser.md, "The reference screen").
+		if choice == .Exact {
+			print("boot program: the firmware refused the mode ")
+		} else {
+			print("boot program: the firmware offers no mode ")
+		}
+		print_number(PREFERRED_WIDTH)
+		print("x")
+		print_number(PREFERRED_HEIGHT)
+		print(" in 32 bits")
+		if set_status != 0 {
+			print("; set_mode of the mode ")
+			print_number(u64(chosen.width))
+			print("x")
+			print_number(u64(chosen.height))
+			print(" gave the status ")
+			print_number(u64(set_status))
+		}
+		print("; it keeps ")
+		print_number(u64(mode_info.width))
+		print("x")
+		print_number(u64(mode_info.height))
+		print("\r\n")
+	}
 	result = {
 		address         = graphics.mode.framebuffer_base,
 		width           = mode_info.width,
@@ -270,20 +472,72 @@ framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
 	return
 }
 
+// pixel_format_drawable says if a mode has a format that the system draws:
+// 32 bits for each pixel, red, green and blue in one of two orders. The
+// firmware writes the format word, so it becomes its enum here, at one
+// place, and a word that names no format is refused.
+pixel_format_drawable :: proc "contextless" (format_word: Efi_Pixel_Format) -> bool {
+	format, known := enum_word.member_of_word(Efi_Pixel_Format, u64(transmute(u32)format_word))
+	if !known {
+		return false
+	}
+	switch format {
+	case .Red_Green_Blue, .Blue_Green_Red:
+		return true
+	case .Bit_Mask, .Blt_Only:
+		return false
+	}
+	return false
+}
+
 // allocate gives zero pages that stay in use after the boot program.
 allocate :: proc "contextless" (page_count: u64) -> rawptr {
 	address: u64
 	if system.boot_services.allocate_pages(.Any, .Loader_Data, uint(page_count), &address) != 0 {
-		stop("boot program: no memory\r\n")
+		text: bootscreen.Text
+		bootscreen.put(&text, "the firmware gives no memory for ")
+		bootscreen.put_number(&text, page_count)
+		bootscreen.put(&text, " pages")
+		stop(string(text.bytes[:text.count]))
 	}
 	intrinsics.mem_zero(rawptr(uintptr(address)), int(page_count * PAGE_SIZE))
 	return rawptr(uintptr(address))
 }
 
+// stop writes why the boot program cannot go on, then shows it and waits,
+// as a refusal of trust does (boot_stop), at the step of stop_step.
 stop :: proc "contextless" (text: string) -> ! {
+	print("boot program: ")
 	print(text)
-	system.runtime_services.reset_system(.Shutdown, 1, 0, nil)
-	for {}
+	print("\r\n")
+	boot_stop(stop_record, stop_step, text)
+}
+
+// boot_stop shows a failure of the boot program and keeps it. The watchdog
+// of the firmware restarts the machine after 5 minutes and starts the same
+// boot program again: the boot program turns the watchdog off, so the
+// failure stays until the machine is stopped by hand. With no record or no
+// screen, the line that the caller wrote stays on the console of the
+// firmware. A power off would remove the failure before anyone reads it.
+//
+// After a call of ExitBootServices, the watchdog is not a service that the
+// boot program may call: the stop draws on the screen, which is memory, and
+// writes on the serial port only (print).
+boot_stop :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, text: string) -> ! {
+	if boot != nil && display(boot, text, .Failed, step) {
+		// After the draw, print writes on the serial port only.
+		print("boot program: the boot display shows the failure\r\n")
+	} else if firmware_services_exit_tried {
+		print("boot program: no boot display: the failure is on the serial port only\r\n")
+	} else {
+		print("boot program: no boot display: the failure stays on the console of the firmware\r\n")
+	}
+	if !firmware_services_exit_tried {
+		system.boot_services.set_watchdog_timer(0, 0, 0, nil)
+	}
+	for {
+		intrinsics.cpu_relax()
+	}
 }
 
 // Set when the boot display is on the screen. The console of the firmware
@@ -293,9 +547,10 @@ stop :: proc "contextless" (text: string) -> ! {
 display_on_screen := false
 
 // print writes ASCII text on the firmware console, which takes UTF-16; after
-// the first draw of the boot display, on the serial port only.
+// the first draw of the boot display, or after a call of ExitBootServices,
+// on the serial port only.
 print :: proc "contextless" (text: string) {
-	if display_on_screen {
+	if display_on_screen || firmware_services_exit_tried {
 		serial_port_print(text)
 		return
 	}
@@ -324,12 +579,12 @@ _fltused: i32 = 0x9875
 _tls_index: u32
 
 // display draws the boot display (package bootscreen) with what the boot
-// program knows. The kernel does not draw: the root service draws the
-// display again with the records of the kernel.
-display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := bootscreen.State.Running, step := bootscreen.Step.Kernel) {
+// program knows; drawn is false with no screen. The kernel does not draw:
+// the root service draws the display again with the records of the kernel.
+display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := bootscreen.State.Running, step := bootscreen.Step.Kernel) -> (drawn: bool) {
 	screen := boot.framebuffer
 	if screen.address == 0 || screen.format == .None {
-		return
+		return false
 	}
 	display_on_screen = true
 	data := &display_data
@@ -352,4 +607,5 @@ display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := 
 	data.step = step
 	data.red_first = screen.format == .Red_Green_Blue_X
 	bootscreen.draw_screen({pixels = ([^]graphics.Color)(uintptr(screen.address)), width = int(screen.width), height = int(screen.height), stride = int(screen.pixels_per_line)}, data)
+	return true
 }

@@ -33,14 +33,16 @@
 //
 // - **Image**: the boot image, read-only, to start the nodes from it.
 //
-// **What a reader sees**: the circle of nodes, the records in each ring, the
-// record that each node holds, and its work time. The log has "rings: ok, 6
+// **What a reader sees**: the circle of nodes, the records in each ring, an
+// arrow on each ring from the node that writes it to the node that reads it,
+// the record that each node holds, and its work time. The log has "rings: ok, 6
 // processes, 6 rings, 5 records", "rings: node N stopped" or "started" after
 // a key, "rings: the key a adds a record: N records in all", "rings: node N
 // stopped alone" when the kernel stopped it, and
 // "rings: node N does not run: M records wait in the ring before it".
 package rings
 
+import "modus:contract/draw_record"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -321,6 +323,42 @@ watch :: proc "contextless" () {
 	}
 }
 
+// The arrow of a ring, in pixels from the center of the node that writes
+// the ring: its base and its tip on the line, out of the card of the node,
+// and half its width. The records wait at the other end, next to the node
+// that reads them.
+ARROW_BASE :: NODE_SIZE / 2 + 14
+ARROW_TIP :: NODE_SIZE / 2 + 28
+ARROW_HALF_WIDTH :: 7
+
+// ring_arrow_draw draws the arrow of the ring from one node to the next:
+// a triangle, one filled path with antialiased edges, along the line of
+// the ring at any angle.
+ring_arrow_draw :: proc "contextless" (table: ^interface.Draw_Table, from, to: [2]int) {
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	along_x, along_y := i64(to.x - from.x), i64(to.y - from.y)
+	length := i64(interface.square_root_floor(u64(along_x * along_x + along_y * along_y)))
+	if length <= ARROW_TIP {
+		return
+	}
+	// A place on the line, at a distance from the center of the writer, and
+	// a step across it, in units.
+	on_line :: proc "contextless" (center: int, along, length, distance: i64) -> i64 {
+		return i64(center) * UNITS + along * distance * UNITS / length
+	}
+	across_x := -along_y * ARROW_HALF_WIDTH * UNITS / length
+	across_y := along_x * ARROW_HALF_WIDTH * UNITS / length
+	base_x, base_y := on_line(from.x, along_x, length, ARROW_BASE), on_line(from.y, along_y, length, ARROW_BASE)
+	tip_x, tip_y := on_line(from.x, along_x, length, ARROW_TIP), on_line(from.y, along_y, length, ARROW_TIP)
+	points := [4]interface.Path_Point {
+		{command = .Move, x = i32(base_x + across_x), y = i32(base_y + across_y)},
+		{command = .Line, x = i32(tip_x), y = i32(tip_y)},
+		{command = .Line, x = i32(base_x - across_x), y = i32(base_y - across_y)},
+		{command = .Close},
+	}
+	interface.draw_path(table, points[:], draw_record.opaque(graphics.colors.dim), 0, 0)
+}
+
 draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 	interface.draw_text(table, 12, 8, "Each square is a process. Each line is a ring in shared memory.", graphics.colors.text)
 	// The band of the action bar, from edge to edge.
@@ -332,8 +370,10 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 	for &node, index in nodes {
 		from := centers[index]
 		to := centers[(index + 1) % relay.NODE_COUNT]
-		// A ring is a line of less weight than the nodes and the records.
+		// A ring is a line of less weight than the nodes and the records, and
+		// its arrow says the way that its records go.
 		interface.draw_line(table, from.x, from.y, to.x, to.y, 2, graphics.colors.dim)
+		ring_arrow_draw(table, from, to)
 		first, count := pending(&node.after.commands)
 		// The oldest record is next to the node that reads the ring.
 		length := abs(to.x - from.x) + abs(to.y - from.y)
