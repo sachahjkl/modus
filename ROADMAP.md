@@ -19,6 +19,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A silent data disk that freezes no processor.** On a disk with the default ioevent file of QEMU, the root service turns the bus master off over a request that never ends, QEMU then waits for that request, and every processor of the machine stops; only the test machine of the silent disk has no ioevent file. The machine of `run` and each test machine then get a form that QEMU does not drain, chosen after a measure of its cost for each request, so a silent disk gives its lines on every machine. [Design](src/md/features/missing_hardware.md)
 - **A machine check or an NMI that stops one process.** The kernel reads the error of the machine check, and a corrected error or an error in the memory of one process gives a line or the stop of that process in place of a stop of the machine. [Design](src/md/features/missing_hardware.md)
 
 - **The bus master off before a device service stops.** The root service turns the bus master of a device off, then stops its device service, for each device service, in place of stopping the service first. A device then makes no access to memory between the stop of its service and the reap, also on a machine with no IOMMU. [Design](src/md/features/device_services.md)

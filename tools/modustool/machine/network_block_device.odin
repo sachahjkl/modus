@@ -140,6 +140,11 @@ Network_Block_Device :: struct {
 	silence_marker:              string,
 	silent:                      bool, // Atomic: the disk answers nothing more.
 	silent_requests:             int, // Atomic: the requests that it read and did not answer, that write first.
+	// Atomic: disk_server_disconnect closed the connection. The server
+	// then refuses each new connection, with a line, and counts it: a
+	// machine that connects again would read a disk that answers.
+	disconnected:                bool,
+	connections_refused:         int,
 }
 
 // The states of the dropped write of zeros, in their order.
@@ -339,8 +344,10 @@ disk_server_stop :: proc(server: ^Network_Block_Device) {
 
 // disk_server_disconnect closes the connection of the machine and keeps the
 // server: QEMU then fails each request that waits for an answer, so a
-// machine whose disk went silent can end (silent_disk.odin).
+// machine whose disk went silent can end (silent_disk.odin). The server
+// refuses each later connection, with a line.
 disk_server_disconnect :: proc(server: ^Network_Block_Device) {
+	sync.atomic_store(&server.disconnected, true)
 	if client := net.TCP_Socket(sync.atomic_load((^int)(&server.client))); client != 0 {
 		_ = net.shutdown(client, .Both)
 	}
@@ -364,6 +371,12 @@ disk_server_run :: proc(server: ^Network_Block_Device) {
 		client, _, err := net.accept_tcp(server.socket)
 		if err != nil {
 			return
+		}
+		if sync.atomic_load(&server.disconnected) {
+			sync.atomic_add(&server.connections_refused, 1)
+			fmt.eprintln("modustool: the disk server refused a new connection of QEMU: the test closed the connection of the disk, and a disk that answers again would hide the silence")
+			net.close(client)
+			continue
 		}
 		sync.atomic_store((^int)(&server.client), int(client))
 		if disk_server_handshake(server, client) {

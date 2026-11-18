@@ -292,6 +292,9 @@ place_new :: proc "contextless" (caller: ^Caller, path: ^Path) -> (place: i64, o
 
 // The refusals that each export of a change makes first.
 change_refusal :: proc "contextless" (caller: ^Caller, error: ^errors.Error_Record) -> (refused: bool, result: i64) {
+	if unopened, refusal := disk_unopened_refusal(error); unopened {
+		return true, refusal
+	}
 	if caller.connection == nil || caller.store.limit == 0 {
 		return true, errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
@@ -310,6 +313,9 @@ Named :: struct {
 }
 
 named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_Record, place_argument: i64, change: bool) -> (named: Named, result: i64) {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return named, refusal
+	}
 	named.caller = caller_of()
 	if change {
 		if refused, refusal := change_refusal(&named.caller, error); refused {
@@ -526,6 +532,9 @@ Listed :: struct {
 // - `Device` (-6).
 @(export, link_name = "list")
 list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(Listed), names: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> i64 {
+	if refused, result := disk_unopened_refusal(error); refused {
+		return result
+	}
 	caller := caller_of()
 	if caller.connection == nil || caller.store.limit == 0 {
 		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
@@ -626,6 +635,9 @@ Shared :: struct {
 // - `Refused` (-6: the kernel refused a memory object or a give).
 @(export, link_name = "share")
 share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors.Error_Record) -> i64 {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return refusal
+	}
 	caller := caller_of()
 	if caller.connection == nil || caller.store.limit == 0 {
 		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
@@ -737,7 +749,11 @@ USAGE_NOT_COUNTED :: answers.USAGE_NOT_COUNTED
 usage :: proc "c" (result: ^[]Usage) -> i64 {
 	caller := caller_of()
 	row: Usage
-	if caller.connection != nil && caller.depth > 0 {
+	if caller.connection != nil && !disk_opened {
+		// A disk that went silent before the open: no count is known.
+		row.limit = i64(caller.store.limit)
+		row.objects, row.trees, row.versions, row.blocks = USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED
+	} else if caller.connection != nil && caller.depth > 0 {
 		row.limit = i64(caller.store.limit)
 		if index := store_find(caller.store.name); index >= 0 && !store_damaged[index] {
 			counts, outcome := tree_usage(index, caller.path[:caller.depth])
@@ -767,9 +783,13 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 //
 // **Error kinds**
 //
-// - `No_Grant` (-10, unit Acts_For_Principal: the caller does not act for a principal).
+// - `No_Grant` (-10, unit Acts_For_Principal: the caller does not act for a principal);
+// - `Device` (-6: the disk went silent before the open, and the service knows no store).
 @(export, link_name = "stores")
 stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return refusal
+	}
 	caller := caller_of()
 	if !caller.acts_for_principal {
 		return errors.fail(error, failure(.Acts_For_Principal), .No_Grant, .Acts_For_Principal)
@@ -826,6 +846,9 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 // - `Full` (-5, unit Places: no free place).
 @(export, link_name = "open_store")
 open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> i64 {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return refusal
+	}
 	caller := caller_of()
 	if caller.connection == nil {
 		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
@@ -1194,8 +1217,10 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 // `system.ANSWER_BOUND_MILLISECONDS` with no completion; a completion with the record `No_Answer` of the device ends
 // it too. The disk is then silent: the service writes "storage: the disk does not answer: <the cause>; the service
 // reads and changes nothing on the disk until its next start, and refuses each call that needs the disk", sends no
-// request to the block service again, and answers each call that needs a block with `Device`. Before the open is
-// done, it stops with the code 1 instead (src/md/features/missing_hardware.md).
+// request to the block service again, and answers each call that needs a block with `Device`. A disk that goes silent
+// before the open is done leaves the service running with no store known: it answers each call that names a store
+// with `Device`, and `usage` gives no count. It does not stop: the root service would start it again, with a new
+// block service and a reset of a device that still holds a request (src/md/features/missing_hardware.md).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
@@ -1243,25 +1268,63 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.sleep(system.time() + 1)
 		}
 	}
+	// A block service that stopped before it mapped the ring: the disk is
+	// silent, as at a stop during a wait.
+	if give_status != .Ok {
+		if state, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+			disk_silence_note(.Block_Service_Stopped)
+		}
+	}
+	// A silent disk wrote its own line: the block service stopped before it
+	// served, or did not answer. The service then does not stop: a stop
+	// would make the root service start it again for the next process with
+	// a store, with a new block service, a reset of a device that still
+	// holds a request, a new wait and new lines; and the device can still
+	// write the data region, which a stop would free. It serves on, and
+	// refuses each call with Device (disk_unopened_refusal).
 	if give_status != .Ok || block.Status(command(.Attach, {0 = u64(given)}).kind) != .Ok {
-		// A silent disk wrote its own line: the block service stopped
-		// before it served, or did not answer.
 		if !disk_silent {
 			system.log_in("storage", .Error, "storage: the block service refused the data region")
+			system.stop(1)
 		}
-		system.stop(1)
 	}
+	if !disk_silent {
+		disk_open()
+	}
+	// A removal that waits runs when no call waits; a service that makes no
+	// change runs none, and waits.
+	for {
+		if broken || !removal_waits() {
+			wait: system.Wait
+			system.service_wait(&wait, &service)
+			for &item in shares {
+				if item.connection.calls.head != nil {
+					system.wait_records(&wait, &item.connection.calls.commands)
+				}
+			}
+			system.wait_end(&wait)
+		}
+		calls := system.service_run(&service)
+		calls += shares_serve()
+		if calls == 0 {
+			removal_step()
+		}
+	}
+}
+
+// disk_open opens the disk (mount) and writes its lines. A disk that goes
+// silent during the open leaves the service with no open: its line is
+// written, and each call is refused (disk_unopened_refusal).
+disk_open :: proc "contextless" () {
 	info := command(.Info)
 	if disk_silent {
-		system.stop(1)
+		return
 	}
 	start := system.time()
 	mounted := mount(info.values[0])
 	elapsed := system.time() - start
-	// The open read nothing that it can trust: it serves nothing, and the
-	// line of the silence says why.
 	if disk_silent {
-		system.stop(1)
+		return
 	}
 	switch {
 	case mounted.failed:
@@ -1300,23 +1363,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log("storage: ", mounted.removing, " trees wait to be freed: the removal continues")
 		}
 	}
-	for {
-		// A removal that waits runs when no call waits: the service then
-		// looks at its rings and does not sleep.
-		if !removal_waits() {
-			wait: system.Wait
-			system.service_wait(&wait, &service)
-			for &item in shares {
-				if item.connection.calls.head != nil {
-					system.wait_records(&wait, &item.connection.calls.commands)
-				}
-			}
-			system.wait_end(&wait)
-		}
-		calls := system.service_run(&service)
-		calls += shares_serve()
-		if calls == 0 {
-			removal_step()
-		}
-	}
+	disk_opened = true
 }

@@ -1,6 +1,7 @@
 package machine
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "modustool:build"
@@ -84,8 +85,15 @@ silent_disk_run :: proc(part: ^Test_Part_Run) -> bool {
 	sync.mutex_lock(&server.lock)
 	kept := strings.contains(string(server.current), SILENT_DISK_MARKER)
 	sync.mutex_unlock(&server.lock)
-	if !silent || unanswered < 1 || kept {
-		fmt.eprintfln("modustool: test failed: the silent disk: the disk went silent: %v; requests that it did not answer: %d; the marker is in its image: %v", silent, unanswered, kept)
+	refused := sync.atomic_load(&server.connections_refused)
+	if !silent || unanswered < 1 || kept || refused != 0 {
+		fmt.eprintfln("modustool: test failed: the silent disk: the disk went silent: %v; requests that it did not answer: %d; the marker is in its image: %v; connections of QEMU refused after the disconnect: %d", silent, unanswered, kept, refused)
+		return false
+	}
+	// The block service and the storage service each write their line once:
+	// the storage service does not stop, so the root service starts no
+	// second one, and no second block service.
+	if !lines_once(TEST_OUTPUT_SILENT_DISK, {"block: the device did not answer a request in ", "storage: the disk does not answer: "}) {
 		return false
 	}
 	foundation.test_passed_print("the silent disk: the disk answered none of %d requests from the write of the marker, and kept none of it; the block service failed its requests at its deadline and stopped, the storage service refused the write and a read, and the console ran on", unanswered)
@@ -102,10 +110,33 @@ scenario_no_network_device := [?]Step {
 	{kind = .Launch, text = "net"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "1 + 2 * 3"},
-	{kind = .Wait, text = "[console] 7", fails_on = "root: no virtio device for frame"},
+	{kind = .Wait, text = "[console] 7", fails_on = "root: the network service did not start"},
 	{kind = .Quit},
 }
 
 no_network_device_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_no_network_device[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NO_NETWORK_DEVICE, exit_status = 0, no_network_device = true})
+	if !machine_test(part, scenario_no_network_device[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NO_NETWORK_DEVICE, exit_status = 0, no_network_device = true}) {
+		return false
+	}
+	// Two starts of net, one line of each: the second start is refused
+	// with no new start of the frame service and no new line.
+	return lines_once(TEST_OUTPUT_NO_NETWORK_DEVICE, {"root: no virtio device for frame", "root: the network service did not start"})
+}
+
+// lines_once says if the log of a machine holds each text exactly once,
+// and writes the count of each one that it holds another count of times.
+lines_once :: proc(log_path: string, texts: []string) -> bool {
+	log, read_error := os.read_entire_file(log_path, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read %s: %v", log_path, read_error)
+		return false
+	}
+	once := true
+	for text in texts {
+		if count := strings.count(string(log), text); count != 1 {
+			fmt.eprintfln("modustool: test failed: the log %s holds \"%s\" %d times, and it must hold it once", log_path, text, count)
+			once = false
+		}
+	}
+	return once
 }

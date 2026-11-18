@@ -79,9 +79,10 @@ network_service :: proc "contextless" () -> (service: ^Started, status: system.S
 		return nil, .Bad_State
 	}
 	if status = start("network"); status != .Ok {
-		// A full table or a budget that is short can pass at a later start;
-		// a device that is absent or a service that cannot drive it cannot.
-		if status != .No_Slot && status != .No_Budget {
+		// Only an absent device is for ever: driver_start gives Bad_Handle
+		// when no network device is at its place. A full table, a short
+		// budget or short memory can pass at a later start.
+		if status == .Bad_Handle {
 			network_refuse("the network service did not start")
 		}
 		return nil, status

@@ -322,35 +322,28 @@ harvest :: proc "contextless" () -> (count: int) {
 	return count
 }
 
-// Why the device stops serving: the cause that each request in flight
-// gets in its error record.
+// Why the device stops serving: the cause of the line of the service.
 Device_Stop :: enum {
 	No_Answer, // A request passed its deadline.
 	Needs_Reset, // The device set its needs-reset bit: it serves no request until a reset.
 }
 
 // stop_with_each_request_failed completes each request in flight with
-// Device_Error and the record of the cause, wakes the client, writes the
-// line of the cause and stops the service. A request is never given back
-// to the device: the device can still write the data region of a request
-// that it did not answer, so the service stops and the root service turns
-// the bus master off (src/md/features/missing_hardware.md).
+// Device_Error and the record No_Answer of the device, wakes the client,
+// writes the line of the cause and stops the service. Both causes give the
+// same record: a device that needs a reset will answer none of them, and
+// the client then makes the disk silent with one line. A request is never
+// given back to the device: the device can still write the data region of
+// a request that it did not answer, so the service stops and the root
+// service turns the bus master off (src/md/features/missing_hardware.md).
 stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 	for slot in 0 ..< slot_count {
 		if !slots[slot].busy {
 			continue
 		}
-		command := u32(slots[slot].command)
-		values: [7]u64
-		switch cause {
-		case .No_Answer:
-			values = errors.ring_fail(command, .No_Answer, .Milliseconds, 0, 0, system.ANSWER_BOUND_MILLISECONDS, i64(errors.Unanswered.Device))
-		case .Needs_Reset:
-			values = errors.ring_fail(command, .Device, .None, 0, 0, 0, i64(virtio.status_read(&device)))
-		}
 		// The completion queue keeps a place for each request in flight
 		// (room), so no completion is lost.
-		complete(slots[slot].tag, .Device_Error, values)
+		complete(slots[slot].tag, .Device_Error, block.no_answer_values(slots[slot].command))
 	}
 	system.wake_reader(&clients.completions)
 	switch cause {
@@ -391,8 +384,8 @@ stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 // with the code 1. A request that the device does not answer by its
 // deadline (system.ANSWER_BOUND_MILLISECONDS after the device got it), and
 // a device that sets its needs-reset bit, end the service too: each
-// request in flight completes with `Device_Error` (with the record
-// `No_Answer` of the device for a deadline), the line says the cause, and
+// request in flight completes with `Device_Error` and the record
+// `No_Answer` of the device, the line says the cause, and
 // the service stops with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -490,6 +483,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 #assert(size_of(Header) == 16)
+#assert(block.NO_ANSWER_BOUND_MILLISECONDS == system.ANSWER_BOUND_MILLISECONDS)
 #assert(SLOT_CAPACITY <= block.RING_CAPACITY)
 #assert(op.PAGE_SIZE == block.BLOCK_SIZE)
 #assert(PAGE_REQUESTS < pci.QUEUE_PAGES)

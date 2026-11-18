@@ -3,7 +3,6 @@ package storage_service
 import "base:intrinsics"
 import "modus:contract/block"
 import "modus:contract/date"
-import "modus:contract/enum_word"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -83,7 +82,7 @@ block_service_state_read: bool
 // Why the disk is silent (disk_silence_note).
 Disk_Silence :: enum {
 	No_Answer, // The block service gave a request the record No_Answer: the device did not answer it by its deadline.
-	Block_Service_Stopped, // The block service stopped while a request waited for its completion.
+	Block_Service_Stopped, // The block service stopped while a request waited for its completion, or before it mapped the block ring.
 	No_Completion, // No completion came for system.ANSWER_BOUND_MILLISECONDS while a request waited.
 }
 
@@ -97,7 +96,24 @@ disk_silent: bool
 // after its cause. A machine test waits for it.
 DISK_SILENT_LINE :: "; the service reads and changes nothing on the disk until its next start, and refuses each call that needs the disk"
 
-// disk_silence_note makes the disk silent, with its line, once.
+// The open of the disk is done: the service knows its stores. A disk that
+// went silent before it leaves this false, and each call is refused.
+disk_opened: bool
+
+// disk_unopened_refusal refuses a call while the disk went silent before
+// the open was done: the service knows no store, so it can answer no
+// call with a fact of the disk. It gives Device, as a read of a silent disk
+// does after the open.
+disk_unopened_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: i64) {
+	if disk_opened {
+		return false, 0
+	}
+	return true, errors.fail(error, failure(.Disk), .Device, .None, 0, 0, 0, 1)
+}
+
+// disk_silence_note makes the disk silent, with its line, once. It closes
+// the handle of the block service: no wait reads it after the silence, and
+// its stopped process then frees its slot of the kernel.
 disk_silence_note :: proc "contextless" (cause: Disk_Silence) {
 	if disk_silent {
 		return
@@ -105,29 +121,22 @@ disk_silence_note :: proc "contextless" (cause: Disk_Silence) {
 	disk_silent = true
 	broken = true
 	disk_errors += 1
+	system.close(block_service)
+	block_service = 0
 	switch cause {
 	case .No_Answer:
-		system.log_in("disk", .Error, "storage: the disk does not answer: the device did not answer a request of the block service by its deadline", DISK_SILENT_LINE)
+		system.log_in("disk", .Error, "storage: the disk does not answer: the block service says that the device did not answer a request", DISK_SILENT_LINE)
 	case .Block_Service_Stopped:
-		system.log_in("disk", .Error, "storage: the disk does not answer: the block service stopped while a request waited for its completion", DISK_SILENT_LINE)
+		system.log_in("disk", .Error, "storage: the disk does not answer: the block service stopped before it answered", DISK_SILENT_LINE)
 	case .No_Completion:
 		system.log_in("disk", .Error, "storage: the disk does not answer: no completion came in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms", DISK_SILENT_LINE)
 	}
 }
 
 // disk_answer_absent says if a completion of the block service says that
-// the device did not answer: the kind No_Answer with the device as what
-// did not answer. The words come from another process: each one goes
-// through its border.
+// the device did not answer (the border block.device_did_not_answer).
 disk_answer_absent :: proc "contextless" (completion: ring.Record) -> bool {
-	status, status_known := enum_word.member_of_word(block.Status, u64(completion.kind))
-	if !status_known || status != .Device_Error {
-		return false
-	}
-	record := errors.completion_record(completion.values)
-	kind, kind_known := errors.kind_of_word(record.kind)
-	unanswered, unanswered_known := errors.unanswered_of_word(record.found)
-	return kind_known && kind == .No_Answer && unanswered_known && unanswered == .Device
+	return block.device_did_not_answer(completion.kind, completion.values)
 }
 
 // disk_wait_goes_on decides a wait for a completion of the block service
@@ -297,7 +306,7 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 // completion (disk_wait_goes_on), it gives a completion Device_Error with
 // the record No_Answer of the device, as the block service gives one.
 command :: proc "contextless" (kind: block.Command, values: [7]u64 = {}) -> ring.Record {
-	silent := ring.Record{kind = u32(block.Status.Device_Error), values = errors.ring_fail(u32(kind), .No_Answer, .Milliseconds, 0, 0, system.ANSWER_BOUND_MILLISECONDS, i64(errors.Unanswered.Device))}
+	silent := ring.Record{kind = u32(block.Status.Device_Error), values = block.no_answer_values(kind)}
 	if disk_silent {
 		return silent
 	}

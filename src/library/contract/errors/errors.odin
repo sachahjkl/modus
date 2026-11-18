@@ -141,7 +141,7 @@ Kind :: enum i64 {
 	// gives it for a kernel call whose answer has another tag than its command, or is absent.
 	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: the word of an Unanswered, what did not answer.
 	// The network service gives it, with the unit `Milliseconds`. The block service gives it with `Device` for each
-	// request in flight when the device did not answer one by its deadline; the storage service then refuses each
+	// request in flight when the device did not answer one by its deadline or needs a reset; the storage service then refuses each
 	// call that needs the disk with the kind `Device`.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
 	// Given by the block and frame services for a command that the device does not have, by the network
