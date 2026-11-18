@@ -3139,7 +3139,7 @@ scenario := [?]Step {
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
 	// The interface font (docs/FONTS.md, section 12): B612 placed by
-	// src/library/support/text_shaping and drawn by graphics.text_proportional.
+	// src/library/support/text_rendering and drawn by graphics.text_proportional.
 	// Its Greek letters are past the glyph cache: the font service drew
 	// them into the demand cache, the box-drawing characters come from
 	// Paper Mono, the second font of the chain, drawn by the process, and

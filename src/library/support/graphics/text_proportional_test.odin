@@ -6,8 +6,7 @@ import "modus:contract/glyph_cache"
 import "core:mem"
 import "core:sync"
 import "core:testing"
-import "modus:support/fallback_glyphs"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 // The glyph cache of B612 Regular, three positions at scale 1 and one at
@@ -40,7 +39,7 @@ b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64
 a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
-	defer fallback_glyphs.state = {}
+	defer text_rendering.state = {}
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
 	render := new(vector_font.Render_Memory)
@@ -73,20 +72,20 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	built_pixels, fallback_pixels: [WIDTH * HEIGHT]Color
 	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	drawn := Canvas{pixels = raw_data(fallback_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
-	placed: [16]text_shaping.Placed_Glyph
+	placed: [16]text_rendering.Placed_Glyph
 	count: int
-	fallback: [16]text_shaping.Placed_Glyph
+	fallback: [16]text_rendering.Placed_Glyph
 	// With no outlines: the replacement glyph at the place of each
 	// fallback glyph.
-	fallback_glyphs.state = {}
-	spacing, _ := text_shaping.spacing_of(&cache, 1)
-	count, _, _ = text_shaping.shape(&spacing, transmute([]u8)string(TEXT), placed[:])
+	text_rendering.state = {}
+	spacing, _ := text_rendering.spacing_of(&cache, 1)
+	count, _, _ = text_rendering.shape(&spacing, transmute([]u8)string(TEXT), placed[:])
 	fallback = placed
 	replaced := placed
 	index := 0
 	for character in TEXT {
-		fallback[index].glyph = text_shaping.FALLBACK_GLYPH_FIRST + u32(character)
-		replaced[index].glyph = text_shaping.REPLACEMENT_GLYPH
+		fallback[index].glyph = text_rendering.FALLBACK_GLYPH_FIRST + u32(character)
+		replaced[index].glyph = text_rendering.REPLACEMENT_GLYPH
 		index += 1
 	}
 	clear(built, DARK_CARD_BOTTOM)
@@ -98,8 +97,8 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	// replacement glyph.
 	words := fallback_open_for_test(t, base)
 	defer delete(words)
-	no_font := [1]text_shaping.Placed_Glyph{{glyph = text_shaping.FALLBACK_GLYPH_FIRST + 0x0416}}
-	no_glyph := [1]text_shaping.Placed_Glyph{{glyph = text_shaping.REPLACEMENT_GLYPH}}
+	no_font := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.FALLBACK_GLYPH_FIRST + 0x0416}}
+	no_glyph := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.REPLACEMENT_GLYPH}}
 	clear(built, DARK_CARD_BOTTOM)
 	clear(drawn, DARK_CARD_BOTTOM)
 	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, no_glyph[:], 1, DARK_TEXT)
@@ -114,16 +113,16 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	for layer in Layer {
 		switch layer {
 		case .Demand_Cache:
-			fallback_glyphs.frame_begin()
+			text_rendering.frame_begin()
 		case .Private_Cache:
 			delete(words)
 			words = fallback_open_for_test(t, 0)
 		}
-		expected := fallback_glyphs.Glyph_Source.Private_Cache
+		expected := text_rendering.Glyph_Source.Private_Cache
 		if layer == .Demand_Cache {
 			expected = .Demand_Cache
 		}
-		_, _, source := fallback_glyphs.glyph(.Interface, 'R', 1, 0)
+		_, _, source := text_rendering.glyph(.Interface, 'R', text_rendering.size_of_scale(1), 0)
 		testing.expectf(t, source == expected, "%v: R comes from %v", layer, source)
 		for fraction in ([3]i64{0, 21, 43}) {
 			clear(built, DARK_CARD_BOTTOM)
@@ -162,7 +161,7 @@ a_proportional_cache_is_not_a_font_of_cells :: proc(t: ^testing.T) {
 the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
-	spacing, spacing_ok := text_shaping.spacing_of(&cache, 1)
+	spacing, spacing_ok := text_rendering.spacing_of(&cache, 1)
 	testing.expect(t, spacing_ok)
 	square_root: [4096]u8
 	square_root_table_fill(&square_root)
@@ -186,8 +185,8 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 		for index in 0 ..< count {
 			characters[index] = u8(glyph_cache.ASCII_FIRST + next(&state) % glyph_cache.ASCII_COUNT)
 		}
-		placed: [40]text_shaping.Placed_Glyph
-		_, width, ok := text_shaping.shape(&spacing, characters[:count], placed[:count])
+		placed: [40]text_rendering.Placed_Glyph
+		_, width, ok := text_rendering.shape(&spacing, characters[:count], placed[:count])
 		testing.expect(t, ok)
 		place := i64(32 * 64) + i64(next(&state) % 64)
 		for &pixel in pixels {
@@ -224,7 +223,7 @@ a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	defer free(tables)
 	pixels: [64 * 32]Color
 	canvas := Canvas{pixels = raw_data(pixels[:]), width = 64, height = 32, stride = 64}
-	placed := [3]text_shaping.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
+	placed := [3]text_rendering.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
 	places := [?]i64{-(1 << 40), 1 << 40, -64 * 70, 64 * 70}
 	for place in places {
 		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, DARK_TEXT)

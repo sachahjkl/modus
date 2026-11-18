@@ -1,50 +1,53 @@
-// Text shaping (docs/FONTS.md, section 12.3): the characters of a text
-// become placed glyphs, with the advance of each character and the pair
-// adjustment of each pair of characters that follow each other. The text
-// is UTF-8 (src/library/contract/text_encoding). No ligature and no other
-// script: one placed glyph for each character, and one for each invalid sequence.
+package text_rendering
+
+import "base:intrinsics"
+import "modus:contract/glyph_cache"
+import "modus:contract/text_encoding"
+
+// Text shaping (docs/FONTS.md, "12.3 The shaping"): the characters of a
+// text become placed glyphs, with the advance of each character and the
+// pair adjustment of each pair of characters that follow each other. The
+// text is UTF-8 (src/library/contract/text_encoding). No ligature and no
+// other script: one placed glyph for each character, and one for each
+// invalid sequence.
 //
 // A module that links this package calls it directly, over the spacing of
 // a glyph cache that it validated (spacing_of). The module text_shaping
 // gives the same functions as exports over tables of the caller.
 //
-// A spacing with a fallback face (Spacing.fallback) also places the
-// characters past the glyph cache that a font of its fallback chain has,
-// with the advance of that font file (src/md/features/glyphs_on_demand.md).
-// The advance never depends on a cache, so the measure and the draw of a
-// frame agree.
+// A spacing with a face (Spacing.face) also places the characters past
+// the glyph cache that a font of its fallback chain has, with the advance
+// of that font file at the size of the spacing. The advance never depends
+// on a cache, so the measure and the draw of a frame agree.
 //
 // The spacing can be in memory that another thread changes during a call:
 // in an isolated call the tables are in the call region. So no value is
 // checked once and trusted later: each advance and each pair is read once,
 // and kept in its limits at that read. A changed table gives other numbers,
 // never a read out of the tables and never a sum that wraps.
-package text_shaping
-
-import "base:intrinsics"
-import "modus:contract/glyph_cache"
-import "modus:contract/text_encoding"
-import "modus:support/fallback_glyphs"
 
 CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126, the Latin-1 Supplement and the added characters.
-// The glyph of a character that the cache does not hold, and of each invalid sequence
-// of the text: the reader draws the replacement glyph in its place
-// (graphics.character_replacement), so that a reader sees that a character
-// is there that the font does not draw. It has the advance of
+// The glyph of a character that the cache does not hold, and of each
+// invalid sequence of the text: the reader draws the replacement glyph in
+// its place (graphics.character_replacement), so that a reader sees that a
+// character is there that the font does not draw. It has the advance of
 // REPLACEMENT_ADVANCE_CHARACTER, and no pair.
 REPLACEMENT_GLYPH :: max(u32)
 REPLACEMENT_ADVANCE_CHARACTER :: '0'
 // The glyph of a character past the glyph cache that the fallback chain
-// has is FALLBACK_GLYPH_FIRST plus its code point
-// (src/md/features/glyphs_on_demand.md): past each character index, and
-// below REPLACEMENT_GLYPH.
+// has is FALLBACK_GLYPH_FIRST plus its code point: past each character
+// index, and below REPLACEMENT_GLYPH.
 FALLBACK_GLYPH_FIRST :: u32(1) << 24
 #assert(FALLBACK_GLYPH_FIRST > CHARACTER_COUNT && u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(REPLACEMENT_GLYPH))
 // The most bytes of one text. With an advance and a pair adjustment of at
-// most glyph_cache.ADVANCE_LIMIT each, the place of the last glyph stays
-// in an i32 of 1/64 of a pixel.
+// most ADVANCE_LIMIT each, the place of the last glyph stays in an i32 of
+// 1/64 of a pixel.
 TEXT_LIMIT :: 1 << 16
-#assert(TEXT_LIMIT * 2 * glyph_cache.ADVANCE_LIMIT < 1 << 31)
+// The largest advance and the largest adjustment of a pair that the shaper
+// places, in 1/64 of a pixel: 64 pixels, the bound of a glyph cache. It
+// holds each advance of the sizes of the glyph caches.
+ADVANCE_LIMIT :: glyph_cache.ADVANCE_LIMIT
+#assert(TEXT_LIMIT * 2 * ADVANCE_LIMIT < 1 << 31)
 
 // Placed_Glyph: one character of a text, placed. x is from the origin of
 // the text; advance includes the pair adjustment with the next character;
@@ -73,20 +76,21 @@ Character_Advance :: struct {
 
 // Spacing: the advances of the characters of a glyph cache, by their
 // character index, and the pairs of one font at one scale, sorted by left
-// then right.
+// then right; or one advance for every character: a grid of cells.
 Spacing :: struct {
-	advances: []i32, // CHARACTER_COUNT of them.
-	pairs:    []glyph_cache.Pair_Entry, // The pair adjustments, sorted by left then right character index.
-	// The fallback face of the glyph cache, or None. With a face, a
-	// character past the glyph cache that its chain has is placed with the
-	// advance of its font file. The module text_shaping has none.
-	fallback: fallback_glyphs.Face,
-	scale:    int, // The scale of the advances: the advance of a fallback glyph is its advance at this scale.
+	advances:     []i32, // CHARACTER_COUNT of them; empty for a grid of cells.
+	pairs:        []glyph_cache.Pair_Entry, // The pair adjustments, sorted by left then right character index.
+	// The face of the glyph cache, or None. With a face, a character past
+	// the glyph cache that its chain has is placed with the advance of its
+	// font file. The module text_shaping has none.
+	face:         Face,
+	size:         int, // The text size of the advances: the advance of a fallback glyph is its advance at this size.
+	cell_advance: i32, // Above 0: each character, the replacement glyph too, has this advance and no pair: the cells of a grid.
 }
 
 // spacing_of gives the spacing of one scale of a valid glyph cache, with
-// the fallback face of the cache when the process opened the outlines. ok
-// is false for a scale that the cache does not have.
+// the face of the cache when the process opened the outlines. ok is false
+// for a scale that the cache does not have.
 spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spacing: Spacing, ok: bool) {
 	if cache.header.character_count != CHARACTER_COUNT {
 		return {}, false
@@ -95,7 +99,13 @@ spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spa
 	if len(advances) != CHARACTER_COUNT {
 		return {}, false
 	}
-	return {advances = advances, pairs = glyph_cache.pairs_of(cache, scale), fallback = fallback_glyphs.face_of_cache(cache), scale = scale}, true
+	return {advances = advances, pairs = glyph_cache.pairs_of(cache, scale), face = face_of_cache(cache), size = size_of_scale(scale)}, true
+}
+
+// cell_spacing gives the spacing of a grid of cells of a width in pixels:
+// each character is one cell.
+cell_spacing :: proc "contextless" (cell_width: int) -> Spacing {
+	return {cell_advance = i32(clamp(cell_width, 1, ADVANCE_LIMIT / SUBPIXEL)) * SUBPIXEL}
 }
 
 // glyph_of gives the glyph of a character: its index in the cache, or
@@ -108,46 +118,49 @@ glyph_of :: #force_inline proc "contextless" (character: rune) -> u32 {
 	return u32(index)
 }
 
-// glyph_in gives the glyph of a decoded character with the fallback face
-// of the spacing: its character index, a fallback glyph, or
-// REPLACEMENT_GLYPH. An invalid sequence is the replacement glyph.
+// glyph_in gives the glyph of a decoded character with the face of the
+// spacing: its character index, a fallback glyph, or REPLACEMENT_GLYPH. An
+// invalid sequence is the replacement glyph.
 @(private)
 glyph_in :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) -> u32 {
 	glyph := glyph_of(character)
-	if glyph != REPLACEMENT_GLYPH || spacing.fallback == .None || !valid {
+	if glyph != REPLACEMENT_GLYPH || spacing.face == .None || !valid {
 		return glyph
 	}
-	if fallback_glyphs.has(spacing.fallback, character) {
+	if has(spacing.face, character) {
 		return FALLBACK_GLYPH_FIRST + u32(character)
 	}
 	return REPLACEMENT_GLYPH
 }
 
 // advance_of gives the advance of a glyph, read once, from 0 to
-// glyph_cache.ADVANCE_LIMIT. A fallback glyph has the advance of its font
-// file at the scale of the spacing.
+// ADVANCE_LIMIT. A fallback glyph has the advance of its font file at the
+// size of the spacing.
 @(private)
 advance_of :: #force_inline proc "contextless" (spacing: ^Spacing, glyph_given: u32) -> i32 {
-	if glyph_given >= FALLBACK_GLYPH_FIRST && glyph_given != REPLACEMENT_GLYPH && spacing.fallback != .None {
-		if value, found := fallback_glyphs.advance(spacing.fallback, rune(glyph_given - FALLBACK_GLYPH_FIRST), spacing.scale); found {
-			return clamp(value, 0, glyph_cache.ADVANCE_LIMIT)
+	if spacing.cell_advance > 0 {
+		return clamp(spacing.cell_advance, 0, ADVANCE_LIMIT)
+	}
+	if glyph_given >= FALLBACK_GLYPH_FIRST && glyph_given != REPLACEMENT_GLYPH && spacing.face != .None {
+		if value, found := advance(spacing.face, rune(glyph_given - FALLBACK_GLYPH_FIRST), spacing.size); found {
+			return clamp(value, 0, ADVANCE_LIMIT)
 		}
 	}
 	glyph := glyph_given >= CHARACTER_COUNT ? glyph_of(REPLACEMENT_ADVANCE_CHARACTER) : glyph_given
 	if int(glyph) >= len(spacing.advances) {
 		return 0
 	}
-	return clamp(intrinsics.volatile_load(&spacing.advances[glyph]), 0, glyph_cache.ADVANCE_LIMIT)
+	return clamp(intrinsics.volatile_load(&spacing.advances[glyph]), 0, ADVANCE_LIMIT)
 }
 
 // pair_of gives the adjustment of the pair of two glyphs, from
-// -glyph_cache.ADVANCE_LIMIT to glyph_cache.ADVANCE_LIMIT: a binary search
-// in the sorted pairs, each pair read once. Pairs out of order give a
-// wrong adjustment, never a read out of the table.
+// -ADVANCE_LIMIT to ADVANCE_LIMIT: a binary search in the sorted pairs,
+// each pair read once. Pairs out of order give a wrong adjustment, never a
+// read out of the table.
 @(private)
 pair_of :: proc "contextless" (spacing: ^Spacing, left, right: u32) -> i32 {
-	if left >= CHARACTER_COUNT || right >= CHARACTER_COUNT {
-		return 0 // The replacement glyph has no pair.
+	if left >= CHARACTER_COUNT || right >= CHARACTER_COUNT || spacing.cell_advance > 0 {
+		return 0 // The replacement glyph, a fallback glyph and a cell have no pair.
 	}
 	key := left << 8 | right
 	low, high := 0, len(spacing.pairs)
@@ -157,7 +170,7 @@ pair_of :: proc "contextless" (spacing: ^Spacing, left, right: u32) -> i32 {
 		pair_key := u32(pair.left) << 8 | u32(pair.right)
 		switch {
 		case pair_key == key:
-			return clamp(pair.adjustment, -glyph_cache.ADVANCE_LIMIT, glyph_cache.ADVANCE_LIMIT)
+			return clamp(pair.adjustment, -ADVANCE_LIMIT, ADVANCE_LIMIT)
 		case pair_key < key:
 			low = middle + 1
 		case:
@@ -169,12 +182,12 @@ pair_of :: proc "contextless" (spacing: ^Spacing, left, right: u32) -> i32 {
 
 // shape places the characters of a text: it writes the placed glyphs that
 // fit from the start of placed, and gives the count of the full answer
-// (one for each character, and one for each invalid sequence) and the width of the
-// text, the sum of the advances. ok is false for a text of more than
-// TEXT_LIMIT bytes: nothing is written. Each character of the text is
-// decoded once: a text that another thread changes during the call gives
-// other glyphs, each one a glyph of the cache or REPLACEMENT_GLYPH, and
-// never a place past the text.
+// (one for each character, and one for each invalid sequence) and the
+// width of the text, the sum of the advances. ok is false for a text of
+// more than TEXT_LIMIT bytes: nothing is written. Each character of the
+// text is decoded once: a text that another thread changes during the call
+// gives other glyphs, each one a glyph of the cache or REPLACEMENT_GLYPH,
+// and never a place past the text.
 shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Glyph) -> (count: int, width: i64, ok: bool) {
 	if len(text) > TEXT_LIMIT {
 		return 0, 0, false
@@ -186,17 +199,17 @@ shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Gly
 	for length > 0 {
 		next_place := place + length
 		next_character, next_length, next_valid := text_encoding.character_decode(text, next_place)
-		advance := advance_of(spacing, glyph)
+		glyph_advance := advance_of(spacing, glyph)
 		next: u32
 		if next_length > 0 {
 			next = glyph_in(spacing, next_character, next_valid)
-			advance += pair_of(spacing, glyph, next)
+			glyph_advance += pair_of(spacing, glyph, next)
 		}
 		if count < len(placed) {
-			placed[count] = {glyph = glyph, x = i32(x), advance = advance, cluster = u32(place)}
+			placed[count] = {glyph = glyph, x = i32(x), advance = glyph_advance, cluster = u32(place)}
 		}
 		count += 1
-		x += i64(advance)
+		x += i64(glyph_advance)
 		glyph, place, length = next, next_place, next_length
 	}
 	return count, x, true
@@ -235,4 +248,37 @@ measure_ranges :: proc "contextless" (spacing: ^Spacing, text: []u8, ranges: []T
 		range.width = width
 	}
 	return .None, len(ranges), 0
+}
+
+// text_fit gives the bytes of the longest start of a text whose width is
+// at most room, in 1/64 of a pixel: whole characters, so a cut never
+// splits one. 0 for a room below the first advance.
+text_fit :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (count: int) {
+	if len(text) > TEXT_LIMIT {
+		return 0
+	}
+	x: i64
+	place := 0
+	character, length, valid := text_encoding.character_decode(text, place)
+	glyph := glyph_in(spacing, character, valid)
+	for length > 0 {
+		next_place := place + length
+		next_character, next_length, next_valid := text_encoding.character_decode(text, next_place)
+		glyph_advance := advance_of(spacing, glyph)
+		next: u32
+		if next_length > 0 {
+			next = glyph_in(spacing, next_character, next_valid)
+		}
+		// The pair with the next character moves the next glyph, not the
+		// end of this one: a start that ends here has no pair after it.
+		if x + i64(glyph_advance) > room {
+			return place
+		}
+		if next_length > 0 {
+			glyph_advance += pair_of(spacing, glyph, next)
+		}
+		x += i64(glyph_advance)
+		glyph, place, length = next, next_place, next_length
+	}
+	return place
 }

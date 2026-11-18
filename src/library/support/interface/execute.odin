@@ -3,7 +3,7 @@ package interface
 import "modus:contract/draw_record"
 import "modus:contract/text_encoding"
 import "modus:support/graphics"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 
 // execute draws each record of a table into a canvas, in order. The records
 // are in the coordinates of the surface; (origin_x, origin_y) is where the
@@ -506,12 +506,12 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 		return
 	}
 	cache := interface_cache_of(table.interface_font, font)
-	spacing, ok := text_shaping.spacing_of(cache, scale)
+	spacing, ok := text_rendering.spacing_of(cache, scale)
 	if !ok {
 		return
 	}
-	placed: [INTERFACE_TEXT_LIMIT]text_shaping.Placed_Glyph
-	placed_count, _, _ := text_shaping.shape(&spacing, text, placed[:])
+	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
+	placed_count, _, _ := text_rendering.shape(&spacing, text, placed[:])
 	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, color, alpha)
 }
 

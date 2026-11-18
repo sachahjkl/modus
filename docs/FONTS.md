@@ -8,7 +8,7 @@ The terms are in `glossary/text.md`: font, glyph, outline, coverage, subpixel ba
 
 **For whom.** A reader who draws text in a process, and a reader who changes a font, the glyph cache or the setting.
 
-**The map of this guide.** Sections 1 to 5: what a process does, the grid, the subpixel bands, fixed point, the glyph cache. Section 6: the font file and the candidates. Sections 7 and 8: the setting and the fallback. Sections 9 to 11: measures, gaps, open decisions. Section 12: the interface font and the text shaping module. Section 13: the glyphs past the glyph cache: the font outlines, the demand cache, the private glyph cache and the fallback chains.
+**The map of this guide.** Sections 1 to 5: what a process does, the grid, the subpixel bands, fixed point, the glyph cache. Section 6: the font file and the candidates. Sections 7 and 8: the setting and the fallback. Sections 9 to 11: measures, gaps, open decisions. Section 12: the interface font and the text shaping module. Section 13: the glyphs past the glyph cache: the font outlines, the demand cache, the private glyph cache and the fallback chains. Section 14: the text rendering at any text size: the text size, the frame of a face, the rasterizer, the private glyph cache and its bounds.
 
 ![The text of the system in the vector font; the process settings changes it to Spleen 8x16 and back while every window runs](screenshots/font_vector.png)
 
@@ -346,7 +346,7 @@ B612 (<https://github.com/polarsys/b612>, version 1.008, the package `b612` of n
 
 ### 12.3 The text shaping module
 
-A module (property 10: shared code with exports), with batch exports whose parameters are tables (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"). Its name: `text_shaping`. Written (part 3 of 12.8): the package `src/library/support/text_shaping` for a direct call, and the module `src/modules/libraries/text_shaping` over it, as `src/library/support/interface` and `interface_module`.
+A module (property 10: shared code with exports), with batch exports whose parameters are tables (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"). Its name: `text_shaping`. Written (part 3 of 12.8): the shaping of the package `src/library/support/text_rendering` for a direct call (section 14), and the module `src/modules/libraries/text_shaping` over it, as `src/library/support/interface` and `interface_module`.
 
 **As written:**
 
@@ -461,18 +461,18 @@ A glyph cache holds 192 characters of one font, drawn at each size. A character 
 | Part | Where | What it does |
 |---|---|---|
 | The font outlines | the resource `font_outlines`, `src/library/contract/font_outlines`, the fixed range `Font_Outlines` | The font files of the four glyph caches (B612 Regular and Bold, Paper Mono, Paper Mono SemiBold), each with its name and its BLAKE3 hash. The root service maps it read-only beside the glyph caches; a process validates its header once. |
-| The fallback glyphs | `src/library/support/fallback_glyphs` | In each process and in the drawing module: the fonts of the outlines opened once, the fallback faces, the chains by script, the advance of a character from its font file, and the glyph of a character from the demand cache or from the private glyph cache. |
-| The fallback faces | `fallback_glyphs.Face` | `Interface` (B612 Regular), `Interface_Bold` (B612 Bold), `Cells` and `Cells_Without_Grid_Fit` (Paper Mono with and without the grid fit), `Cells_Bold` (Paper Mono SemiBold, scale 1). A process finds the face of a glyph cache by the hash of its font file and its flags (`face_of_cache`). |
-| The private glyph cache | `fallback_glyphs.Private_Cache` | 65 536 words in runs of 32 to 4 096 words, and 1 024 entries by face, scale, position and code point, in the memory of the process. A new glyph that finds no room evicts the glyphs used the longest time ago, counted in frames (`fallback_glyphs.frame_begin`). |
+| The text rendering | `src/library/support/text_rendering` | In each process and in the drawing module: the fonts of the outlines opened once, the faces, the chains by script, the advance of a character from its font file at a text size, the shaping, the breaks of the lines, the rasterizer at any size, and the glyph of a character from the demand cache or from the private glyph cache (section 14). |
+| The faces | `text_rendering.Face` | `Interface` (B612 Regular), `Interface_Bold` (B612 Bold), `Cells` and `Cells_Without_Grid_Fit` (Paper Mono with and without the grid fit), `Cells_Bold` (Paper Mono SemiBold). A process finds the face of a glyph cache by the hash of its font file and its flags (`face_of_cache`). |
+| The private glyph cache | `text_rendering.Private_Cache` | 262 144 words (1 MiB) in runs of 32 to 16 384 words, and 4 096 entries by face, font, glyph index, text size and position, in the memory of the process. A new glyph that finds no room evicts the glyphs used the longest time ago, counted in frames (`text_rendering.frame_begin`), never a glyph of the frame in progress. |
 | The demand cache | `src/library/contract/demand_cache`, the fixed range `Demand_Cache` | One memory object of 4 395 008 bytes: a header, a hash table of 2048 entries by face and code point, 4 MiB of words. The font service writes it; each process that gets the glyph caches maps it read-only. |
 | The font service | the process `glyphs` | Draws each character of the subset of each demand face from the font outlines with the renderer of the build (`vector_font.demand_glyph_draw`), writes what each fallback chain lacks, and ends with the code 0. |
 | The root service | `src/modules/system/root/font_service.odin`, `text_settings.odin` | Checks the font outlines, creates the demand cache before the compositor, starts the font service, and maps the outlines and the demand cache with the glyph caches in each process that gets them (each process with a surface, each terminal, the compositor, a process from a disk). It keeps no handle for each process. |
-| The shaper and the draw | `text_shaping.Spacing.fallback`, `graphics.text_proportional`, `text_scaled`, `text_bold`, `character` | A character past the glyph cache that the chain has is the placed glyph `FALLBACK_GLYPH_FIRST` plus its code point, with the advance of its font file and no pair; the draw takes its glyph from `fallback_glyphs.glyph`. |
+| The shaper and the draw | `text_rendering.Spacing.face`, `graphics.text_proportional`, `text_scaled`, `text_bold`, `character` | A character past the glyph cache that the chain has is the placed glyph `FALLBACK_GLYPH_FIRST` plus its code point, with the advance of its font file and no pair; the draw takes its glyph from `text_rendering.glyph`. |
 
 ### 13.2 What a process does
 
-1. At its start, `display.text_settings_load` opens the font outlines and the demand cache that the starter mapped (`fallback_glyphs.open`), before the glyph caches. The drawing module does the same in its own copy at its first draw.
-2. Each spacing of a glyph cache (`text_shaping.spacing_of`) finds the fallback face of the cache. The shaper places a character past the glyph cache that the chain has as a fallback glyph, with the advance of its font file. Another one is the replacement glyph, with the advance of `0`. The advance never depends on a cache, so the measure and the draw of a frame agree.
+1. At its start, `display.text_settings_load` opens the font outlines and the demand cache that the starter mapped (`text_rendering.open`), before the glyph caches. The drawing module does the same in its own copy at its first draw.
+2. Each spacing of a glyph cache (`text_rendering.spacing_of`) finds the face of the cache. The shaper places a character past the glyph cache that the chain has as a fallback glyph, with the advance of its font file. Another one is the replacement glyph, with the advance of `0`. The advance never depends on a cache, so the measure and the draw of a frame agree.
 3. Each frame starts with `display.text_frame_begin`: `interface.window_frame_begin` and the drawing module call it, and a process that draws text by hand calls it at its frame.
 4. The draw takes the glyph of a fallback glyph from the demand cache when its font is the first font of the face and the cache holds it, else from the private glyph cache, where it draws it at its first use: 3 to 46 µs, in the frame.
 
@@ -492,7 +492,7 @@ The demand cache holds the same entries whatever the processes draw: the font se
 
 ### 13.2.3 The fallback chains, and what they lack
 
-The chains are data (`fallback_glyphs.scripts`): one row for each script, with the fonts of each face in order. A character takes the first font of its chain that has its glyph; a character of no row takes the default chain of its face.
+The chains are data (`text_rendering.scripts`): one row for each script, with the fonts of each face in order. A character takes the first font of its chain that has its glyph; a character of no row takes the default chain of its face.
 
 | Script | Interface | Cells |
 |---|---|---|
@@ -528,14 +528,14 @@ The glyphs of the glyph caches do not change: the build draws the 192 characters
 - The root service creates the demand cache, and gives it with Write to the font service only. Each other process maps it with the right Read only.
 - The font service writes an entry, then its key with release, then the generation of the header. An entry never changes after that.
 - A process copies each entry that it finds and checks it against the constants of `demand_cache` (`entry_valid`): the rows inside the line, the width and the left side inside the limits of a glyph, the words inside the words of the cache, each advance inside its limits. A glyph of a cell face must also start at the left of its cell, be at most as wide as the cell, and have the width of the cell as its advance. A wrong entry is never a read outside the cache: the process draws that glyph itself.
-- A process uses a face of the demand cache only for the font file and the flags of its fallback face: the header names the hash of the font file and the flags of each face, and `reader_frame_begin` compares them at each frame.
+- A process uses a face of the demand cache only for the font file and the flags of its face: the header names the hash of the font file and the flags of each face, and `reader_frame_begin` compares them at each frame.
 - The font service publishes no entry for a character outside the subset of its face. The table then holds at most the characters of the subsets: no process fills it.
 - The font outlines are pages of the boot image, whose one handle has no right Write, mapped with the right Read only, after the root service checked their hash and their format (`font_outlines.validate`), as a glyph cache is. Each record names the hash of its font file, which is the hash that its glyph cache and its demand face name.
 - The private glyph cache is memory of the process: only the process writes it, and only the process reads it.
 
 ### 13.6 The pixels
 
-A glyph past the glyph cache has the bytes that the build gives to the same character from the same font file: the same style, the same renderer, the same positions. The host test `a_glyph_on_demand_is_the_glyph_of_the_build` (`src/library/support/vector_font`) compares the box, the words and the advance of characters of the glyph cache drawn both ways; `a_cell_glyph_on_demand_is_the_glyph_of_the_build` does the same for the three cell faces against the caches of cells of Paper Mono. The host test `a_private_glyph_of_the_first_font_is_the_glyph_of_the_demand_cache` (`src/library/support/fallback_glyphs`) compares each word of a glyph of the private glyph cache with the glyph that the font service draws, for each face. The host test `a_text_on_demand_draws_the_pixels_of_the_glyph_cache` (`src/library/support/graphics`) draws a text from the glyph cache, from the demand cache and from the private glyph cache, and compares the pixels at each third of a pixel; `a_cell_on_demand_draws_the_pixels_of_the_glyph_cache` draws a cell from each at each scale, and checks that the ink of a Greek letter of B612 stays in its cell. The service draws the faces in their order and each subset in the order of the code points, so each start gives the same places and the same generations.
+A glyph past the glyph cache has the bytes that the build gives to the same character from the same font file: the same style, the same renderer, the same positions. The host test `a_glyph_on_demand_is_the_glyph_of_the_build` (`src/library/support/vector_font`) compares the box, the words and the advance of characters of the glyph cache drawn both ways; `a_cell_glyph_on_demand_is_the_glyph_of_the_build` does the same for the three cell faces against the caches of cells of Paper Mono. The host test `a_private_glyph_of_the_first_font_is_the_glyph_of_the_demand_cache` (`src/library/support/text_rendering`) compares each word of a glyph of the private glyph cache with the glyph that the font service draws, for each face. The host test `a_text_on_demand_draws_the_pixels_of_the_glyph_cache` (`src/library/support/graphics`) draws a text from the glyph cache, from the demand cache and from the private glyph cache, and compares the pixels at each third of a pixel; `a_cell_on_demand_draws_the_pixels_of_the_glyph_cache` draws a cell from each at each scale, and checks that the ink of a Greek letter of B612 stays in its cell. The service draws the faces in their order and each subset in the order of the code points, so each start gives the same places and the same generations.
 
 ### 13.7 Measures
 
@@ -557,13 +557,68 @@ Host: AMD Ryzen 7 5800X, one core (`taskset`), `-o:speed`, each time the least o
 
 | Measure | Value |
 |---|---|
-| The private glyph cache, in each copy of `fallback_glyphs` | 256 KiB of words, 1 024 entries, the table and the blocks, and 75 KiB of render memory: about 390 KiB that the budget of the process reserves; a page gets its frame at its first use |
+| The private glyph cache, in each copy of `text_rendering` that draws | 1 MiB of words, 4 096 entries of 48 bytes, a table of 8 192 places and the blocks, and about 150 KiB of render memory: about 1.4 MiB that the budget of the process reserves; a page gets its frame at its first use |
 | The demand cache | 4 395 008 bytes: 1 073 pages that the root service pays once |
 | The words of the four faces | at most 997 504 of the 1 048 576 words within the limits that a reader checks (`demand_cache.WORD_BOUND`, checked by an `#assert`); at most 678 016 for the subsets of today, computed for a cell full at each scale (host test `each_face_of_the_subset_fits_the_demand_cache`, which checks that no character is refused) |
 | The font outlines | the four subsets: about 195 KB in the boot image |
 
-A placed glyph costs about four times a glyph of cells, because `glyph_render_placed` clears and filters a work row of 64 pixels whatever the width of the glyph.
+These measures are of the rasterizer of the glyph caches, which the build still uses: there a placed glyph costs about four times a glyph of cells, because `glyph_render_placed` clears and filters a work row of 64 pixels whatever the width of the glyph. The rasterizer of each process has a work row as wide as the glyph (section 14.3); its measures are in section 14.6.
 
 ### 13.8 What is left
 
 A font for the Greek letters that B612 lacks, Cyrillic and Latin Extended-A; a TrueType font for the CJK ideographs, with a cell of two columns; the shaping of complex scripts in the process: `ROADMAP.md`.
+
+## 14. Text at any size
+
+The package `src/library/support/text_rendering` draws each glyph of a face at any text size, into the private glyph cache of the copy that draws. The callers give the sizes of the three scales of the glyph caches; the glyph caches of the boot image still draw the 192 characters, and the demand cache its subsets. The intent of this design is `src/md/features/text_rendering.md`.
+
+### 14.1 The text size
+
+The text size is the height of the line of a face, in 1/64 of a pixel: a line of 16 pixels is the size 1 024, and the scales 1, 2 and 3 are the sizes 1 024, 2 048 and 3 072 (`size_of_scale`). A size from 256 (a line of 4 pixels) to 16 384 (a line of 256 pixels) is valid. `size_check` refuses 0 (`Zero`), a size below 256 (`Too_Small`) and a size past 16 384 (`Too_Large`); it never clamps. A refused size gives no advance and no glyph.
+
+### 14.2 The frame of a face
+
+| Face | Its frame | At the size 1 024 |
+|---|---|---|
+| A face of cells (Paper Mono, Paper Mono SemiBold) | The advance of the font is half the line | 606 units are 8 pixels |
+| A face of the interface (B612, B612 Bold) | The cap height of the font is 10/16 of the line | 1 500 units are 10 rows |
+
+A length of the font at a size is `units * size / (2 * units of a cell)` in 1/64 of a pixel, rounded to the nearest integer, a half up (`units_at_size`): at the sizes of the glyph caches it is the advance of the glyph caches. A cell of a face of cells is half the line, rounded to whole pixels, a half up (`cell_columns`). The baseline puts the middle of the ink of the first font at the middle of the line (`baseline_of`).
+
+### 14.3 The rasterizer
+
+The exact area in integers of section 4, with the filter of five taps, the words `0xGGRRGGBB` and the grid fit of section 2 at each size. Two changes from the rasterizer of the glyph caches, which change no word:
+
+- **The work row is as wide as the glyph.** The points of the outline give the columns that the ink can touch, with the spread of the filter and one pixel more on each side. A glyph wider than 512 pixels is refused: its font is hostile.
+- **The rows are drawn in bands of 8 rows.** Each band adds the whole outline, moved up by whole rows, so the memory has a bound at any size.
+
+A proportional glyph is at the nearest third of a pixel at each size: three positions. A glyph of cells is at a whole pixel, cut to its cell. The ink of a glyph is cut to its line.
+
+### 14.4 The private glyph cache
+
+| Bound | Value |
+|---|---|
+| The words | 262 144 words (1 MiB), in runs of 32 to 16 384 words that split and join by halves |
+| The entries | 4 096, in a table of 8 192 places |
+| The key | 64 bits: the face (4 bits), the font of the chain (4), the glyph index in that font (16), the text size (16), the position (2) |
+
+A new glyph that finds no room evicts the glyphs of the oldest frames. A glyph of the frame in progress is never evicted: when the glyphs of one frame fill the cache, each other new glyph of that frame is drawn into the render memory, blended, and not kept (`Glyph_Source.Not_Kept`). Its pixels are right; the frame costs more time. The first such frame writes one line on the log of the process, at the start of the next frame:
+
+`text_rendering: the glyphs of one frame fill the private glyph cache: <n> glyphs drawn and not kept`
+
+A glyph larger than 16 384 words (a glyph of 128 by 128 pixels) is never kept (`Glyph_Source.Too_Large`): the draw takes its rows band by band (`glyph_bands`, `band_next`) and blends each band.
+
+### 14.5 The proof of the pixels
+
+The host test `the_words_are_the_words_of_the_glyph_caches` (`src/library/support/text_rendering`) draws the 192 characters of each face at the sizes 1 024, 2 048 and 3 072, at each position, and compares the box and each word with the glyph that the build of the glyph caches draws from the same font file (`vector_font.glyph_cache_build`, `glyph_cache_build_proportional`): the code of the tool that makes the caches of the boot image. The faces of the interface are compared at three positions at each size: at 2 048 and 3 072 the position 0 is the glyph of today's cache, and the positions 1 and 2 are the two new ones.
+
+The host test `the_measure_is_the_draw` checks, for each face at six sizes, that the x of each placed glyph is the sum of the advances of the font file before it, and that the fit of a room is the start whose measure is that room.
+
+### 14.6 Measures
+
+Each one is a measure, never a test.
+
+| Measure | Command |
+|---|---|
+| The raster of one glyph of each face at the lines of 16, 20, 24 and 32 pixels, the least of 200 | `nix develop -c taskset -c 2 odin test src/library/support/text_rendering -vet -collection:modus=src/library -o:speed -define:ODIN_TEST_NAMES=text_rendering.the_raster_time_of_one_glyph` |
+| The glyphs of the frame that fills the cache | the same, with `ODIN_TEST_NAMES=text_rendering.a_frame_larger_than_the_cache` |

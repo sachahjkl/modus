@@ -82,7 +82,7 @@ package terminal_process
 import "modus:contract/demand_cache"
 import "modus:contract/enum_word"
 import "modus:support/display"
-import "modus:support/fallback_glyphs"
+import "modus:support/text_rendering"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/key_path"
@@ -1682,11 +1682,14 @@ fallback_cells_tell :: proc "contextless" () {
 		}
 		found := display.cell_fallback_of(character)
 		switch found.source {
-		case .Private_Cache, .Demand_Cache:
+		case .Private_Cache, .Demand_Cache, .Not_Kept:
 			if !fallback_cell_told && found.rows > 0 && found.inside {
 				fallback_cell_told = true
-				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", fallback_glyphs.outline_font_name(found.font), " of its fallback chain")
+				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", text_rendering.outline_font_name(found.font), " of its fallback chain")
 			}
+		case .Too_Large:
+			// Not reached: a cell of the terminal is far below the largest
+			// block of the private glyph cache.
 		case .Missing:
 			if !missing_cell_told && found.font == .None {
 				missing_cell_told = true

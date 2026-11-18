@@ -1,16 +1,16 @@
-// The glyphs past the glyph cache (src/md/features/glyphs_on_demand.md):
-// for a character that no glyph cache holds, the font of its fallback
-// chain, its advance from that font file, and its glyph: from the demand
-// cache when the font service drew it there, else drawn by this process
-// into its private glyph cache.
+// The text rendering of the system (src/md/features/text_rendering.md):
+// the faces and their fallback chains, the text size, the measure of a
+// text (shaping.odin), the breaks of its lines (line_break.odin), the
+// rasterizer at any size (raster.odin) and the private glyph cache
+// (private_cache.odin).
 //
 // A process opens it once with the font outlines and the demand cache that
 // its starter mapped (open). The shaper asks for an advance (advance), the
 // draw for a glyph (glyph), and each frame starts with frame_begin. The
 // state is one for each copy of this package: a process has its own, and
 // the drawing module that it imports has its own. Both read the same
-// outlines, so the measure in the process and the draw in the module give
-// the same advances.
+// outlines with the same code, so the measure in the process and the draw
+// in the module give the same advances.
 //
 // The advance comes from the font file at each measure, never from a
 // cache: the measure and the draw of a frame agree whatever the cache
@@ -22,15 +22,77 @@
 // (docs/MODULE_CONTRACT.md, "A library as a module"). So the chains are
 // fixed arrays and the names come from procedures.
 //
-// See [fallback chain](term:fallback-chain), [fallback face](term:fallback-face)
-// and [private glyph cache](term:private-glyph-cache).
-package fallback_glyphs
+// See [text size](term:text-size), [face](term:face),
+// [fallback chain](term:fallback-chain) and
+// [private glyph cache](term:private-glyph-cache).
+package text_rendering
 
 import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/vector_font"
+
+// ---- The text size.
+
+// The text size is the height of the line of a face, in 1/64 of a pixel:
+// a line of 16 pixels is the size 1 024. The places and the advances of a
+// text are in the same unit.
+SUBPIXEL :: glyph_cache.SUBPIXEL
+// The size of a line of 16 pixels: the line of the glyph caches at scale 1.
+TEXT_SIZE_OF_SCALE_ONE :: 16 * SUBPIXEL
+// The smallest size: a line of 4 pixels. Below it a glyph has no form that
+// a reader can read.
+TEXT_SIZE_MINIMUM :: 4 * SUBPIXEL
+// The largest size: a line of 256 pixels. It is a bound of cost: the work
+// of one glyph grows with the square of the size. A larger text is a path.
+TEXT_SIZE_LIMIT :: 256 * SUBPIXEL
+// The size is 16 bits in the key of the private glyph cache.
+#assert(TEXT_SIZE_LIMIT < 1 << 16)
+
+// Why a text size is refused. None: the size is valid.
+Size_Problem :: enum u8 {
+	None, // A size from TEXT_SIZE_MINIMUM to TEXT_SIZE_LIMIT.
+	Zero, // The size 0: a caller that gives no size names the size it wants.
+	Too_Small, // Above 0 and below TEXT_SIZE_MINIMUM.
+	Too_Large, // Above TEXT_SIZE_LIMIT.
+}
+
+// size_check checks a text size. A size out of its range is refused, never
+// clamped: a clamp turns a value that the contract refuses into one that
+// it accepts.
+size_check :: proc "contextless" (size: int) -> Size_Problem {
+	switch {
+	case size == 0:
+		return .Zero
+	case size < TEXT_SIZE_MINIMUM:
+		return .Too_Small
+	case size > TEXT_SIZE_LIMIT:
+		return .Too_Large
+	}
+	return .None
+}
+
+// size_of_scale gives the text size of a scale of the glyph caches: 1 024,
+// 2 048 and 3 072 for the scales 1, 2 and 3.
+size_of_scale :: #force_inline proc "contextless" (scale: int) -> int {
+	return scale * TEXT_SIZE_OF_SCALE_ONE
+}
+
+// line_rows gives the rows of pixels of a line of a size: the size rounded
+// up to a whole pixel, so that the line holds the ink of the size.
+line_rows :: #force_inline proc "contextless" (size: int) -> int {
+	return (size + SUBPIXEL - 1) / SUBPIXEL
+}
+
+// cell_columns gives the width of a cell of a face of cells at a size, in
+// whole pixels: half the line, a half up. At the sizes of the glyph caches
+// it is the cell of the grid: 8, 16 and 24 pixels.
+cell_columns :: #force_inline proc "contextless" (size: int) -> int {
+	return (size + SUBPIXEL) / (2 * SUBPIXEL)
+}
+
+// ---- The fonts, the faces and the chains.
 
 // The fonts that a chain names: one member for each font file that the
 // resource of the outlines holds, found there by its name
@@ -43,6 +105,8 @@ Outline_Font :: enum u8 {
 	Paper_Mono_Semibold, // Paper Mono SemiBold: the bold weight of the cells.
 }
 Outline_Fonts :: bit_set[Outline_Font]
+// The font is 4 bits in the key of the private glyph cache.
+#assert(int(max(Outline_Font)) < 1 << 4)
 
 // outline_font_name gives the name of the record of a font in the resource
 // of the outlines: the name of its file in resources/fonts.
@@ -71,29 +135,38 @@ Chain_Kind :: enum u8 {
 	Cells_Bold,
 }
 
-// A fallback face: the glyph cache that a glyph past it stands beside. A
-// glyph of a face has the form, the baseline and the scale of the glyphs
-// of that cache. None: a glyph cache that is not of a font of the outlines,
-// or a process with no outlines; its characters past the cache draw the
-// replacement glyph.
+// A face: a first font, its frame, its weight and the grid fit. A glyph of
+// another font of its chain is drawn in the frame of the first font. None:
+// a glyph cache that is not of a font of the outlines, or a process with
+// no outlines; its characters past the glyph cache draw the replacement
+// glyph.
 Face :: enum u8 {
 	None,
-	Interface, // The glyph cache of B612 Regular: proportional.
-	Interface_Bold, // The glyph cache of B612 Bold: proportional, scale 1.
-	Cells, // The glyph cache of Paper Mono with the grid fit.
-	Cells_Without_Grid_Fit, // The glyph cache of Paper Mono with no grid fit.
-	Cells_Bold, // The glyph cache of Paper Mono SemiBold: scale 1.
+	Interface, // B612 Regular: proportional.
+	Interface_Bold, // B612 Bold: proportional.
+	Cells, // Paper Mono with the grid fit.
+	Cells_Without_Grid_Fit, // Paper Mono with no grid fit.
+	Cells_Bold, // Paper Mono SemiBold.
 }
+// The face is 4 bits in the key of the private glyph cache.
+#assert(int(max(Face)) < 1 << 4)
 
-// The form of a face: the form of its glyph cache, its first font, its
-// chain, and its face of the demand cache.
+// The positions of a glyph across a pixel: the step of the color stripes.
+// A proportional glyph is at the nearest third of a pixel at each size; a
+// glyph of cells is at a whole pixel.
+POSITION_LIMIT :: glyph_cache.POSITION_LIMIT
+#assert(POSITION_LIMIT == 3)
+
+// The form of a face: its first font, its chain, its frame and the grid
+// fit; the form of its glyph cache of the boot image; its face of the
+// demand cache.
 Face_Form :: struct {
-	primary:      Outline_Font, // The font of its glyph cache: the first font of each of its chains.
+	primary:      Outline_Font, // The first font of each of its chains.
 	chain:        Chain_Kind,
-	proportional: bool, // Each character has its own advance; a glyph is the box of its ink.
-	grid_fit:     bool, // The flag FLAG_GRID_FIT of the glyph cache.
-	scale_count:  int, // The scales 1 ..= scale_count.
-	positions:    [glyph_cache.SIZE_LIMIT]int, // The positions of each scale; 0 past scale_count.
+	proportional: bool, // Each character has its own advance, and its frame is the cap height; else its frame is the advance, half the line.
+	grid_fit:     bool, // The baseline, the x-height and the cap height on whole pixels.
+	scale_count:  int, // The glyph cache of the boot image of this face has the scales 1 ..= scale_count.
+	positions:    [glyph_cache.SIZE_LIMIT]int, // The positions of each scale of that glyph cache; 0 past scale_count.
 	has_demand:   bool, // The demand cache has a face for it.
 	demand:       demand_cache.Face, // That face.
 }
@@ -106,6 +179,12 @@ face_forms := [Face]Face_Form {
 	.Cells = {primary = .Paper_Mono, chain = .Cells, grid_fit = true, scale_count = 3, positions = {1, 1, 1}, has_demand = true, demand = .Cells},
 	.Cells_Without_Grid_Fit = {primary = .Paper_Mono, chain = .Cells, grid_fit = false, scale_count = 3, positions = {1, 1, 1}, has_demand = true, demand = .Cells_Without_Grid_Fit},
 	.Cells_Bold = {primary = .Paper_Mono_Semibold, chain = .Cells_Bold, grid_fit = true, scale_count = 1, positions = {1, 0, 0}, has_demand = true, demand = .Cells_Bold},
+}
+
+// positions_of gives the positions across a pixel of a face at any size:
+// three for a proportional face, one for a face of cells.
+positions_of :: #force_inline proc "contextless" (face: Face) -> int {
+	return face_forms[face].proportional ? POSITION_LIMIT : 1
 }
 
 // The scripts that have chains of their own. A character of no script
@@ -167,9 +246,11 @@ default_chains := [Chain_Kind]Chain {
 
 // Where a glyph comes from.
 Glyph_Source :: enum u8 {
-	Missing, // No font of the chain has the character, the character is no character of a text, or the renderer refused its outline: the replacement glyph.
+	Missing, // No font of the chain has the character, the character is no character of a text, the size or the position is refused, or the renderer refused its outline: the replacement glyph.
 	Demand_Cache, // The words of the demand cache: the first font of the face, drawn by the font service.
 	Private_Cache, // The words of the private glyph cache of this process.
+	Not_Kept, // Drawn into the render memory of this copy and not kept: the glyphs of the frame in progress fill the cache. The words are valid until the next draw.
+	Too_Large, // Larger than the largest block of the cache: never kept, no entry and no words; the caller draws it band by band (glyph_bands).
 }
 
 // One font file of the outlines, opened.
@@ -177,8 +258,8 @@ Font :: struct {
 	opened: bool,
 	file:   vector_font.Font_File,
 	hash:   [32]u8, // The hash that its record names.
-	own:    vector_font.Font_Measures, // From its outlines: the measures of a font of cells.
-	stated: vector_font.Font_Measures, // With the heights that its table OS/2 states and the units of one cell from its cap height: the measures of a proportional font.
+	own:    vector_font.Font_Measures, // From its outlines: the frame of a font of cells.
+	stated: vector_font.Font_Measures, // With the heights that its table OS/2 states and the units of one cell from its cap height: the frame of a proportional font.
 }
 
 // State: the state of this copy of the package. All zero: nothing is
@@ -193,11 +274,6 @@ State :: struct {
 }
 
 state: State
-// The private glyph cache and the work memory of the renderer, apart from
-// the state: a copy that only measures (the module text_shaping) never
-// names them, so its file does not carry them.
-private_cache: Private_Cache
-render_memory: vector_font.Render_Memory
 
 // open opens the fonts of the outlines and the faces of the demand cache
 // mapped at demand_base (0: none). It gives the fonts that the outlines do
@@ -221,7 +297,8 @@ open :: proc "contextless" (outlines: ^font_outlines.Outlines, demand_base: uint
 			problem: vector_font.Font_Problem
 			opened.file, problem = vector_font.font_open(font_outlines.font_bytes(outlines, index))
 			if problem == .None {
-				opened.own, problem = vector_font.font_measures(&opened.file, &render_memory)
+				outline := outline_memory(&render_memory)
+				opened.own, problem = vector_font.font_measures_of_outline(&opened.file, &outline)
 			}
 			if problem == .None {
 				opened.stated, problem = vector_font.proportional_measures(&opened.file, opened.own)
@@ -252,9 +329,9 @@ demand_flags_of :: proc "contextless" (face: Face) -> u32 {
 	return (form.grid_fit ? glyph_cache.FLAG_GRID_FIT : 0) | (form.proportional ? glyph_cache.FLAG_PROPORTIONAL : 0) | u32(vector_font.Stripe_Filter.Five_Taps) << glyph_cache.FILTER_SHIFT
 }
 
-// face_of_cache gives the fallback face of a glyph cache: the face whose
-// first font has the hash of the font file of the cache, whose form the
-// cache has at each scale. None when no face matches.
+// face_of_cache gives the face of a glyph cache: the face whose first font
+// has the hash of the font file of the cache, whose form the cache has at
+// each scale. None when no face matches.
 face_of_cache :: proc "contextless" (cache: ^glyph_cache.Cache) -> Face {
 	if !state.opened || cache == nil || cache.header == nil {
 		return .None
@@ -277,10 +354,12 @@ face_of_cache :: proc "contextless" (cache: ^glyph_cache.Cache) -> Face {
 }
 
 // frame_begin starts a frame of the process: the order of use of the
-// private glyph cache counts in frames, and the demand cache gives one
-// generation to each draw of the frame.
+// private glyph cache counts in frames, a glyph of the frame in progress is
+// never evicted, and the demand cache gives one generation to each draw of
+// the frame.
 frame_begin :: proc "contextless" () {
 	state.frame += 1
+	private_cache.frame_full = false
 	for &reader, face in state.demand_readers {
 		if state.demand_open[face] {
 			demand_cache.reader_frame_begin(&reader)
@@ -318,34 +397,47 @@ chain_of :: proc "contextless" (face: Face, character: rune) -> Chain {
 	return default_chains[kind]
 }
 
-// font_of gives the first font of the chain of a face that has a glyph for
-// a character: None for no font, for the face None, for a character that
-// is no character of a text, before open, and for a face whose first font
-// the outlines lack: its measures place each glyph of the face.
-font_of :: proc "contextless" (face: Face, character: rune) -> Outline_Font {
+// font_glyph_of gives the first font of the chain of a face that has a
+// glyph for a character, and the index of that glyph in that font: None
+// for no font, for the face None, for a character that is no character of
+// a text, before open, and for a face whose first font the outlines lack:
+// its frame places each glyph of the face.
+font_glyph_of :: proc "contextless" (face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
 	if face == .None || !state.opened || !character_valid(character) || !state.fonts[face_forms[face].primary].opened {
-		return .None
+		return .None, 0
 	}
 	chain := chain_of(face, character)
-	for font in chain {
-		if font == .None {
+	for each in chain {
+		if each == .None {
 			break
 		}
-		opened := &state.fonts[font]
+		opened := &state.fonts[each]
 		if !opened.opened {
 			continue
 		}
-		if _, problem := vector_font.glyph_of(&opened.file, character); problem == .None {
-			return font
+		if index, problem := vector_font.glyph_of(&opened.file, character); problem == .None {
+			return each, index
 		}
 	}
-	return .None
+	return .None, 0
+}
+
+// font_of gives the first font of the chain of a face that has a glyph for
+// a character (font_glyph_of).
+font_of :: proc "contextless" (face: Face, character: rune) -> Outline_Font {
+	font, _ := font_glyph_of(face, character)
+	return font
+}
+
+// has says if a face has a glyph for a character.
+has :: proc "contextless" (face: Face, character: rune) -> bool {
+	return font_of(face, character) != .None
 }
 
 // measures_in_frame gives the measures with which a font draws in a face:
-// the measures of its glyph cache for the first font; for another font,
-// its stated heights and the units of one cell that put its cap height on
-// the cap height of the first font.
+// the frame of the first font; for another font, its stated heights and
+// the units of one cell that put its cap height on the cap height of the
+// first font.
 @(private)
 measures_in_frame :: proc "contextless" (face: Face, font: Outline_Font) -> vector_font.Font_Measures {
 	form := face_forms[face]
@@ -362,68 +454,40 @@ measures_in_frame :: proc "contextless" (face: Face, font: Outline_Font) -> vect
 	return measures
 }
 
-// style_of gives the style of a face at a scale: the cell, the baseline and
-// the grid fit of its first font, for each font of its chain.
-@(private)
-style_of :: proc "contextless" (face: Face, scale: int) -> vector_font.Glyph_Style {
-	form := face_forms[face]
-	first := &state.fonts[form.primary]
-	primary := form.proportional ? first.stated : first.own
-	return vector_font.glyph_style_of(primary, 8 * scale, 16 * scale, form.grid_fit)
+// units_at_size gives a length in units of a font in 1/64 of a pixel at a
+// text size, in a frame of units_per_cell units for the width of a cell:
+// units * (size / 2) / units_per_cell, rounded to the nearest integer, a
+// half up (vector_font.divide_rounded). A cell is half the line, so at the
+// sizes of the glyph caches it is vector_font.units_to_subpixels.
+units_at_size :: #force_inline proc "contextless" (units, size, units_per_cell: int) -> i64 {
+	return vector_font.divide_rounded(i64(units) * i64(size), 2 * i64(max(units_per_cell, 1)))
 }
 
-// has says if a face has a glyph for a character past its glyph cache.
-has :: proc "contextless" (face: Face, character: rune) -> bool {
-	return font_of(face, character) != .None
+// advance_limit_of_size gives the bound of an advance at a size: four
+// lines. A font that states more is hostile; its advance is kept in that
+// bound, so no sum along a text wraps.
+advance_limit_of_size :: #force_inline proc "contextless" (size: int) -> i64 {
+	return 4 * i64(size)
 }
 
-// advance gives the advance of a character of a face at a scale, in 1/64
-// of a pixel, from the font file of its chain: the same at each measure,
-// whatever the private glyph cache holds. found is false for a character
-// that no font of the chain has, and for a scale that the face does not
-// have.
-advance :: proc "contextless" (face: Face, character: rune, scale: int) -> (value: i32, found: bool) {
-	form := face_forms[face]
-	if scale < 1 || scale > form.scale_count {
+// advance gives the advance of a character of a face at a text size, in
+// 1/64 of a pixel, from the font file of its chain: the same at each
+// measure, whatever the private glyph cache holds. A face of cells has the
+// advance of a cell, half the line. found is false for a character that no
+// font of the chain has, and for a size that size_check refuses.
+advance :: proc "contextless" (face: Face, character: rune, size: int) -> (value: i32, found: bool) {
+	if size_check(size) != .None {
 		return 0, false
 	}
 	font := font_of(face, character)
 	if font == .None {
 		return 0, false
 	}
-	if !form.proportional {
-		return i32(8 * scale * glyph_cache.SUBPIXEL), true
+	if !face_forms[face].proportional {
+		return i32(vector_font.divide_rounded(i64(size), 2)), true
 	}
 	units := vector_font.character_advance(&state.fonts[font].file, character)
-	return clamp(vector_font.units_to_subpixels(units, scale, measures_in_frame(face, font).advance), 0, glyph_cache.ADVANCE_LIMIT), true
-}
-
-// glyph gives the glyph of a character of a face at a scale and a position
-// of a pixel, and its first word: from the demand cache when the font is
-// the first font of the face and the demand cache holds it, else from the
-// private glyph cache, where it is drawn at its first use. The words of a
-// row are entry.width words from words + row * entry.width. source is
-// Missing for a face, a scale, a position or a character that has no
-// glyph, and for an outline that the renderer refuses.
-glyph :: proc "contextless" (face: Face, character: rune, scale, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
-	form := face_forms[face]
-	if scale < 1 || scale > form.scale_count || position < 0 || position >= form.positions[scale - 1] {
-		return {}, nil, .Missing
-	}
-	font := font_of(face, character)
-	if font == .None {
-		return {}, nil, .Missing
-	}
-	if font == form.primary && state.demand_open[face] {
-		reader := &state.demand_readers[face]
-		found, found_state := demand_cache.find(reader, character)
-		if found_state == .Drawn {
-			if demand_glyph, has_glyph := demand_cache.glyph_of_entry(reader.face, &found, scale, position); has_glyph {
-				return demand_glyph, ([^]u32)(&reader.words[int(demand_glyph.word_offset)]), .Demand_Cache
-			}
-		}
-	}
-	return private_glyph(face, font, character, scale, position)
+	return i32(clamp(units_at_size(units, size, measures_in_frame(face, font).advance), 0, advance_limit_of_size(size))), true
 }
 
 // coverage counts the characters of a script that the chain of a face
@@ -440,4 +504,34 @@ coverage :: proc "contextless" (face: Face, script: Script) -> (drawn, total: in
 		}
 	}
 	return drawn, total
+}
+
+// glyph gives the glyph of a character of a face at a text size and a
+// position across a pixel, and its first word: from the demand cache when
+// the font is the first font of the face, the size is a scale of the
+// demand cache and the demand cache holds it; else from the private glyph
+// cache, where it is drawn at its first use. The words of a row are
+// entry.width words from words + row * entry.width. source is Missing for
+// a face, a size, a position or a character that has no glyph, and for an
+// outline that the renderer refuses.
+glyph :: proc "contextless" (face: Face, character: rune, size, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) {
+		return {}, nil, .Missing
+	}
+	font, glyph_index := font_glyph_of(face, character)
+	if font == .None {
+		return {}, nil, .Missing
+	}
+	scale := size / TEXT_SIZE_OF_SCALE_ONE
+	form := face_forms[face]
+	if font == form.primary && state.demand_open[face] && size % TEXT_SIZE_OF_SCALE_ONE == 0 && scale >= 1 && scale <= form.scale_count && position < form.positions[scale - 1] {
+		reader := &state.demand_readers[face]
+		found, found_state := demand_cache.find(reader, character)
+		if found_state == .Drawn {
+			if demand_glyph, has_glyph := demand_cache.glyph_of_entry(reader.face, &found, scale, position); has_glyph {
+				return demand_glyph, ([^]u32)(&reader.words[int(demand_glyph.word_offset)]), .Demand_Cache
+			}
+		}
+	}
+	return private_glyph(face, font, glyph_index, size, position)
 }

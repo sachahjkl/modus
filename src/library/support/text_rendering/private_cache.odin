@@ -1,41 +1,58 @@
-package fallback_glyphs
+package text_rendering
 
 import "modus:contract/glyph_cache"
-import "modus:support/vector_font"
 
-// The private glyph cache (src/md/features/glyphs_on_demand.md, "Layer 2:
-// the private glyph cache"): the glyphs that this copy of the package drew,
-// in its own memory,
-// which the budget of the process pays. No other process reads it, so its
+// The private glyph cache (src/md/features/text_rendering.md, "The cache"):
+// the glyphs that this copy of the package drew, in its own memory, which
+// the budget of the process pays. No other process reads it, so its
 // content and its evictions tell nothing to another process.
 //
-// An entry is one glyph: its key (the face, the scale, the position and
-// the code point) and its glyph entry in the form of a glyph cache. Its
-// words take one run of blocks: BLOCK_WORDS words split and joined by
-// halves, so a glyph is contiguous and a freed run joins its free
-// neighbour. The order of use counts in frames: a glyph used in a frame
-// goes to the newest end once in that frame, and a new glyph that finds no
-// room evicts from the oldest end. A glyph that the renderer refuses has
-// an entry with no words, so it is not drawn again at each frame.
+// An entry is one glyph: its key (the face, the font of the chain, the
+// glyph index in that font, the text size and the position across a
+// pixel) and its glyph entry in the form of a glyph cache. Its words take
+// one run of blocks: BLOCK_WORDS words split and joined by halves, so a
+// glyph is contiguous and a freed run joins its free neighbour. The order
+// of use counts in frames: a glyph used in a frame goes to the newest end
+// once in that frame, and a new glyph that finds no room evicts from the
+// oldest end, never a glyph of the frame in progress. When the glyphs of
+// the frame in progress fill the cache, a new glyph is drawn and not kept:
+// the frame has the right pixels and costs more time. A glyph that the
+// renderer refuses has an entry with no words, so it is not drawn again at
+// each frame.
+//
+// The words of a key are a function of the key and of the font file, so
+// an eviction never changes a pixel.
 
-WORD_CAPACITY :: 1 << 16 // The words of the glyphs: 256 KiB.
+WORD_CAPACITY :: 1 << 18 // The words of the glyphs: 1 MiB.
 BLOCK_WORDS :: 32 // The words of the smallest block.
 BLOCK_COUNT :: WORD_CAPACITY / BLOCK_WORDS
-ORDER_COUNT :: 12 // The sizes of a block: BLOCK_WORDS << 0 to BLOCK_WORDS << 11, the whole words.
-#assert(BLOCK_WORDS << (ORDER_COUNT - 1) == WORD_CAPACITY)
-ENTRY_CAPACITY :: 1024 // The glyphs that the cache holds at most.
-BUCKET_BITS :: 11
+// The sizes of a run: BLOCK_WORDS << 0 to BLOCK_WORDS << (ORDER_COUNT - 1),
+// the largest block. The words are WORD_CAPACITY / GLYPH_WORDS_LIMIT runs
+// of the largest block, which never join.
+ORDER_COUNT :: 10
+#assert(BLOCK_WORDS << (ORDER_COUNT - 1) == GLYPH_WORDS_LIMIT)
+#assert(WORD_CAPACITY % GLYPH_WORDS_LIMIT == 0)
+LARGEST_RUN_COUNT :: WORD_CAPACITY / GLYPH_WORDS_LIMIT
+ENTRY_CAPACITY :: 4096 // The glyphs that the cache holds at most.
+BUCKET_BITS :: 13
 BUCKET_COUNT :: 1 << BUCKET_BITS // The places of the hash table: twice the entries.
-// The largest glyph: a proportional glyph as wide as the widest glyph and
-// as high as its line at scale 3. It fits one block of the largest size.
-GLYPH_WORDS_LIMIT :: glyph_cache.GLYPH_WIDTH_LIMIT * glyph_cache.CELL_HEIGHT_LIMIT
-#assert(GLYPH_WORDS_LIMIT <= WORD_CAPACITY)
+#assert(BUCKET_COUNT == 2 * ENTRY_CAPACITY)
 // An index of an entry or a block is stored plus one: 0 is no index, so
 // the cache of all zero is empty and valid.
 #assert(ENTRY_CAPACITY < 1 << 16 && BLOCK_COUNT < 1 << 16)
 
+// The fields of a key, from bit 0: the face (4 bits), the font of the
+// chain (4 bits), the glyph index (16 bits), the text size (16 bits) and
+// the position (2 bits). A key is never 0, as a face of a key is never
+// None.
+KEY_FONT_SHIFT :: 4
+KEY_GLYPH_SHIFT :: 8
+KEY_SIZE_SHIFT :: 24
+KEY_POSITION_SHIFT :: 40
+#assert(POSITION_LIMIT <= 1 << 2)
+
 Private_Entry :: struct {
-	key:            u32, // key_of; 0: a free entry.
+	key:            u64, // key_of; 0: a free entry.
 	glyph:          glyph_cache.Glyph_Entry, // word_offset: from the first word of the cache.
 	frame:          u64, // The frame of its last use.
 	newer, older:   u16, // Its neighbours in the order of use, plus one.
@@ -47,44 +64,66 @@ Private_Entry :: struct {
 }
 
 Private_Cache :: struct {
-	entries:         [ENTRY_CAPACITY]Private_Entry,
-	entries_used:    int, // The entries taken once: the next new entry.
-	free_entry:      u16, // The first free entry, plus one.
-	buckets:         [BUCKET_COUNT]u16, // The first entry of each place, plus one.
-	newest, oldest:  u16, // The two ends of the order of use, plus one.
-	words:           [WORD_CAPACITY]u32,
+	entries:        [ENTRY_CAPACITY]Private_Entry,
+	entries_used:   int, // The entries taken once: the next new entry.
+	free_entry:     u16, // The first free entry, plus one.
+	buckets:        [BUCKET_COUNT]u16, // The first entry of each place, plus one.
+	newest, oldest: u16, // The two ends of the order of use, plus one.
+	words:          [WORD_CAPACITY]u32,
 	// For the first block of a free run: its order plus one; 0 for each
 	// other block.
-	free_order:      [BLOCK_COUNT]u8,
-	free_next:       [BLOCK_COUNT]u16, // The next free run of its order, plus one.
-	free_previous:   [BLOCK_COUNT]u16, // The free run before it, plus one.
-	free_heads:      [ORDER_COUNT]u16, // The first free run of each order, plus one.
-	words_ready:     bool, // The words are one free run: the first take makes it.
-	counts:          Private_Counts,
+	free_order:     [BLOCK_COUNT]u8,
+	free_next:      [BLOCK_COUNT]u16, // The next free run of its order, plus one.
+	free_previous:  [BLOCK_COUNT]u16, // The free run before it, plus one.
+	free_heads:     [ORDER_COUNT]u16, // The first free run of each order, plus one.
+	words_ready:    bool, // The words are runs of the largest block: the first take makes them.
+	frame_full:     bool, // The glyphs of the frame in progress fill the cache: frame_begin clears it.
+	not_kept_told:  bool, // not_kept_report gave its one report.
+	counts:         Private_Counts,
 }
 
 // The counts of a private glyph cache, since the start of the process.
 Private_Counts :: struct {
-	drawn:          u64, // The glyphs drawn into the cache.
-	refused:        u64, // The outlines that the renderer refused.
-	evicted:        u64, // The glyphs that left the cache.
-	evicted_in_use: u64, // Of them, the glyphs that the frame of their eviction had used: a working set larger than the cache.
+	drawn:     u64, // The glyphs drawn into the cache.
+	refused:   u64, // The outlines that the renderer refused.
+	evicted:   u64, // The glyphs that left the cache: each of an older frame.
+	not_kept:  u64, // The glyphs drawn and not kept, because the glyphs of their frame filled the cache.
+	too_large: u64, // The glyphs larger than the largest block, drawn band by band.
 }
 
-// key_of gives the key of a glyph: never 0, as a face is never None.
-key_of :: #force_inline proc "contextless" (face: Face, character: rune, scale, position: int) -> u32 {
-	return u32(character) | u32(position) << 21 | u32(scale) << 23 | u32(face) << 25
+// The private glyph cache of this copy, apart from the state: a copy that
+// only measures never names it, so its file does not carry it.
+private_cache: Private_Cache
+
+// key_of gives the key of a glyph. The caller has checked each field
+// against its bound: the face, the font and the position are enums or
+// below POSITION_LIMIT, the glyph index is a glyph of a font file (16
+// bits), the size passed size_check.
+key_of :: #force_inline proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> u64 {
+	return u64(face) | u64(font) << KEY_FONT_SHIFT | (u64(glyph_index) & 0xFFFF) << KEY_GLYPH_SHIFT | (u64(size) & 0xFFFF) << KEY_SIZE_SHIFT | u64(position) << KEY_POSITION_SHIFT
 }
-#assert(int(max(Face)) < 1 << 7 && glyph_cache.SIZE_LIMIT < 4 && glyph_cache.POSITION_LIMIT <= 4)
 
 @(private)
-bucket_of :: #force_inline proc "contextless" (key: u32) -> int {
-	return int((key * 2654435769) >> (32 - BUCKET_BITS))
+bucket_of :: #force_inline proc "contextless" (key: u64) -> int {
+	return int((key * 0x9E37_79B9_7F4A_7C15) >> (64 - BUCKET_BITS))
 }
 
 // counts gives the counts of the private glyph cache of this copy.
 counts :: proc "contextless" () -> Private_Counts {
 	return private_cache.counts
+}
+
+// not_kept_report gives the count of the glyphs drawn and not kept, once:
+// report is true at the first call after the first such glyph, and never
+// again. The caller writes its one line on the log: this package calls no
+// operation of the kernel, so the host tests run it.
+not_kept_report :: proc "contextless" () -> (count: u64, report: bool) {
+	cache := &private_cache
+	if cache.not_kept_told || cache.counts.not_kept == 0 {
+		return cache.counts.not_kept, false
+	}
+	cache.not_kept_told = true
+	return cache.counts.not_kept, true
 }
 
 // ---- The runs of blocks.
@@ -118,9 +157,9 @@ free_remove :: proc "contextless" (cache: ^Private_Cache, block, order: int) {
 }
 
 // order_of_words gives the order of the run that holds count words; ok is
-// false past the whole words.
+// false for no word and past the largest block.
 order_of_words :: proc "contextless" (count: int) -> (order: int, ok: bool) {
-	if count < 1 || count > WORD_CAPACITY {
+	if count < 1 || count > GLYPH_WORDS_LIMIT {
 		return 0, false
 	}
 	blocks := (count + BLOCK_WORDS - 1) / BLOCK_WORDS
@@ -136,7 +175,11 @@ order_of_words :: proc "contextless" (count: int) -> (order: int, ok: bool) {
 run_take :: proc "contextless" (cache: ^Private_Cache, order: int) -> (block: int, ok: bool) {
 	if !cache.words_ready {
 		cache.words_ready = true
-		free_push(cache, 0, ORDER_COUNT - 1)
+		// From the last run to the first, so that the first take gives the
+		// first block.
+		for run := LARGEST_RUN_COUNT - 1; run >= 0; run -= 1 {
+			free_push(cache, run << uint(ORDER_COUNT - 1), ORDER_COUNT - 1)
+		}
 	}
 	for found in order ..< ORDER_COUNT {
 		if cache.free_heads[found] == 0 {
@@ -155,7 +198,7 @@ run_take :: proc "contextless" (cache: ^Private_Cache, order: int) -> (block: in
 }
 
 // run_give gives back a run, joined with its free neighbour of the same
-// size while there is one.
+// size while there is one, up to the largest block.
 @(private)
 run_give :: proc "contextless" (cache: ^Private_Cache, block_given, order_given: int) {
 	block, order := block_given, order_given
@@ -204,8 +247,7 @@ order_push_newest :: proc "contextless" (cache: ^Private_Cache, index: int) {
 
 // entry_find gives the index of the entry of a key, or -1. The walk of a
 // place ends after ENTRY_CAPACITY entries, whatever the links say.
-@(private)
-entry_find :: proc "contextless" (cache: ^Private_Cache, key: u32) -> int {
+entry_find :: proc "contextless" (cache: ^Private_Cache, key: u64) -> int {
 	next := cache.buckets[bucket_of(key)]
 	for _ in 0 ..< ENTRY_CAPACITY {
 		if next == 0 {
@@ -242,7 +284,9 @@ bucket_unlink :: proc "contextless" (cache: ^Private_Cache, index: int) {
 }
 
 // evict_oldest removes the entry used the longest time ago, and gives back
-// its words. false: the cache holds no entry.
+// its words. false: the cache holds no entry, or its oldest entry is of
+// the frame in progress, so each entry is: a glyph of the frame in
+// progress is never evicted.
 @(private)
 evict_oldest :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> bool {
 	if cache.oldest == 0 {
@@ -250,22 +294,23 @@ evict_oldest :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> bool {
 	}
 	index := int(cache.oldest - 1)
 	entry := &cache.entries[index]
+	if entry.frame == frame {
+		return false
+	}
 	order_unlink(cache, index)
 	bucket_unlink(cache, index)
 	if entry.has_words {
 		run_give(cache, int(entry.first_block), int(entry.order))
 	}
 	cache.counts.evicted += 1
-	if entry.frame == frame {
-		cache.counts.evicted_in_use += 1
-	}
 	entry^ = {next_in_bucket = cache.free_entry}
 	cache.free_entry = u16(index + 1)
 	return true
 }
 
 // entry_take gives a free entry, out of the table and of the order: a
-// free one, a new one, or the oldest, evicted.
+// free one, a new one, or the oldest, evicted. ok is false when each entry
+// holds a glyph of the frame in progress.
 @(private)
 entry_take :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> (index: int, ok: bool) {
 	if cache.free_entry == 0 && cache.entries_used < ENTRY_CAPACITY {
@@ -281,9 +326,17 @@ entry_take :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> (index: 
 	return index, true
 }
 
+// entry_give gives back an entry that entry_take gave and that holds no
+// glyph: it is in no list.
+@(private)
+entry_give :: proc "contextless" (cache: ^Private_Cache, index: int) {
+	cache.entries[index] = {next_in_bucket = cache.free_entry}
+	cache.free_entry = u16(index + 1)
+}
+
 // entry_insert puts a new entry in the table and at the newest end.
 @(private)
-entry_insert :: proc "contextless" (cache: ^Private_Cache, index: int, key: u32, frame: u64) {
+entry_insert :: proc "contextless" (cache: ^Private_Cache, index: int, key: u64, frame: u64) {
 	entry := &cache.entries[index]
 	entry.key = key
 	entry.frame = frame
@@ -308,7 +361,8 @@ entry_touch :: proc "contextless" (cache: ^Private_Cache, index: int, frame: u64
 
 // words_take gives a run for count words, evicting from the oldest end
 // until one is free. The entry that the caller holds is in no list, so it
-// is never evicted. ok is false only for a count past the whole words.
+// is never evicted. ok is false when only glyphs of the frame in progress
+// are left and no run is free.
 @(private)
 words_take :: proc "contextless" (cache: ^Private_Cache, count: int, frame: u64) -> (block, order: int, ok: bool) {
 	order = order_of_words(count) or_return
@@ -323,12 +377,28 @@ words_take :: proc "contextless" (cache: ^Private_Cache, count: int, frame: u64)
 	return 0, 0, false
 }
 
-// private_glyph gives the glyph of a character of a face from the private
-// glyph cache, and draws it there at its first use.
+// not_kept_glyph gives the words of a glyph that the render memory holds,
+// drawn and not kept, and counts it. Its rows move to the start of the
+// words, entry.width words each, as in the cache: a row moves to a place
+// at or before its own, after the rows before it, so no row that is still
+// to move is written.
 @(private)
-private_glyph :: proc "contextless" (face: Face, font: Outline_Font, character: rune, scale, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+not_kept_glyph :: proc "contextless" (box: Raster_Box) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
 	cache := &private_cache
-	key := key_of(face, character, scale, position)
+	cache.frame_full = true
+	cache.counts.not_kept += 1
+	for row in 0 ..< box.row_count {
+		copy(render_memory.words[row * box.width:][:box.width], render_memory.words[box.first_word + row * box.stride:][:box.width])
+	}
+	return {first_row = u16(box.first_row), row_count = u16(box.row_count), left = i16(box.left), width = u16(box.width)}, raw_data(render_memory.words[:]), .Not_Kept
+}
+
+// private_glyph gives the glyph of a key from the private glyph cache, and
+// draws it there at its first use.
+@(private)
+private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+	cache := &private_cache
+	key := key_of(face, font, glyph_index, size, position)
 	if index := entry_find(cache, key); index >= 0 {
 		entry_touch(cache, index, state.frame)
 		found := &cache.entries[index]
@@ -337,31 +407,44 @@ private_glyph :: proc "contextless" (face: Face, font: Outline_Font, character: 
 		}
 		return found.glyph, ([^]u32)(&cache.words[found.glyph.word_offset]), .Private_Cache
 	}
+	box, problem := glyph_raster(face, font, glyph_index, size, position)
+	switch problem {
+	case .Too_Large:
+		cache.counts.too_large += 1
+		return {}, nil, .Too_Large
+	case .Refused, .None:
+	}
+	drawn := problem == .None
+	count := box.row_count * box.width
+	// A frame whose glyphs fill the cache draws each other new glyph and
+	// keeps none: no search for room that cannot succeed.
+	if cache.frame_full && drawn && count > 0 {
+		return not_kept_glyph(box)
+	}
 	index, taken := entry_take(cache, state.frame)
 	if !taken {
-		return {}, nil, .Missing
+		if !drawn {
+			cache.counts.refused += 1
+			return {}, nil, .Missing
+		}
+		return not_kept_glyph(box)
 	}
-	drawn, rows, width, first_row, left, source_words, stride := glyph_draw(face, font, character, scale, position)
-	count := rows * width
 	if !drawn {
 		cache.counts.refused += 1
 	} else if count > 0 {
 		block, order, has_room := words_take(cache, count, state.frame)
 		if !has_room {
-			// Not reached: a glyph is at most GLYPH_WORDS_LIMIT words,
-			// and the whole words are free once each entry is evicted.
-			cache.entries[index] = {next_in_bucket = cache.free_entry}
-			cache.free_entry = u16(index + 1)
-			return {}, nil, .Missing
+			entry_give(cache, index)
+			return not_kept_glyph(box)
 		}
 		offset := block * BLOCK_WORDS
-		for row in 0 ..< rows {
-			copy(cache.words[offset + row * width:][:width], source_words[row * stride:][:width])
+		for row in 0 ..< box.row_count {
+			copy(cache.words[offset + row * box.width:][:box.width], render_memory.words[box.first_word + row * box.stride:][:box.width])
 		}
 		cache.entries[index].has_words = true
 		cache.entries[index].first_block = u16(block)
 		cache.entries[index].order = u8(order)
-		cache.entries[index].glyph = {first_row = u16(first_row), row_count = u16(rows), word_offset = u32(offset), left = i16(left), width = u16(width)}
+		cache.entries[index].glyph = {first_row = u16(box.first_row), row_count = u16(box.row_count), word_offset = u32(offset), left = i16(box.left), width = u16(box.width)}
 	}
 	cache.entries[index].drawn = drawn
 	entry_insert(cache, index, key, state.frame)
@@ -370,50 +453,4 @@ private_glyph :: proc "contextless" (face: Face, font: Outline_Font, character: 
 	}
 	cache.counts.drawn += 1
 	return cache.entries[index].glyph, ([^]u32)(&cache.words[cache.entries[index].glyph.word_offset]), .Private_Cache
-}
-
-// glyph_draw draws one glyph of a font in the frame of a face, as the
-// build draws a glyph of the cache of that face: a proportional glyph as
-// the box of its ink at a position of the pixel, a glyph of cells cut to
-// its cell with only its rows of ink. It gives the rows, the words of a
-// row, the first row and the left side, and the first word of the box in
-// the work memory with its words from one row to the next. drawn is false
-// when the renderer refuses the outline.
-@(private)
-glyph_draw :: proc "contextless" (face: Face, font: Outline_Font, character: rune, scale, position: int) -> (drawn: bool, rows, width, first_row, left: int, words: []u32, stride: int) {
-	form := face_forms[face]
-	opened := &state.fonts[font]
-	measures := measures_in_frame(face, font)
-	style := style_of(face, scale)
-	memory := &render_memory
-	if form.proportional {
-		box, problem := vector_font.glyph_render_placed(&opened.file, measures, style, character, position, form.positions[scale - 1], memory)
-		if problem != .None {
-			return false, 0, 0, 0, 0, nil, 0
-		}
-		if box.row_count == 0 {
-			return true, 0, 0, 0, 0, nil, 0
-		}
-		start := box.first_row * vector_font.PLACED_WIDTH_LIMIT + box.first_column
-		return true, box.row_count, box.width, box.first_row, box.left, memory.placed[start:], vector_font.PLACED_WIDTH_LIMIT
-	}
-	#assert(vector_font.PLACED_WIDTH_LIMIT >= vector_font.CELL_WIDTH_LIMIT)
-	cell_width := style.cell_width
-	pixels := memory.placed[:cell_width * style.cell_height]
-	if vector_font.glyph_render(&opened.file, measures, style, character, memory, pixels) != .None {
-		return false, 0, 0, 0, 0, nil, 0
-	}
-	first, last := style.cell_height, -1
-	for row in 0 ..< style.cell_height {
-		for word in pixels[row * cell_width:][:cell_width] {
-			if word != 0 {
-				first = min(first, row)
-				last = max(last, row)
-			}
-		}
-	}
-	if last < first {
-		return true, 0, 0, 0, 0, nil, 0
-	}
-	return true, last - first + 1, cell_width, first, 0, pixels[first * cell_width:], cell_width
 }

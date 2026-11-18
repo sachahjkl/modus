@@ -5,7 +5,7 @@ import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/graphics"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 
 // The fonts that the package can measure (docs/FONTS.md, section 12.6).
 // Cells_8x16: the grid of the font of the cells, 8 x 16 pixels at scale 1;
@@ -82,11 +82,11 @@ interface_cache_of :: proc "contextless" (caches: ^display.Interface_Font, font:
 // font, in 1/64 of a pixel: the sum of the advances of its placed glyphs.
 // 0 for a cache that does not have the scale.
 interface_width_subpixels :: proc "contextless" (caches: ^display.Interface_Font, font: Font, text: string) -> i64 {
-	spacing, ok := text_shaping.spacing_of(interface_cache_of(caches, font), font_scale(font))
+	spacing, ok := text_rendering.spacing_of(interface_cache_of(caches, font), font_scale(font))
 	if !ok {
 		return 0
 	}
-	width, _ := text_shaping.text_width(&spacing, transmute([]u8)text)
+	width, _ := text_rendering.text_width(&spacing, transmute([]u8)text)
 	return width
 }
 
@@ -118,13 +118,13 @@ texts_measure :: proc "contextless" (table: ^Draw_Table, font: Font, texts: []st
 		}
 		return
 	}
-	spacing, ok := text_shaping.spacing_of(interface_cache_of(table.interface_font, used), font_scale(used))
+	spacing, ok := text_rendering.spacing_of(interface_cache_of(table.interface_font, used), font_scale(used))
 	for index in 0 ..< count {
 		if !ok || len(texts[index]) > INTERFACE_TEXT_LIMIT {
 			widths[index] = text_width({scale = used.scale}, texts[index])
 			continue
 		}
-		width, _ := text_shaping.text_width(&spacing, transmute([]u8)texts[index])
+		width, _ := text_rendering.text_width(&spacing, transmute([]u8)texts[index])
 		widths[index] = int((width + 63) / 64)
 	}
 }
@@ -168,74 +168,29 @@ text_fit :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, ro
 // without the spaces at a break. text_fit, above, is for a name whose whole
 // form the reader has at another place.
 
-// is_path_break says if a line can end after a character of a word: the
-// separators of a path, of a place in a source and of a name of the system.
-@(private)
-is_path_break :: proc "contextless" (character: u8) -> bool {
-	return character == '/' || character == ':' || character == '_'
-}
-
 // text_wrap_line gives the first line of a text in a box of `room` pixels,
-// and the text after it. The line ends at the last space that fits, and the
-// spaces at the break are in neither part. A word that is wider than the
-// box starts on the line of the word before it, and ends a line after its
-// last `/`, `:` or `_` that fits; with none, at its last character that
-// fits. A line has at least one character, also in a box narrower than a
-// character: the rest is always shorter than the text, so a loop over the
-// lines ends. The text is measured in the font that the table draws it in
-// (font_in_use).
+// and the text after it, by the rule of text_rendering.line_break: the line
+// ends at the last space that fits, a word wider than the box ends a line
+// after its last `/`, `:` or `_` that fits, and a line has at least one
+// whole character. The text is measured in the font that the table draws
+// it in (font_in_use); a line longer than INTERFACE_TEXT_LIMIT is drawn in
+// the font of the cells, so it is measured in it.
 text_wrap_line :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, room: int) -> (line: string, rest: string) {
-	count := len(text_fit(table, font, text, room))
-	if count == len(text) {
-		return text, text[len(text):]
-	}
-	at_space := 0 // The bytes of the line that ends at the last space; 0: none.
-	if text[count] == ' ' {
-		at_space = count
-	}
-	for index := count - 1; at_space == 0 && index > 0; index -= 1 {
-		if text[index] == ' ' {
-			at_space = index
+	used := font_in_use(table, font, 0)
+	cells := text_rendering.cell_spacing(graphics.CELL_WIDTH * font_scale(used))
+	spacing := cells
+	if used.kind == .Interface {
+		if interface_spacing, ok := text_rendering.spacing_of(interface_cache_of(table.interface_font, used), font_scale(used)); ok {
+			spacing = interface_spacing
 		}
 	}
-	in_word := 0 // The bytes of the line that ends after the last separator; 0: none.
-	for index := count - 1; in_word == 0 && index >= at_space && index >= 0; index -= 1 {
-		if is_path_break(text[index]) {
-			in_word = index + 1
-		}
+	bytes := transmute([]u8)text
+	room_subpixels := i64(room) * text_rendering.SUBPIXEL
+	end, start := text_rendering.line_break(&spacing, bytes, room_subpixels)
+	if used.kind == .Interface && end > INTERFACE_TEXT_LIMIT {
+		end, start = text_rendering.line_break(&cells, bytes, room_subpixels)
 	}
-	end := at_space
-	if at_space != 0 && in_word > at_space {
-		// The last word of the line has a separator. If the whole word has
-		// room on a line of its own, it goes there; else it is broken here,
-		// so that the line of the word before it is not left short.
-		word := text[at_space:]
-		for len(word) > 0 && word[0] == ' ' {
-			word = word[1:]
-		}
-		for index in 0 ..< len(word) {
-			if word[index] == ' ' {
-				word = word[:index]
-				break
-			}
-		}
-		if text_measured_width(table, font, word) > room {
-			end = in_word
-		}
-	}
-	if end == 0 {
-		// At least the first character, whole.
-		_, first_length, _ := text_encoding.character_decode(transmute([]u8)text, 0)
-		end = in_word != 0 ? in_word : max(count, first_length)
-	}
-	line, rest = text[:end], text[end:]
-	for len(line) > 1 && line[len(line) - 1] == ' ' {
-		line = line[:len(line) - 1]
-	}
-	for len(rest) > 0 && rest[0] == ' ' {
-		rest = rest[1:]
-	}
-	return line, rest
+	return text[:end], text[start:]
 }
 
 // text_wrapped_line_count gives the count of lines of a text in a box of

@@ -150,12 +150,18 @@ outline_add :: proc "contextless" (target: ^Accumulation, outline: ^Outline, pla
 // characters 33 to 126.
 font_measures :: proc "contextless" (font: ^Font_File, memory: ^Render_Memory) -> (measures: Font_Measures, problem: Font_Problem) {
 	outline := Outline{points = memory.points[:], contour_ends = memory.contours[:]}
+	return font_measures_of_outline(font, &outline)
+}
+
+// font_measures_of_outline is font_measures over the memory of an outline
+// of the caller: the text rendering keeps the points in its own memory.
+font_measures_of_outline :: proc "contextless" (font: ^Font_File, outline: ^Outline) -> (measures: Font_Measures, problem: Font_Problem) {
 	measures.monospace = true
 	measures.top = -1 << 30
 	measures.bottom = 1 << 30
 	for character in rune(33) ..= 126 {
 		glyph := glyph_of(font, character) or_return
-		glyph_outline(font, glyph, &outline) or_return
+		glyph_outline(font, glyph, outline) or_return
 		if measures.advance == 0 {
 			measures.advance = outline.advance
 		} else if measures.advance != outline.advance {

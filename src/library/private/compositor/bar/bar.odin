@@ -8,7 +8,7 @@ package bar
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/glyph_cache"
 import "modus:support/mark"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 
 // The modules that the start menu offers, in its order.
 @(rodata)
@@ -47,8 +47,8 @@ Layout :: struct {
 // cells.
 text_width_in :: proc "contextless" (cache: ^glyph_cache.Cache, text: string) -> int {
 	if cache != nil {
-		if spacing, ok := text_shaping.spacing_of(cache, 1); ok {
-			width, _ := text_shaping.text_width(&spacing, transmute([]u8)text)
+		if spacing, ok := text_rendering.spacing_of(cache, 1); ok {
+			width, _ := text_rendering.text_width(&spacing, transmute([]u8)text)
 			return int((width + 63) / 64)
 		}
 	}

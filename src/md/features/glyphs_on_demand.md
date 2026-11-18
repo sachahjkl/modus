@@ -1,5 +1,7 @@
 # Glyphs past the glyph cache
 
+What changed: the package `fallback_glyphs` became the support package `text_rendering`, with the rasterizer at any text size and a larger private glyph cache keyed by glyph index and text size ([text_rendering.md](text_rendering.md), "The cache" and "The rasterizer"). The names `fallback_glyphs` and "fallback face" below are the names of that design; the face is now `text_rendering.Face`. The layers 0 and 1 are as this file says.
+
 ## Purpose
 
 The glyph caches of the boot image hold 192 characters: ASCII, the Latin-1 Supplement and the euro sign ([../data/text_encoding.md](../data/text_encoding.md)). Each character of a cache costs about 2.2 KB of drawn words in each cache, at each scale and each position. So each new character of each font makes the boot image larger.
@@ -154,7 +156,7 @@ Each step leaves a working system.
 
 ## State
 
-Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs` with the private glyph cache, the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the demand cache with its four faces, drawn whole by the font service, which then ends; the root service, which maps the outlines and the demand cache with the glyph caches; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure.
+Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the demand cache with its four faces, drawn whole by the font service, which then ends; the root service, which maps the outlines and the demand cache with the glyph caches; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure.
 
 Left (`ROADMAP.md`): a font for the missing Greek letters, Cyrillic and Latin Extended-A; a CJK font; the shaping of complex scripts.
 

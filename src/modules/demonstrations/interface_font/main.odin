@@ -1,5 +1,5 @@
 // The interface font (docs/FONTS.md, section 12): B612 Regular and Bold,
-// placed by src/library/support/text_shaping and drawn by graphics.text_proportional.
+// placed by src/library/support/text_rendering and drawn by graphics.text_proportional.
 // It shows a paragraph, three pairs with and without their adjustment, one
 // word at the three positions of a pixel, enlarged, the digits in columns,
 // three lines of characters past the glyph cache (Greek letters of B612,
@@ -42,11 +42,10 @@ import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/display"
-import "modus:support/fallback_glyphs"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 
 WIDTH :: 800
 HEIGHT :: 720
@@ -54,7 +53,7 @@ HEIGHT :: 720
 regular_cache, bold_cache: glyph_cache.Cache
 // The spacing of the regular weight at scale 1 and at scale 3, the bold
 // weight at scale 1, and the regular weight at scale 3 with no pair.
-regular_spacing, regular_spacing_large, bold_spacing, no_pair_spacing_large: text_shaping.Spacing
+regular_spacing, regular_spacing_large, bold_spacing, no_pair_spacing_large: text_rendering.Spacing
 
 // The most characters of one line of this window.
 LINE_LIMIT :: 96
@@ -102,10 +101,10 @@ window_memory: interface.Window_Memory(128, 4096)
 
 // line_draw places a text and draws it, its origin at the whole pixel x and
 // the top of its line at y; it gives the width in 1/64 of a pixel.
-line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, text: string, spacing: ^text_shaping.Spacing, cache: ^glyph_cache.Cache, scale: int, color: graphics.Color) -> (width: i64) {
-	placed: [LINE_LIMIT]text_shaping.Placed_Glyph
+line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, text: string, spacing: ^text_rendering.Spacing, cache: ^glyph_cache.Cache, scale: int, color: graphics.Color) -> (width: i64) {
+	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
 	count := min(len(text), LINE_LIMIT)
-	_, width, _ = text_shaping.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
+	_, width, _ = text_rendering.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
 	graphics.text_proportional(canvas, place, y, placed[:count], cache, scale, color)
 	return width
 }
@@ -138,22 +137,25 @@ fallback_lines_tell :: proc "contextless" () {
 		return
 	}
 	fallback_told = true
-	face := fallback_glyphs.face_of_cache(&regular_cache)
+	face := text_rendering.face_of_cache(&regular_cache)
 	if face != .Interface {
-		system.log_in("processes", .Warning, FAULT, "the glyph cache of B612 Regular has no fallback face; the font outlines are not given")
+		system.log_in("processes", .Warning, FAULT, "the glyph cache of B612 Regular has no face; the font outlines are not given")
 		return
 	}
 	drawn, from_demand, missing: u64
 	for range in demand_cache.interface_subset_ranges {
 		for character in range.first ..= range.last {
-			entry, _, source := fallback_glyphs.glyph(face, character, 1, 0)
+			entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
 			switch source {
 			case .Demand_Cache:
 				from_demand += 1
 				drawn += entry.row_count > 0 ? 1 : 0
-			case .Private_Cache:
+			case .Private_Cache, .Not_Kept:
 				drawn += entry.row_count > 0 ? 1 : 0
-			case .Missing:
+			case .Missing, .Too_Large:
+				// A Greek letter at a line of 16 pixels is far below the
+				// largest block: Too_Large is a glyph that this window does
+				// not draw.
 				missing += 1
 			}
 		}
@@ -165,23 +167,23 @@ fallback_lines_tell :: proc "contextless" () {
 		system.log_in("processes", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", subset, ", ", missing, " with no glyph")
 	}
 	for character in BOX_CHARACTERS {
-		entry, _, source := fallback_glyphs.glyph(face, character, 1, 0)
-		font := fallback_glyphs.font_of(face, character)
+		entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
+		font := text_rendering.font_of(face, character)
 		if font != .Paper_Mono || source != .Private_Cache || entry.row_count == 0 {
-			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " comes from the font ", fallback_glyphs.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
+			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " comes from the font ", text_rendering.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
 			return
 		}
 	}
 	system.log("interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: ", u64(len(BOX_CHARACTERS)), " characters: as it must")
 	for character in MISSING_CHARACTERS {
-		_, _, source := fallback_glyphs.glyph(face, character, 1, 0)
-		if fallback_glyphs.has(face, character) || source != .Missing {
+		_, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
+		if text_rendering.has(face, character) || source != .Missing {
 			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
 			return
 		}
 		// Its advance is the advance of the replacement glyph: the shaper
 		// gives it no fallback glyph.
-		if _, found := fallback_glyphs.advance(face, character, 1); found {
+		if _, found := text_rendering.advance(face, character, text_rendering.size_of_scale(1)); found {
 			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " has an advance of a font")
 			return
 		}
@@ -190,8 +192,8 @@ fallback_lines_tell :: proc "contextless" () {
 }
 
 // line_width gives the width of a text in 1/64 of a pixel.
-line_width :: proc "contextless" (text: string, spacing: ^text_shaping.Spacing) -> i64 {
-	width, _ := text_shaping.text_width(spacing, transmute([]u8)(text[:min(len(text), LINE_LIMIT)]))
+line_width :: proc "contextless" (text: string, spacing: ^text_rendering.Spacing) -> i64 {
+	width, _ := text_rendering.text_width(spacing, transmute([]u8)(text[:min(len(text), LINE_LIMIT)]))
 	return width
 }
 
@@ -278,12 +280,12 @@ measure :: proc "contextless" () {
 	BATCHES :: 50
 	canvas := graphics.Canvas{pixels = raw_data(measure_pixels[:]), width = MEASURE_WIDTH, height = 16, stride = MEASURE_WIDTH}
 	text := transmute([]u8)(PARAGRAPH[1])
-	placed: [LINE_LIMIT]text_shaping.Placed_Glyph
+	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
 	shaping_time, drawing_time = max(u64), max(u64)
 	for _ in 0 ..< BATCHES {
 		graphics.clear(canvas, graphics.colors.card_bottom)
 		start := system.nanoseconds()
-		count, _, _ := text_shaping.shape(&regular_spacing, text, placed[:])
+		count, _, _ := text_rendering.shape(&regular_spacing, text, placed[:])
 		shaped := system.nanoseconds()
 		graphics.text_proportional(canvas, 0, 0, placed[:count], &regular_cache, 1, graphics.colors.text)
 		drawn := system.nanoseconds()
@@ -309,9 +311,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	regular_cache, bold_cache = font.regular, font.bold
 	spacing_ok: [3]bool
-	regular_spacing, spacing_ok[0] = text_shaping.spacing_of(&regular_cache, 1)
-	regular_spacing_large, spacing_ok[1] = text_shaping.spacing_of(&regular_cache, 3)
-	bold_spacing, spacing_ok[2] = text_shaping.spacing_of(&bold_cache, 1)
+	regular_spacing, spacing_ok[0] = text_rendering.spacing_of(&regular_cache, 1)
+	regular_spacing_large, spacing_ok[1] = text_rendering.spacing_of(&regular_cache, 3)
+	bold_spacing, spacing_ok[2] = text_rendering.spacing_of(&bold_cache, 1)
 	if !spacing_ok[0] || !spacing_ok[1] || !spacing_ok[2] {
 		system.stop(1)
 	}

@@ -1,18 +1,16 @@
 #+build !freestanding
-package text_shaping
+package text_rendering
 
+import "core:testing"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
-import "core:sync"
-import "core:testing"
-import "modus:support/fallback_glyphs"
 import "modus:support/vector_font"
 
 @(private = "file")
 b612_regular := #load("../../../../resources/fonts/b612.ttf")
 @(private = "file")
-paper_mono := #load("../../../../resources/fonts/paper_mono.ttf")
+paper_mono_regular := #load("../../../../resources/fonts/paper_mono.ttf")
 
 // test_spacing builds the glyph cache of B612 (three positions at scale 1,
 // one at the scales 2 and 3) and gives the spacing of scale 1. The memory
@@ -41,18 +39,21 @@ test_spacing :: proc(t: ^testing.T) -> (spacing: Spacing, memory: []u64) {
 // the x of each glyph is the sum of the advances before it.
 @(test)
 the_width_is_the_sum_of_the_placed_glyphs :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
+	testing.expect_value(t, spacing.size, TEXT_SIZE_OF_SCALE_ONE)
 	text := "To Live: AVATAR, Wave 1234 - the quick brown fox jumps over the lazy dog."
 	placed: [128]Placed_Glyph
 	count, width, ok := shape(&spacing, transmute([]u8)text, placed[:])
 	testing.expect(t, ok)
 	testing.expect_value(t, count, len(text))
 	sum: i64
-	for glyph, index in placed[:count] {
-		testing.expect_value(t, i64(glyph.x), sum)
-		testing.expect_value(t, glyph.cluster, u32(index)) // One byte for each character of ASCII.
-		sum += i64(glyph.advance)
+	for glyph_placed, index in placed[:count] {
+		testing.expect_value(t, i64(glyph_placed.x), sum)
+		testing.expect_value(t, glyph_placed.cluster, u32(index)) // One byte for each character of ASCII.
+		sum += i64(glyph_placed.advance)
 	}
 	testing.expect_value(t, width, sum)
 	measured, measured_ok := text_width(&spacing, transmute([]u8)text)
@@ -64,10 +65,11 @@ the_width_is_the_sum_of_the_placed_glyphs :: proc(t: ^testing.T) {
 // pair in B612, so its advance is the advance of "A" alone (555). The rule
 // of the sum: the cache rounds the advance and the adjustment each on its
 // own, and the shaper adds the two integers: "T" before "o" is 512 - 43 =
-// 469. The rounding of the sum of the units (1100 units, 469.33) also
-// gives 469 here; for other pairs the two rules differ by 1/64.
+// 469.
 @(test)
 a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
 	placed: [2]Placed_Glyph
@@ -89,6 +91,8 @@ a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
 // the advance of "0" and no pair.
 @(test)
 an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
 	count, width, ok := shape(&spacing, nil, nil)
@@ -98,10 +102,10 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	count, width, ok = shape(&spacing, outside[:], placed[:])
 	testing.expect(t, ok && count == 3)
 	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
-	for glyph, index in placed[:3] {
-		testing.expect_value(t, glyph.glyph, REPLACEMENT_GLYPH)
-		testing.expect_value(t, glyph.advance, zero)
-		testing.expect_value(t, glyph.cluster, u32(index))
+	for glyph_placed, index in placed[:3] {
+		testing.expect_value(t, glyph_placed.glyph, REPLACEMENT_GLYPH)
+		testing.expect_value(t, glyph_placed.advance, zero)
+		testing.expect_value(t, glyph_placed.cluster, u32(index))
 	}
 	testing.expect_value(t, width, 3 * i64(zero))
 	// The first character past the Latin-1 Supplement (Ā, U+0100) is
@@ -121,16 +125,14 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[2].cluster, u32(1 + length))
 	testing.expect_value(t, placed[0].advance, spacing.advances['T' - glyph_cache.ASCII_FIRST]) // No pair with the replacement glyph.
 	testing.expect_value(t, width, 2 * i64(spacing.advances['T' - glyph_cache.ASCII_FIRST]) + i64(zero))
-	// "é" is in the cache: two bytes and its own glyph, by its character
-	// index, and the glyph after it starts at byte 3.
+	// "é" is in the cache: two bytes and its own glyph.
 	e_acute, _ := glyph_cache.character_index('é')
 	count, _, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[1].glyph, u32(e_acute))
 	testing.expect_value(t, placed[1].cluster, u32(1))
 	testing.expect_value(t, placed[2].cluster, u32(3))
-	// "€", an added character, is in the cache: three bytes and the glyph
-	// of its character index, after the Latin-1 Supplement.
+	// "€", an added character, is in the cache: three bytes.
 	count, _, ok = shape(&spacing, transmute([]u8)string("5 €"), placed[:])
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[2].glyph, u32(glyph_cache.ADDED_FIRST_INDEX))
@@ -145,33 +147,27 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[0], Placed_Glyph{})
 }
 
-// With a fallback face, a character past the glyph cache that a font of
-// the chain has is a fallback glyph with the advance of its font file and
-// no pair; the advance is the same at each measure, whatever the private
-// glyph cache holds. A character that no font has (ā, Ж), an invalid
-// sequence, and a code point past Unicode are the replacement glyph, with
-// the advance of "0". A spacing with no face (the module text_shaping)
-// places the replacement glyph, last.
+// With a face, a character past the glyph cache that a font of the chain
+// has is a fallback glyph with the advance of its font file at the size of
+// the spacing and no pair; the advance is the same at each measure,
+// whatever the private glyph cache holds. A character that no font has
+// (ā, Ж), an invalid sequence, and a code point past Unicode are the
+// replacement glyph, with the advance of "0". A spacing with no face (the
+// module text_shaping) places the replacement glyph, last.
 @(test)
 a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
-	sync.mutex_lock(&fallback_test_lock)
-	defer sync.mutex_unlock(&fallback_test_lock)
-	defer fallback_glyphs.state = {}
-	fonts := [2]font_outlines.Font_Input{{"b612", b612_regular}, {"paper_mono", paper_mono}}
-	size := font_outlines.resource_size(fonts[:])
-	words := make([]u64, (size + 7) / 8)
+	test_state_take()
+	defer state = {}
+	fonts := [2]font_outlines.Font_Input{{"b612", b612_regular}, {"paper_mono", paper_mono_regular}}
+	outlines, words := resource_of(t, fonts[:])
 	defer delete(words)
-	bytes := ([^]u8)(raw_data(words))[:size]
-	_, written := font_outlines.resource_write(fonts[:], bytes)
-	testing.expect(t, written)
-	outlines, problem := font_outlines.validate(bytes)
-	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
-	fallback_glyphs.state = {}
-	_ = fallback_glyphs.open(&outlines, 0)
+	state = {}
+	private_cache = {}
+	_ = open(&outlines, 0)
 
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
-	testing.expect_value(t, spacing.fallback, fallback_glyphs.Face.Interface)
+	testing.expect_value(t, spacing.face, Face.Interface)
 	OMEGA :: rune(0x03A9)
 	text := "AΩB\xffāЖ─"
 	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
@@ -181,7 +177,7 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	for index in ([?]int{3, 4, 5}) {
 		testing.expectf(t, placed[index].glyph == REPLACEMENT_GLYPH && placed[index].advance == zero, "glyph %v: the replacement glyph with the advance of 0", index)
 	}
-	omega_advance, found := fallback_glyphs.advance(.Interface, OMEGA, 1)
+	omega_advance, found := advance(.Interface, OMEGA, TEXT_SIZE_OF_SCALE_ONE)
 	testing.expect(t, found && omega_advance > 0)
 	testing.expect_value(t, placed[1].glyph, FALLBACK_GLYPH_FIRST + u32(OMEGA))
 	testing.expect_value(t, placed[1].advance, omega_advance) // No pair with a fallback glyph.
@@ -190,7 +186,7 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[6].glyph, FALLBACK_GLYPH_FIRST + 0x2500) // From Paper Mono, the second font.
 	// Draws in the private glyph cache change no advance.
 	for character in ([?]rune{OMEGA, 0x2500}) {
-		_, _, _ = fallback_glyphs.glyph(.Interface, character, 1, 0)
+		_, _, _ = glyph(.Interface, character, TEXT_SIZE_OF_SCALE_ONE, 0)
 	}
 	_, again, _ := shape(&spacing, transmute([]u8)text, placed[:])
 	testing.expect_value(t, again, width)
@@ -199,26 +195,22 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	past := [4]u8{0xF4, 0x90, 0x80, 0x80}
 	_, _, _ = shape(&spacing, past[:], placed[:1])
 	testing.expect_value(t, placed[0].glyph, REPLACEMENT_GLYPH)
-	// At scale 3, the advance of scale 3.
-	spacing.scale = 3
+	// At the size of scale 3, the advance of that size.
+	spacing.size = size_of_scale(3)
 	_, _, _ = shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
-	large, _ := fallback_glyphs.advance(.Interface, OMEGA, 3)
+	large, _ := advance(.Interface, OMEGA, size_of_scale(3))
 	testing.expect_value(t, placed[0].advance, large)
 	// A spacing with no face: the replacement glyph.
-	spacing.fallback = .None
+	spacing.face = .None
 	_, _, _ = shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
 	testing.expect_value(t, placed[0].glyph, REPLACEMENT_GLYPH)
 }
 
-// The tests of this package that open the fallback state run one at a
-// time: the state is one for the package, and the runner runs tests on
-// several threads.
-@(private = "file")
-fallback_test_lock: sync.Mutex
-
 // 10 000 texts in one call give the widths of 10 000 calls of one text.
 @(test)
 ten_thousand_texts_in_one_call :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
 	COUNT :: 10_000
@@ -253,6 +245,8 @@ ten_thousand_texts_in_one_call :: proc(t: ^testing.T) {
 // measured.
 @(test)
 a_range_past_the_limit_of_a_text :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
 	bytes := make([]u8, TEXT_LIMIT + 1)
@@ -268,4 +262,71 @@ a_range_past_the_limit_of_a_text :: proc(t: ^testing.T) {
 	problem, measured, _ := measure_ranges(&spacing, bytes, at_limit[:])
 	width, _ := text_width(&spacing, bytes[1:])
 	testing.expect(t, problem == .None && measured == 1 && at_limit[0].width == width)
+}
+
+// The fit of a text: a room below 0, of 0, and below the first advance
+// gives no byte; a text past TEXT_LIMIT gives no byte; a room of the width
+// of a start gives that start, and a fit never ends inside a character of
+// several bytes. A room of the whole width gives the whole text, last.
+@(test)
+the_fit_of_a_text_is_whole_characters :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
+	spacing := cell_spacing(8)
+	text := transmute([]u8)string("aé€b")
+	cell := i64(8 * SUBPIXEL)
+	for room in ([?]i64{min(i64), -1, 0, cell - 1}) {
+		testing.expectf(t, text_fit(&spacing, text, room) == 0, "room %v: no byte", room)
+	}
+	long := make([]u8, TEXT_LIMIT + 1)
+	defer delete(long)
+	testing.expect_value(t, text_fit(&spacing, long, max(i64)), 0)
+	Fit :: struct {
+		room:  i64,
+		bytes: int,
+	}
+	for fit in ([?]Fit{{cell, 1}, {2 * cell - 1, 1}, {2 * cell, 3}, {3 * cell - 1, 3}, {3 * cell, 6}, {4 * cell, len(text)}, {max(i64), len(text)}}) {
+		testing.expectf(t, text_fit(&spacing, text, fit.room) == fit.bytes, "room %v: %v bytes, expected %v", fit.room, text_fit(&spacing, text, fit.room), fit.bytes)
+	}
+}
+
+// The breaks of the lines: an empty text has one empty line; a box
+// narrower than a character still gives a line of one whole character, of
+// several bytes too; a line ends at the last space that fits, with no
+// space at its end and none at the start of the rest; a word wider than
+// the box breaks after its last `/`; with no separator, at its last
+// character that fits. The lines, joined, are the text with no space at a
+// break, last.
+@(test)
+the_breaks_of_the_lines :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
+	spacing := cell_spacing(8)
+	cell := i64(8 * SUBPIXEL)
+	end, rest := line_break(&spacing, nil, cell)
+	testing.expect(t, end == 0 && rest == 0)
+	euro := transmute([]u8)string("€€")
+	end, rest = line_break(&spacing, euro, 0)
+	testing.expect(t, end == 3 && rest == 3) // One whole character of three bytes.
+	end, rest = line_break(&spacing, euro, -1)
+	testing.expect(t, end == 3 && rest == 3)
+	Case :: struct {
+		text:          string,
+		room:          i64,
+		line, after:   string,
+	}
+	cases := [?]Case {
+		{"one two three", 9 * cell, "one two", "three"},
+		{"one two three", 8 * cell, "one two", "three"},
+		{"one two three", 3 * cell, "one", "two three"},
+		{"one   two", 5 * cell, "one", "two"},
+		{"see src/library/support", 12 * cell, "see src/", "library/support"},
+		{"abcdefgh", 3 * cell, "abc", "defgh"},
+		{"one two", 100 * cell, "one two", ""},
+	}
+	for each in cases {
+		text := transmute([]u8)each.text
+		end, rest = line_break(&spacing, text, each.room)
+		testing.expectf(t, string(text[:end]) == each.line && string(text[rest:]) == each.after, "%q in %v cells: %q and %q, expected %q and %q", each.text, each.room / cell, string(text[:end]), string(text[rest:]), each.line, each.after)
+	}
 }

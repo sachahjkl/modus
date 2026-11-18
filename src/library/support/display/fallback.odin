@@ -3,9 +3,9 @@ package display
 import "modus:contract/demand_cache"
 import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
-import "modus:support/fallback_glyphs"
 import "modus:support/graphics"
 import "modus:support/system"
+import "modus:support/text_rendering"
 
 // The glyphs past the glyph caches (src/md/features/glyphs_on_demand.md):
 // the side of a process. The starter maps the font outlines and the demand
@@ -21,7 +21,7 @@ import "modus:support/system"
 // replacement glyph. missing names the fonts of the chains that the
 // outlines lack or that the renderer refuses.
 @(private)
-fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: fallback_glyphs.Outline_Fonts) {
+fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
 	outlines: font_outlines.Outlines
 	outlines, problem = font_outlines.open(&ctx.values)
 	if problem.kind != .None {
@@ -31,21 +31,26 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 	if .Demand_Cache in fixed_addresses.ranges_mapped(&ctx.values) {
 		demand_base = uintptr(demand_cache.ADDRESS)
 	}
-	return {}, fallback_glyphs.open(&outlines, demand_base)
+	return {}, text_rendering.open(&outlines, demand_base)
 }
 
 // text_frame_begin starts a frame of the text of the process: the order of
 // use of its private glyph cache counts in frames, and the demand cache
-// gives one generation to the draws of the frame.
+// gives one generation to the draws of the frame. The first frame whose
+// glyphs filled the private glyph cache gets one line on the log: its
+// pixels are right, and it cost more time.
 text_frame_begin :: proc "contextless" () {
-	fallback_glyphs.frame_begin()
+	if count, report := text_rendering.not_kept_report(); report {
+		system.log("text_rendering: the glyphs of one frame fill the private glyph cache: ", count, " glyphs drawn and not kept")
+	}
+	text_rendering.frame_begin()
 }
 
 // Cell_Fallback: what the process draws for a character in a cell past the
 // glyph cache of cells, at scale 1.
 Cell_Fallback :: struct {
-	font:   fallback_glyphs.Outline_Font, // The font of the chain of the cells that has it; None: the replacement glyph.
-	source: fallback_glyphs.Glyph_Source, // Where its words are.
+	font:   text_rendering.Outline_Font, // The font of the chain of the cells that has it; None: the replacement glyph.
+	source: text_rendering.Glyph_Source, // Where its words are.
 	rows:   int, // Its rows of ink.
 	inside: bool, // Its glyph starts at the left of its cell and is at most as wide as the cell.
 }
@@ -55,6 +60,6 @@ Cell_Fallback :: struct {
 // the terminal says it once on its log.
 cell_fallback_of :: proc "contextless" (character: rune) -> Cell_Fallback {
 	face := graphics.cell_face()
-	entry, _, source := fallback_glyphs.glyph(face, character, 1, 0)
-	return {font = fallback_glyphs.font_of(face, character), source = source, rows = int(entry.row_count), inside = entry.left == 0 && int(entry.width) <= graphics.CELL_WIDTH}
+	entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
+	return {font = text_rendering.font_of(face, character), source = source, rows = int(entry.row_count), inside = entry.left == 0 && int(entry.width) <= graphics.CELL_WIDTH}
 }

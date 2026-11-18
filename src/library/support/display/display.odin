@@ -53,7 +53,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:contract/glyph_cache"
-import "modus:support/fallback_glyphs"
+import "modus:support/text_rendering"
 import "modus:contract/pointer_pictures"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
@@ -1033,7 +1033,7 @@ Text_Settings_Problems :: struct {
 	cells_of_another_font: [settings.Grid_Fit]bool, // The cache is valid, and cannot draw cells (graphics.cell_cache_problem).
 	bold:                  glyph_cache.Problem, // The cache of the bold weight. Not_Mapped: the process has none.
 	outlines:              font_outlines.Problem, // The font outlines. Not_Mapped: the process has none.
-	fonts_missing:         fallback_glyphs.Outline_Fonts, // The fonts of the chains that the outlines lack or that the renderer refuses.
+	fonts_missing:         text_rendering.Outline_Fonts, // The fonts of the chains that the outlines lack or that the renderer refuses.
 }
 
 // text_settings_load does the work of text_settings_open and writes no
