@@ -1580,6 +1580,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// cache that it draws below, as the drawing module draws them in
 		// its own copy, from the same outlines and the same demand cache.
 		display.text_frame_begin()
+		display.text_not_kept_tell()
 		draw(&window, request.follow)
 		fallback_cells_tell()
 		// A frame that did not reach the compositor (a Present that the full

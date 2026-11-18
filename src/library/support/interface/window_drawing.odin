@@ -473,6 +473,7 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	// The glyphs past the glyph cache that the process draws itself in
 	// this frame count their use in it.
 	display.text_frame_begin()
+	display.text_not_kept_tell()
 	// The elements of a window draw their names and titles in the
 	// interface font of the process, when its starter gave it one.
 	drawing.now.interface_font = display.interface_font_of()

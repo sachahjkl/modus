@@ -4,7 +4,7 @@ import "base:intrinsics"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 
-// Text shaping (docs/FONTS.md, "12.3 The shaping"): the characters of a
+// Text shaping (docs/FONTS.md, "12.3 The text shaping module"): the characters of a
 // text become placed glyphs, with the advance of each character and the
 // pair adjustment of each pair of characters that follow each other. The
 // text is UTF-8 (src/library/contract/text_encoding). No ligature and no

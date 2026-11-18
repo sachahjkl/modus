@@ -604,9 +604,11 @@ A proportional glyph is at the nearest third of a pixel at each size: three posi
 | The entries | 4 096, in a table of 8 192 places |
 | The key | 64 bits: the face (4 bits), the font of the chain (4), the glyph index in that font (16), the text size (16), the position (2) |
 
-A new glyph that finds no room evicts the glyphs of the oldest frames. A glyph of the frame in progress is never evicted: when the glyphs of one frame fill the cache, each other new glyph of that frame is drawn into the render memory, blended, and not kept (`Glyph_Source.Not_Kept`). Its pixels are right; the frame costs more time. The first such frame writes one line on the log of the process, at the start of the next frame:
+A new glyph that finds no room evicts the glyphs of the oldest frames. A glyph of the frame in progress is never evicted: when the glyphs of one frame fill the cache, each other new glyph of that frame is drawn into the render memory, blended, and not kept (`Glyph_Source.Not_Kept`). Its pixels are right; the frame costs more time. The first such frame of a copy in a process writes one line on the log of the process, at the start of the next frame (`display.text_not_kept_tell`, which `interface.window_frame_begin` and the terminal call). The line:
 
 `text_rendering: the glyphs of one frame fill the private glyph cache: <n> glyphs drawn and not kept`
+
+The copy in the drawing module counts its glyphs and writes no line: the parts of a line of the log hold the addresses of their texts, and a library module holds no table of addresses.
 
 A glyph larger than 16 384 words (a glyph of 128 by 128 pixels) is never kept (`Glyph_Source.Too_Large`): the draw takes its rows band by band (`glyph_bands`, `band_next`) and blends each band.
 

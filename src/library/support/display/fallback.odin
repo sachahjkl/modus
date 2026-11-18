@@ -36,14 +36,22 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 
 // text_frame_begin starts a frame of the text of the process: the order of
 // use of its private glyph cache counts in frames, and the demand cache
-// gives one generation to the draws of the frame. The first frame whose
-// glyphs filled the private glyph cache gets one line on the log: its
-// pixels are right, and it cost more time.
+// gives one generation to the draws of the frame. It writes no line: the
+// drawing module calls it, and a library module holds no table of the
+// addresses of texts, which the parts of a line of the log are
+// (src/md/api/library_modules.md).
 text_frame_begin :: proc "contextless" () {
+	text_rendering.frame_begin()
+}
+
+// text_not_kept_tell writes one line on the log of the process, once,
+// after the first frame whose glyphs filled its private glyph cache: its
+// pixels were right, and it cost more time. A process calls it after
+// text_frame_begin; the drawing module does not.
+text_not_kept_tell :: proc "contextless" () {
 	if count, report := text_rendering.not_kept_report(); report {
 		system.log("text_rendering: the glyphs of one frame fill the private glyph cache: ", count, " glyphs drawn and not kept")
 	}
-	text_rendering.frame_begin()
 }
 
 // Cell_Fallback: what the process draws for a character in a cell past the
