@@ -3105,7 +3105,9 @@ scenario := [?]Step {
 	// the first wait of each key leaves the place of the log as it was.
 	{kind = .Key, text = "ctrl-c"},
 	{kind = .Wait, text = "compositor: the copy key goes to interface_elements", any_order = true},
-	{kind = .Wait, text = "display: interface_elements: a copy of 5 bytes of text"},
+	// The program sends its copy, then writes its line; the compositor can
+	// take the copy and write its own line between the two.
+	{kind = .Wait, text = "display: interface_elements: a copy of 5 bytes of text", any_order = true},
 	{kind = .Wait, text = "compositor: a copy of 5 bytes of text from interface_elements"},
 	{kind = .Front, text = "console"},
 	{kind = .Key, text = "ctrl-v"},
