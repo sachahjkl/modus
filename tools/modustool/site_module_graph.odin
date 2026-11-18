@@ -717,7 +717,7 @@ site_module_graph_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Referenc
 	depth := max(layout.layer_count - 1, 0)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>The module graph</h1>\n")
-	fmt.sbprintf(&b, "<p>Each module and process of the build is a node: %d nodes. Each import is an edge: %d edges, a depth of %d. An edge is an import of the module file: the module names the hash of another module, and a loader puts that module in the same process. ", len(inputs), len(layout.edges), depth)
+	fmt.sbprintf(&b, "<p>Each module of the build is a node: %d nodes. Each import is an edge: %d edges, a depth of %d. An edge is an import of the module file: the module names the hash of another module, and a loader puts that module in the same process. ", len(inputs), len(layout.edges), depth)
 	strings.write_string(&b, "An edge is not a library of <code>contract</code> or <code>support</code>, which the build compiles into each module; not a module that a process loads by its name, as the console does; not a connection to a service; and not a replacement of an import, which the machine decides when a process starts.</p>\n")
 	fmt.sbprintf(&b, "<p>The nodes are read from <code>module_builds</code>; see the <a href=\"%s\">modules</a> for the page of each. A pointer on a node, or the focus, marks its edges and its neighbours and shows its identity card; a click opens its page. The table under the picture gives every edge.</p>\n", site_page_link(site, path, modules_page))
 	strings.write_string(&b, "<figure class=\"graph-figure\" id=\"module-graph\">\n")
@@ -746,8 +746,8 @@ site_module_graph_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Referenc
 		strings.write_string(&b, ".</p>\n")
 	}
 	fmt.sbprintf(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"%s\"><code>%s</code></a>, the boot image of the last build and the module files of <code>%s</code>.</p>\n", site_repository_file(site, SITE_MODULES_FILE), SITE_MODULES_FILE, MODULE_BUILD_FOLDER)
-	site_page_add(site, Site_Page{path = path, title = "The module graph", description = site_description_cut(fmt.tprintf("The %d modules and processes of %s as a graph: %d imports, in layers by depth, with the identity card of each module.", len(inputs), SITE_SYSTEM_NAME, len(layout.edges))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation, script = SITE_MODULE_GRAPH_SCRIPT})
-	append(entries, Site_Reference_Entry{path = path, title = "The module graph", what = "Each module and process as a node, each import as an edge, in layers by depth; the identity card of each module.", source = SITE_MODULES_FILE, count = len(layout.edges), kind = .Module})
+	site_page_add(site, Site_Page{path = path, title = "The module graph", description = site_description_cut(fmt.tprintf("The %d modules of %s as a graph: %d imports, in layers by depth, with the identity card of each module.", len(inputs), SITE_SYSTEM_NAME, len(layout.edges))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation, script = SITE_MODULE_GRAPH_SCRIPT})
+	append(entries, Site_Reference_Entry{path = path, title = "The module graph", what = "Each module as a node, each import as an edge, in layers by depth; the identity card of each module.", source = SITE_MODULES_FILE, count = len(layout.edges), kind = .Module})
 	fmt.printfln("modustool: site: the module graph: %d nodes, %d edges, depth %d, %d nodes with no edge; modules with no entry that no module imports: %s", len(inputs), len(layout.edges), depth, layout.band_count, len(unimported) == 0 ? "none" : strings.join(unimported[:], ", ", context.temp_allocator))
 }
 

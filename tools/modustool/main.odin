@@ -318,7 +318,7 @@ COMMANDS :: [?]Command {
 	// ```
 	// nix develop -c modustool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
@@ -526,9 +526,9 @@ COMMANDS :: [?]Command {
 	// build that gives the same bytes every time.
 	//
 	// - `module`, `count`: the module and the count of builds.
-	// - `all count [processes]`: every module and the boot program, one row
+	// - `all count [host_processes]`: every module and the boot program, one row
 	//   each.
-	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
+	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [host_processes]`: every module and the boot program, one row each", run = run_repeat},
 	// Copies a file of `core:crypto` of the Odin compiler into the repository
 	// with the listed changes of its imports, and prints its line of the
 	// manifest of the origin.
@@ -554,7 +554,7 @@ COMMANDS :: [?]Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a process or a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
+	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
@@ -708,7 +708,7 @@ COMMANDS :: [?]Command {
 	// (docs/TOOLS.md, "The fuzzing").
 	//
 	// - `list`: the fuzz targets, with the inputs of their corpus.
-	// - `<target> [executions [processes [seed]]]`, `all [executions]`:
+	// - `<target> [executions [host_processes [seed]]]`, `all [executions]`:
 	//   builds the instrumented child, then runs the target until it is
 	//   stopped, or for a count of executions; a fuzz finding is minimized
 	//   into `build/fuzzing/<target>/findings`.
@@ -720,7 +720,7 @@ COMMANDS :: [?]Command {
 	//   regression inputs of the corpus.
 	// - `corpus <target>`: writes the reach inputs of the corpus from the
 	//   inputs that the long runs kept.
-	{name = "fuzz", about = "list | <target> [executions [processes [seed]]] | all [executions] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target>: fuzz the readers of the system on the host, guided by edge counters", run = run_fuzz},
+	{name = "fuzz", about = "list | <target> [executions [host_processes [seed]]] | all [executions] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target>: fuzz the readers of the system on the host, guided by edge counters", run = run_fuzz},
 	// The child process of `fuzz` and of `check`: it runs the engine on one
 	// target. The parent starts it; it is not a command to run by hand.
 	{name = "fuzz-child", about = "the child process of `fuzz` and of `check`, which the parent starts", run = run_fuzz_child},
@@ -784,7 +784,7 @@ usage :: proc() {
 // each boot volume (incremental_build.odin, boot_volumes.odin); `build
 // whole` keeps nothing.
 run_build :: proc(args: []string) -> int {
-	// `build [whole] [processes]`: a whole build, and the count of module
+	// `build [whole] [host_processes]`: a whole build, and the count of module
 	// processes at once.
 	rest := args
 	if len(rest) >= 1 && rest[0] == "whole" {
@@ -792,7 +792,7 @@ run_build :: proc(args: []string) -> int {
 		rest = rest[1:]
 	}
 	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_host_processes(rest[0])) {
-		fmt.eprintln("modustool: build [whole] [processes]")
+		fmt.eprintln("modustool: build [whole] [host_processes]")
 		return EXIT_USAGE
 	}
 	return build_system(nil)

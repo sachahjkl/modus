@@ -20,7 +20,7 @@ PROCESSES_BUDGET :: module.Budget_Request{pages = 16384, processes = 4, threads 
 // The processor time of all disk processes together, in microseconds in
 // each second: two processors. A disk process that computes with no end
 // then leaves the other processors to the processes of the system.
-PROCESSES_PROCESSOR :: 2_000_000
+SHARED_PROCESSOR_TIME :: 2_000_000
 
 // The most that one disk process gets. A disk process holds no grant that
 // starts a process, so it needs its own process slot only, and with one

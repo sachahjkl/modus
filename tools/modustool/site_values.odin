@@ -71,7 +71,7 @@ site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 		title = "Command", meaning = "A command of the console or of modustool.",
 	},
 	.Module = {
-		title = "Module", meaning = "A module or a process of the boot image or of the build.",
+		title = "Module", meaning = "A module of the boot image or of the build.",
 	},
 	.File = {
 		title = "File", meaning = "A file or a folder of the repository.",

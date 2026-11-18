@@ -463,7 +463,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		commands := COMMANDS
 		main_text, _ := site_read_quiet(SITE_TOOL_MAIN_FILE)
 		main_lines := site_lines(main_text)
-		fmt.sbprintf(&b, "<h1>Commands of modustool</h1>\n<p>All the automation of the project is one process, <code>modustool</code>. Run a command with <code>nix develop -c modustool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
+		fmt.sbprintf(&b, "<h1>Commands of modustool</h1>\n<p>All the automation of the project is one program of the host, <code>modustool</code>. Run a command with <code>nix develop -c modustool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
 		site_about_paragraph(site, &b, path, site_comment_above(main_text, "COMMANDS ::"), SITE_TOOL_MAIN_FILE, "COMMANDS")
 		strings.write_string(&b, "<p>The table names each command; under it, each command has its documentation, the help that <code>modustool help</code> prints, and a link to its line.</p>\n")
 		site_source_line(site, &b, SITE_TOOL_MAIN_FILE)

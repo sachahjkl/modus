@@ -503,7 +503,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// The process writes its first line when it runs, and the root service
 	// writes its line when the start returned: the system fixes no order.
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s", DISK_MODULE_NAME, hash), any_order = true})
-	append(&steps, Step{kind = .Wait, text = "visitor: ok, a process that the boot image does not hold"})
+	append(&steps, Step{kind = .Wait, text = "visitor: ok, a module that the boot image does not hold"})
 	append(&steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
 	append(&steps, Step{kind = .Wait, text = "visitor: no ring to the root service: the open of its handle is refused: as it must"})
 	// The module of another project, from the same store: the root service

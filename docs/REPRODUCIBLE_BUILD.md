@@ -20,7 +20,7 @@ A module of this system is named by the hash of its bytes, so one source must gi
 |---|---|---|
 | `modustool check` | Builds the modules and the boot program a second time and compares each output with the first build, byte for byte. The two builds are whole builds | At each full check (`modustool screenshots` runs the same second build): it catches a compiler that lost the rule |
 | `modustool repeat <module> <count>` | Builds one module `count` times, with no machine, and counts the distinct results of each output | After a change of one module that looks nondeterministic |
-| `modustool repeat all <count> [processes]` | The same for every module and the boot program, one row each | After a change of the compiler, of its flags or of LLVM |
+| `modustool repeat all <count> [host_processes]` | The same for every module and the boot program, one row each | After a change of the compiler, of its flags or of LLVM |
 
 **What a build is not.** The rule covers the modules, their intermediate outputs, the resources and the boot program. It does not cover the tool `modustool` itself, which is not a module (section 6).
 
@@ -135,7 +135,7 @@ This patch is not written. The estimate: several hundred lines in about 8 files,
 
 The parallelism is one level up: `modustool build` runs one host process of the compiler for each module, several at once, and assembles the boot image in the fixed order of the module table (`tools/modustool/parallel_build.odin`).
 
-- **One host process for each step of a module.** The compile step of a module runs in its own host process of the tool (the command `module`), which runs one compiler; its conversion runs in another host process, after the compile steps of its level. The tool runs as many host processes at once as the host has processors; `modustool build <processes>` and `repeat all <count> <processes>` set another count.
+- **One host process for each step of a module.** The compile step of a module runs in its own host process of the tool (the command `module`), which runs one compiler; its conversion runs in another host process, after the compile steps of its level. The tool runs as many host processes at once as the host has processors; `modustool build <host_processes>` and `repeat all <count> <host_processes>` set another count.
 - **Levels.** A module needs the files of its imports at its conversion: their hashes go into its import table. So a module with no import is in level 0, and a module is in the level after the highest level of its imports. Each level starts after the level before it ended.
 - **No shared file.** Each module writes only in its own folder and its own `<name>.module`, so two host processes never write one file.
 - **One order of the output.** The tool keeps the output of each host process and prints it whole, in the order of the module table.

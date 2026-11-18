@@ -2259,20 +2259,20 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.signature(\"tally\", 9)"},
 	{kind = .Wait, text = "[console] error: manual.signature: the argument export has the value 9, which the call refuses; it takes at most 5 (-2)"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
-	{kind = .Wait, text = "manual: tally: a process, 5 exports, "},
+	{kind = .Wait, text = "manual: tally: a module with an entry, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
 	{kind = .Shot, text = "manual"},
 	// The keys of the manual: the next module of the boot image, then the one before.
 	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "manual: manual: a process, 17 exports, "},
+	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "manual: tally: a process, 5 exports, "},
+	{kind = .Wait, text = "manual: tally: a module with an entry, 5 exports, "},
 	// The links of a page (src/md/features/manual_links.md). Tab puts the
 	// focus on the first link of the page of the manual, a heading of a
 	// guide, and scrolls the page to it.
 	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "manual: manual: a process, 17 exports, "},
+	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
 	// The element line of the link comes after the line of the page: before
 	// the focus when the view showed the link, after it when Tab scrolled.
 	{kind = .Key, text = "tab"},
@@ -2286,7 +2286,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: the page docs/MODULE_CONTRACT.md#description-tables: Description tables, "},
 	{kind = .Key, text = "backspace"},
 	{kind = .Wait, text = "manual: back to the page before"},
-	{kind = .Wait, text = "manual: manual: a process, 17 exports, "},
+	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
 	// Tab twice and Enter: the second link, a term of the glossary.
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "manual: the focus is on the link the description tables to docs/MODULE_CONTRACT.md#description-tables"},
@@ -2297,7 +2297,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: the page term:link-page: Link page, "},
 	{kind = .Key, text = "backspace"},
 	{kind = .Wait, text = "manual: back to the page before"},
-	{kind = .Wait, text = "manual: manual: a process, 17 exports, "},
+	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
 	// The third link names a procedure of a support package that no
 	// module describes: it opens the page of its declaration, which the
 	// build took from the source.
@@ -2313,7 +2313,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "manual_declaration"},
 	{kind = .Key, text = "backspace"},
 	{kind = .Wait, text = "manual: back to the page before"},
-	{kind = .Wait, text = "manual: manual: a process, 17 exports, "},
+	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
 	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 
@@ -2395,7 +2395,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
 	{kind = .Wait, text = "[console] 395"},
 	{kind = .Type, text = "manual.show(\"agenda\")"},
-	{kind = .Wait, text = "manual: agenda: a process, 3 exports, "},
+	{kind = .Wait, text = "manual: agenda: a module with an entry, 3 exports, "},
 	// A process that imports calendar: the root service gives it the
 	// replacements of the machine when it starts it.
 	{kind = .Launch, text = "imports"},
@@ -2722,7 +2722,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.signature(\"sample\", 11)"},
 	{kind = .Wait, text = "[console] sum_words(words: Table(Word, Change), text: Bytes(Read)) -> Integer"},
 	{kind = .Type, text = "manual.show(\"sample\")"},
-	{kind = .Wait, text = "manual: sample: a process, "},
+	{kind = .Wait, text = "manual: sample: a module with an entry, "},
 	{kind = .Front, text = "manual"},
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "pgdn"},
@@ -4669,7 +4669,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				found: bool
 				step.x, step.y, found = bar.center(layout, step.text)
 				if !found {
-					fmt.eprintfln("error: the start menu does not have the process %s", step.text)
+					fmt.eprintfln("error: the start menu does not have the module %s", step.text)
 					return false
 				}
 			}

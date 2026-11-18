@@ -34,7 +34,7 @@ import "core:time"
 // the names of the module table are distinct (checked below).
 
 // The count of module processes at once. 0: the count of processors.
-// `modustool build <processes>` and `repeat all <count> <processes>` set it.
+// `modustool build <host_processes>` and `repeat all <count> <host_processes>` set it.
 module_build_host_processes := 0
 
 // What one process of a build gave.

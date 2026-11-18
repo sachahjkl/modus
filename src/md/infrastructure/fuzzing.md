@@ -110,7 +110,7 @@ The corpus of one target holds at most 512 inputs and 1 MiB; the whole corpus ho
 
 **The long runs** are commands of the tool, never a part of a check:
 
-- `fuzz <target> [executions] [processes]`: runs a target for a count of executions: by default the count of the check, and a count of 0 is refused, so that a forgotten argument never starts a run with no end; with several processes, each process runs a child, and the children share the kept inputs through the folder of the run in `build/fuzzing/`.
+- `fuzz <target> [executions] [host_processes]`: runs a target for a count of executions: by default the count of the check, and a count of 0 is refused, so that a forgotten argument never starts a run with no end; with several host processes, each host process runs a child, and the children share the kept inputs through the folder of the run in `build/fuzzing/`.
 - `fuzz all [executions]`: each host target in turn.
 - `fuzz operations <executions> [<seed>]`: the kernel operations in a test machine, one machine at a time, with no default count ([kernel_fuzzing.md](kernel_fuzzing.md), "The loop and the speed").
 - `fuzz list`: the targets and the inputs of their corpus.

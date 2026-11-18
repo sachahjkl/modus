@@ -72,7 +72,7 @@ tool_compile_command_of :: proc(output, dependency_file: string) -> []string {
 tool_build_key_inputs :: proc() -> Build_Key_Inputs {
 	base := TOOL_COMPILE_COMMAND
 	settings := make([dynamic]string, context.temp_allocator)
-	append(&settings, process_identity("odin"), "the compiler")
+	append(&settings, host_program_identity("odin"), "the compiler")
 	append(&settings, ..base[:])
 	return {subject = "the tool", settings = settings[:]}
 }

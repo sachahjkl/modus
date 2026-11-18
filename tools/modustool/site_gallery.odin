@@ -60,7 +60,7 @@ site_gallery_groups := [Site_Gallery_Group]Site_Gallery_Group_Text {
 	.Desktop         = {"The desktop and the palette", "The windows, the bar with its two menus, the palette that the key super opens, and the pointer."},
 	.Console         = {"The console and the terminal", "The console, where a command is a typed function, the terminal that draws the lines of a process, and the log."},
 	.Mark            = {"The mark and the graphics", "The process that plays the animations of the heron of the mark, and the hall of fame of the people whose work inspired the system."},
-	.Rights          = {"Rights, grants and faults", "Processes that show what a process reaches and what the kernel refuses: rights, revocation, isolation, budgets, faults and errors."},
+	.Rights          = {"Rights, grants and faults", "Modules that show what a process reaches and what the kernel refuses: rights, revocation, isolation, budgets, faults and errors."},
 	.Modules         = {"Modules", "One file in several roles, the replacement of an import, and the information that each module carries."},
 	.Memory          = {"Memory, threads and time", "The address space of a process, its threads on several processors, the scheduling, and the paths that enter the kernel seldom."},
 	.Developer_Tools = {"The developer tools", "The tool that inspects a process that runs or that stopped, and the call of an export from the host."},
@@ -90,7 +90,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "desktop_moved.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "Windows after a move with the pointer: plasma, paint, life and monitor on the grid of the desktop."},
 	{file = "menu.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "The start menu: the button of the bar opens it."},
 	{file = "windows.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "The menu of the windows: a press on a line brings the window to the front."},
-	{file = "disk_process_windows.png", group = .Desktop, guide = "docs/MODULE_CONTRACT.md", caption = "A process from a disk in the menu of the windows and in the monitor: its nickname, with the hash prefix of its file faded beside it."},
+	{file = "disk_process_windows.png", group = .Desktop, guide = "docs/MODULE_CONTRACT.md", caption = "The process of a module from a disk in the menu of the windows and in the monitor: its nickname, with the hash prefix of its file faded beside it."},
 	{file = "palette.png", group = .Desktop, home = true, guide = "docs/DESIGN.md", film = "docs/films/palette.webm", caption = "The palette: the key super opens one list of the processes, the windows, the commands and the settings, which narrows at each typed key."},
 	{file = "palette_open.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette with no letter typed: the windows first, then the processes, each with the icon of its kind."},
 	{file = "palette_modules.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The letter p in the palette: windows, modules and commands in one ranking, with each matched letter marked."},
@@ -147,7 +147,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "principals_unlock.png", group = .Rights, guide = "docs/PRINCIPALS.md", caption = "The window of unlock: the passphrase of a named principal, shown as dots."},
 
 	// Modules.
-	{file = "roles.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "One module in each role: the file of tally is a process, a service, a library in the console and a sandboxed process."},
+	{file = "roles.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "One module in each role: the file of tally runs as a process, as a service, as a library in the console and as a sandboxed process."},
 	{file = "services.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "A service serves its own exports while it runs: the console draws in the window of paint with isolated calls."},
 	{file = "imports.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The replacement of an import: agenda imports calendar, which has a fault, and the loader gives calendar_fixed in its place."},
 	{file = "replacement.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The console sets a replacement through the root service, and process_modules() gives the replacements that the loader applied."},

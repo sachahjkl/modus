@@ -537,7 +537,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 // A picture and a grid of text cells are named by values, so such a
 // module can draw both.
 @(test)
-processes_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
+modules_that_draw_through_the_drawing_module_follow_its_rules :: proc(t: ^testing.T) {
 	library_found := false
 	library_place := -1
 	for build, index in module_builds {

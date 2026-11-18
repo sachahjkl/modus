@@ -669,7 +669,7 @@ boot_volume_is_ready_with_the_lock :: proc(path: string) -> bool {
 MOST_BOOT_VOLUME_HOST_PROCESSES :: 8
 
 // boot_volume_host_processes gives the count of volume processes at once: the
-// count of `build <processes>`, or the count of the processors, at most
+// count of `build <host_processes>`, or the count of the processors, at most
 // MOST_BOOT_VOLUME_HOST_PROCESSES.
 boot_volume_host_processes :: proc(volume_count: int, asked: int, processors: int) -> int {
 	host_processes := asked

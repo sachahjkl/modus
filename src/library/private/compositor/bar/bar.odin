@@ -124,9 +124,9 @@ button_center :: proc "contextless" (layout: Layout) -> (center_x, center_y: int
 
 // center gives the middle of the line of a module in the menu. ok is
 // false if the menu does not have the module.
-center :: proc "contextless" (layout: Layout, process: string) -> (center_x, center_y: int, ok: bool) {
+center :: proc "contextless" (layout: Layout, module: string) -> (center_x, center_y: int, ok: bool) {
 	for name, index in names {
-		if name == process {
+		if name == module {
 			x, y, width, height := line(layout, index)
 			return x + width / 2, y + height / 2, true
 		}

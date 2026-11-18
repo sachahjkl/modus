@@ -838,10 +838,10 @@ tool_identity_of :: proc(table: ^Input_File_Table, tool_folder: string) -> (iden
 	return blake3.hash(text[:]), complete
 }
 
-// process_identity names the file of a host program of the path: where it is
+// host_program_identity names the file of a host program of the path: where it is
 // after each link, its size and its time. In the store of Nix, the path
 // holds the hash of the package: another version is another path.
-process_identity :: proc(name: string) -> string {
+host_program_identity :: proc(name: string) -> string {
 	search := os.get_env("PATH", context.temp_allocator)
 	for folder in strings.split(search, ":", context.temp_allocator) {
 		if folder == "" {
@@ -856,9 +856,9 @@ process_identity :: proc(name: string) -> string {
 		if resolve_error != nil {
 			resolved = candidate
 		}
-		return fmt.tprintf("process %s: %s, %d bytes, time %d", name, resolved, information.size, time.to_unix_nanoseconds(information.modification_time))
+		return fmt.tprintf("host program %s: %s, %d bytes, time %d", name, resolved, information.size, time.to_unix_nanoseconds(information.modification_time))
 	}
-	return fmt.tprintf("process %s: not on the path", name)
+	return fmt.tprintf("host program %s: not on the path", name)
 }
 
 // What the incremental build knows for the whole of one build.
@@ -897,10 +897,10 @@ build_inputs_prepare :: proc() {
 	build_inputs.table = input_file_table_make(root, folders[:])
 	build_inputs.tool_identity, build_inputs.usable = tool_identity_of(build_inputs.table, TOOL_SOURCE_FOLDER)
 	for name, index in ([4]string{"odin", "llc", "nasm", "ld.lld"}) {
-		build_inputs.module_programs[index] = strings.clone(process_identity(name))
+		build_inputs.module_programs[index] = strings.clone(host_program_identity(name))
 	}
 	for name, index in ([5]string{"odin", "nasm", "lld-link", "sbsign", "virt-fw-vars"}) {
-		build_inputs.volume_programs[index] = strings.clone(process_identity(name))
+		build_inputs.volume_programs[index] = strings.clone(host_program_identity(name))
 	}
 	if !build_inputs.usable {
 		fmt.println("modustool: a source of the tool cannot be read: the build keeps no output and writes no build record")

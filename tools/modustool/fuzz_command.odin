@@ -378,7 +378,7 @@ fuzz_print_literal :: proc(name: string, input: []u8) {
 
 // run_fuzz is the command `fuzz` (docs/TOOLS.md, "The fuzzing").
 run_fuzz :: proc(args: []string) -> int {
-	usage_text :: "modustool: fuzz list | <target> [<executions> [<processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | regression operations <finding folder> | replay operations <file>"
+	usage_text :: "modustool: fuzz list | <target> [<executions> [<host_processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | regression operations <finding folder> | replay operations <file>"
 	if len(args) == 0 {
 		fmt.eprintln(usage_text)
 		return EXIT_USAGE

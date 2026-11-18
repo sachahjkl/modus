@@ -507,7 +507,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 	for credit in credits {
 		append(&system_rows, Site_License_Row {
-			what           = strings.concatenate({"Portrait of ", credit.person, " in the process hall_of_fame"}, context.temp_allocator),
+			what           = strings.concatenate({"Portrait of ", credit.person, " in the module hall_of_fame"}, context.temp_allocator),
 			place          = hall_of_fame_pixels_path(credit.file),
 			license        = site_spdx(credit.license),
 			author         = credit.author,

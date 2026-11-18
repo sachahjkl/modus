@@ -97,7 +97,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		for item in reference.modules {
 			in_image += module_in_boot_image(item.build) ? 1 : 0
 		}
-		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a process is a module with an entry function that the root service starts; the others are modules that a process loads or calls. The source of each is in <code>" + SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a module with an entry is one that the root service starts as a process; the others are modules that a process loads or calls. The source of each is in <code>" + SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
 		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
 		// One table for each group, in the order of the tree of the documentation.
 		for group in Site_Module_Group {
@@ -135,8 +135,8 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"")
 		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
-		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and processes of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
-		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and process, with a page for each: its documentation, its exports, its imports, and for a process its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
+		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
+		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module, with a page for each: its documentation, its exports, its imports, and for a module with an entry its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
 	}
 	site_module_graph_page_add(site, entries, graph_inputs, graph_layout)
 

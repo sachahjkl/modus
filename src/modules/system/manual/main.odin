@@ -734,7 +734,7 @@ page_log :: proc "contextless" () -> int {
 	file := file_of(&entries[selected])
 	head, _ := module.header(file)
 	exports := described_exports(file)
-	system.log("manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a process, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
+	system.log("manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a module with an entry, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
 	return exports
 }
 

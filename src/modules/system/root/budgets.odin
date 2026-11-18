@@ -155,7 +155,7 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 	}
 	own, _ := system.budget_read()
 	shared := disk_process.PROCESSES_BUDGET
-	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.PROCESSES_PROCESSOR, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
+	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
 	if status != .Ok {
 		system.log_in("processes", .Warning, "root: cannot make the budget of the disk processes: status ", status)
 		return 0, status

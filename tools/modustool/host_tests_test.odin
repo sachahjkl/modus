@@ -8,24 +8,24 @@ import "core:testing"
 // test runner follows: the tests do not free them.
 
 // A command that cannot start, and a command that ends with a failure,
-// are failures; after a failure the pool starts no new process. With one
-// process at once the order is fixed: the second and the third commands
-// never start.
+// are failures; after a failure the pool starts no new host process. With
+// one host process at once the order is fixed: the second and the third
+// commands never start.
 @(test)
 host_test_pool_stops_after_a_failure :: proc(t: ^testing.T) {
-	missing := []string{"/a process that is not there"}
+	missing := []string{"/a program that is not there"}
 	outcomes := build_host_processes_run([][]string{missing, []string{"true"}, []string{"true"}}, 1, context.temp_allocator)
 	testing.expect_value(t, len(outcomes), 3)
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
 	testing.expect(t, len(outcomes[0].output) > 0, "a command that cannot start says why")
-	testing.expect(t, !outcomes[1].started && !outcomes[2].started, "no process starts after a failure")
+	testing.expect(t, !outcomes[1].started && !outcomes[2].started, "no host process starts after a failure")
 	// A host process that runs and ends with a status that is not 0: its
 	// output is kept, and the next command does not start.
 	absent := "/a folder that is not there/of a host test"
 	outcomes = build_host_processes_run([][]string{[]string{"ls", absent}, []string{"true"}}, 1, context.temp_allocator)
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a status that is not 0 is a failure")
 	testing.expect(t, strings.contains(string(outcomes[0].output), absent), "the output of a failure is kept: it names the folder")
-	testing.expect(t, !outcomes[1].started, "no process starts after a failure")
+	testing.expect(t, !outcomes[1].started, "no host process starts after a failure")
 }
 
 // No count of processes starts no process: the caller then counts each
@@ -36,7 +36,7 @@ host_test_pool_with_no_host_process_starts_none :: proc(t: ^testing.T) {
 	for host_processes in ([]int{0, -1}) {
 		outcomes := build_host_processes_run([][]string{[]string{"true"}}, host_processes, context.temp_allocator)
 		testing.expect_value(t, len(outcomes), 1)
-		testing.expectf(t, !outcomes[0].started && !outcomes[0].success, "%d processes at once start no command", host_processes)
+		testing.expectf(t, !outcomes[0].started && !outcomes[0].success, "%d host processes at once start no command", host_processes)
 	}
 }
 
@@ -90,7 +90,7 @@ host_test_folders_with_one_name_are_refused :: proc(t: ^testing.T) {
 @(test)
 host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.T) {
 	folders := HOST_TEST_FOLDERS
-	processes := make(map[string]bool, context.temp_allocator)
+	test_programs := make(map[string]bool, context.temp_allocator)
 	for folder in folders {
 		command := host_test_command(folder, "/temporary")
 		testing.expect_value(t, command[0], "env")
@@ -102,10 +102,10 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 			}
 		}
 		testing.expectf(t, kernel_flag_count == (source_folder_takes_kernel_library(folder) ? 1 : 0), "%s: the flag of the kernel parts %d times", folder, kernel_flag_count)
-		process := command[len(command) - 1]
-		testing.expectf(t, strings.has_prefix(process, "-out:" + BUILD_FOLDER + "/test_"), "%s: the last word is the test process, not %s", folder, process)
-		testing.expectf(t, !processes[process], "%s: the test process %s is the process of another folder", folder, process)
-		processes[process] = true
+		test_program := command[len(command) - 1]
+		testing.expectf(t, strings.has_prefix(test_program, "-out:" + BUILD_FOLDER + "/test_"), "%s: the last word is the test program, not %s", folder, test_program)
+		testing.expectf(t, !test_programs[test_program], "%s: the test program %s is the test program of another folder", folder, test_program)
+		test_programs[test_program] = true
 	}
 	tool := host_test_command(TOOL_SOURCE_FOLDER, "/temporary")
 	testing.expect(t, strings.contains(strings.join(tool, " ", context.temp_allocator), KERNEL_LIBRARY_FLAG), "the tool takes the kernel parts")

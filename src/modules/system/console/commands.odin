@@ -454,7 +454,7 @@ commands_start :: proc "contextless" () {
 	// boot image has the name, or the root service gives the name a grant;
 	// another load runs; the loader refuses the file; the storage service
 	// stopped or gave no answer.
-	command("start_from_disk", {.Text, .Text}, .None, "start a process of the store module_files, by nickname and hash", start_from_disk)
+	command("start_from_disk", {.Text, .Text}, .None, "start a module of the store module_files, by nickname and hash", start_from_disk)
 	// Gives a grant to the file that a nickname names, from its next start
 	// (docs/MODULE_CONTRACT.md, "The grants of a disk process"). It gives
 	// nothing.

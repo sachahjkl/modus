@@ -233,7 +233,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	process_records_export := module.export_find(file, "process_records")
 	process_value_runs_export := module.export_find(file, "process_value_runs")
 	if !row_size_holds(file, records_export, size_of(Record)) || !row_size_holds(file, value_runs_export, size_of(Value_Run)) || !row_size_holds(file, process_records_export, size_of(Record)) || !row_size_holds(file, process_value_runs_export, size_of(Value_Run)) {
-		return "a row of the log service has another size than in this process"
+		return "a row of the log service has another size than in this module"
 	}
 	own, read_status := system.budget_read()
 	if read_status != .Ok {

@@ -57,7 +57,7 @@ FAULTS_AFTER_THE_START :: #config(FAULTS_AFTER_THE_START, false)
 //    address 0, three calls deep (fault_one).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log("visitor: ok, a process that the boot image does not hold")
+	system.log("visitor: ok, a module that the boot image does not hold")
 	when BUILT_OUTSIDE {
 		system.log("visitor: built outside the sources of the system")
 	}

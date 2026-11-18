@@ -99,7 +99,7 @@ the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
 		_, found := module_group_of_source(build.source)
 		testing.expectf(t, found, "the source %s of the module %s is in no module group", build.source, build.name)
 		if build.entry {
-			testing.expectf(t, module_source_declares_entry(build.source), "the process %s has no entry function in %s", build.name, build.source)
+			testing.expectf(t, module_source_declares_entry(build.source), "the module %s has no entry function in %s", build.name, build.source)
 		}
 	}
 	entries, error := os.read_all_directory_by_path(SOURCE_FOLDER_MODULES, context.temp_allocator)
