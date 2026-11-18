@@ -650,6 +650,7 @@ the_changes_that_a_file_takes :: proc(t: ^testing.T) {
 		{.Sealed_By_The_Tpm, .Create_Principal, true, true, .Unknown_Change},
 		{.Passphrase, .Set_Machine_Passphrase, true, true, .Unknown_Change},
 		{.Passphrase, .Seal_Machine_Key, true, true, .Unknown_Change},
+		{.Sealed_By_The_Tpm, .Machine_Key_Without_Window, true, true, .Unknown_Change},
 		{.Unknown, .Change_Passphrase, true, true, .Unknown_Form},
 		{.Unknown, .New_Recovery_Key, false, false, .Unknown_Form},
 		{.Sealed_By_The_Tpm, .Change_Passphrase, true, false, .Seal_Not_Allowed},
@@ -724,7 +725,7 @@ the_prompts_that_offer_the_recovery_key :: proc(t: ^testing.T) {
 // the border refuses it (the_word_of_the_mode_of_unlock).
 @(test)
 the_words_of_each_mode_of_unlock :: proc(t: ^testing.T) {
-	asked := [?]Unlock_Mode{.Create_Principal, .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key}
+	asked := [?]Unlock_Mode{.Create_Principal, .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window}
 	for mode, index in asked {
 		testing.expect(t, mode_words(mode) != mode_words(.Unlock))
 		for other in asked[index + 1:] {

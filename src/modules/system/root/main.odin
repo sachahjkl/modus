@@ -62,6 +62,9 @@
 //   the disk grant table of principal 0 (persisted_grant_table.odin).
 // - `Machine_Seal`: a machine key that the TPM service seals to the
 //   measure of the system, with a recovery key (tpm.odin).
+// - `Start_Policy_Choice`: the start policy from the disk that the next
+//   start runs, a row of the disk grant table of principal 0
+//   (start_policy_choice.odin).
 // - `Debug`: the handle of a process with the right Debug, for the
 //   debugger service, on behalf of a caller of that service that acts for
 //   the principal whose session runs that process (`debug`).
@@ -591,13 +594,17 @@ entropy_report: random.Entropy_Report
 // 6. starts the entropy service when the machine has an entropy device,
 //    with no wait for its bytes, and the TPM service when the system is
 //    measured into a TPM;
-// 7. writes the machine parts page, and starts one start policy: the
-//    default start policy with the list start_list, or, when the boot
-//    record asks for it, the rescue start policy with the list
-//    rescue_list (start_policy.odin). The start policy asks for each other
-//    start: the parts of the system (`input`, the compositor, the font
-//    service) start by their procedures here, each other process with the
-//    grants of its role.
+// 7. writes the machine parts page, and, with a TPM service and a data
+//    disk, reads the choice of principal 0: `unlock` with no window
+//    unseals the machine key, and the disk grant table of principal 0 is
+//    read (start_policy_choice.odin);
+// 8. starts one start policy, measured into PCR 12 first: the start policy
+//    from the disk that principal 0 chose, the default start policy with
+//    the list start_list, or, when the boot record asks for it, the rescue
+//    start policy with the list rescue_list (start_policy.odin). The start
+//    policy asks for each other start: the parts of the system (`input`,
+//    the compositor, the font service) start by their procedures here,
+//    each other process with the grants of its role.
 //
 // With no screen before the first start (modus:support/screen_presence),
 // this service writes the line "root: no screen: no console, no window;
@@ -1942,7 +1949,14 @@ reap :: proc "contextless" () {
 		}
 		state, code := system.process_state(item.process)
 		if state == .Stopped {
-			system.log_in("processes", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+			// The run of `unlock` before the start policy has a line of its
+			// own: a wait for the stop of the run of the start list never
+			// takes it.
+			if unlock_without_window_running(&item) {
+				system.log_in("processes", code == 0 ? .Info : .Warning, "root: unlock read the machine key with no window and stopped with code ", u64(code))
+			} else {
+				system.log_in("processes", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+			}
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk process keeps it here.
 			stop_report_keep(&item)

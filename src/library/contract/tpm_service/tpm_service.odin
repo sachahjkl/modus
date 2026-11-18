@@ -21,6 +21,11 @@
 // service builds each command of the TPM itself; a client sends no raw
 // command, so no client extends a PCR or clears the TPM.
 //
+// The root service has a ring of its own, the measure ring, with no
+// region: it sends Measure_Start_Policy there before each start policy
+// runs, and the service extends PCR 12, at most MEASURE_LIMIT times in one
+// start (src/md/features/start_policy.md, "The measure of the start policy").
+//
 // The region holds a secret while a request runs. The service writes zeros
 // over its own copies and over the buffer of the interface of the TPM
 // after each request; the client writes zeros over the region after it read
@@ -31,11 +36,20 @@
 // See [TPM service](term:tpm-service).
 package tpm_service
 
-// The handles of the context of the service: the ring, the region, and the
-// page of the registers of the CRB interface of the TPM.
+// The handles of the context of the service: the ring, the region, the
+// page of the registers of the CRB interface of the TPM, and the measure
+// ring, which only the root service holds: it sends Measure_Start_Policy
+// there, and nowhere else (src/md/features/start_policy.md, "The measure
+// of the start policy").
 SERVICE_RING :: 0
 SERVICE_REGION :: 1
 SERVICE_REGISTERS :: 2
+SERVICE_MEASURE_RING :: 3
+
+// The extends of PCR 12 in one start: the start policy that starts, then
+// the rescue after a failure. A third is refused before any command of the
+// TPM, so no later process makes another start policy look measured.
+MEASURE_LIMIT :: 2
 // The handles of the context of the client: the ring, the region, and the
 // TPM service with the right Read: its state, so that the client learns at
 // once that the service stopped (its stop is an event of the client).
@@ -105,6 +119,21 @@ Command :: enum u32 {
 	// no orderly stop, and a TPM counts a failure at a start that follows a
 	// use of such an object with no TPM2_Shutdown.
 	Unseal = 2,
+	// Only on the measure ring, from the root service: values[0..3] the
+	// event digest of the start policy that starts (tpm2.start_policy_event_digest).
+	// The service extends PCR 12 of the SHA-256 bank with it, then reads
+	// PCR 12. The completion: values[0..3] the value of PCR 12 after the
+	// extend, values[4] the count of the extends of this start. On the TPM
+	// ring of a client it is refused with Bad_Command; past MEASURE_LIMIT
+	// extends, with Measure_Limit.
+	Measure_Start_Policy = 3,
+}
+
+// The ring on which a request came: the border takes Seal and Unseal on the
+// TPM ring of a client, and Measure_Start_Policy on the measure ring only.
+Request_Source :: enum u8 {
+	Client_Ring,
+	Measure_Ring,
 }
 
 // The status of a request: the kind of its completion record.
@@ -129,6 +158,9 @@ Status :: enum u32 {
 	// it counted too many failures (TPM_RC_LOCKOUT). The PCRs and the value
 	// were not checked. values[0] is the response code.
 	Locked_Out = 7,
+	// Measure_Start_Policy: MEASURE_LIMIT extends ran in this start, and
+	// PCR 12 takes no more. values[0] is the count of the extends.
+	Measure_Limit = 8,
 }
 
 // The step of a request at which the interface failed, in values[0] of a
@@ -186,16 +218,16 @@ status_of_word :: proc "contextless" (word: u32) -> (status: Status, ok: bool) {
 
 // A request of the ring, past its border.
 Request :: struct {
-	command:       Command, // .Seal or .Unseal.
-	authorization: Authorization,
+	command:       Command, // .Seal, .Unseal or .Measure_Start_Policy.
+	authorization: Authorization, // .None for Measure_Start_Policy.
 }
 
-// request_of_record is the border of the service: the command of a record
-// and its authorization (values[0] of Seal, values[4] of Unseal). A kind
-// that names no command, the kind of None, or an authorization that names
-// none gives Bad_Command; the service then does no work. It reads and
-// changes no state.
-request_of_record :: proc "contextless" (kind: u32, values: [7]u64) -> (request: Request, status: Status) {
+// request_of_record is the border of the service: the command of a record,
+// the ring it came on, and its authorization (values[0] of Seal, values[4]
+// of Unseal). A kind that names no command, the kind of None, a command of
+// the other ring, or an authorization that names none gives Bad_Command;
+// the service then does no work. It reads and changes no state.
+request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Request_Source) -> (request: Request, status: Status) {
 	command, command_ok := command_of_word(kind)
 	if !command_ok {
 		return {}, .Bad_Command
@@ -204,16 +236,36 @@ request_of_record :: proc "contextless" (kind: u32, values: [7]u64) -> (request:
 	switch command {
 	case .None:
 		return {}, .Bad_Command
-	case .Seal:
-		authorization_word = values[0]
-	case .Unseal:
-		authorization_word = values[4]
+	case .Seal, .Unseal:
+		if source != .Client_Ring {
+			return {}, .Bad_Command
+		}
+		authorization_word = command == .Seal ? values[0] : values[4]
+	case .Measure_Start_Policy:
+		// A client of the TPM ring never extends a PCR: only the root
+		// service holds the measure ring.
+		if source != .Measure_Ring {
+			return {}, .Bad_Command
+		}
+		return {command = .Measure_Start_Policy, authorization = .None}, .Ok
 	}
 	authorization, authorization_ok := authorization_of_word(authorization_word)
 	if !authorization_ok {
 		return {}, .Bad_Command
 	}
 	return {command = command, authorization = authorization}, .Ok
+}
+
+// measure_refusal decides one Measure_Start_Policy from the count of the
+// extends that ran in this start: Measure_Limit from MEASURE_LIMIT on, and
+// for a count that no start can reach (a negative one); else Ok. The service
+// counts each extend that it sends, before its answer: the TPM can take an
+// extend whose answer the interface lost.
+measure_refusal :: proc "contextless" (extends_done: int) -> Status {
+	if extends_done < 0 || extends_done >= MEASURE_LIMIT {
+		return .Measure_Limit
+	}
+	return .Ok
 }
 
 device_step_of_word :: proc "contextless" (word: u64) -> (step: Device_Step, ok: bool) {

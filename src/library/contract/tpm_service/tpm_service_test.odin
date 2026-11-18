@@ -25,22 +25,50 @@ a_record_that_names_no_request_is_refused :: proc(t: ^testing.T) {
 		{u32(Command.Unseal), {4 = max(u64)}},
 	}
 	for item in refused {
-		values := item.values
-		request, status := request_of_record(item.kind, values)
-		testing.expectf(t, status == .Bad_Command, "the kind %d with %v is taken: %v", item.kind, item.values, status)
-		testing.expect_value(t, request, Request{})
-		testing.expect_value(t, values, item.values)
+		for source in Request_Source {
+			values := item.values
+			request, status := request_of_record(item.kind, values, source)
+			testing.expectf(t, status == .Bad_Command, "the kind %d with %v from %v is taken: %v", item.kind, item.values, source, status)
+			testing.expect_value(t, request, Request{})
+			testing.expect_value(t, values, item.values)
+		}
 	}
+	// A command of the other ring: a client of the TPM ring never extends
+	// PCR 12, and the measure ring neither seals nor unseals.
+	_, status := request_of_record(u32(Command.Measure_Start_Policy), {}, .Client_Ring)
+	testing.expect_value(t, status, Status.Bad_Command)
+	_, status = request_of_record(u32(Command.Seal), {}, .Measure_Ring)
+	testing.expect_value(t, status, Status.Bad_Command)
+	_, status = request_of_record(u32(Command.Unseal), {}, .Measure_Ring)
+	testing.expect_value(t, status, Status.Bad_Command)
 	// Each command reads its own place: a word of no authorization in the
 	// other place changes nothing.
 	for authorization in Authorization {
-		seal, seal_status := request_of_record(u32(Command.Seal), {0 = u64(authorization), 4 = max(u64)})
+		seal, seal_status := request_of_record(u32(Command.Seal), {0 = u64(authorization), 4 = max(u64)}, .Client_Ring)
 		testing.expect_value(t, seal_status, Status.Ok)
 		testing.expect_value(t, seal, Request{command = .Seal, authorization = authorization})
-		unseal, unseal_status := request_of_record(u32(Command.Unseal), {0 = max(u64), 4 = u64(authorization)})
+		unseal, unseal_status := request_of_record(u32(Command.Unseal), {0 = max(u64), 4 = u64(authorization)}, .Client_Ring)
 		testing.expect_value(t, unseal_status, Status.Ok)
 		testing.expect_value(t, unseal, Request{command = .Unseal, authorization = authorization})
 	}
+	// The measure reads no authorization: its values are the digest.
+	measure, measure_status := request_of_record(u32(Command.Measure_Start_Policy), {0 = max(u64), 4 = max(u64)}, .Measure_Ring)
+	testing.expect_value(t, measure_status, Status.Ok)
+	testing.expect_value(t, measure, Request{command = .Measure_Start_Policy, authorization = .None})
+}
+
+// The bound of the extends of PCR 12 in one start, edges first: a negative
+// count, the bound, one past it, and the largest count are refused; then
+// 0 and 1, the start policy and the rescue, pass.
+@(test)
+a_third_extend_of_pcr_12_is_refused :: proc(t: ^testing.T) {
+	refused := [?]int{-1, min(int), MEASURE_LIMIT, MEASURE_LIMIT + 1, max(int)}
+	for count in refused {
+		testing.expectf(t, measure_refusal(count) == .Measure_Limit, "the extend after %d extends is taken", count)
+	}
+	testing.expect_value(t, MEASURE_LIMIT, 2)
+	testing.expect_value(t, measure_refusal(0), Status.Ok)
+	testing.expect_value(t, measure_refusal(1), Status.Ok)
 }
 
 // Each word of the ring that names no member is refused first: one past

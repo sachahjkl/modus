@@ -80,6 +80,10 @@ COMMAND_NV_DEFINE_SPACE :: u32(0x0000_012A)
 COMMAND_NV_SET_BITS :: u32(0x0000_0135)
 COMMAND_NV_READ :: u32(0x0000_014E)
 COMMAND_NV_READ_PUBLIC :: u32(0x0000_0169)
+// The commands of the measure of a start policy: the TPM service extends
+// PCR 12, then reads it back for the line of the root service.
+COMMAND_PCR_EXTEND :: u32(0x0000_0182)
+COMMAND_PCR_READ :: u32(0x0000_017E)
 
 // The kind of TPM2_Shutdown: the next TPM2_Startup is a reset, as the
 // firmware starts the TPM with TPM2_Startup(CLEAR) at each start.
@@ -176,6 +180,14 @@ NONCE_SIZE :: 16
 // bit n of byte n / 8 is PCR n.
 PCR_SELECTION :: [3]u8{0x80, 0x08, 0x00}
 PCR_SET :: u32(1 << 7 | 1 << 11) // The same PCRs, as one number: bit n is PCR n.
+
+// The register of the start policy: PCR 12, which the seal never selects,
+// so a new start policy changes no unseal
+// (src/md/features/start_policy.md, "The measure of the start policy").
+START_POLICY_PCR :: u32(12)
+// PCR 12 in the bit map of the SHA-256 bank: bit 4 of byte 1.
+START_POLICY_PCR_SELECTION :: [3]u8{0x00, 0x10, 0x00}
+#assert(PCR_SET & (1 << START_POLICY_PCR) == 0)
 
 // The largest areas of a sealed object that the record of a key keeps, with
 // their size field. A TPM with SHA-256 gives 82 bytes of the public area
@@ -581,6 +593,38 @@ flush_command :: proc "contextless" (buffer: []u8, handle: u32) -> int {
 	return end(&command_writer)
 }
 
+// start_policy_pcr_selection puts the selection of PCR 12 of the SHA-256
+// bank, as one list of one selection.
+@(private)
+start_policy_pcr_selection :: proc "contextless" (command_writer: ^Command_Writer) {
+	put_u32(command_writer, 1)
+	put_u16(command_writer, ALGORITHM_SHA256)
+	selection := START_POLICY_PCR_SELECTION
+	put_u8(command_writer, u8(len(selection)))
+	put_bytes(command_writer, selection[:])
+}
+
+// pcr_extend_command builds TPM2_PCR_Extend of the register of the start
+// policy, in the SHA-256 bank, with one digest. A PCR below 16 has the
+// empty authorization value at locality 0: the password session is empty.
+pcr_extend_command :: proc "contextless" (buffer: []u8, digest: ^[DIGEST_SIZE]u8) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_PCR_EXTEND)
+	put_u32(&command_writer, START_POLICY_PCR) // The handle of a PCR is its number.
+	put_password_session(&command_writer)
+	put_u32(&command_writer, 1) // One digest.
+	put_u16(&command_writer, ALGORITHM_SHA256)
+	put_bytes(&command_writer, digest^[:])
+	return end(&command_writer)
+}
+
+// pcr_read_command builds TPM2_PCR_Read of the register of the start
+// policy in the SHA-256 bank.
+pcr_read_command :: proc "contextless" (buffer: []u8) -> int {
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_PCR_READ)
+	start_policy_pcr_selection(&command_writer)
+	return end(&command_writer)
+}
+
 // The read of one answer: each read checks the bytes that are left first.
 Answer_Reader :: struct {
 	bytes:  []u8,
@@ -895,6 +939,51 @@ unseal_answer :: proc "contextless" (answer: []u8) -> (secret: []u8, code: u32, 
 status_answer :: proc "contextless" (answer: []u8) -> (code: u32, problem: Answer_Problem) {
 	_, code, problem = answer_begin(answer)
 	return
+}
+
+// pcr_read_answer reads the answer of TPM2_PCR_Read of the register of the
+// start policy: the selection that the TPM gives back must be the one
+// asked, with one digest of SHA-256, and no byte after it. A TPM with no
+// SHA-256 bank gives an empty selection, which is refused: a value of
+// another register or bank is never taken for PCR 12. The counts come from
+// the device: they are compared, never used as a bound.
+pcr_read_answer :: proc "contextless" (answer: []u8) -> (value: [DIGEST_SIZE]u8, code: u32, problem: Answer_Problem) {
+	reader: Answer_Reader
+	reader, code, problem = answer_begin(answer)
+	if problem != .None {
+		return {}, code, problem
+	}
+	_ = take_u32(&reader) // The update counter of the PCRs.
+	selection := START_POLICY_PCR_SELECTION
+	selection_count := take_u32(&reader)
+	bank := take_u16(&reader)
+	select_size := take_bytes(&reader, 1)
+	if reader.failed || selection_count != 1 || bank != ALGORITHM_SHA256 || select_size[0] != u8(len(selection)) {
+		return {}, code, .Malformed
+	}
+	selected := take_bytes(&reader, len(selection))
+	digest_count := take_u32(&reader)
+	_, data := take_sized(&reader)
+	if reader.failed || string(selected) != string(selection[:]) || digest_count != 1 || len(data) != DIGEST_SIZE || reader.place != len(answer) {
+		return {}, code, .Malformed
+	}
+	copy(value[:], data)
+	return value, code, .None
+}
+
+// start_policy_event_digest gives the digest that one start policy extends
+// PCR 12 with: SHA-256 of the hash of its module and the hash of its list,
+// 32 zero bytes for a start policy from the disk, which has no list
+// (src/md/features/start_policy.md, "The measure of the start policy").
+start_policy_event_digest :: proc "contextless" (module_hash: ^[DIGEST_SIZE]u8, list_hash: ^[DIGEST_SIZE]u8) -> [DIGEST_SIZE]u8 {
+	return sha256_of(module_hash^[:], list_hash^[:])
+}
+
+// pcr_extended gives the value of a PCR of the SHA-256 bank after an
+// extend: SHA-256 of its value before and of the digest. An attestor and
+// the tool compute the value of PCR 12 with it.
+pcr_extended :: proc "contextless" (before: ^[DIGEST_SIZE]u8, digest: ^[DIGEST_SIZE]u8) -> [DIGEST_SIZE]u8 {
+	return sha256_of(before^[:], digest^[:])
 }
 
 // properties_answer reads the answer of TPM2_GetCapability of the
