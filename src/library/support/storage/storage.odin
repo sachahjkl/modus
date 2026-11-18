@@ -1,4 +1,4 @@
-// The client of the storage service: what a process compiles in to keep its
+// The client of the storage service: what a module compiles in to keep its
 // data in its private store: a tree of entries, each an object or a tree
 // (docs/STORAGE.md).
 //

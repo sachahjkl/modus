@@ -261,7 +261,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 // The log records of each second that a call host gets by default.
 CALL_HOST_LOG_RECORDS :: 100
 
-// call_host_start starts a call host (the process "host" of the boot
+// call_host_start starts a call host (the module "host" of the boot
 // image) for one module, and maps the file of the module and of its
 // imports in it, read-only: the call host has the call ring and the call
 // region, and no other handle. image_memory is the handle of the boot

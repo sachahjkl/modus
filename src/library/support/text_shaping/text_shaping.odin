@@ -4,7 +4,7 @@
 // is UTF-8 (src/library/contract/text_encoding). No ligature and no other
 // script: one placed glyph for each character, and one for each invalid sequence.
 //
-// A process that links this package calls it directly, over the spacing of
+// A module that links this package calls it directly, over the spacing of
 // a glyph cache that it validated (spacing_of). The module text_shaping
 // gives the same functions as exports over tables of the caller.
 //

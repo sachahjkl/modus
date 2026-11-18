@@ -420,7 +420,7 @@ secret_erase :: proc "contextless" (data: rawptr, count: int) {
 
 when ODIN_OS == .Freestanding {
 	foreign _ {
-		// The procedure of the runtime of a process of the system that writes `count` zero bytes at
+		// The procedure of the runtime of a module of the system that writes `count` zero bytes at
 		// `destination`. `secret_erase` is its one caller.
 		erase_secret_bytes :: proc "c" (destination: rawptr, count: int) -> rawptr ---
 	}

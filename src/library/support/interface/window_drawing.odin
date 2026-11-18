@@ -6,11 +6,11 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/system"
 
-// A process built with this setting draws its window through the drawing
+// A module built with this setting draws its window through the drawing
 // module (docs/INTERFACE.md, section 7): window_frame_end calls the two
 // exports of the module in place of the difference and the execution of
-// this package, so the process holds no copy of that code. The modus tool
-// sets it for each process that imports the module (the module table,
+// this package, so the module holds no copy of that code. The modus tool
+// sets it for each module that imports the drawing module (the module table,
 // tools/modustool/modules.odin).
 //
 // A window of such a process has at most one picture memory: a call of
@@ -46,7 +46,7 @@ Window_Drawing :: struct {
 	// for the difference and one for the draw of all its rectangles), and
 	// the error record of the last call that the module refused, which the
 	// one line of the log of a refusal reads (module_refusal_log). A
-	// process with the package compiled in keeps the three zero.
+	// process whose module has the package compiled in keeps the three zero.
 	module_calls: u64,
 	module_error: errors.Error_Record,
 	module_refusal_logged: bool, // The line of a refusal is on the log: a window writes it one time.

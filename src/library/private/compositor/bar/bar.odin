@@ -1,6 +1,6 @@
-// The bar of the desktop: the names of the processes, and the place of each
-// button of the bar and of each line of its two menus, the menu of the
-// processes and the menu of the windows. The compositor draws them; the
+// The bar of the desktop: the names of the modules, and the place of each
+// button of the bar and of each line of its two menus, the start menu and
+// the menu of the windows. The compositor draws them; the
 // modus tool clicks them in the machine test. The two read this one table.
 // The palette (src/library/private/compositor/palette) lists the same names.
 package bar
@@ -81,8 +81,8 @@ rows :: proc "contextless" () -> int {
 	return (len(names) + COLUMNS - 1) / COLUMNS
 }
 
-// button gives the place of the button of the bar that opens the menu of
-// the processes: its label and a padding on each side.
+// button gives the place of the button of the bar that opens the start
+// menu: its label and a padding on each side.
 button :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 	return START, BUTTON_Y, layout.label_width + 2 * PADDING, BUTTON_HEIGHT
 }
@@ -122,8 +122,8 @@ button_center :: proc "contextless" (layout: Layout) -> (center_x, center_y: int
 	return x + width / 2, y + height / 2
 }
 
-// center gives the middle of the line of a process in the menu. ok is
-// false if the menu does not have the process.
+// center gives the middle of the line of a module in the menu. ok is
+// false if the menu does not have the module.
 center :: proc "contextless" (layout: Layout, process: string) -> (center_x, center_y: int, ok: bool) {
 	for name, index in names {
 		if name == process {
