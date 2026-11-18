@@ -59,11 +59,15 @@ HEIGHT :: 312 + LINE
 LARGEST_WIDTH :: 1216
 LARGEST_HEIGHT :: 640
 
-// The window is counted at its largest size. The working memory: what the
-// least budget left it beside its window, for the glyphs that it draws
-// itself and its tables, and the surface before a resize, which the budget
-// pays beside the new one until the new one exists.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, programs = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The window is counted at its largest size: 1216 x 640 pixels, 4 bytes
+// each, two pictures, 6 225 920 bytes, 1520 pages. A resize holds the old
+// surface and the new one together until the compositor shows the new one,
+// so the working memory holds a second surface at the largest size: 1520
+// pages. It also holds what clock used before it stated a budget: the
+// least budget of 2048 pages less its window of 816 x 336 (2 193 408
+// bytes, 536 pages), 1512 pages, for its module, its stack, the glyphs
+// that it draws itself and its tables. 1520 + 1512 = 3032.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3032, programs = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
 Measure :: struct {
 	name:    string,
@@ -240,8 +244,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The limits are constants of this program that size_limits_of_words
 	// takes: a refusal is a fault of this source, which the line says.
-	if problem, _ := display.resizable_set(&window, {least_width = WIDTH, least_height = HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT}); problem != .None {
+	// The ring holds the one record of the surface: a full ring is a fault
+	// of the compositor, which the line says too.
+	if problem, sent := display.resizable_set(&window, {least_width = WIDTH, least_height = HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT}); problem != .None {
 		system.log("clock: the window stays fixed: ", display.SIZE_LIMITS_PROBLEM_SENTENCES[problem])
+	} else if !sent {
+		system.log("clock: the window stays fixed: the command ring of the window is full")
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report

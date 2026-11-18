@@ -85,11 +85,16 @@ Command :: enum u32 {
 	// refuses limits that size_limits_of_words refuses, and the window stays
 	// as it was (resizable_set).
 	Resizable      = 6,
-	// The surface of a new size, after the event Resized: the compositor
-	// shows it from the next Present, and the old surface until then.
-	// values: memory handle (in the compositor), width, height
-	// (surface_resize).
+	// The surface of a new size, the answer to the event Resized: the
+	// compositor shows it from the next Present, and the old surface until
+	// then. Its size is the size of the event; the compositor takes one
+	// answer for each event, and refuses any other. values: memory handle
+	// (in the compositor), width, height (surface_resize).
 	Surface_Resize = 7,
+	// The other answer to the event Resized: the window keeps its size,
+	// after a refused budget, or because the program does not take the
+	// event (present_rectangle sends it then). No values.
+	Resize_Declined = 8,
 }
 
 ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.
@@ -289,6 +294,10 @@ Window :: struct {
 	size_limits: Size_Limits, // The limits of the last Resizable that went to the compositor.
 	resizable:   bool, // A Resizable went to the compositor: the window can get Resized.
 	resized_picture_due: bool, // surface_resize made a new surface, and no Present of it went yet: the first one writes a line.
+	// The last event Resized that next_event gave, with no answer sent yet:
+	// surface_resize answers it, or the next present declines it.
+	resize_asked: bool,
+	resize_asked_width, resize_asked_height: int,
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
@@ -416,6 +425,12 @@ present :: proc "contextless" (window: ^Window) -> bool {
 // command ring was full: the compositor did not get the present, and the
 // canvas stays the same.
 present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) -> bool {
+	// A program that presents with a request that it did not answer keeps
+	// its size: the answer goes before the picture, so that the compositor
+	// takes a drag of the window again.
+	if window.resize_asked && !resize_decline(window) {
+		return false
+	}
 	picture_end(window)
 	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
 	if !system.send(&window.ring.commands, record) {
@@ -468,23 +483,30 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 // until that Present: the budget pays for both until then, and the old
 // memory ends when the compositor unmaps it.
 //
-// The statuses: Ok, also for the size that the surface has; Bad_Operation
-// for a window that is not resizable or a size outside its limits; No_Slot
-// when the command ring is full (nothing was made: call again later);
-// No_Budget, or another status of Memory_Create, Memory_Map or Handle_Give,
-// with its error record. Each status but Ok keeps the old surface and its
-// size, and a status of the kernel writes one line.
+// It answers the last Resized that next_event gave, with its size only:
+// the compositor takes no other size, and no surface that the principal
+// did not ask for.
+//
+// The statuses: Ok; Bad_Operation for a window that is not resizable, with
+// no Resized to answer, for another size than the asked one, or for a size
+// outside its limits (nothing changes); No_Slot when the command ring is
+// full (nothing was made: call again later, or the next present declines
+// the request); No_Budget, or another status of Memory_Create, Memory_Map
+// or Handle_Give, with its error record: the window keeps its size, writes
+// one line, and declines the request (Resize_Declined), so that the
+// principal can drag it again.
 surface_resize :: proc "contextless" (window: ^Window, width, height: int, error: ^errors.Error_Record = nil) -> system.Status {
 	title := string(window.title[:window.title_count])
 	switch {
 	case !window.resizable:
 		errors.fail(error, 0, .State, .None, 1)
 		return .Bad_Operation
+	case !window.resize_asked || width != window.resize_asked_width || height != window.resize_asked_height:
+		errors.fail(error, 0, .State, .None, 2, i64(width), i64(window.resize_asked_width), i64(height))
+		return .Bad_Operation
 	case !size_inside(window.size_limits, width, height):
 		errors.fail(error, 0, .Out_Of_Range, .None, width < window.size_limits.least_width || width > window.size_limits.largest_width ? 2 : 3, i64(width), i64(window.size_limits.largest_width), i64(height))
 		return .Bad_Operation
-	case width == window.pictures[0].width && height == window.pictures[0].height:
-		return .Ok
 	case ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands):
 		// The ring has one writer, this thread: the room seen here stays.
 		// Without it, the handle given below would wait in the table of the
@@ -511,9 +533,12 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	}
 	if status != .Ok {
 		system.log_in("programs", .Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
+		// A full ring keeps the request: the next present declines it.
+		resize_decline(window)
 		return status
 	}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Resize), values = {0 = u64(granted), 1 = u64(width), 2 = u64(height)}})
+	window.resize_asked = false
 	system.memory_unmap(rawptr(window.pictures[0].pixels))
 	system.close(window.surface)
 	window.surface = memory
@@ -524,6 +549,19 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	window.canvas = window.pictures[0]
 	window.resized_picture_due = true
 	return .Ok
+}
+
+// resize_decline answers the last Resized with Resize_Declined: the window
+// keeps its size, and the compositor takes a drag of it again. It gives
+// false when the command ring was full: the request stays, and the next
+// present declines it.
+resize_decline :: proc "contextless" (window: ^Window) -> bool {
+	if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Resize_Declined)}) {
+		return false
+	}
+	window.resize_asked = false
+	system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
+	return true
 }
 
 // picture_due_set tells the compositor that a change of the window waits
@@ -690,6 +728,10 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		}
 		if read.kind == .Settings_Changed {
 			text_settings_apply()
+		}
+		if read.kind == .Resized {
+			window.resize_asked = true
+			window.resize_asked_width, window.resize_asked_height = read.width, read.height
 		}
 		return read, true
 	}

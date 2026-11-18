@@ -109,8 +109,15 @@ import "base:intrinsics"
 // memory of the screen costs no page, but its page tables do: the two
 // screen pages (1536 pages, 6 MiB) need up to 4 page tables where the one
 // framebuffer needed up to 3, and the page of the display registers needs
-// a page table and a page directory: 4 pages more.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3803, programs = 1, threads = 2}
+// a page table and a page directory: 4 pages more. A resize maps the new
+// surface of a window beside its old one until its Present
+// (src/md/features/window_resize.md): the largest surface, 2048 x 2048
+// pixels of 8 bytes for two pictures, is 32 MiB, whose mapping takes at
+// most 17 page tables of 2 MiB (its start need not be on a 2 MiB edge) and
+// 2 page directories (it can cross a 1 GiB edge): 19 pages. Each of the 32
+// clients can hold one such second mapping: 32 x 19 = 608 pages, and
+// 3803 + 608 = 4411.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4411, programs = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -190,8 +197,15 @@ Client :: struct {
 	// becomes the surface of the window.
 	resize_pictures: [^]graphics.Color,
 	resize_width, resize_height: int,
-	resize_edges: bar.Resize_Edges, // The edges that the last drag held: the opposite ones stay in place when the window takes its new surface.
-	resizes_refused: u64, // The Surface_Resize records that the compositor refused.
+	resize_pending_edges: bar.Resize_Edges, // The edges that the drag of resize_pictures held: the opposite ones stay in place when the window takes it.
+	// The request of the last drag: the compositor sent Resized with this
+	// size, and no answer came yet. The one Surface_Resize that it takes
+	// is the answer of this size; Resize_Declined ends it too. While it
+	// waits, the edges of the window take no new drag.
+	resize_asked: bool,
+	resize_asked_width, resize_asked_height: int,
+	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
+	resizes_refused: u64, // The Surface_Resize and Resize_Declined records that the compositor refused.
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -789,6 +803,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					resizable_take(&client, record)
 				case .Surface_Resize:
 					surface_resize_take(&client, record)
+				case .Resize_Declined:
+					resize_declined_take(&client)
 				}
 			}
 			// The program can wait until this loop took its last picture

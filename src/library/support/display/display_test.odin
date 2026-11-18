@@ -1,6 +1,7 @@
 #+build !freestanding
 package display
 
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/key_path"
 import "core:testing"
@@ -198,6 +199,67 @@ size_inside_at_each_edge :: proc(t: ^testing.T) {
 	inside := [?][2]int{{200, 100}, {400, 300}, {300, 150}}
 	for size in inside {
 		testing.expectf(t, size_inside(limits, size[0], size[1]), "%v is outside", size)
+	}
+}
+
+// A window of 816 x 336 whose limits go to 1216 x 640, with a ring in plain
+// memory: the refusals of surface_resize come before any kernel operation,
+// so a host test runs them.
+@(private = "file")
+resizable_window_of_test :: proc(ring_memory: []u8) -> Window {
+	window: Window
+	opened, ok := ring.open(raw_data(ring_memory), ring.PAGE_COUNT)
+	assert(ok)
+	window.ring = opened
+	window.pictures[0] = {width = 816, height = 336, stride = 816}
+	window.pictures[1] = window.pictures[0]
+	window.canvas = window.pictures[0]
+	window.resizable = true
+	window.size_limits = {least_width = 816, least_height = 336, largest_width = 1216, largest_height = 640}
+	window.resize_asked = true
+	window.resize_asked_width, window.resize_asked_height = 880, 384
+	return window
+}
+
+// surface_resize refuses, with no change of the window: a fixed window; no
+// Resized to answer; another size than the asked one, by one pixel, 0 and
+// a negative size; a size outside the limits that a Resizable narrowed
+// after the request; and a full command ring, with No_Slot. No_Budget comes
+// from the kernel, which a host test does not have: the machine test of a
+// window whose budget refuses is not written.
+@(test)
+surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	Case :: struct {
+		width, height: int,
+		change:        proc(window: ^Window),
+		status:        op.Status,
+	}
+	cases := [?]Case{
+		{880, 384, proc(window: ^Window) {window.resizable = false}, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {window.resize_asked = false}, .Bad_Operation},
+		{881, 384, nil, .Bad_Operation},
+		{880, 383, nil, .Bad_Operation},
+		{0, 0, nil, .Bad_Operation},
+		{-880, -384, nil, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {window.size_limits.largest_width = 872}, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {
+			for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Picture_Due)}) {}
+		}, .No_Slot},
+	}
+	for each, index in cases {
+		for &value in ring_memory {
+			value = 0
+		}
+		window := resizable_window_of_test(ring_memory)
+		if each.change != nil {
+			each.change(&window)
+		}
+		before := window
+		status := surface_resize(&window, each.width, each.height)
+		testing.expectf(t, status == each.status, "case %d gives %v, not %v", index, status, each.status)
+		testing.expectf(t, window == before, "case %d changed the window", index)
 	}
 }
 

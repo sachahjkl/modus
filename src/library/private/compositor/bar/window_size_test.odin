@@ -192,3 +192,141 @@ resize_drag_moves_by_steps_of_the_grid :: proc(t: ^testing.T) {
 	testing.expect_value(t, x, OUTER_OF_TEST.x - 40)
 	testing.expect(t, x %% GRID == 0, "the left edge stays on the grid")
 }
+
+// A window behind the front one: its frame is under the band of the right
+// edge of the front window.
+@(private = "file")
+BEHIND_OF_TEST :: Outer_Rectangle{880, 100, 200, 200}
+
+// The band of an edge never takes a press from a window that lies under the
+// pointer, and a window in front hides the edges of the windows behind it.
+// The places that give no edge come first, then the edges that hold.
+@(test)
+resize_target_refuses_a_place_that_another_window_holds :: proc(t: ^testing.T) {
+	front_first := [2]Window_Hit{{outer = OUTER_OF_TEST, resizable = true}, {outer = BEHIND_OF_TEST, resizable = false}}
+	right := OUTER_OF_TEST.x + OUTER_OF_TEST.width
+	no_edge := [?][2]int{
+		{right + 2, 200}, // The band of the front window, over the window behind.
+		{OUTER_OF_TEST.x + 100, OUTER_OF_TEST.y + 100}, // The surface of the front window.
+		{2000, 2000}, // Far from each window.
+		{max(int), min(int)},
+	}
+	for place in no_edge {
+		found, edges := resize_target(front_first[:], BORDER_OF_TEST, place[0], place[1])
+		testing.expectf(t, found == -1 && edges == {}, "the place %v gives the window %d and the edges %v", place, found, edges)
+	}
+	// The other order: the window behind comes to the front and is
+	// resizable. It covers the right border of the other window, and its own
+	// band at its left lies over the frame of the other window.
+	other_order := [2]Window_Hit{{outer = BEHIND_OF_TEST, resizable = true}, {outer = OUTER_OF_TEST, resizable = true}}
+	covered := [?][2]int{
+		{right - 1, 200}, // The right border of the window behind, under the front one.
+		{BEHIND_OF_TEST.x - 3, 200}, // The band of the front window, over the frame of the other one.
+	}
+	for place in covered {
+		found, edges := resize_target(other_order[:], BORDER_OF_TEST, place[0], place[1])
+		testing.expectf(t, found == -1 && edges == {}, "the place %v gives the window %d and the edges %v", place, found, edges)
+	}
+	// No window at all.
+	found, edges := resize_target(nil, BORDER_OF_TEST, right - 1, 200)
+	testing.expect(t, found == -1 && edges == {})
+	// A fixed window has no edge, at its border and in its band.
+	fixed := [1]Window_Hit{{outer = OUTER_OF_TEST, resizable = false}}
+	found, edges = resize_target(fixed[:], BORDER_OF_TEST, right - 1, 200)
+	testing.expect(t, found == -1 && edges == {})
+	found, edges = resize_target(fixed[:], BORDER_OF_TEST, right + 2, 200)
+	testing.expect(t, found == -1 && edges == {})
+	// The edges that hold: the border of the front window over the window
+	// behind, and its band where no window lies.
+	found, edges = resize_target(front_first[:], BORDER_OF_TEST, right - 1, 200)
+	testing.expect_value(t, found, 0)
+	testing.expect_value(t, edges, Resize_Edges{.Right})
+	found, edges = resize_target(front_first[:], BORDER_OF_TEST, right + 2, 400)
+	testing.expect_value(t, found, 0)
+	testing.expect_value(t, edges, Resize_Edges{.Right})
+	// The border of the window behind where the front one does not cover it.
+	behind_bottom := BEHIND_OF_TEST.y + BEHIND_OF_TEST.height - 1
+	found, edges = resize_target(other_order[:], BORDER_OF_TEST, BEHIND_OF_TEST.x + 50, behind_bottom)
+	testing.expect_value(t, found, 0)
+	testing.expect_value(t, edges, Resize_Edges{.Bottom})
+}
+
+// The facts of a Surface_Resize that the compositor takes: the answer of
+// 880 x 384 to the request of that size.
+@(private = "file")
+answer_of_test :: proc() -> Surface_Resize_Facts {
+	return {
+		is_memory = true,
+		readable = true,
+		memory_bytes = 880 * 384 * SURFACE_BYTES_FOR_EACH_PIXEL,
+		width = 880,
+		height = 384,
+		resizable = true,
+		limits = {least_width = 816, least_height = 336, largest_width = 1216, largest_height = 640},
+		asked = true,
+		asked_width = 880,
+		asked_height = 384,
+	}
+}
+
+// Each rule that a Surface_Resize can break, from the edges: a handle that
+// is no memory or that cannot be read, a fixed window, no request, another
+// size than the asked one (one pixel off, and the largest word), a size
+// past limits that a Resizable narrowed, memory one byte too small, and a
+// second answer after the first. The answer that holds comes last.
+@(test)
+surface_resize_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		facts:   Surface_Resize_Facts,
+		refusal: Surface_Resize_Refusal,
+	}
+	cases: [12]Case
+	for &each in cases {
+		each.facts = answer_of_test()
+	}
+	cases[0].facts.is_memory, cases[0].refusal = false, .Not_Memory
+	cases[1].facts.readable, cases[1].refusal = false, .No_Read
+	cases[2].facts.resizable, cases[2].refusal = false, .Not_Resizable
+	cases[3].facts.asked, cases[3].refusal = false, .Not_Asked
+	cases[4].facts.width, cases[4].refusal = 881, .Other_Size
+	cases[5].facts.height, cases[5].refusal = 383, .Other_Size
+	cases[6].facts.width, cases[6].refusal = max(u64), .Other_Size
+	cases[7].facts.width, cases[7].refusal = 0, .Other_Size
+	cases[8].facts.limits.largest_width, cases[8].refusal = 872, .Outside_Limits
+	cases[9].facts.limits.least_height, cases[9].refusal = 392, .Outside_Limits
+	cases[10].facts.memory_bytes, cases[10].refusal = 880 * 384 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
+	cases[11].facts.memory_bytes, cases[11].refusal = 0, .Too_Small
+	for each, index in cases {
+		refusal := surface_resize_refusal(each.facts)
+		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)
+	}
+	// The first answer is taken; the compositor then clears the request,
+	// so the same record a second time is refused.
+	facts := answer_of_test()
+	testing.expect_value(t, surface_resize_refusal(facts), Surface_Resize_Refusal.None)
+	facts.asked = false
+	testing.expect_value(t, surface_resize_refusal(facts), Surface_Resize_Refusal.Not_Asked)
+	// The edges that hold: the size at each limit, and memory larger than
+	// needed.
+	facts = answer_of_test()
+	facts.width, facts.asked_width = 1216, 1216
+	facts.height, facts.asked_height = 336, 336
+	facts.memory_bytes = 1216 * 336 * SURFACE_BYTES_FOR_EACH_PIXEL
+	testing.expect_value(t, surface_resize_refusal(facts), Surface_Resize_Refusal.None)
+	facts.memory_bytes += 4096
+	testing.expect_value(t, surface_resize_refusal(facts), Surface_Resize_Refusal.None)
+}
+
+// A window that took a new surface and keeps the edges at its right: its
+// left edge can be left of the screen, or its title over the bar. The rule
+// of the places brings it back where its title can be taken.
+@(test)
+resized_window_place_is_kept_on_screen :: proc(t: ^testing.T) {
+	frame := Window_Frame{outer_width = 1216 + FRAME_WIDTH_OF_TEST, border = BORDER_OF_TEST, close_size = 24, title_height = 24}
+	places := [?][2]int{{-2000, -2000}, {-1216, 0}, {0, HEIGHT - 1}, {SCREEN_WIDTH_OF_TEST, SCREEN_HEIGHT_OF_TEST}}
+	for place in places {
+		x, y := window_place_kept(place[0], place[1], frame, SCREEN_WIDTH_OF_TEST, SCREEN_HEIGHT_OF_TEST)
+		title_end := x + frame.outer_width - frame.border - frame.close_size
+		testing.expectf(t, y >= HEIGHT && title_end >= TITLE_KEPT && x <= SCREEN_WIDTH_OF_TEST - TITLE_KEPT, "the place %v gives %d,%d", place, x, y)
+	}
+}
