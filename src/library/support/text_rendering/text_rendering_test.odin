@@ -583,19 +583,26 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 		form := face_forms[each.face]
 		font, problem := vector_font.font_open(each.bytes)
 		testing.expect_value(t, problem, vector_font.Font_Problem.None)
+		// The scales of the glyph cache of the face in the boot image: the
+		// bold weights have scale 1 only, and the build of today refuses
+		// some of their glyphs at the larger scales, whose ink passes its
+		// row of 64 pixels.
 		size: int
 		if form.proportional {
 			positions := [glyph_cache.SIZE_LIMIT]int{POSITION_LIMIT, POSITION_LIMIT, POSITION_LIMIT}
-			size, problem = vector_font.glyph_cache_build_proportional(&font, each.bytes, each.name, form.grid_fit, memory, file, positions[:])
+			size, problem = vector_font.glyph_cache_build_proportional(&font, each.bytes, each.name, form.grid_fit, memory, file, positions[:form.scale_count])
 		} else {
-			size, problem = vector_font.glyph_cache_build(&font, each.bytes, each.name, form.grid_fit, memory, file)
+			size, problem = vector_font.glyph_cache_build(&font, each.bytes, each.name, form.grid_fit, memory, file, form.scale_count)
 		}
 		testing.expectf(t, problem == .None, "%v: the build of today: %v", each.face, problem)
 		cache, refused := glyph_cache.validate(file[:size])
-		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
+		testing.expectf(t, refused.kind == .None, "%v: the cache of today: %v", each.face, refused.kind)
+		if problem != .None || refused.kind != .None {
+			continue
+		}
 		compared, differ := 0, 0
 		start := time.tick_now()
-		for scale in 1 ..= glyph_cache.SIZE_LIMIT {
+		for scale in 1 ..= form.scale_count {
 			text_size := size_of_scale(scale)
 			for position in 0 ..< positions_of(each.face) {
 				for index in 0 ..< glyph_cache.CHARACTER_COUNT {

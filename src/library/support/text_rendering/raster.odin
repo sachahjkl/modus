@@ -13,13 +13,19 @@ import "modus:support/vector_font"
 // - The work row is as wide as the glyph. The points of the outline give
 //   the columns that the ink can touch (a quadratic curve stays inside its
 //   control points), with the spread of the filter and one pixel more on
-//   each side. The origin of the glyph moves by whole pixels in that row,
-//   and a move by whole pixels moves each cut of the area by whole pixels,
-//   so each word is the word of a wider row.
+//   each side. The glyph moves by whole pixels into that row.
 // - The rows are drawn in bands of BAND_ROWS rows: each band adds the whole
-//   outline, moved up by whole rows, and keeps the pieces in its rows. A
-//   move by whole rows moves each cut by whole rows, so each word is the
-//   word of one tall accumulation, and the memory has a bound at any size.
+//   outline, moved up by whole rows, and keeps the pieces in its rows, so
+//   the memory has a bound at any size.
+//
+// The outline keeps the placement of the rasterizer of the glyph caches,
+// and each move is added to the ends of each segment, after the points of
+// the outline and of its curves are computed (vector_font.Accumulation,
+// move_x and move_y). A move of the placement itself changes words: the
+// point between two points off the curve is a division by two that rounds
+// toward zero, so a coordinate that becomes negative rounds the other way.
+// A move of the segments by whole pixels moves each cut of the area by
+// whole pixels, so each word is the word of the glyph caches.
 //
 // The ink of a glyph is cut to the rows of its line, as in a glyph cache:
 // the box of a text record is its line.
@@ -75,6 +81,7 @@ Raster_Job :: struct {
 	next_row:      int, // The first row of the next band.
 	columns:       int, // The pixels of the work row.
 	origin_column: int, // The column of the whole pixel of the origin in the work row.
+	move_x:        i64, // The subunits from the place of the placement to this work row, across.
 	thirds:        int, // The thirds of the work row with its margins.
 	proportional:  bool, // The box of the glyph is the box of its ink; else its cell.
 	filter:        vector_font.Stripe_Filter,
@@ -198,7 +205,13 @@ raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 		}
 		job.columns = int(right_pixel - left_pixel + 1)
 		job.origin_column = int(-left_pixel)
-		job.placement.origin_x += 3 * i64(job.origin_column) * SUBUNITS + shift
+		// The placement of the rasterizer of the glyph caches, with its
+		// origin at the column PLACED_ORIGIN_COLUMN of its row; the move to
+		// the column of this row is added to each segment after its points
+		// are computed (vector_font.Accumulation, move_x), so each point is
+		// the point of the glyph caches.
+		job.placement.origin_x += 3 * vector_font.PLACED_ORIGIN_COLUMN * SUBUNITS + shift
+		job.move_x = 3 * i64(job.origin_column - vector_font.PLACED_ORIGIN_COLUMN) * SUBUNITS
 	}
 	if job.columns < 1 || job.columns > WORK_COLUMN_LIMIT {
 		return {}, .Refused
@@ -222,9 +235,11 @@ band_next :: proc "contextless" (job: ^Raster_Job) -> (first_row, row_count: int
 	if !ok {
 		return first_row, 0, nil
 	}
-	placement := job.placement
-	placement.origin_y -= i64(first_row) * SUBUNITS
-	vector_font.outline_add(&target, &job.outline, &placement)
+	// The outline keeps the placement of the whole line; the band moves
+	// each segment up by its first row after the points are computed.
+	target.move_x = job.move_x
+	target.move_y = -i64(first_row) * SUBUNITS
+	vector_font.outline_add(&target, &job.outline, &job.placement)
 	vector_font.coverage_finish(&target, memory.thirds[:])
 	for row in 0 ..< row_count {
 		thirds := memory.thirds[row * job.thirds:][:job.thirds]

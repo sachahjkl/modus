@@ -592,6 +592,8 @@ The exact area in integers of section 4, with the filter of five taps, the words
 - **The work row is as wide as the glyph.** The points of the outline give the columns that the ink can touch, with the spread of the filter and one pixel more on each side. A glyph wider than 512 pixels is refused: its font is hostile.
 - **The rows are drawn in bands of 8 rows.** Each band adds the whole outline, moved up by whole rows, so the memory has a bound at any size.
 
+The outline keeps the placement of the glyph caches; each move is added to the ends of each segment after the points are computed (`vector_font.Accumulation`, `move_x` and `move_y`), because the point between two points off the curve rounds toward zero and would round the other way at a negative coordinate.
+
 A proportional glyph is at the nearest third of a pixel at each size: three positions. A glyph of cells is at a whole pixel, cut to its cell. The ink of a glyph is cut to its line.
 
 ### 14.4 The private glyph cache
@@ -610,7 +612,7 @@ A glyph larger than 16 384 words (a glyph of 128 by 128 pixels) is never kept (`
 
 ### 14.5 The proof of the pixels
 
-The host test `the_words_are_the_words_of_the_glyph_caches` (`src/library/support/text_rendering`) draws the 192 characters of each face at the sizes 1 024, 2 048 and 3 072, at each position, and compares the box and each word with the glyph that the build of the glyph caches draws from the same font file (`vector_font.glyph_cache_build`, `glyph_cache_build_proportional`): the code of the tool that makes the caches of the boot image. The faces of the interface are compared at three positions at each size: at 2 048 and 3 072 the position 0 is the glyph of today's cache, and the positions 1 and 2 are the two new ones.
+The host test `the_words_are_the_words_of_the_glyph_caches` (`src/library/support/text_rendering`) draws the 192 characters of each face at the sizes of its glyph cache (1 024, 2 048 and 3 072; 1 024 for the bold weights), at each position, and compares the box and each word with the glyph that the build of the glyph caches draws from the same font file (`vector_font.glyph_cache_build`, `glyph_cache_build_proportional`): the code of the tool that makes the caches of the boot image. The faces of the interface are compared at three positions at each size: at 2 048 and 3 072 the position 0 is the glyph of today's cache, and the positions 1 and 2 are the two new ones.
 
 The host test `the_measure_is_the_draw` checks, for each face at six sizes, that the x of each placed glyph is the sum of the advances of the font file before it, and that the fit of a room is the start whose measure is that room.
 

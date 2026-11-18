@@ -34,6 +34,13 @@ Accumulation :: struct {
 	cells:         []i32, // (width + 1) * height cells, from the caller.
 	width, height: int, // The pixels of the glyph.
 	segments:      int, // The line segments added since the last finish.
+	// The subunits that line_add adds to each end of a segment, after the
+	// points of the outline and of its curves are computed: a band of rows
+	// or a work row that starts at another place than the placement. A
+	// move of the placement itself is not the same: the point between two
+	// points off the curve is a division by two that rounds toward zero, so
+	// its result depends on the sign of the coordinates.
+	move_x, move_y: i64,
 }
 
 // accumulation_of makes an accumulation over the memory of the caller, all
@@ -77,7 +84,8 @@ line_add :: proc "contextless" (target: ^Accumulation, x0, y0, x1, y1: i32) {
 	}
 	target.segments += 1
 	sign: i64 = 1
-	from_x, from_y, to_x, to_y := i64(x0), i64(y0), i64(x1), i64(y1)
+	from_x, from_y := i64(x0) + target.move_x, i64(y0) + target.move_y
+	to_x, to_y := i64(x1) + target.move_x, i64(y1) + target.move_y
 	if from_y > to_y {
 		sign = -1
 		from_x, from_y, to_x, to_y = to_x, to_y, from_x, from_y
