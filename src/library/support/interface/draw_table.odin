@@ -44,6 +44,8 @@ import "modus:support/graphics"
 DRAW_RECORD_VERSION :: draw_record.VERSION
 Draw_Kind :: draw_record.Draw_Kind
 Draw_Record :: draw_record.Draw_Record
+Draw_Color :: draw_record.Draw_Color
+Picture_Format :: draw_record.Picture_Format
 COORDINATE_LIMIT :: draw_record.COORDINATE_LIMIT
 LINE_THICKNESS_LIMIT :: draw_record.LINE_THICKNESS_LIMIT
 LINE_COORDINATE_LIMIT :: draw_record.LINE_COORDINATE_LIMIT
@@ -179,30 +181,71 @@ record_append :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) ->
 	return &table.records[table.record_count - 1]
 }
 
-// draw_rectangle appends a rectangle of one color.
+// draw_rectangle appends a rectangle of one opaque color.
 draw_rectangle :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, color: graphics.Color, element: u32 = 0) {
+	draw_rectangle_with_alpha(table, x, y, width, height, draw_record.opaque(color), element)
+}
+
+// draw_rectangle_with_alpha appends a rectangle of one color with alpha,
+// which blends over what is drawn before it: a shadow, a translucent
+// panel. draw_record.with_alpha gives such a color from a token.
+draw_rectangle_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, color: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, placed_record(draw_record.Draw_Rectangle{color = color}, element, x, y, width, height))
+	record_append(table, placed_record(draw_record.Draw_Rectangle{color = canonical_color(color)}, element, x, y, width, height))
 }
 
 // draw_vertical_gradient appends the block of the rules: from top, on the
-// first line, to bottom, on the last line.
+// first line, to bottom, on the last line, both opaque.
 draw_vertical_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, top, bottom: graphics.Color, element: u32 = 0) {
+	draw_vertical_gradient_with_alpha(table, x, y, width, height, draw_record.opaque(top), draw_record.opaque(bottom), element)
+}
+
+// draw_vertical_gradient_with_alpha appends a vertical gradient between two
+// colors with alpha, which mix in their encoded values, alpha too: a fade
+// to the same color with alpha 0 keeps the color.
+draw_vertical_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, top, bottom: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, placed_record(draw_record.Draw_Vertical_Gradient{top_color = top, bottom_color = bottom}, element, x, y, width, height))
+	top_color, bottom_color := canonical_gradient_colors(top, bottom)
+	record_append(table, placed_record(draw_record.Draw_Vertical_Gradient{top_color = top_color, bottom_color = bottom_color}, element, x, y, width, height))
 }
 
 // draw_horizontal_gradient appends a rectangle whose color goes from left,
-// on its first column, to right, on its last column.
+// on its first column, to right, on its last column, both opaque.
 draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, left, right: graphics.Color, element: u32 = 0) {
+	draw_horizontal_gradient_with_alpha(table, x, y, width, height, draw_record.opaque(left), draw_record.opaque(right), element)
+}
+
+// draw_horizontal_gradient_with_alpha appends a horizontal gradient between
+// two colors with alpha, as draw_vertical_gradient_with_alpha.
+draw_horizontal_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, left, right: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, placed_record(draw_record.Draw_Horizontal_Gradient{left_color = left, right_color = right}, element, x, y, width, height))
+	left_color, right_color := canonical_gradient_colors(left, right)
+	record_append(table, placed_record(draw_record.Draw_Horizontal_Gradient{left_color = left_color, right_color = right_color}, element, x, y, width, height))
+}
+
+// canonical_color gives the one form of a color of one color: a color with
+// alpha 0 draws nothing, whatever its channels, and is 0, so the border
+// reads the record and two such records have the same bytes.
+@(private)
+canonical_color :: proc "contextless" (color: Draw_Color) -> Draw_Color {
+	return draw_record.alpha_of(color) == 0 ? 0 : color
+}
+
+// canonical_gradient_colors gives the one form of the two colors of a
+// gradient: the channels of one end with alpha 0 color the mix, so they
+// stay, and two ends with alpha 0 are both 0.
+@(private)
+canonical_gradient_colors :: proc "contextless" (first, second: Draw_Color) -> (Draw_Color, Draw_Color) {
+	if draw_record.alpha_of(first) == 0 && draw_record.alpha_of(second) == 0 {
+		return 0, 0
+	}
+	return first, second
 }
 
 // The grid of points of the background (docs/DESIGN.md, "3. Surfaces") as
@@ -221,7 +264,7 @@ POINT_GRID_PATTERN :: draw_record.Repetition {
 // draw_point_grid appends the grid of points of the background: one
 // Rectangle whose pattern is the grid, cut to the area.
 draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, placed_record(draw_record.Draw_Rectangle{color = graphics.colors.point, repetition = POINT_GRID_PATTERN}, 0, x, y, width, height))
+	record_append(table, placed_record(draw_record.Draw_Rectangle{color = draw_record.opaque(graphics.colors.point), repetition = POINT_GRID_PATTERN}, 0, x, y, width, height))
 }
 
 // draw_folded_gap appends a part with no measure on this scale: the track,
@@ -249,7 +292,7 @@ line_in_box :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_
 		return
 	}
 	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
-	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = color, thickness = 1}
+	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = draw_record.opaque(color), thickness = 1}
 	record_append(table, placed_record(line, element, x, y, width, height))
 }
 
@@ -258,14 +301,28 @@ line_in_box :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_
 // the record names the first such memory, the index of the first pixel in
 // it, and the stride. generation is a new number each time its pixels
 // change: the difference sees the change. A picture with no pixel, or with
-// a pixel outside each picture memory, is refused.
+// a pixel outside each picture memory, is refused. Each pixel is
+// 0x00RRGGBB, copied as it is.
 draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, element: u32 = 0) {
+	picture_append(table, x, y, picture, generation, .Opaque, element)
+}
+
+// draw_picture_with_alpha appends a picture as draw_picture does, whose
+// pixels are 0xAARRGGBB with straight alpha: each blends over what is drawn
+// before it, by the rule of the colors.
+draw_picture_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, element: u32 = 0) {
+	picture_append(table, x, y, picture, generation, .Straight_Alpha, element)
+}
+
+// picture_append appends the record of a picture in a format.
+@(private)
+picture_append :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, format: Picture_Format, element: u32) {
 	memory, first, found := picture_place(table, picture)
 	if !found {
 		table.refused = true
 		return
 	}
-	record_append(table, placed_record(draw_record.Draw_Picture{memory = u8(memory), first = u32(first), stride = u32(picture.stride), generation = generation}, element, x, y, picture.width, picture.height))
+	record_append(table, placed_record(draw_record.Draw_Picture{memory = u8(memory), format = format, first = u32(first), stride = u32(picture.stride), generation = generation}, element, x, y, picture.width, picture.height))
 }
 
 // picture_place finds the picture memory that holds each pixel of a
@@ -433,7 +490,7 @@ draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y:
 	}
 	side := min(thickness, LINE_THICKNESS_LIMIT)
 	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
-	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = color, thickness = u8(side)}
+	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = draw_record.opaque(color), thickness = u8(side)}
 	box := line_rectangle(start_x, start_y, end_x, end_y, side)
 	record_append(table, placed_record_of_edges(line, element, box.left, box.top, box.right, box.bottom))
 }
@@ -511,7 +568,7 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(used)
-	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = color, origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, scale = u8(scale), weight = used.weight}
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.opaque(color), origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, scale = u8(scale), weight = used.weight}
 	record_append(table, placed_record(fields, element, x, y, width, graphics.CELL_HEIGHT * scale))
 	return x + width
 }
@@ -561,7 +618,7 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	start := table.text_count
 	copy(table.text[start:], text)
 	table.text_count += len(text)
-	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = color, origin_x = i32(origin), font = .Interface, scale = u8(scale), weight = font.weight}
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.opaque(color), origin_x = i32(origin), font = .Interface, scale = u8(scale), weight = font.weight}
 	// The top and the bottom by the rule of each writer: the edges of a
 	// place and a size, each cut to the limit, so no sum passes the int.
 	top, bottom := cut_edges(y, graphics.CELL_HEIGHT * scale)

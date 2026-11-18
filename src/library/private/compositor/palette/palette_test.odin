@@ -2318,14 +2318,15 @@ the_match_of_an_act_name :: proc(t: ^testing.T) {
 }
 
 // The rectangle and the color of a record of the kind Rectangle, read
-// through the border of the draw record; false for another record, and
-// for a Rectangle with a pattern, which fills no box.
+// through the border of the draw record; false for another record, for a
+// Rectangle with a pattern, which fills no box, and for a color that is not
+// opaque. The color is its channels, as a token of the appearance.
 @(private = "file")
 rectangle_of_record :: proc(record: interface.Draw_Record) -> (place: interface.Rectangle, color: graphics.Color, is_rectangle: bool) {
 	primitive, problem := draw_record.read(record)
 	fields, is_kind := primitive.(draw_record.Draw_Rectangle)
-	if problem != .None || !is_kind || fields.repetition != (draw_record.Repetition{}) {
+	if problem != .None || !is_kind || fields.repetition != (draw_record.Repetition{}) || !draw_record.color_opaque(fields.color) {
 		return {}, 0, false
 	}
-	return interface.record_rectangle(record), fields.color, true
+	return interface.record_rectangle(record), draw_record.channels_of(fields.color), true
 }

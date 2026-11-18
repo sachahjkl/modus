@@ -237,6 +237,14 @@ mix :: proc "contextless" (first, second: Color, level: u32) -> Color {
 	return rgb(part(first >> 16 & 0xFF, second >> 16 & 0xFF, level), part(first >> 8 & 0xFF, second >> 8 & 0xFF, level), part(first & 0xFF, second & 0xFF, level))
 }
 
+// mix_with_alpha gives a color between two colors with straight alpha,
+// 0xAARRGGBB: the alpha mixes as mix mixes each channel, in the encoded
+// values, and the red, the green and the blue are those of mix.
+mix_with_alpha :: proc "contextless" (first, second: u32, level: u32) -> u32 {
+	alpha := ((first >> 24) * (255 - level) + (second >> 24) * level) / 255
+	return alpha << 24 | mix(first, second, level)
+}
+
 // shade gives a color nearer to black (percent under 100) or nearer to
 // white (percent from 100 to 200).
 shade :: proc "contextless" (color: Color, percent: u32) -> Color {
@@ -290,6 +298,21 @@ gradient :: proc "contextless" (row: []Color, start, end: Color, total, first: i
 	}
 	for &color in row {
 		color = rgb(u32(value[0] >> 16), u32(value[1] >> 16), u32(value[2] >> 16))
+		value += step
+	}
+}
+
+// gradient_with_alpha is gradient for two colors with straight alpha,
+// 0xAARRGGBB: the alpha steps as each channel does, and the red, the green
+// and the blue of each column are those of gradient.
+gradient_with_alpha :: proc "contextless" (row: []u32, start, end: u32, total, first: int) {
+	gradient(row, start, end, total, first)
+	steps := i64(max(total - 1, 1))
+	from, to := i64(start >> 24), i64(end >> 24)
+	step := (to - from) * 65536 / steps
+	value := from * 65536 + step * i64(first) + 32768
+	for &color in row {
+		color |= u32(value >> 16) << 24
 		value += step
 	}
 }

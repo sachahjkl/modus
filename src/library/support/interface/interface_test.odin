@@ -865,7 +865,7 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
 	text := [4]u8{'a', 'b', 'c', 'd'}
 	text_record :: proc(first: u32) -> Draw_Record {
-		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, origin_x = draw_record.units_of_pixels(8), scale = 1}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
+		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, color = draw_record.opaque(0), origin_x = draw_record.units_of_pixels(8), scale = 1}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
 	}
 	records := [1]Draw_Record{text_record(2)}
 	before := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
@@ -1440,10 +1440,10 @@ line_hostile_values :: proc(t: ^testing.T) {
 	}
 	one, six := draw_record.units_of_pixels(1), draw_record.units_of_pixels(6)
 	hostile := [?]Draw_Record {
-		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFF, thickness = 0}),
-		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFF, thickness = 200}),
-		line_record_of({start_x = one, start_y = one, end_x = max(i32) - 63, end_y = six, color = 0xFFFFFF, thickness = 1}),
-		line_record_of({start_x = one + 1, start_y = one, end_x = six, end_y = six, color = 0xFFFFFF, thickness = 1}),
+		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 0}),
+		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 200}),
+		line_record_of({start_x = one, start_y = one, end_x = max(i32) - 63, end_y = six, color = 0xFFFFFFFF, thickness = 1}),
+		line_record_of({start_x = one + 1, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 1}),
 	}
 	for record in hostile {
 		_, problem := draw_record.read(record)
@@ -2196,7 +2196,7 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 		return {}
 	}
 	rectangle_of :: proc(x, y, width, height: int, color: graphics.Color) -> Draw_Record {
-		return draw_record.record_of(draw_record.Draw_Rectangle{color = color}, 0, draw_record.units_of_pixels(x), draw_record.units_of_pixels(y), draw_record.units_of_pixels(x + width), draw_record.units_of_pixels(y + height))
+		return draw_record.record_of(draw_record.Draw_Rectangle{color = draw_record.opaque(color)}, 0, draw_record.units_of_pixels(x), draw_record.units_of_pixels(y), draw_record.units_of_pixels(x + width), draw_record.units_of_pixels(y + height))
 	}
 	build(&table, &state, &input, "", 0, 2)
 	// The field, then its line, from edge to edge.
@@ -2334,8 +2334,8 @@ refused_copy :: proc(record: Draw_Record) -> Draw_Record {
 // frames draw nothing in both, and damage nothing.
 @(test)
 a_refused_record_damages_its_box :: proc(t: ^testing.T) {
-	valid := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 0, 0, 10, 10)
-	refused := refused_copy(record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 50, 50, 60, 60))
+	valid := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 0, 0, 10, 10)
+	refused := refused_copy(record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 50, 50, 60, 60))
 	_, problem := draw_record.read(refused)
 	testing.expect_value(t, problem, draw_record.Problem.Reserved_Not_Zero)
 	before_records, now_records := [1]Draw_Record{valid}, [1]Draw_Record{refused}
@@ -2448,7 +2448,7 @@ a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
 	SIDE :: 32
 	clip := record_in_pixels(draw_record.Draw_Clip{}, 0, 0, 8, 8)
 	refused_clip := refused_copy(record_in_pixels(draw_record.Draw_Clip{}, 0, 0, SIDE, SIDE))
-	fill := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 0, 0, SIDE, SIDE)
+	fill := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 0, 0, SIDE, SIDE)
 	records := [3]Draw_Record{clip, refused_clip, fill}
 	table := Draw_Table{records = records[:], record_count = 3}
 	pixels: [SIDE * SIDE]graphics.Color
@@ -2467,7 +2467,7 @@ a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
 	// The same clips in two frames and a rectangle that changes: the
 	// rectangle is damaged.
 	changed := records
-	changed[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0x00FF00}, 4, 4, 12, 12)
+	changed[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFF00FF00}, 4, 4, 12, 12)
 	now := Draw_Table{records = changed[:], record_count = 3}
 	damage: Damage
 	damage_by_difference(&table, &now, &damage)
@@ -2476,7 +2476,7 @@ a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
 	// A refused clip whose bytes change: each record after it is damaged.
 	moved := records
 	moved[1].reserved[0] = 2
-	moved[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 20, 20, 24, 24)
+	moved[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 20, 20, 24, 24)
 	rest := Draw_Table{records = moved[:], record_count = 3}
 	damage = {}
 	damage_by_difference(&table, &rest, &damage)
@@ -2688,7 +2688,7 @@ a_pattern_at_its_bounds_draws_the_pixels_of_the_plain_loop :: proc(t: ^testing.T
 		defer delete(drawn)
 		defer delete(parts)
 		defer delete(expected)
-		records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = COLOR, repetition = pattern_of_case(item)}, item.area.left, item.area.top, item.area.right, item.area.bottom)}
+		records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = draw_record.opaque(COLOR), repetition = pattern_of_case(item)}, item.area.left, item.area.top, item.area.right, item.area.bottom)}
 		_, problem := draw_record.read(records[0])
 		testing.expectf(t, problem == .None, "%s: the border refuses the pattern: %v", item.name, problem)
 		table := Draw_Table{records = records[:], record_count = 1}
@@ -2719,8 +2719,8 @@ a_refused_pattern_draws_nothing_and_damages_its_box :: proc(t: ^testing.T) {
 	good := draw_record.Repetition{cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 8 * pixel, step_y = 8 * pixel}
 	refused := good
 	refused.step_y = 0
-	before_records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF, repetition = good}, 4, 4, 36, 28)}
-	now_records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF, repetition = refused}, 4, 4, 36, 28)}
+	before_records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF, repetition = good}, 4, 4, 36, 28)}
+	now_records := [1]Draw_Record{record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF, repetition = refused}, 4, 4, 36, 28)}
 	_, problem := draw_record.read(now_records[0])
 	testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
 	before := Draw_Table{records = before_records[:], record_count = 1}

@@ -61,10 +61,14 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // border: two records with the same bytes draw the same thing, also two
 // records that the border refuses, which draw nothing in both frames. Only
 // a text compares its bytes too. The border keeps each byte of a record
-// that it reads canonical (each unused byte and the high byte of each color
-// are 0), so two records whose bytes differ draw different things, or one
-// of them draws nothing: they are not equal, and no read through the border
-// is needed to know it. The one exception is the first byte of the range of
+// that it reads canonical (each unused byte is 0, and a color with alpha 0
+// that draws nothing is 0), so two records whose bytes differ draw
+// different things, or one of them draws nothing: they are not equal, and
+// no read through the border is needed to know it. Where two records with
+// other bytes still draw the same pixels (a gradient of one line whose
+// second end, of alpha 0, is never drawn; rectangles of the color 0 with
+// other patterns; a rectangle of the color 0 against a None), the damage
+// is too large, never too small. The one exception is the first byte of the range of
 // a Text or a Text_Grid, which can move in the text table
 // with no change of what is drawn: those records are compared with that
 // word masked. Two refused records that are equal under the mask draw

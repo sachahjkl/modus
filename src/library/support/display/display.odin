@@ -798,6 +798,11 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 // The settings page of this program (modus:contract/settings), or nil.
 settings_page: ^settings.Page
 
+// The text state of the graphics package has its table of the blend: the
+// first text_settings_load filled it.
+@(private)
+text_state_started: bool
+
 // The two glyph caches of this program, each validated once: with the grid fit
 // and without it (the setting "grid_fit").
 glyph_caches: [settings.Grid_Fit]glyph_cache.Cache
@@ -871,6 +876,12 @@ Text_Settings_Problems :: struct {
 // table of texts has addresses that the loader writes
 // (docs/MODULE_CONTRACT.md, "A library as a module").
 text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Text_Settings_Problems, loaded: bool) {
+	// The table of the blend once, at the start of the program, also with
+	// no settings page: the draw records with alpha blend with it.
+	if !text_state_started {
+		graphics.text_state_start()
+		text_state_started = true
+	}
 	if .Settings_Page not_in fixed_addresses.ranges_mapped(&ctx.values) || settings_page != nil {
 		return {}, false
 	}

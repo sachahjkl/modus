@@ -274,7 +274,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_13` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_13` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 13 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
+It is the first library module. A window calls `damage_of_draw_table_14` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_14` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 14 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 
@@ -299,6 +299,16 @@ A draw primitive is what one draw record draws, as a reader sees it past the bor
 The design: `src/md/api/draw_table.md`, "The record: a header and the fields of one kind".
 
 Do not use: draw command, shape.
+
+### Draw color
+
+A draw color is the color of a draw record: `0xAARRGGBB`, with straight alpha in the high byte, so alpha 255 is opaque and the color 0 is transparent.
+
+It blends over the pixels by one rule in linear light, the rule of the glyphs with the alpha as the coverage of the three channels. A color with alpha 0 has one form, 0, so two rectangles that draw nothing in one box have the same bytes, but for their patterns. A writer makes one from a color token with `draw_record.opaque` or `draw_record.with_alpha`. A draw color is not a pixel of a surface: a pixel is `0x00RRGGBB`, and stays opaque.
+
+The design: `docs/INTERFACE.md`, "2.1 Draw record".
+
+Do not use: RGBA color, premultiplied color, opacity.
 
 ### Draw table
 
@@ -346,7 +356,7 @@ Do not use: character matrix, screen buffer.
 
 A picture record is a draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change.
 
-A program that computes or holds its own pixels, such as `life`, `paint` or `plasma`, puts its image in a draw table as one record. The record names its pixels by values: its picture memory, its first pixel, its stride and its size. The program raises the generation when its pixels change; with the same generation the record damages nothing. A picture record is not a picture of a surface: it shows a canvas that the program holds, inside its surface, and it holds no address.
+A program that computes or holds its own pixels, such as `life`, `paint` or `plasma`, puts its image in a draw table as one record. The record names its pixels by values: its picture memory, its first pixel, its stride, its size, and its format: copied, or blended with alpha. The program raises the generation when its pixels change; with the same generation the record damages nothing. A picture record is not a picture of a surface: it shows a canvas that the program holds, inside its surface, and it holds no address.
 
 The design: `src/md/api/picture.md`.
 
