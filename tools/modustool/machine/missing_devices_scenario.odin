@@ -55,7 +55,7 @@ scenario_missing_devices_no_screen := [?]Step {
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
-	{kind = .Wait, text = "root: the start is done: ", fails_on = "root: started console"},
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", fails_on = "root: started console"},
 	{kind = .Quit},
 }
 
@@ -67,7 +67,7 @@ scenario_missing_devices_no_screen := [?]Step {
 scenario_missing_devices_no_ps2_controller := [?]Step {
 	{kind = .Wait, text = NO_PS2_CONTROLLER_LINE, fails_on = "input: ok, "},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "root: the start is done: ", any_order = true},
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Quit},
 }
 

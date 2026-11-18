@@ -103,7 +103,10 @@ module_builds := [?]Module_Build {
 	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true},
 	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", entry = true, image = true},
+	// It takes nearly every page of the machine and stops the machine at its
+	// end: only the image of its test holds it, so no start policy of
+	// another image can start it.
+	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", entry = true, image = true, only_in_image = BOOT_IMAGE_SHORTAGE},
 	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
 	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true},
@@ -160,6 +163,9 @@ module_builds := [?]Module_Build {
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
 	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", entry = true, image = true},
 	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", entry = true, image = true},
+	// The default start policy and the rescue start policy: one module that
+	// reads the list that the root service maps (src/md/features/start_policy.md).
+	{name = START_POLICY_MODULE, source = SYSTEM_MODULE_SOURCES + START_POLICY_MODULE, entry = true, image = true},
 	// The module of the operation sequences and its runner: only the boot
 	// image of the operation sequences holds them, and the root service
 	// starts nothing else there.
@@ -218,7 +224,15 @@ SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/system"
 // and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
 BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.image"
 
+// The boot image of the shortage of frames: no input service, and the
+// module shortage, which only it holds.
+BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
+
 OPERATION_FUZZING_MODULE :: "operation_fuzzing"
+
+// The module of the start policy, which the boot image of a start that
+// fails leaves out, and whose source the tool checks (start_lists.odin).
+START_POLICY_MODULE :: "start_policy"
 
 OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 

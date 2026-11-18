@@ -146,12 +146,14 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 // settings_boot_pass_start starts `settings` for its boot pass: it reads
 // the settings kept in its private store, writes the page, and stops. The
 // storage service starts first, with the block service of the data disk.
-// A machine with no data disk keeps the defaults.
-settings_boot_pass_start :: proc "contextless" () {
+// A machine with no data disk keeps the defaults. A start policy asks for
+// it, as the row settings of its list, and gets the status.
+settings_boot_pass_start :: proc "contextless" () -> system.Status {
 	settings_boot_pass = true
 	status := start("settings")
 	settings_boot_pass = false
 	if status != .Ok {
 		system.log_in("processes", .Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
 	}
+	return status
 }

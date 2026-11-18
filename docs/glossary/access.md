@@ -462,7 +462,7 @@ Do not use: permission set.
 
 The root ring is the ring of a process to the root service: the process writes a command record on it, and the root service answers with a completion.
 
-A process receives a root ring at its start only when its process role holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
+A process receives a root ring at its start only when its process role holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
 
 Example: `start("clock")` in the console sends `Root_Command.Start` with the name `clock` on the root ring of the console.
 

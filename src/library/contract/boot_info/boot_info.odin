@@ -24,6 +24,9 @@
 // and [boot image](term:boot-image).
 package boot_info
 
+import "base:intrinsics"
+import "modus:contract/enum_word"
+
 MAGIC :: u64(0x4F464E49544F4F42) // The bytes "BOOTINFO".
 
 // The address where the boot program maps all physical memory, for the
@@ -110,6 +113,102 @@ Boot_Info :: struct {
 	// verify it, and no code comes from it.
 	debug_image:        u64,
 	debug_image_size:   u64, // At most `DEBUG_IMAGE_LIMIT`.
+	// The start policy that the root service starts: the word of a
+	// Start_Request, and the word of the Start_Request_Source that asked
+	// for it (start_request_of_words).
+	start_request:        u64,
+	start_request_source: u64,
+}
+
+// The start policy that the boot program asks the root service for
+// (src/md/features/start_policy.md, "The rescue key").
+Start_Request :: enum u64 {
+	Chosen = 0, // The start policy of the choice of principal 0, or the default one.
+	Rescue = 1, // The rescue start policy, in place of the chosen one, for this start only.
+}
+
+// What asked for the start request: the root service names it in its line.
+// The key R and the boot entry give the same Rescue.
+Start_Request_Source :: enum u64 {
+	None       = 0, // Nothing asked: the request is Chosen.
+	Key        = 1, // The key R, held while the machine started.
+	Boot_Entry = 2, // The load options of the boot entry "modus (rescue)".
+}
+
+// start_request_of_words is the border of the two words of the boot
+// record: a word that names no member is
+// refused, and so is a pair that does not agree (Rescue with no source,
+// Chosen with one). The root service then starts the rescue start policy,
+// with its line: a record that it cannot read never chooses a start policy
+// that no principal chose.
+start_request_of_words :: proc "contextless" (request_word, source_word: u64) -> (request: Start_Request, source: Start_Request_Source, ok: bool) {
+	read_request, request_known := enum_word.member_of_word(Start_Request, request_word)
+	read_source, source_known := enum_word.member_of_word(Start_Request_Source, source_word)
+	if !request_known || !source_known {
+		return .Chosen, .None, false
+	}
+	if (read_request == .Rescue) != (read_source != .None) {
+		return .Chosen, .None, false
+	}
+	return read_request, read_source, true
+}
+
+// The load options of the boot entry "modus (rescue)": one record of 16
+// bytes, the tag, the version and the word of a Start_Request. The boot
+// program writes it as the optional data of the entry, and reads it from
+// the load options of its loaded image.
+LOAD_OPTIONS_TAG :: "MODUSOPT"
+LOAD_OPTIONS_VERSION :: 1
+LOAD_OPTIONS_SIZE :: 16
+
+Load_Options_Record :: struct #packed {
+	tag:     [8]u8,
+	version: u32,
+	request: u32, // The word of a Start_Request.
+}
+#assert(size_of(Load_Options_Record) == LOAD_OPTIONS_SIZE)
+
+// What the read of the load options found.
+Load_Options_Reading :: enum u8 {
+	Not_Tagged     = 0, // They do not start with the tag: not a flag of this system. Chosen, with no line.
+	Read           = 1, // A whole record: its request.
+	Wrong_Size     = 2, // The tag, and not 16 bytes.
+	Wrong_Version  = 3,
+	Unknown_Word   = 4, // A word that names no Start_Request.
+}
+
+// load_options_read reads a copy of the load options. Bytes that do not
+// start with the tag are a normal start: some firmware gives the
+// description of the entry, or a device path, to a normal start. A tagged
+// record is the one form that this system writes, so a damaged one is a
+// fault to read: each other reading stops the boot program. word is the
+// word of the record, for the line of an Unknown_Word.
+load_options_read :: proc "contextless" (bytes: []u8) -> (request: Start_Request, reading: Load_Options_Reading, word: u32) {
+	if len(bytes) < len(LOAD_OPTIONS_TAG) || string(bytes[:len(LOAD_OPTIONS_TAG)]) != LOAD_OPTIONS_TAG {
+		return .Chosen, .Not_Tagged, 0
+	}
+	if len(bytes) != LOAD_OPTIONS_SIZE {
+		return .Chosen, .Wrong_Size, 0
+	}
+	record: Load_Options_Record
+	intrinsics.mem_copy_non_overlapping(&record, raw_data(bytes), LOAD_OPTIONS_SIZE)
+	if record.version != LOAD_OPTIONS_VERSION {
+		return .Chosen, .Wrong_Version, 0
+	}
+	read, known := enum_word.member_of_word(Start_Request, u64(record.request))
+	if !known {
+		return .Chosen, .Unknown_Word, record.request
+	}
+	return read, .Read, record.request
+}
+
+// load_options_write gives the record of a request.
+load_options_write :: proc "contextless" (request: Start_Request) -> (record: Load_Options_Record) {
+	tag := LOAD_OPTIONS_TAG
+	intrinsics.mem_copy_non_overlapping(&record.tag[0], raw_data(tag), len(tag))
+	record.version = LOAD_OPTIONS_VERSION
+	record.request = u32(request)
+	return record
 }
 
 // The trust record (docs/TRUSTED_BOOT.md): what the boot program verified

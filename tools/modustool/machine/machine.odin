@@ -88,6 +88,14 @@ Step_Kind :: enum {
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
+	// Write the character text on the serial line of the machine again and
+	// again until the log has `expected` after the last Wait, with the
+	// bound of the first wait: a key that the firmware holds while the
+	// machine starts, which no process confirms. The console input of the
+	// firmware of a machine with no screen is the serial terminal, so the
+	// machine needs the option serial_input; without it the step fails
+	// with its line (src/md/features/start_policy.md, "The rescue key").
+	Key_Until,
 	Click, // Press the left button at (x, y).
 	Launch, // Open the start menu, and press the line of the process text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
@@ -287,7 +295,7 @@ number_after :: proc(text: string, after: string) -> (value: i64, found: bool) {
 	return strconv.parse_i64(rest[:end])
 }
 
-// A start that fails: the boot image has no compositor. The boot display
+// A start that fails: the boot image has no start policy. The boot display
 // stays on the screen with the failure, and the machine does not stop.
 // Before it, the trusted boot of a machine with no TPM: the boot program
 // verifies the system description and says that nothing verified it, and
@@ -303,7 +311,10 @@ scenario_fails := [?]Step {
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
 	{kind = .Wait, text = "root: the system description is not measured into the TPM"},
-	{kind = .Wait, text = "root: cannot start the compositor: status "},
+	// The image has no start policy: the rescue is the same module, so the
+	// machine has no start policy at all, and the boot display says it.
+	{kind = .Wait, text = "root: the start policy is absent from the boot image: the rescue start policy starts"},
+	{kind = .Wait, text = "root: no start policy at all: the rescue start policy is absent from the boot image"},
 	{kind = .Wait, text = "root: the boot display shows the failure"},
 	{kind = .Shot, text = "boot_fails"},
 	{kind = .Quit},
@@ -3658,6 +3669,7 @@ Machine :: struct {
 	powered_off: bool, // A step Power_Loss ended QEMU: the machine has no exit status.
 	disk_server: ^Network_Block_Device, // The data disk, when the tool serves it.
 	client:      Call_Client,
+	serial_input: ^Serial_Input, // The input of the serial line, when the machine has one (Machine_Options.serial_input).
 	client_open: bool,
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
@@ -4112,6 +4124,14 @@ Machine_Options :: struct {
 	no_network_device: bool, // The machine has no network device (silent_disk.odin).
 	data_disk_without_ioevent: bool, // The data disk has no ioevent file (machine_command).
 	without_pit:    bool, // No 8254: `-machine q35,pit=off` (src/md/features/missing_hardware.md).
+	// The variable store of the firmware that the machines of a part share,
+	// so a boot entry that one machine writes is there at the next start
+	// (start_policy_scenario.odin). "": a new copy for this machine.
+	firmware_variables: string,
+	// The serial line has an input: a FIFO beside the log, which the step
+	// Key_Until writes (serial_input_linux.odin). On a machine with no
+	// screen, the console input of the firmware is the serial terminal.
+	serial_input: bool,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4163,12 +4183,23 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 			_ = os.remove(machine_file(output, suffix))
 		}
 	}
+	// The FIFO of the input of the serial line, and its writer, before QEMU
+	// starts: QEMU then opens it to read with no wait.
+	serial_input: Serial_Input
+	serial_input_path := ""
+	if options.serial_input {
+		serial_input_path = machine_file(output, SERIAL_INPUT_SUFFIX)
+		if !serial_input_open(&serial_input, serial_input_path) {
+			return false
+		}
+	}
+	defer serial_input_close(&serial_input)
 	host_process: os.Process
 	monitor_read, monitor_write: ^os.File
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path)
 		if !ok {
 			return false
 		}
@@ -4239,6 +4270,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		forward   = forward,
 		disk_server = options.disk_server,
 		memory_file = options.memory_file,
+		serial_input = &serial_input,
 	}
 	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
@@ -4544,6 +4576,32 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			if !keys_send(machine, []string{step.text}, fmt.tprintf("the key %s", step.text)) {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not take the key %s", index + 1, step.text)
+				return false
+			}
+		case .Key_Until:
+			// The console input of the firmware of a machine with no screen
+			// is the serial terminal, not the PS/2 keyboard of QMP: the key
+			// goes on the serial line. A held key repeats in the buffer of the
+			// firmware: the presses end when the boot program says that it
+			// read the key.
+			if machine.serial_input == nil || !machine.serial_input.open {
+				fmt.eprintfln("modustool: test failed: step %d: the step Key_Until writes the key on the serial line, and this machine has no serial input: give it the option serial_input", index + 1)
+				return false
+			}
+			pressed := false
+			for start := time.now(); time.since(start) < BOOT_HANG_BOUND; {
+				log := log_read(machine)
+				if len(log) > machine.seen && strings.contains(log[machine.seen:], step.expected) {
+					pressed = true
+					break
+				}
+				if !serial_input_write(machine.serial_input, step.text) {
+					break
+				}
+				time.sleep(CONDITION_POLL_PERIOD)
+			}
+			if !pressed {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v of the character %q on its serial line", index + 1, step.expected, BOOT_HANG_BOUND, step.text)
 				return false
 			}
 		case .Point:

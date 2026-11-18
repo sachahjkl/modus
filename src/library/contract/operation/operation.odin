@@ -3518,6 +3518,11 @@ Boot_Report :: struct {
 	// each device reaches all memory. Whether one device has a domain and device windows is the second
 	// result of `Device_Create` of its registers (`Device_Memory_Facts`).
 	iommu_unit_count:       u64,
+	// The words of the start request of the boot program, as it wrote them: a
+	// boot_info.Start_Request and a boot_info.Start_Request_Source, which the root
+	// service reads through boot_info.start_request_of_words.
+	start_request:          u64,
+	start_request_source:   u64,
 }
 
 // The state of one process slot: its state, its name, its counts and what

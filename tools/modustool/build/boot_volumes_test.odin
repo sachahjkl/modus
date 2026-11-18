@@ -7,13 +7,13 @@ import "core:strings"
 import "core:testing"
 import "modustool:foundation"
 
-// The table of the boot volumes: 17 fixed volumes and one for each test of
+// The table of the boot volumes: 18 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 17 + len(self_tests))
-	testing.expect_value(t, len(volumes), 24)
+	testing.expect_value(t, len(volumes), 18 + len(self_tests))
+	testing.expect_value(t, len(volumes), 25)
 	// The volumes of the TPM floors are signed for Secure Boot: only a start
 	// with the PCR 7 of Secure Boot raises a floor. The newer key differs
 	// from the newer system by its key number alone.

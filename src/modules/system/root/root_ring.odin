@@ -25,6 +25,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
+import "modus:private/root/start_policy_rules"
 import "modus:support/principals"
 import "modus:support/system"
 
@@ -37,6 +38,10 @@ Command_Answer :: struct {
 	// change of a passphrase): the loop goes on meanwhile, and the work
 	// sends it.
 	held:   bool,
+	// The procedure of the command wrote the error record of its refusal,
+	// for a command whose table says that the dispatch writes it: the
+	// refusals of a start policy (start_policy_rules).
+	written: bool,
 }
 
 // root_ring_serve answers each command that a process wrote on its root
@@ -66,7 +71,7 @@ root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) 
 	}
 	command := decision.command
 	answer = root_command_run(item, command, record, name)
-	if answer.status != .Ok && !answer.held && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
+	if answer.status != .Ok && !answer.held && !answer.written && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
 		answer.values = root_command_refusal(command, name, record.values[4], answer.status)
 	}
 	return answer
@@ -80,18 +85,33 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .None:
 		// The border refuses it; the case keeps the switch whole.
 	case .Start:
-		// A process that a process starts belongs to the session of the
-		// process that asks.
-		answer.status = start(name, item.principal)
+		// The start policy starts the parts of the system too, and gets a
+		// handle of each process (start_policy.odin). A process that a
+		// process starts belongs to the session of the process that asks.
+		if .Start_Policy in item.role.grants {
+			answer.status = start_policy_start(item, name, &answer.values, &answer.written)
+		} else {
+			answer.status = start(name, item.principal)
+		}
 	case .Stop:
 		answer.status = .Bad_Handle
 		for &other in started {
-			// The compositor is not a process that the console stops.
+			// The compositor is not a process that the console stops, and
+			// the start policy stops only a process that it asked for.
+			if .Start_Policy in item.role.grants && !other.asked_by_start_policy {
+				continue
+			}
 			if other.process != 0 && other.process != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
 				system.call(.Process_Stop, u64(other.process), 0)
 				answer.status = .Ok
 				break
 			}
+		}
+		// A start policy learns nothing of a process that it did not ask
+		// for: each refusal is the one record Absent.
+		if answer.status != .Ok && .Start_Policy in item.role.grants {
+			answer.values = start_policy_rules.stop_record()
+			answer.written = true
 		}
 	case .Connect:
 		answer.status = root_connect(item, record, name, &answer.values)
@@ -169,6 +189,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = principal_change_end(record.values, &answer.values)
 	case .Remote_Client:
 		answer.status = remote_client_command(item, record, &answer.values)
+	case .Machine_Usable:
+		answer.status = start_policy_usable(item, &answer.values)
 	}
 	return answer
 }
@@ -202,9 +224,11 @@ root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: s
 // caller, and no fact of another process that the status does not give.
 root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, name: string, value: u64, status: system.Status) -> [7]u64 {
 	kind := u32(command)
-	of_the_system := name_is_a_system_part(name)
+	// The start policy is no part of the system, and only this service
+	// starts it: a Start of its name is refused as one.
+	of_the_system := name_is_a_system_part(name) || .Start_Policy in role_of(name).grants
 	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
 		// A grant of the role that the command needs, and that the process
@@ -224,6 +248,10 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 		}
 		if status == .Bad_Operation && len(system.image_find(image, name)) == 0 {
 			return errors.ring_fail(kind, .Absent, .Modules, 1)
+		}
+		// A start of the start policy for a name that runs.
+		if status == .Bad_State && find_running(name) != nil {
+			return errors.ring_fail(kind, .Exists, .Processes, 1)
 		}
 	case .Stop:
 		if status == .Bad_Handle && (name == "compositor" || name == "terminal") {

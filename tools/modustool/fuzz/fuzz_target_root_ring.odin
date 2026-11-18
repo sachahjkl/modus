@@ -88,7 +88,8 @@ fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) 
 // from the guides and not from the table of the contract, so a wrong row
 // of ROOT_COMMAND_SENDERS breaks the oracle:
 // - a process receives a root ring only with Root_Ring, Connect,
-//   Principals or Debugger (src/md/api/root_ring.md, "The chosen form");
+//   Principals, Debugger or Start_Policy (src/md/api/root_ring.md, "The
+//   chosen form");
 // - `unlock`, with Principals, alone sends Principal_Record,
 //   Principal_Unlock, Machine_Key and Principal_Change_End
 //   (docs/PRINCIPALS.md, "7. The commands");
@@ -96,12 +97,15 @@ fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) 
 //   (docs/TOOLS.md, "The debugger");
 // - Connect comes from Root_Ring, or from Connect to a service of the list
 //   of its role; Disconnect from each ring, for a connection that it holds;
+// - the start policy, with Start_Policy, sends Start and Stop as the
+//   console does, and alone sends Machine_Usable
+//   (src/md/features/start_policy.md);
 // - each other command from Root_Ring, the console; None from nobody.
 // The switch is whole: a new command does not compile until its sender is
 // written here too.
 @(private = "file")
 fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, role: bit_set[start_grant.Grant], listed: bool) -> bool {
-	if role & {.Root_Ring, .Connect, .Principals, .Debugger} == {} {
+	if role & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy} == {} {
 		return false
 	}
 	switch command {
@@ -115,7 +119,11 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, role: bit_s
 		return .Root_Ring in role || .Connect in role && listed
 	case .Disconnect:
 		return true
-	case .Start, .Stop, .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client:
+	case .Machine_Usable:
+		return .Start_Policy in role
+	case .Start, .Stop:
+		return .Root_Ring in role || .Start_Policy in role
+	case .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client:
 		return .Root_Ring in role
 	}
 	return false

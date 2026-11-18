@@ -211,6 +211,15 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	expect_one(t, with(whole, {name = "beta", grants = {"Inspect", "System_Part"}, line = 2}), system_parts, builds, "line 2: the row beta has the grant System_Part")
 	// A part of the system with no row.
 	expect_one(t, whole, []string{"root", "compositor", "block", "glyphs"}, builds, "system_part_names names glyphs, which has no row")
+	// The grant Start_Policy on another row, the row of the start policy
+	// without it, and with another grant beside it.
+	expect_one(t, with(whole, {name = "alpha", grants = {"Start_Policy"}, line = 1}), system_parts, builds, "line 1: the row alpha has the grants")
+	with_policy := make([]foundation.Module_Build, len(builds) + 1, context.temp_allocator)
+	copy(with_policy, builds)
+	with_policy[len(builds)] = {name = foundation.START_POLICY_MODULE, source = foundation.SYSTEM_MODULE_SOURCES + foundation.START_POLICY_MODULE, entry = true, image = true}
+	expect_one(t, with(whole, {name = foundation.START_POLICY_MODULE, line = 5}), system_parts, with_policy, "line 5: the row start_policy has the grants")
+	expect_one(t, with(whole, {name = foundation.START_POLICY_MODULE, grants = {"Start_Policy", "Inspect"}, line = 5}), system_parts, with_policy, "line 5: the row start_policy has the grants")
+	testing.expect_value(t, len(build.process_roles_problems(with(whole, {name = foundation.START_POLICY_MODULE, grants = {"Start_Policy"}, line = 5}), system_parts, with_policy, "roles.odin")), 0)
 	// A module with no entry may have a row: a service that starts as
 	// a process at its first connection.
 	testing.expect_value(t, len(build.process_roles_problems(with(whole, {name = "library", line = 5}), system_parts, builds, "roles.odin")), 0)

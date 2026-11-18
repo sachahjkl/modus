@@ -79,6 +79,9 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 		timer_frequency     = u64(timer_count) * 16 * TICKS_PER_SECOND,
 		trust               = boot.trust,
 		iommu_unit_count    = iommu_in_use ? u64(iommu_unit_count) : 0,
+		// Copied as words: the kernel does not read them.
+		start_request        = boot.start_request,
+		start_request_source = boot.start_request_source,
 	}
 	start: u64
 	for stage in Stage {

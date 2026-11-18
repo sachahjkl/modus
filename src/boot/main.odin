@@ -2,7 +2,8 @@
 //
 // It contains the kernel module, the boot image, and the public key of the
 // signing key with its key number. It does this:
-//   1. reads the framebuffer of the firmware;
+//   1. reads the framebuffer of the firmware, and whether its load options
+//      or the key R ask for the rescue start policy (rescue.odin);
 //   2. verifies the system description and the hash of the kernel and of
 //      each file of the boot image, refuses an older system or a revoked
 //      key with the TPM floors and raises them, and asks the firmware to
@@ -11,7 +12,8 @@
 //   4. builds page tables: all physical memory at DIRECT_MAP_BASE, the kernel
 //      at KERNEL_BASE, and the same physical memory at its own addresses for
 //      the moment of the jump;
-//   5. reads the memory map and leaves the firmware services;
+//   5. reads the keys again, writes the boot entry "modus (rescue)" when
+//      it is absent, reads the memory map and leaves the firmware services;
 //   6. starts the entry of the kernel with a Boot_Info record.
 package boot
 
@@ -94,6 +96,13 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 		character = unit < 0x7F ? u8(unit) : '?'
 	}
 	boot.firmware_revision = u64(system.firmware_revision)
+	// The rescue start policy, by the boot entry or by the key R: the
+	// first read of the keys comes before the checks, the second before
+	// the end of the firmware services (start_request_note).
+	if load_options_request() == .Rescue {
+		boot.start_request, boot.start_request_source = u64(info.Start_Request.Rescue), u64(info.Start_Request_Source.Boot_Entry)
+	}
+	start_request_note(boot)
 	// The kernel reads the list of the processors in the ACPI tables.
 	for entry in system.tables[:system.table_count] {
 		if entry.guid == EFI_ACPI_GUID {
@@ -163,6 +172,8 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	// last read of the memory map, which gives its pages the kind Boot. The
 	// page tables map all memory, its pages too.
 	boot.debug_image, boot.debug_image_size = debug_image_read()
+	start_request_note(boot)
+	rescue_entry_write()
 	print("boot program: ok\r\n")
 	stop_step = .Kernel
 	for attempt in 0 ..< 2 {
@@ -177,6 +188,17 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 		_ = attempt
 	}
 	stop("the firmware refused to end its services")
+}
+
+// start_request_note reads the keys that wait, and asks for the rescue
+// start policy when the key R is one of them, with one line. The boot
+// entry, which asked first, keeps its source.
+start_request_note :: proc "contextless" (boot: ^info.Boot_Info) {
+	if !rescue_key_read() || boot.start_request == u64(info.Start_Request.Rescue) {
+		return
+	}
+	boot.start_request, boot.start_request_source = u64(info.Start_Request.Rescue), u64(info.Start_Request_Source.Key)
+	print("boot program: the key R is held: the root service starts the rescue start policy\r\n")
 }
 
 // build_page_tables gives the address of the top level table.

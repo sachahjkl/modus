@@ -82,6 +82,10 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return grant == .Principals
 		case .Debugger:
 			return grant == .Debugger
+		case .Root_Ring_Or_Start_Policy:
+			return grant == .Root_Ring || grant == .Start_Policy
+		case .Start_Policy:
+			return grant == .Start_Policy
 		}
 		return false
 	}
@@ -101,6 +105,17 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, sender_allowed(.Disconnect, {.Principals}))
 	testing.expect(t, sender_allowed(.Connect, {.Connect}))
 	testing.expect(t, sender_allowed(.Start, {.Root_Ring}))
+	// The start policy: Machine_Usable from it alone, never from the
+	// console or another ring; Start and Stop, and no other command of the
+	// console.
+	testing.expect(t, !sender_allowed(.Machine_Usable, {.Root_Ring, .Connect, .Principals, .Debugger}))
+	testing.expect(t, !sender_allowed(.Grants, {.Start_Policy}))
+	testing.expect(t, !sender_allowed(.Revoke, {.Start_Policy}))
+	testing.expect(t, !sender_allowed(.Start_From_Disk, {.Start_Policy}))
+	testing.expect(t, !sender_allowed(.Connect, {.Start_Policy}))
+	testing.expect(t, sender_allowed(.Start, {.Start_Policy}))
+	testing.expect(t, sender_allowed(.Stop, {.Start_Policy}))
+	testing.expect(t, sender_allowed(.Machine_Usable, {.Start_Policy}))
 	// A refused Connect names the connection; another command the commands.
 	connect := errors.completion_record(sender_refusal(.Connect))
 	testing.expect_value(t, errors.Kind(connect.kind), errors.Kind.No_Grant)
@@ -109,6 +124,19 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, errors.Kind(start.kind), errors.Kind.No_Grant)
 	testing.expect_value(t, errors.Unit(start.unit), errors.Unit.Root_Commands)
 	testing.expect_value(t, start.operation, i64(Root_Command.Start))
+}
+
+// The start policy receives its root ring and the log, and no window: it
+// starts before the compositor. A role with the grant beside another grant
+// gets no window either, and each other role with no Terminal keeps its
+// window.
+@(test)
+the_start_policy_has_no_window :: proc(t: ^testing.T) {
+	testing.expect_value(t, role_handles({.Start_Policy}), bit_set[Role_Handle]{.Log, .Root_Ring})
+	testing.expect(t, .Display not_in role_handles({.Start_Policy, .Inspect}))
+	testing.expect(t, .Display in role_handles({}))
+	testing.expect(t, .Display in role_handles({.Root_Ring}))
+	testing.expect(t, .Display not_in role_handles({.Terminal}))
 }
 
 // The decision of the dispatch, in the order of its steps. The border

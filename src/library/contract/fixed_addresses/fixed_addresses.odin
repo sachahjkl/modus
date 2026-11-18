@@ -37,7 +37,7 @@ import op "modus:contract/operation"
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
-SLOT_COUNT :: 16 // The slots of the band: the most members of Fixed_Range.
+SLOT_COUNT :: 17 // The slots of the band: the most members of Fixed_Range.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -131,6 +131,11 @@ Fixed_Range :: enum u8 {
 	// The root service writes there, now and then, 32 bytes of its stream
 	// for this process alone, after a read of the entropy device; the
 	// random generator of the process mixes them into its key.
+	Start_Policy_Pages, // The machine parts page, then the start list, read-only, in a start policy (modus:contract/start_list).
+	// The root service writes the machine parts page once, before the start
+	// policy starts, and maps the list that the start policy reads after
+	// it: a resource of the boot image, with its size in a value of the
+	// context.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -171,6 +176,7 @@ DISK_PROCESS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Process_Pa
 DEMAND_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Demand_Cache)
 FONT_OUTLINES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Font_Outlines)
 FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)
+START_POLICY_PAGES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Start_Policy_Pages)
 
 // The addresses of one range.
 Address_Range :: struct {
