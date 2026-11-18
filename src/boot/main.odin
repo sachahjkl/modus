@@ -60,6 +60,12 @@ image_handle: rawptr
 stop_record: ^info.Boot_Info
 stop_step := bootscreen.Step.Firmware
 
+// Set before the first call of ExitBootServices. After a call that fails,
+// the specification allows only the services of the memory: GetMemoryMap,
+// to read the map again, and the allocation of pages. So no line goes
+// through the console of the firmware, and no stop calls the watchdog.
+firmware_services_exit_tried := false
+
 @(export, link_name = "efi_main")
 efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi_Status {
 	cycles_start := u64(intrinsics.read_cycle_counter())
@@ -156,6 +162,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	for attempt in 0 ..< 2 {
 		list, key := read_memory_map(&firmware_map, ranges)
 		boot.memory_range_count = u64(list.count)
+		firmware_services_exit_tried = true
 		if services.exit_boot_services(image_handle, key) == 0 {
 			// After the end of the firmware services: the serial port only.
 			dropped_ranges_line(&list)
@@ -269,17 +276,29 @@ read_memory_map :: proc "contextless" (firmware_map: ^Firmware_Map, ranges: [^]i
 			stop(string(text.bytes[:text.count]))
 		}
 	}
-	if !firmware_memory_map.descriptor_size_valid(u64(descriptor_size)) {
+	buffer_bytes := firmware_map.pages * PAGE_SIZE
+	if !firmware_memory_map.map_size_valid(u64(size), buffer_bytes) {
+		text: bootscreen.Text
+		bootscreen.put(&text, "the firmware says that its memory map has ")
+		bootscreen.put_number(&text, u64(size))
+		bootscreen.put(&text, " bytes, in a buffer of ")
+		bootscreen.put_number(&text, buffer_bytes)
+		stop(string(text.bytes[:text.count]))
+	}
+	if !firmware_memory_map.descriptor_size_valid(u64(descriptor_size), u64(size)) {
 		text: bootscreen.Text
 		bootscreen.put(&text, "the memory map of the firmware has descriptors of ")
 		bootscreen.put_number(&text, u64(descriptor_size))
-		bootscreen.put(&text, " bytes, fewer than the specification")
+		bootscreen.put(&text, " bytes in a map of ")
+		bootscreen.put_number(&text, u64(size))
 		stop(string(text.bytes[:text.count]))
 	}
-	descriptor_end := uint(size_of(Efi_Memory_Descriptor))
+	// By index: each descriptor that the walk reads ends inside the map,
+	// and no offset wraps.
+	descriptor_count := firmware_memory_map.descriptor_count(u64(size), u64(descriptor_size))
 	usable_count := 0
-	for offset := uint(0); offset + descriptor_end <= size; offset += descriptor_size {
-		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map.address) + uintptr(offset))
+	for index in 0 ..< descriptor_count {
+		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map.address) + uintptr(index * u64(descriptor_size)))
 		if memory_kind_of(descriptor) != .Reserved && descriptor.page_count != 0 {
 			usable_count += 1
 		}
@@ -294,12 +313,23 @@ read_memory_map :: proc "contextless" (firmware_map: ^Firmware_Map, ranges: [^]i
 		bootscreen.put_number(&text, firmware_memory_map.RANGE_CAPACITY)
 		stop(string(text.bytes[:text.count]))
 	}
-	for offset := uint(0); offset + descriptor_end <= size; offset += descriptor_size {
-		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map.address) + uintptr(offset))
-		if !firmware_memory_map.list_add(&list, descriptor.physical_start, descriptor.page_count, memory_kind_of(descriptor)) {
+	for index in 0 ..< descriptor_count {
+		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map.address) + uintptr(index * u64(descriptor_size)))
+		status := firmware_memory_map.list_add(&list, descriptor.physical_start, descriptor.page_count, memory_kind_of(descriptor))
+		text: bootscreen.Text
+		switch status {
+		case .Added:
+			continue
+		case .No_Room:
 			// The two walks read one buffer: this is a fault of the count.
 			stop("the usable ranges of the memory map do not fit the room that the boot program counted for them")
+		case .Not_On_Page:
+			bootscreen.put(&text, "the memory map of the firmware has a usable range that starts inside a page, at ")
+		case .Past_Address_Limit:
+			bootscreen.put(&text, "the memory map of the firmware has a usable range that ends past the physical addresses, at ")
 		}
+		bootscreen.put_hex(&text, descriptor.physical_start, 16)
+		stop(string(text.bytes[:text.count]))
 	}
 	return
 }
@@ -418,14 +448,22 @@ stop :: proc "contextless" (text: string) -> ! {
 // failure stays until the machine is stopped by hand. With no record or no
 // screen, the line that the caller wrote stays on the console of the
 // firmware. A power off would remove the failure before anyone reads it.
+//
+// After a call of ExitBootServices, the watchdog is not a service that the
+// boot program may call: the stop draws on the screen, which is memory, and
+// writes on the serial port only (print).
 boot_stop :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, text: string) -> ! {
 	if boot != nil && display(boot, text, .Failed, step) {
 		// After the draw, print writes on the serial port only.
 		print("boot program: the boot display shows the failure\r\n")
+	} else if firmware_services_exit_tried {
+		print("boot program: no boot display: the failure is on the serial port only\r\n")
 	} else {
 		print("boot program: no boot display: the failure stays on the console of the firmware\r\n")
 	}
-	system.boot_services.set_watchdog_timer(0, 0, 0, nil)
+	if !firmware_services_exit_tried {
+		system.boot_services.set_watchdog_timer(0, 0, 0, nil)
+	}
 	for {
 		intrinsics.cpu_relax()
 	}
@@ -438,9 +476,10 @@ boot_stop :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, t
 display_on_screen := false
 
 // print writes ASCII text on the firmware console, which takes UTF-16; after
-// the first draw of the boot display, on the serial port only.
+// the first draw of the boot display, or after a call of ExitBootServices,
+// on the serial port only.
 print :: proc "contextless" (text: string) {
-	if display_on_screen {
+	if display_on_screen || firmware_services_exit_tried {
 		serial_port_print(text)
 		return
 	}

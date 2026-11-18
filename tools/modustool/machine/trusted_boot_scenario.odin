@@ -356,7 +356,7 @@ trusted_boot_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	refused_machine_run(part, scenario_changed_kernel[:], build.BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
 	refused_machine_run(part, scenario_without_description[:], build.BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
 	refused_machine_run(part, scenario_stated_hash[:], build.BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
-	refused_machine_run(part, scenario_kernel_memory_raised[:], build.BOOT_VOLUME_KERNEL_MEMORY_RAISED, TEST_OUTPUT_KERNEL_MEMORY_RAISED) or_return
+	refused_machine_run(part, scenario_kernel_memory_raised[:], build.BOOT_VOLUME_KERNEL_MEMORY_RAISED, TEST_OUTPUT_KERNEL_MEMORY_RAISED, .Usual, "for memory: its kernel asks more than the machine has") or_return
 	measured := measure_machine_run(part, scenario_measured[:], build.BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
 	other := measure_machine_run(part, scenario_other_system[:], build.BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
 	if measured == other {
@@ -685,7 +685,9 @@ release_image_machine_run :: proc(part: ^Test_Part_Run) -> bool {
 // refused_machine_run runs a machine whose boot program, or whose firmware,
 // must refuse its volume, then checks that the kernel wrote nothing: it
 // never started. With Secure Boot the boot program itself must not start.
-refused_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output: string, firmware: Machine_Firmware = .Usual) -> bool {
+// stop_reason is "" for a refusal; else the boot program accepts the
+// volume and stops for this reason, which the line of the test names.
+refused_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output: string, firmware: Machine_Firmware = .Usual, stop_reason := "") -> bool {
 	// The tool ends QEMU: status 0.
 	machine_test(part, steps, {volume = volume, output = output, exit_status = 0, firmware = firmware}) or_return
 	log_bytes := foundation.read_file(output) or_return
@@ -700,6 +702,10 @@ refused_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 			return false
 		}
 		foundation.test_passed_print("the firmware with Secure Boot refused the boot program of %s, which never started", volume)
+		return true
+	}
+	if stop_reason != "" {
+		foundation.test_passed_print("the boot program of %s stopped %s, its message stays on the boot display, and the kernel did not start", volume, stop_reason)
 		return true
 	}
 	foundation.test_passed_print("the boot program refused %s, and the kernel did not start", volume)

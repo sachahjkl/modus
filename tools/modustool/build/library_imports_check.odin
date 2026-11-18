@@ -561,6 +561,19 @@ library_private_import_is_allowed :: proc(file, path: string, form: Library_Sour
 // and the code that it alone compiles in has a host test there.
 PRIVATE_PART_OF_THE_BOOT_PROGRAM :: "boot_program"
 
+// library_module_table_problem says why a table of the modules cannot be
+// read by the owner rule, or gives "": a row named
+// PRIVATE_PART_OF_THE_BOOT_PROGRAM would make private/boot_program name two
+// owners, that module and the boot program.
+library_module_table_problem :: proc(builds: []foundation.Module_Build) -> string {
+	for build in builds {
+		if build.name == PRIVATE_PART_OF_THE_BOOT_PROGRAM {
+			return fmt.tprintf("the table of the modules has a row named %s (source %s): that name is the one of the private parts of the boot program, %s%s/; give the module another name", build.name, build.source, foundation.PRIVATE_IMPORT_START, PRIVATE_PART_OF_THE_BOOT_PROGRAM)
+		}
+	}
+	return ""
+}
+
 // library_private_owner_source gives the folder of the one owner of a
 // private part from the name after private/: a module of the table, or the
 // boot program. found: the name names one of them.
@@ -916,6 +929,10 @@ library_import_breach_sentence :: proc(breach: Library_Import_Breach) -> string 
 // the file and the line, as it stopped when the compiler refused the
 // import.
 library_imports_hold :: proc() -> (reading: Library_Import_Reading, hold: bool) {
+	if problem := library_module_table_problem(foundation.module_builds[:]); problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
+		return {}, false
+	}
 	found, read_ok := library_import_breaches_of_tree("")
 	if !read_ok {
 		return {}, false

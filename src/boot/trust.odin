@@ -65,11 +65,14 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 	if !signature_verifies(trust.public_key[:], message[:], signature) {
 		trust_fail(boot, .Boot_Image, "the signature of the system description is wrong")
 	}
-	if kernel_result := system_description.kernel_check(description, kernel_file); kernel_result.fault != .None {
-		check_fail(boot, .Kernel_Module, &kernel_result)
-	}
+	// The files of the boot image before the kernel, in the order of the
+	// steps of the boot display: a failure of the kernel then shows the
+	// boot image as done, which it is.
 	if image_result := system_description.image_check(description, image); image_result.fault != .None {
 		check_fail(boot, .Boot_Image, &image_result)
+	}
+	if kernel_result := system_description.kernel_check(description, kernel_file); kernel_result.fault != .None {
+		check_fail(boot, .Kernel_Module, &kernel_result)
 	}
 	trust.verifier = secure_boot_on() ? info.Verifier.Firmware_And_Boot_Program : info.Verifier.Boot_Program
 	trust.description_hash = blake3.hash(description)

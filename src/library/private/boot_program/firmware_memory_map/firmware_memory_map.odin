@@ -7,7 +7,7 @@
 // ```odin
 // pages, problem := firmware_memory_map.buffer_pages(needed_bytes, descriptor_size)
 // list, fits := firmware_memory_map.list_begin(ranges[:], usable_count)
-// kept := firmware_memory_map.list_add(&list, start, page_count, kind)
+// status := firmware_memory_map.list_add(&list, start, page_count, kind)
 // ```
 package firmware_memory_map
 
@@ -17,6 +17,14 @@ import info "modus:contract/boot_info"
 // state a larger step between two descriptors, never a smaller one: a
 // smaller step would read one descriptor over the next.
 DESCRIPTOR_SIZE_MINIMUM :: 40
+// The largest step between two descriptors that the boot program walks:
+// one page, 100 times the descriptor of the specification. A step past it
+// is no descriptor that a firmware gives, and a step near the largest u64
+// would carry an offset past the end of the buffer and back before it.
+DESCRIPTOR_SIZE_MAXIMUM :: 4096
+// The first address past the physical addresses of the processor (52
+// bits): a usable range ends at or below it, so no end of a range wraps.
+ADDRESS_LIMIT :: u64(1) << 52
 // The descriptors of room past the size that the firmware asks. The
 // allocation of the buffer itself splits a free range in two or three, and
 // the free of an older buffer can split another: 8 covers both with room.
@@ -66,6 +74,7 @@ Size_Problem :: enum {
 	None,
 	Map_Empty, // The firmware asks a buffer of 0 bytes: a map holds one range at least.
 	Descriptor_Too_Small, // The step between two descriptors is below DESCRIPTOR_SIZE_MINIMUM.
+	Descriptor_Too_Large, // The step between two descriptors is past DESCRIPTOR_SIZE_MAXIMUM.
 	Too_Large, // The buffer would pass BUFFER_PAGE_LIMIT.
 }
 
@@ -86,9 +95,12 @@ buffer_pages :: proc "contextless" (needed_bytes: u64, descriptor_size: u64) -> 
 	if step < DESCRIPTOR_SIZE_MINIMUM {
 		return 0, .Descriptor_Too_Small
 	}
+	if step > DESCRIPTOR_SIZE_MAXIMUM {
+		return 0, .Descriptor_Too_Large
+	}
 	limit := u64(BUFFER_PAGE_LIMIT) * info.PAGE_SIZE
 	// Each term is bounded before the sum: no sum wraps.
-	if needed_bytes > limit || step > limit / MARGIN_DESCRIPTORS {
+	if needed_bytes > limit {
 		return 0, .Too_Large
 	}
 	whole := needed_bytes + step * MARGIN_DESCRIPTORS
@@ -99,9 +111,28 @@ buffer_pages :: proc "contextless" (needed_bytes: u64, descriptor_size: u64) -> 
 }
 
 // descriptor_size_valid says if the step that the firmware gave with a map
-// can be walked: at least one descriptor of the specification.
-descriptor_size_valid :: proc "contextless" (descriptor_size: u64) -> bool {
-	return descriptor_size >= DESCRIPTOR_SIZE_MINIMUM
+// of map_bytes can be walked: at least one descriptor of the
+// specification, at most DESCRIPTOR_SIZE_MAXIMUM, and at most the map, so
+// the map holds one descriptor at least.
+descriptor_size_valid :: proc "contextless" (descriptor_size: u64, map_bytes: u64) -> bool {
+	return descriptor_size >= DESCRIPTOR_SIZE_MINIMUM && descriptor_size <= DESCRIPTOR_SIZE_MAXIMUM && descriptor_size <= map_bytes
+}
+
+// map_size_valid says if the size that the firmware gives with a read that
+// succeeded fits the buffer of buffer_bytes that the boot program gave: a
+// larger size would make the walk read past the buffer.
+map_size_valid :: proc "contextless" (map_bytes: u64, buffer_bytes: u64) -> bool {
+	return map_bytes <= buffer_bytes
+}
+
+// descriptor_count gives the descriptors that the boot program walks in a
+// map of map_bytes, by index: a walk by offset could wrap. The step is one
+// that descriptor_size_valid took; a step of 0 gives no descriptor.
+descriptor_count :: proc "contextless" (map_bytes: u64, descriptor_size: u64) -> u64 {
+	if descriptor_size == 0 {
+		return 0
+	}
+	return map_bytes / descriptor_size
 }
 
 // The list of the ranges that the kernel receives, while the boot program
@@ -132,15 +163,31 @@ list_begin :: proc "contextless" (ranges: []info.Memory_Range, usable_count: int
 	return {ranges = ranges, reserved_room = len(ranges) - usable_count}, true
 }
 
+// What list_add did with one range. Each status but Added stops the boot
+// program: the list would not be the map.
+Add_Status :: enum {
+	Added, // Kept, joined to the last range, left out with no page, or a Reserved range dropped and counted.
+	No_Room, // A usable range found no room: the count given to list_begin was below the usable ranges of the map.
+	Not_On_Page, // A usable range starts inside a page.
+	Past_Address_Limit, // A usable range ends past ADDRESS_LIMIT: its end would be no physical address, or wrap.
+}
+
 // list_add adds one range of the map, in the order of the map. A range
 // that follows the last kept one, with the same kind, joins it. A range of
 // no page holds no memory: it is left out and not counted. A Reserved range
-// past its room is dropped and counted. kept is false for a usable range
-// that finds no room: the count given to list_begin was below the usable
-// ranges of the map, and the list is not the map.
-list_add :: proc "contextless" (list: ^Range_List, start: u64, page_count: u64, kind: info.Memory_Kind) -> (kept: bool) {
+// past its room is dropped and counted. A usable range is checked before
+// it is kept: the kernel computes its end, and gives its pages.
+list_add :: proc "contextless" (list: ^Range_List, start: u64, page_count: u64, kind: info.Memory_Kind) -> Add_Status {
 	if page_count == 0 {
-		return true
+		return .Added
+	}
+	if kind != .Reserved {
+		if start % info.PAGE_SIZE != 0 {
+			return .Not_On_Page
+		}
+		if start > ADDRESS_LIMIT || page_count > (ADDRESS_LIMIT - start) / info.PAGE_SIZE {
+			return .Past_Address_Limit
+		}
 	}
 	if list.count > 0 {
 		last := &list.ranges[list.count - 1]
@@ -149,7 +196,7 @@ list_add :: proc "contextless" (list: ^Range_List, start: u64, page_count: u64, 
 		last_end_fits := last.page_count <= (max(u64) - last.start) / info.PAGE_SIZE
 		if last_end_fits && last.kind == kind && last.start + last.page_count * info.PAGE_SIZE == start && page_count <= (max(u64) - last.start) / info.PAGE_SIZE - last.page_count {
 			last.page_count += page_count
-			return true
+			return .Added
 		}
 	}
 	switch kind {
@@ -157,15 +204,15 @@ list_add :: proc "contextless" (list: ^Range_List, start: u64, page_count: u64, 
 		if list.reserved_room == 0 || list.count == len(list.ranges) {
 			list.dropped_count += 1
 			list.dropped_pages = page_count > max(u64) - list.dropped_pages ? max(u64) : list.dropped_pages + page_count
-			return true
+			return .Added
 		}
 		list.reserved_room -= 1
 	case .Free, .Boot:
 		if list.count == len(list.ranges) {
-			return false
+			return .No_Room
 		}
 	}
 	list.ranges[list.count] = {start = start, page_count = page_count, kind = kind}
 	list.count += 1
-	return true
+	return .Added
 }

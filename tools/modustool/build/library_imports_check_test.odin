@@ -480,17 +480,22 @@ library_private_part_of_the_boot_program :: proc(t: ^testing.T) {
 	import_line :: "import \"" + foundation.PRIVATE_IMPORT_START + PRIVATE_PART_OF_THE_BOOT_PROGRAM + "/memory_map\"\n"
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	for folder in ([]string{part, unused, foundation.SOURCE_FOLDER_BOOT, foundation.SYSTEM_MODULE_SOURCES + "console"}) {
+	for folder in ([]string{part, unused, foundation.SOURCE_FOLDER_BOOT, foundation.SYSTEM_MODULE_SOURCES + "console", foundation.SOURCE_FOLDER_KERNEL}) {
 		library_tree_folder_make(root, folder)
 	}
 	library_tree_file_write(root, part + "/memory_map.odin", "package memory_map\n")
 	library_tree_file_write(root, unused + "/unused.odin", "package unused\n")
 	library_tree_file_write(root, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\n" + import_line)
 	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\n" + import_line)
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/memory.odin", "package kernel\n\n" + import_line)
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	module_breach, module_found := breach_of_file(reading.breaches[:], foundation.SYSTEM_MODULE_SOURCES + "console/main.odin")
 	testing.expectf(t, module_found && module_breach.reason == .Private_Part_Of_Another_Module, "a module that imports a part of the boot program is not refused: %v", reading.breaches[:])
+	// The kernel, which the boot program loads, is another body of code:
+	// whichever rule refuses it first, its import is refused.
+	kernel_breach, kernel_found := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_KERNEL + "/memory.odin")
+	testing.expectf(t, kernel_found && (kernel_breach.reason == .Private_Part_Of_Another_Module || kernel_breach.reason == .Refused_Import), "the kernel that imports a part of the boot program is not refused: %v", reading.breaches[:])
 	_, boot_refused := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_BOOT + "/main.odin")
 	testing.expect(t, !boot_refused, "the boot program is refused its own private part")
 	owners := library_owner_breaches(reading)
@@ -512,6 +517,23 @@ library_private_part_of_the_boot_program :: proc(t: ^testing.T) {
 	// the part of the boot program matters here.
 	_, part_refused := breach_of_file(library_owner_breaches(accepted), part)
 	testing.expect(t, !part_refused, "the part that the boot program reaches is refused")
+}
+
+// A row of the table of the modules named as the private parts of the boot
+// program is refused, alone or after other rows, and a kernel row of that
+// name too. The table of the repository has none.
+@(test)
+library_module_named_as_the_boot_program_is_refused :: proc(t: ^testing.T) {
+	named := foundation.Module_Build{name = PRIVATE_PART_OF_THE_BOOT_PROGRAM, source = foundation.SYSTEM_MODULE_SOURCES + PRIVATE_PART_OF_THE_BOOT_PROGRAM}
+	other := foundation.Module_Build{name = "console", source = foundation.SYSTEM_MODULE_SOURCES + "console"}
+	testing.expect(t, library_module_table_problem([]foundation.Module_Build{named}) != "", "a row named boot_program is taken")
+	testing.expect(t, library_module_table_problem([]foundation.Module_Build{other, named}) != "", "a row named boot_program after another row is taken")
+	kernel_row := named
+	kernel_row.kernel = true
+	testing.expect(t, library_module_table_problem([]foundation.Module_Build{kernel_row}) != "", "a kernel row named boot_program is taken")
+	testing.expect_value(t, library_module_table_problem([]foundation.Module_Build{other}), "")
+	testing.expect_value(t, library_module_table_problem(nil), "")
+	testing.expect_value(t, library_module_table_problem(foundation.module_builds[:]), "")
 }
 
 // A source of a kernel part keeps no state and reaches no machine. Each
