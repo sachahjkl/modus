@@ -53,7 +53,7 @@ scenario_start_policy_key := [?]Step {
 	{kind = .Wait, text = "root: the key R was held at the start: the rescue start policy starts in place of the start policy "},
 	{kind = .Wait, text = "start_policy: the start list has 4 rows: each starts in its order"},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "start_policy: each needed row runs: the machine is usable"},
+	{kind = .Wait, text = "start_policy: each needed row runs: the machine is usable", any_order = true},
 	// The root service writes its line when it takes Machine_Usable, before or
 	// after the line of the start policy: two processes, no fixed order.
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
