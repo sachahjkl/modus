@@ -118,3 +118,34 @@ the_identifiers_stop_at_their_capacity :: proc(t: ^testing.T) {
 	testing.expect_value(t, processors_read(builder.bytes[:builder.length], false, identifiers[:]), 3)
 	testing.expect_value(t, identifiers, [3]u32{0, 1, 2})
 }
+
+// The absence of a table comes first, then its length, then its count;
+// one listed processor is a machine of one processor, not an absence.
+@(test)
+the_absence_of_the_processors_of_a_table :: proc(t: ^testing.T) {
+	builder: Table_Builder
+	builder_start(&builder)
+	testing.expect_value(t, table_absence(false, nil, 0), Table_Absence.Absent)
+	// A table that the kernel did not find, whatever its bytes and count.
+	testing.expect_value(t, table_absence(false, builder.bytes[:builder.length], 3), Table_Absence.Absent)
+	for length in ([?]int{0, 1, ENTRIES_START - 1}) {
+		testing.expect_value(t, table_absence(true, builder.bytes[:length], 0), Table_Absence.Too_Short)
+		testing.expect_value(t, table_absence(true, builder.bytes[:length], 1), Table_Absence.Too_Short)
+	}
+	// A table of its header only, and a table whose one entry cannot run.
+	testing.expect_value(t, table_absence(true, builder.bytes[:ENTRIES_START], processors_read(builder.bytes[:ENTRIES_START], false, nil)), Table_Absence.No_Usable_Processor)
+	local_add(&builder, 1, 0)
+	identifiers: [4]u32
+	count := processors_read(builder.bytes[:builder.length], false, identifiers[:])
+	testing.expect_value(t, table_absence(true, builder.bytes[:builder.length], count), Table_Absence.No_Usable_Processor)
+	testing.expect_value(t, table_absence(true, builder.bytes[:builder.length], -1), Table_Absence.No_Usable_Processor)
+	// Each absence has a text for the line of the kernel; None alone has none.
+	for absence in Table_Absence {
+		testing.expectf(t, (TABLE_ABSENCE_TEXTS[absence] == "") == (absence == .None), "the text of %v", absence)
+	}
+	local_add(&builder, 2, FLAG_ENABLED)
+	count = processors_read(builder.bytes[:builder.length], false, identifiers[:])
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, table_absence(true, builder.bytes[:builder.length], count), Table_Absence.None)
+	testing.expect_value(t, table_absence(true, builder.bytes[:builder.length], max(int)), Table_Absence.None)
+}

@@ -61,14 +61,18 @@ Processor_Model :: enum {
 	Without_Random, // No rdrand and no rdseed: the fallback of the seed of the root service (`test random`).
 	Without_Avx, // No AVX: the kernel saves x87 and SSE with xsaveopt (`test extended_state`).
 	Without_Xsave, // No xsave: the kernel saves with fxsave (`test extended_state`).
+	// No leaf 0x15 of CPUID and none above: the processor states no
+	// frequency of its cycle counter, on every host (`test no_pit`).
+	Without_Frequency_Leaves,
 }
 
 @(rodata)
 processor_models := [Processor_Model]string {
-	.Maximum        = "max",
-	.Without_Random = "max,-rdrand,-rdseed",
-	.Without_Avx    = "max,-avx",
-	.Without_Xsave  = "max,-xsave",
+	.Maximum                  = "max",
+	.Without_Random           = "max,-rdrand,-rdseed",
+	.Without_Avx              = "max,-avx",
+	.Without_Xsave            = "max,-xsave",
+	.Without_Frequency_Leaves = "max,level=0x14",
 }
 
 // machine_command gives the one QEMU command line of the project: the first
@@ -125,7 +129,9 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // machine, which the tool reads and writes (operation_sequences.odin); such
 // a machine has one processor, so that a sequence gives the same answers at
 // each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "") -> (command: []string, ok: bool) {
+// without_pit leaves the 8254 out of the machine (`pit=off`): the start of
+// the kernel with no time base (src/md/features/missing_hardware.md).
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_pit := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -190,7 +196,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the processor: its variables are written only there. QEMU refuses
 		// interrupt remapping when KVM holds the whole interrupt controller:
 		// the machine with the IOMMU splits it. QEMU accepts both together.
-		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : ""}, context.temp_allocator),
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : "", memory_file != "" ? ",memory-backend=machine_memory" : "", without_pit ? ",pit=off" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",

@@ -125,6 +125,7 @@ test_parts := [?]Test_Part {
 		procedures = {"guest_tests_run"},
 		volumes = {build.BOOT_VOLUME},
 	},
+	{name = "no_pit", does = "The machine with no time base: no 8254 (`-machine q35,pit=off`) and a processor whose CPUID states no frequency of its cycle counter; the kernel writes its line and stops with the code 1", run = no_pit_tests_run, procedures = {"no_pit_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "fails", does = "The machine of a start that fails: a boot image with no compositor", run = fails_tests_run, procedures = {"fails_tests_run"}, volumes = {build.BOOT_VOLUME_FAILS}},
 	{name = "shortage", does = "The machine of the shortage of frames", run = shortage_tests_run, procedures = {"shortage_tests_run"}, volumes = {build.BOOT_VOLUME_SHORTAGE}},
 	{name = "operation_sequences", does = "The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence (\"The operation sequences\")", run = operation_sequences_tests_run, procedures = {"operation_sequences_tests_run"}, volumes = {build.BOOT_VOLUME_OPERATION_SEQUENCES}},
