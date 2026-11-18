@@ -291,6 +291,8 @@ Unit :: enum i64 {
 	Stop_Reports = 50, // Absent: the stop reports of disk programs that the root service keeps; no disk program of the principal of the caller with this nickname stopped on a fault, or newer reports took its place (src/md/features/debug_object_of_a_disk_program.md).
 	Versions_Erase = 51, // No_Grant: the erase of the versions of an object (the start grant Versions_Erase, docs/STORAGE.md, "4.8 The erase of versions").
 	Dropped_Writes = 52, // Device: the blocks of a commit that the disk answered with Ok and did not keep; found: their count. The storage service refused the commit (docs/STORAGE.md, "3.3 The commit and the open").
+	Nanoseconds = 53, // A time of the system clock, or a span of it, in nanoseconds: the time of a record of a timed stream (src/library/contract/timed_stream).
+	Frames      = 54, // Frames of a timed stream: one sample of each channel (src/library/contract/timed_stream).
 }
 
 // How a handle ended (Handle_Ended).
@@ -388,6 +390,8 @@ UNIT_NAMES := [Unit]string {
 	.Stop_Reports = "stop reports of disk programs that the root service keeps",
 	.Versions_Erase = "the erase of the versions of an object",
 	.Dropped_Writes = "blocks that the disk did not keep",
+	.Nanoseconds = "nanoseconds",
+	.Frames      = "frames",
 }
 
 // A ring completion (src/library/contract/ring) has the status of the contract of its

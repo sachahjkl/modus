@@ -957,7 +957,9 @@ a_kept_fault_outlives_the_temporary_memory :: proc(t: ^testing.T) {
 // same random state builds the same sequence.
 @(test)
 the_generator_of_the_run_is_a_function_of_its_seed :: proc(t: ^testing.T) {
-	testing.expect(t, fuzz_operation_sequence_start())
+	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+		return
+	}
 	first_sequence := new(operation_sequence.Sequence)
 	defer free(first_sequence)
 	second_sequence := new(operation_sequence.Sequence)

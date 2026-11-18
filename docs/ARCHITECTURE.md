@@ -61,6 +61,7 @@ flowchart TB
     net["Frame: the network device"]
     input["Input"]
     entropy["Entropy"]
+    sound["Sound"]
     tpm["TPM"]
   end
 
@@ -98,7 +99,7 @@ The same picture in text:
  Services          compositor (display, desktop)  storage  network  root
                         |         |           |
                   ======|=========|===========|======  rings in shared memory
- Device services     block    frame (network device)   input   entropy   TPM
+ Device services     block    frame (network device)   input   entropy   sound   TPM
                         |         |           |
                   ======|=========|===========|======  device queues, mapped once
  Machine             virtio queues, framebuffer, timers
@@ -276,9 +277,10 @@ A device service is the driver of one device class, as a normal program with the
 | Display | `compositor` | The framebuffer of the firmware: the compositor owns it directly. On the standard VGA of the test machine, the two screen pages of its video memory and its display registers: each frame goes into the page that the display does not show, then a page flip shows it (`src/md/infrastructure/whole_frame.md`) |
 | Real-time clock | `date` | Two ports of the clock, and the date page ("The date", below) |
 | Entropy device | `entropy` | The virtio entropy device, through the entropy ring, to the root service, which mixes its bytes into its random generator (`RANDOMNESS.md`, "3. The seed of the system, and what is claimed") |
+| Sound | `sound` | The virtio sound device, through the stream ring of a timed stream, to the one program with the grant `Sound_Device`: each record plays at the time that it names (`SOUND.md`) |
 | TPM | `tpm` | The registers of the CRB interface of the TPM, after the start: Seal and Unseal of the machine key through the TPM ring, to `unlock` (`PRINCIPALS.md`, "The machine key sealed by the TPM"). Before the kernel starts, the boot program asks the firmware for the measure (`TRUSTED_BOOT.md`, "6. The measure") |
 
-- **The bus.** Only the root service holds the ports of the configuration, 0xCF8 to 0xCFF, as a ports handle that it makes with `Device_Create`. It reads the configuration at the fixed place of each device, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. On the test machine the places are fixed: the data disk at device 16 (`pci.DATA_DISK_DEVICE`), the disk of the measures at 17, the network device at 18, the entropy device at 19. With no device of the right kind at a place, the root service writes one line, such as "root: no virtio device for block at the place 16 of the bus", and starts no service.
+- **The bus.** Only the root service holds the ports of the configuration, 0xCF8 to 0xCFF, as a ports handle that it makes with `Device_Create`. It reads the configuration at the fixed place of each device, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. On the test machine the places are fixed: the data disk at device 16 (`pci.DATA_DISK_DEVICE`), the disk of the measures at 17, the network device at 18, the entropy device at 19, the sound device at 20. With no device of the right kind at a place, the root service writes one line, such as "root: no virtio device for block at the place 16 of the bus", and starts no service.
 - **What a device service receives.** A copy of the first 256 bytes of the configuration, read-only (`GRANT_CONFIGURATION` of `src/library/support/pci`); the device memory of its registers, one object for each base address register (`Device_Create` of the kind `Memory`, with a physical address that is a multiple of 4096 and a count of pages; the roles `GRANT_BAR + n`); one message interrupt; memory for its queues; and the machine handle with the right **Physical** only. The root service starts one block service for each disk that a program needs, with exactly one device.
 - **Virtio.** The system uses virtio 1 over PCI, the modern interface, with no older interface (`disable-legacy=on` in the command of QEMU). A start asks the device for a reset and reads its status until it is 0, at most `RESET_READ_LIMIT` times (`src/library/support/virtio`); a device that does not finish its reset makes its service write "the device did not finish its reset" and stop.
 - **The first lines.** Each device service writes one line when its device is ready. The block service, on the disk of the measures: "block: ok, 8192 blocks of 4096 bytes, a queue of ...", then the size of the queue of the device, the most requests in flight, and whether the disk has a cache that `Flush` empties. The frame service: "frame: ok, the hardware address 52:54:00:12:34:56, the link is up, ...", then the sizes of its two queues and the count of places for the frames that arrive. The test machine has one virtio network device, with the hardware address 52:54:00:12:34:56.

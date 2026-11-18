@@ -164,7 +164,7 @@ Do not use: PCI tree.
 
 A class protocol is the ring and the records that every device service of one device class serves, whatever the vendor of its device.
 
-A class protocol hides the vendor: the storage service reads the block ring the same way for a virtio disk and for an NVMe disk. The device service translates between the registers of its device and the class protocol. The block ring, the frame ring and the input records are class protocols; the display, sound and the handle of one USB device have none yet. A class protocol is not a queue of a device: only the device service sees those.
+A class protocol hides the vendor: the storage service reads the block ring the same way for a virtio disk and for an NVMe disk. The device service translates between the registers of its device and the class protocol. The block ring, the frame ring, the input records and the timed stream are class protocols; the display and the handle of one USB device have none yet. A class protocol is not a queue of a device: only the device service sees those.
 
 The design: `src/md/features/device_services.md`.
 
@@ -174,9 +174,9 @@ Do not use: device interface, HAL, ioctl.
 
 A timed stream is a class protocol whose records carry the time at which their content must reach the device: the samples of sound, later the frames of a video.
 
-A ring of the block or the frame class says what to do; a timed stream also says when. Sound through virtio-snd is its first user, and it comes early because it forces this design. Its records and the rule of a late record are not designed yet.
+A ring of the block or the frame class says what to do; a timed stream also says when. Each record names the time of its first frame by the system clock, its format, its count and the place of its samples. A record whose time is past is refused whole, with the earliest time that it could take. Sound through virtio-snd is its first user, served by the sound service of the group Sound.
 
-The design: `src/md/features/desktop_to_browser.md`.
+The design: `src/md/features/timed_stream.md`.
 
 Do not use: audio stream, media pipe.
 

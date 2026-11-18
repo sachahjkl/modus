@@ -130,6 +130,16 @@ The design: `src/md/features/window_resize.md`.
 
 Do not use: live resize, size hint, stretchable window.
 
+### Clipboard
+
+The clipboard is the one slot of the compositor that holds the last text that the principal copied, until a program reads it at a paste of the principal.
+
+Control+C asks the window in front for its text; the program gives a memory object of its own with Read, so its budget pays. Control+V lends the window in front a handle with Read to it, revoked after the paste or at the next key of the clipboard. The compositor takes both keys, so no program reads the clipboard by itself, writes it by itself, or sends the keys. The content ends with the program that copied. The clipboard is not a named object that a program opens.
+
+The design: `src/md/features/clipboard.md`.
+
+Do not use: pasteboard, selection buffer, primary selection.
+
 ### Bar
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
@@ -706,7 +716,7 @@ Do not use: file dialog, powerbox.
 
 A quality profile is one of the two sets of thresholds of the standard of quality of the desktop: the GPU profile and the processor profile.
 
-The GPU profile is 120 Hz at 1920 × 1080: a frame in less than 8.3 ms, a key to the screen in less than 20 ms, a window shown less than 100 ms after its start. The processor profile, for a machine with no GPU, has a lower resolution or 60 Hz and fewer effects, with thresholds from a measure. The system chooses its profile at its start and writes it on the log. A threshold is a measure that the tool follows, never a test.
+The GPU profile is 120 Hz at 1920 × 1080: a frame in less than 8.3 ms, a key to the screen in less than 20 ms, a window shown less than 100 ms after its start. The processor profile, for a machine with no GPU, can lower the resolution, the rate or the effects, with thresholds from a measure: today 1920 × 1080 at 120 Hz with no blur. The system chooses its profile at its start and writes it on the log. A threshold is a measure that the tool follows, never a test.
 
 The design: `src/md/features/desktop_to_browser.md`.
 

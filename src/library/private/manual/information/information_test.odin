@@ -5,6 +5,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:support/system"
 import "core:math/rand"
 import "core:testing"
 
@@ -358,4 +359,42 @@ random_damage :: proc(t: ^testing.T) {
 		problems += int(check(damaged).kind != .None)
 	}
 	testing.expect(t, problems > 1000, "the damage must break rules often")
+}
+
+// A column into a buffer that cannot hold it ends: a buffer of no byte, a
+// buffer shorter than the text, and a buffer that holds the text and not
+// its spaces. Each gives what fits and counts the rest as dropped. The
+// overview of the program `manual` looped for ever here when its built
+// lines were full. Then a column that fits, last.
+@(test)
+a_column_into_a_full_buffer_ends :: proc(t: ^testing.T) {
+	sizes := [?]int{0, 2, 5}
+	for size in sizes {
+		buffer: [8]u8
+		writer := system.Writer {
+			buffer = buffer[:size],
+		}
+		padded_write(&writer, "name", 6)
+		testing.expectf(t, writer.count == size, "a buffer of %d bytes holds %d", size, writer.count)
+		testing.expectf(t, writer.dropped > 0, "a buffer of %d bytes drops no byte", size)
+	}
+	// A width past the largest count of a buffer ends too.
+	buffer: [8]u8
+	writer := system.Writer {
+		buffer = buffer[:],
+	}
+	padded_write(&writer, "name", max(int) - 1)
+	testing.expect_value(t, writer.count, len(buffer))
+
+	room: [16]u8
+	fits := system.Writer {
+		buffer = room[:],
+	}
+	padded_write(&fits, "name", 6)
+	testing.expect_value(t, string(system.written(&fits)), "name   ")
+	narrow := system.Writer {
+		buffer = room[:],
+	}
+	padded_write(&narrow, "a longer name", 0)
+	testing.expect_value(t, string(system.written(&narrow)), "a longer name")
 }

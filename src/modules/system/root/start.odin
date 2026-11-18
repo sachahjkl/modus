@@ -133,6 +133,18 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		work.driver, work.device_ring, status = driver_start(place, name == "iommu" ? DRIVER_IOMMU_DEVICE : DRIVER_BLOCK)
 	} else if .Network_Device in grants {
 		work.driver, work.device_ring, status = driver_start(pci.Place{device = pci.NETWORK_DEVICE}, DRIVER_FRAME)
+	} else if .Sound_Device in grants {
+		// One program plays at a time: a second one finds the sound service
+		// of the device started, and does not start (src/md/features/timed_stream.md,
+		// "One program at a time").
+		place := pci.Place{device = pci.SOUND_DEVICE}
+		for &item in started {
+			if item.program != 0 && item.is_driver && item.device == place {
+				system.log_in("devices", .Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another program; one program plays at a time")
+				return .Bad_State
+			}
+		}
+		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
 	return status
 }
@@ -446,8 +458,21 @@ start_program_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	load_error: module.Load_Error
 	program_budget := budget_of(work.file, name)
 	status: system.Status
+	// The start of the measure of the start of a window: the load of the
+	// module, its hash and Program_Start are in it
+	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
+	started_at := system.nanoseconds()
 	work.slot.program, status = system.program_start(work.file, name, work.grants.grants, random.values_with_seed(&program_generator, work.values.values), program_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
 	if status == .Ok {
+		// A program with a window of its own: the compositor ties the time
+		// to the ring of the window that Client_Add gave.
+		if .Terminal not_in work.role.grants && work.slot.client != 0 {
+			if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}}) {
+				// A measure, not a part of the start: the window runs, and
+				// has no line of its start.
+				system.log_in("programs", .Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
+			}
+		}
 		return .Ok
 	}
 	// A budget of no page: the start failed before program_start.

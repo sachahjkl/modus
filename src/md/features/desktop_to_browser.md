@@ -18,12 +18,105 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 | Profile | When | The screen | The three measures |
 |---|---|---|---|
 | GPU profile | A GPU that the system drives | 1920 × 1080 at 120 Hz | A frame in less than 8.3 ms; a key to the screen in less than 20 ms; a window shown less than 100 ms after its start |
-| Processor profile | No GPU | A lower resolution or 60 Hz, and fewer effects | The same three measures, with thresholds that a measure gives |
+| Processor profile | No GPU | 1920 × 1080 at 120 Hz, with no blur (the thresholds below) | The same three measures, with the thresholds below |
 
 - **The measures are measures, never tests.** The tool records them in the measure record of each release and follows them over the releases ([measure_history.md](measure_history.md)). A test never fails on a time (`AGENTS.md`, "Work"). A change that makes a measure worse is a regression that a developer reads to its cause.
 - **The processor profile is accepted with no shame.** The test machine has no GPU, and a machine with no GPU still gets a desktop that answers at once.
 - **Its thresholds come from numbers.** The first measure is a frame of the desktop at 1920 × 1080 drawn on the processor, before any GPU work. Its number gives the resolution, the rate and the effects of the processor profile.
-- **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads to the flip; the time from the interrupt of a key to the flip that shows it; the time from `Program_Start` to the first frame of the window.
+- **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads in the turn that draws it to the flip; the time from the read of a key by the input service to the flip that shows it; the time from `Program_Start` to the first frame of the window.
+
+### The thresholds of the processor profile
+
+| Threshold | Value |
+|---|---|
+| The resolution | 1920 × 1080, the reference screen: the profile lowers nothing |
+| The rate | 120 Hz, as the GPU profile |
+| The time of a frame | Less than 8.3 ms, as the GPU profile; the first measure gives 2.0 ms for the heaviest part |
+| The effects that the profile keeps | Alpha and sharp shadows; a blur waits for its own measure |
+
+Each value comes from the first measure below, on the test machine (one processor of the host under KVM, a host load of about 19): a clear and a present, median 268.8 us; a full frame of the compositor with 4 windows, median 953.9 us; a frame in its damage, median 86.2 us; a draw table of 339 records that fills the screen, with alpha, median 2043.0 us (`processor_frame: measure:` lines of the measure record). The heaviest part takes a quarter of the 8.3 ms of a frame at 120 Hz, so the processor profile keeps the resolution and the rate of the GPU profile. The two profiles then differ in the effects only: a blur costs a pass over each pixel under it, which no measure gives yet, so it stays out of the processor profile until a measure says it fits. A change that brings a part past 8.3 ms is a regression to read to its cause, and the table changes only from a new measure.
+
+### The three measures on the path of the system
+
+The compositor measures all three, with `system.nanoseconds()`, the clock of the system that the kernel keeps for each program: never a clock of the host. Each measure is one sentence of the log, and the tool keeps it in the measure record; no test reads a time.
+
+| Measure | From | To | Its line |
+|---|---|---|---|
+| The time of a frame | The read of the first record (of the root service, of the input service or of a window) in the turn that draws the frame; the start of the draw when that turn read none | The end of the copy into the screen page and of its page flip | Each 4096 frames, about once a minute, so that the measure does not fill the log of the system; and with each line of the keys; over the last 64 frames |
+| The time of a key to the screen | The read of the byte of the key by the input service, which writes the time in its record (not the interrupt: the input service reads the byte just after it) | The flip of the frame that draws the Present that names the key | Each 16 keys that a window named |
+| The start of a window | The call of `system.program_start` by the root service, which loads the module and makes `Program_Start` | The flip of the first frame that draws the first Present of the window | One line for each window, when both times are known |
+
+**The time of a frame holds no pacing.** The compositor draws at most one frame each 16 ms. A record that comes during that wait is read in a turn that draws nothing; the frame starts in the turn that draws, so its time is the cost of the frame, and it compares with the 8.3 ms of a frame at 120 Hz. The wait is the rate of the compositor, which the reference screen at 120 Hz changes.
+
+```
+compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least <t> us, median <t> us, over <n> frames
+compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least <t> us, median <t> us, over <n> keys
+compositor: measure: the start of the window <name>, from Program_Start to its first frame: <t> us
+```
+
+**The tie of a key to its effect.** A frame shows a key only when the program says so. The path:
+
+1. The input service writes the time of the system in the record of the key.
+2. The compositor gives each key with a character a serial, sends it in the event `Key`, and keeps the serial, the window and the time in a table of 32 keys.
+3. The console marks the serial of each key that it puts in its edit line, and gives the newest one with the record `Edit` to its terminal.
+4. The terminal gives the serial of the edit line that its picture shows to the window layer (`display.key_shown`). Its next `Present` names it.
+5. The compositor ties each key of that window up to that serial, and measures each one at the flip of the frame that draws that Present.
+
+So the key is measured to the frame that shows its character, not to a frame that only came after it. A key that does not change the edit line stays sent, and the next edit of the line ties it late; its time is then too long, never too short. The cases:
+
+- a key that the terminal drops because the queue of its program is full, or that the console drops while a line runs and its keys that wait are full;
+- a key that the completion list takes, which moves the list and not the line: Tab, Enter or Escape while a list is open (`completion_key` in `src/modules/system/console/completion.odin`); the arrows and Control+R or Control+S have no measure, because the compositor gives a serial only to a key with a character and no Control;
+- a character of the history search, which changes the search and not the line.
+
+A window that names no serial ties none. A Present that names a serial past the newest key that its window got is refused and counted, as an `Edit` record whose serial is past the newest key that the terminal forwarded: a program cannot name the key of another window, nor hold the measure with the largest serial. When the table is full, a new key takes the place of the oldest key that is not shown, and of the oldest shown key only when all are shown; each such key is a lost measure, and counted. The counts of the lost keys and of the refused serials come in one line after a line of the keys, when they changed: the table holds measures, not records of input.
+
+**The start of a window.** The root service writes the time before it calls `system.program_start`, and sends it to the compositor after the start, in the control record `Client_Started`, for the ring of the window. The time holds the load of the module, its hash and `Program_Start`, as the principal waits for them. The two times come from two programs in either order: the compositor keeps the time of the first flip of each window, and writes the line when it has both, whichever comes second. The span is the first flip less the start. A record that names no window (the handle 0, a handle of no window, a window that ended), a time of 0 or after now, and a second record are refused. When the control ring is full, the root service writes one line, and the window has no measure.
+
+**The profile at the start.** The compositor writes one line at its start: `compositor: the quality profile is the processor profile: the system drives no GPU device`. The system drives no GPU today, so the decision is one pure procedure of the private part `quality` of the compositor, which the GPU path changes.
+
+**The checks.** No wait of the measure run depends on the order of two programs or on the place of the 16th key. The line of the profile and the start of `locks` are waited for in any order with the steps after them. The line of the keys, with its line of the frames, is waited for after the 24 characters of `start("processor_frame")`: whatever the count of keys before them, more than 16 keys come after the wait before, so a line comes after it. After the machine, the tool checks the form of the lines only, as for `processor_frame`.
+
+**The refused forms.**
+
+- **The first flip after the key.** A frame of a clock, or of a window that ignores the key, would count as its effect, and the number would be too small.
+- **The time in the event, sent back by the program.** A program would then write the time that the compositor reads. With a serial, the compositor keeps the time.
+- **A line for each frame and each key.** The log would hold thousands of lines in a test; a line for each 16 keys holds the least and the median.
+- **The time of the `Client_Add` record.** It goes before the budget and the mappings are made, so it is not the start that the design names. A new control record says when the start ended.
+- **The profile in the root service.** The compositor owns the screen, and it is the part that a GPU changes first.
+
+### The first measure: a frame at 1920 × 1080 on the processor
+
+**Its purpose.** It gives the numbers from which the thresholds above come: what a frame of the desktop at the reference screen costs on the processor, with no GPU, split into the parts that a later change moves one by one.
+
+**The three parts.** Each part is drawn 21 times, after one frame that is not counted: that frame pays the pages on first use of each canvas.
+
+1. **A clear and a present.** `graphics.clear` of a canvas of 1920 × 1080, then `graphics.copy` of it into a second canvas, as the compositor copies its frame into a screen page. It writes 8.3 MB, then reads and writes 8.3 MB: the bound of the memory bandwidth. No frame of this size on this path costs less.
+2. **A frame of the compositor with four windows**, of 1280 × 800, 960 × 640, 800 × 640 and 640 × 480, in the phases of the compositor ([`docs/SIMD.md`](../../../docs/SIMD.md), "4. The compositor"): the background copied into the frame, one call of the drawing module for each window (the records of its frame and the Picture record of its surface) and one for the bar, then the copy of the frame into a screen page. One line for a full frame. One line for a frame in its damage: a rectangle of 400 × 300 of the surface of the front window and the clock of the bar, the damage of one `Present` and of one second of the bar.
+3. **A draw table that fills the screen** with the records of a desktop: twelve cards, each with a gradient, a title and a caption in the interface font, ten lines of a label in the interface font and a value in the font of the cells, a bar, an opaque picture, a picture with alpha and a rectangle with alpha. One call of the drawing module draws it into a canvas of 1920 × 1080, with the fill of the background. The table is built once: the time is its execution, which a GPU back end of the draw table replaces.
+
+**Where it runs: a program on the machine.** The program `processor_frame` runs in the measure run of `modustool measure`, after the other measures of that run, when no other program draws. It makes its canvases and its surfaces with its own budget, and calls the code that the compositor calls: `graphics.clear`, `graphics.copy` (that is `copy_bytes_without_overlap`), and the drawing module through `interface.draw_part_through_module`. So the number is a number of the code of the system, built as the system is, under its kernel, on the machine of the other measures. The test machine keeps its screen of 1024 × 768: the move of the screen is the entry "The reference screen", and the measure comes before it, to give the thresholds.
+
+**What it does not measure.** The procedures of the frame of the compositor (`screen_build`, `frame_records`, `draw_areas`) are in the compositor module, and no other module imports them. The program builds the records of each window in the form of the compositor (the gradients of the title bar, the borders, the title, the close button) and runs the same phases. It leaves out the pointer, a blend of at most 48 × 48 pixels, the read of the rings, the page flip, and the swap of red and blue of a screen in that order. When the test machine shows 1920 × 1080, the line "compositor: a full frame of 1920x1080 with ..." of the compositor itself is the number of the compositor, and part 2 is read against it.
+
+**How it reports.** One line for each part, with the least of the 21 frames and their median, in microseconds with one decimal, and the frames in one second that the median gives:
+
+```
+processor_frame: measure: a clear and a present of 1920x1080: least <t> us, median <t> us, <n> frames in one second at the median, over 21 frames
+```
+
+The least is the cost when the host did not stop the processor during the frame. The median holds the noise of the host. The chart of the measure history follows the least ([measure_history.md](measure_history.md)). The frames in one second come from the median, because a screen shows each frame and not only the fastest one. The line of the draw table names its count of records of each kind before its times.
+
+**No time is a condition.** The scenario of the measure run waits for each line and for the last line of the program. Then the tool reads the four lines and checks their form only: each part ran once, each number is a number, the least is not above the median, the frames in one second agree with the median, and the count of frames is not 0. The program checks its pixels: after each part a pixel that the part writes has its color, and no call of the drawing module was refused.
+
+**The refused forms.**
+
+- **The measure inside the compositor, at its start**, as its measures of the bar and of a title bar. Three canvases of 1920 × 1080 and the four surfaces are about 8 500 pages. The budget of the compositor would hold them at each start of each machine, for a run that only measures. The compositor already prints its full frame at the size of its screen.
+- **The frame of the compositor in a support package** that the compositor and the program both import. It measures the code of the compositor itself, but it moves the loop of the compositor for one measure. The reference screen gives the number of the compositor itself with no move.
+- **A host benchmark alone.** A host test has another runtime of memory, no kernel, no page on first use and no QEMU: its number is a second number, never the only one. It is not built.
+- **A rate over one second.** A count of 21 frames needs no duration, and runs the same work on a slow host. The frames in one second are computed from the median.
+- **Large pages for the canvases.** The surfaces of today have 4 KiB pages ("Large pages for large buffers" below). The measure takes the pages of today; a measure with both forms is a later step.
+
+**The hazards.** A measure is valid when the load of the host is under 8 ([`docs/SIMD.md`](../../../docs/SIMD.md), "6. How to measure on the machine"). The measure record says the host of the run. A change of the host is not a change of the system.
 
 ## The reference screen
 
@@ -82,8 +175,8 @@ The hot paths of these phases have a vector form after the rules of [`docs/SIMD.
 - **Windows that change size.** The principal drags an edge of a window that its program declared resizable. The compositor sends the event `Resized`; the program makes the surface of the new size, paid by its budget, and draws its next frame into it; the compositor shows the old one until that frame comes. A budget that cannot pay keeps the old size, with one line. A program never draws into a surface that the compositor resized under it. The program makes the surface, and not the compositor, because whoever creates an object pays for it: [window_resize.md](window_resize.md).
 - **A resolution that the principal chooses.** The compositor sets a mode of the display, then a scale factor for the interface, from 1.25 to 2 on the reference screen.
 - **A window manager.** Windows float, with snap to the edges and to the halves of the screen, maximize and minimize, and global shortcuts that the compositor keeps. Workspaces come next. Tiling may come later as an option, never as the form of the desktop. One key combination always goes to the system (property 20, line 8).
-- **The clipboard.** A copy gives the compositor a read-only handle to a memory object of the program that copies. A paste of the principal gives the program that pastes a read-only handle to that object, at that paste only (property 20, line 5). No program reads the clipboard when the principal does not paste.
-- **Sound** through virtio-snd: a device service, and the class protocol of a timed stream, whose records carry the time at which their samples must play.
+- **The clipboard.** A copy gives the compositor a read-only handle to a memory object of the program that copies. A paste of the principal gives the program that pastes a read-only handle to that object, at that paste only (property 20, line 5). No program reads the clipboard when the principal does not paste: [clipboard.md](clipboard.md).
+- **Sound** through virtio-snd: a device service, and the class protocol of a timed stream, whose records carry the time at which their samples must play: [timed_stream.md](timed_stream.md).
 
 ### The look
 
@@ -221,4 +314,8 @@ Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
 ## State
 
-Not built. The draw table, phase C, is the next work of `ROADMAP.md`; the measure of a frame on the processor, arenas, windows that change size, the clipboard and sound come next.
+Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form. Sound through virtio-snd, the first timed stream ([timed_stream.md](timed_stream.md)).
+
+Built: the three measures of the standard of quality on the path of the system (the time of a frame, of a key to the screen through the console, of the start of a window), the line of the quality profile at the start of the compositor, and the check of the form of their lines in the measure run.
+
+Left: the measures of the GPU profile, which wait for the GPU path; a key to the screen in a window other than the console, which must name its serial; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size and the clipboard are built.

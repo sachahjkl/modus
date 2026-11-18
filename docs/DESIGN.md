@@ -272,6 +272,14 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, with a fixed-point step for each channel (no division for each pixel), then copies them to the 24 lines. At its start it measures three forms of a title bar of 1024 pixels, 64 times each, and writes them on the log. On 10 machines of one check: one color takes 1.6 to 2.7 us, a mix for each pixel 65 to 87 us, one row of colors then copies 5.7 to 6.8 us. The gradient costs about 4 us for each window that a frame draws.
 - At 8 bits for each channel, the gradient has 41 levels of red, 80 of green and 126 of blue over the width of a window. The picture shows no band, so there is no dithering.
 
+### The clipboard
+
+- **Control+C** copies the text of the element that has the focus in the window in front, and **Control+V** pastes the last copied text into the element that has the focus in the window in front. The compositor takes the two keys: a program never receives them as keys, and no program can send them.
+- A copy takes the whole text of a text field: a field has no selection yet. A paste goes at the end of the text of a field, whole, or not at all when the field has no room for it. In the console, a paste goes into the line as typed characters, and never runs the line: a pasted text holds no Enter and no other control character.
+- A text on the clipboard is UTF-8 of 1 to 4096 bytes. It stays until the next copy, or until the program that copied it ends.
+- A program reads the clipboard only at a paste of the principal, through a handle that the compositor lends for that paste. The log of the compositor names each copy and each paste, with the two windows.
+- The design: `src/md/features/clipboard.md`.
+
 ### Pointer
 
 - The pointer is a slanted arrow with a large head and a short slim tail, 13 pixels wide and 18 high at the size 24: a fill inside an edge of 1 pixel. Its point is the top left corner; its left side is upright, its right side at 45 degrees to the wing, and its tail leaves the head along the axis of the arrow, 2 down for 1 across, ended square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: a fill inside an edge of 1 pixel at every size, strokes of 1 pixel of fill at 24, the level and upright edges on whole pixels, the slanted sides and the curves smooth. The shapes are outlines that the tool draws at the build (`docs/POINTERS.md`, "4. The manifest").

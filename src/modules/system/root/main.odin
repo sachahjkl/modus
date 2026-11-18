@@ -876,7 +876,7 @@ control_ring_serve :: proc "contextless" () {
 			continue
 		}
 		switch control_word {
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove:
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_in("programs", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which this service sends and does not take")
@@ -1014,8 +1014,8 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 //   principal reads each store of that principal, and writes only its own:
 //   through the registers of the program, a debugger would write the store
 //   of the program;
-// - Data_Disk, Scratch_Disk, Network_Device: a device service that this
-//   service started for the program alone, and its ring;
+// - Data_Disk, Scratch_Disk, Network_Device, Sound_Device: a device service
+//   that this service started for the program alone, and its ring;
 // - Network: an endpoint names its own remote and its own ports;
 // - Connect: the services that a program can connect to are its own list;
 // - Principals: a ring of its own, and the records of the principals;
@@ -1030,7 +1030,7 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients}
+GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients}
 
 // debug gives the debugger service the handle of the program with a name,
 // with the right Debug and no other, on behalf of one of its callers:

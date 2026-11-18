@@ -326,16 +326,14 @@ overview_build :: proc "contextless" () -> int {
 }
 
 // padded gives a text, whole, and the spaces after it that make it one
-// character wider than `width`, in the built lines.
+// character wider than `width`, in the built lines. With the built lines
+// full, it gives what fits and ends.
 @(private = "file")
 padded :: proc "contextless" (text: string, width: int) -> string {
 	writer := system.Writer {
 		buffer = built[built_count:],
 	}
-	system.write_part(&writer, text)
-	for writer.count < width + 1 {
-		system.write_part(&writer, " ")
-	}
+	information.padded_write(&writer, text, width)
 	built_count += writer.count
 	return system.written(&writer)
 }

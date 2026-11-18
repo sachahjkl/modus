@@ -10,7 +10,7 @@ The code that knows a device is a device service, whatever the vendor. Other sys
 
 ## The model: a translator between a vendor and a class
 
-A device service is an ordinary program that translates. On one side it speaks the registers and the queues of the device of one vendor. On the other side it serves the class protocol of the device: the block ring for a disk, the frame ring for a network device, the input records for a keyboard and a pointer, and the protocols still to write for a display, sound and USB.
+A device service is an ordinary program that translates. On one side it speaks the registers and the queues of the device of one vendor. On the other side it serves the class protocol of the device: the block ring for a disk, the frame ring for a network device, the input records for a keyboard and a pointer, the timed stream for sound ([timed_stream.md](timed_stream.md)), and the protocols still to write for a display and USB.
 
 - No program but the device service sees the vendor. The storage service reads the block ring the same way for a virtio disk and for an NVMe disk.
 - For virtio the translation is thin, because a virtio device is already a set of queues. For a device of a vendor it is thicker, and it stays in the one program.
@@ -79,7 +79,7 @@ USB adds one level. The device service of the xHCI controller owns the controlle
 - **The table of identities.** Its format, its place in the system description, and the rule for one identity that two modules serve.
 - **The device grant.** The form of a grant of a principal for one device: the identity, the place on the bus (which changes when a card moves), the hash of the module and of its blob.
 - **The restart protocol.** The state that a class service keeps for each ring, the request that it sends again, the count of restarts after which the root service stops trying.
-- **The class protocols still to write**: the display (a scanout and its modes), sound (a stream of samples), and the handle of one USB device.
+- **The class protocols still to write**: the display (a scanout and its modes) and the handle of one USB device. Sound has the timed stream ([timed_stream.md](timed_stream.md)).
 
 ## State
 

@@ -2541,7 +2541,7 @@ scenario := [?]Step {
 	// records of each second from the budget of log_reader, which counts
 	// only its own, and each child gives them back at its stop.
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
@@ -2567,7 +2567,7 @@ scenario := [?]Step {
 	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
@@ -3097,6 +3097,35 @@ scenario := [?]Step {
 	// Shift+Tab takes the focus back to the list, and Up on the list
 	// chooses the line before.
 	{kind = .Shot, text = "action_bar"},
+	// The clipboard (src/md/features/clipboard.md): Control+C copies the
+	// text "hello" of the field that has the focus in interface_elements,
+	// and Control+V puts it in the line of the console as typed
+	// characters. The compositor takes both keys: no program sees them.
+	// A program can write its line before the compositor writes its own:
+	// the first wait of each key leaves the place of the log as it was.
+	{kind = .Key, text = "ctrl-c"},
+	{kind = .Wait, text = "compositor: the copy key goes to interface_elements", any_order = true},
+	// The program sends its copy, then writes its line; the compositor can
+	// take the copy and write its own line between the two.
+	{kind = .Wait, text = "display: interface_elements: a copy of 5 bytes of text", any_order = true},
+	{kind = .Wait, text = "compositor: a copy of 5 bytes of text from interface_elements"},
+	{kind = .Front, text = "console"},
+	{kind = .Key, text = "ctrl-v"},
+	{kind = .Wait, text = "compositor: a paste of 5 bytes of text from interface_elements goes to console", any_order = true},
+	{kind = .Wait, text = "display: console: a paste of 5 bytes of text"},
+	{kind = .Wait, text = "terminal: a paste of 5 characters goes to console", any_order = true},
+	// The console gave the terminal its line with the paste: the terminal
+	// says that a picture is due, and the picture waits for it.
+	{kind = .Wait, text = "console: the line shows \"hello\" after a paste"},
+	{kind = .Shot, text = "clipboard_paste"},
+	// The pasted characters leave the line of the console for the steps
+	// that type in it later.
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "console: the line is empty again after a paste"},
 	{kind = .Click_Element, text = "interface_elements", element = "element before"},
 	{kind = .Click_Element, text = "interface_elements", element = "line before"},
 	{kind = .Wait, text = "interface_elements: the list chooses boot"},
@@ -3478,10 +3507,16 @@ scenario := [?]Step {
 scenario_measure := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
+	// The quality profile that the compositor chose at its start
+	// (quality_measure.odin).
+	{kind = .Wait, text = QUALITY_PROFILE_LINE, any_order = true},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "locks"},
+	// The start of its window: locks draws its first frame before its
+	// measures.
+	{kind = .Wait, text = QUALITY_WINDOW_START_LOCKS, any_order = true},
 	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
 	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
@@ -3503,6 +3538,21 @@ scenario_measure := [?]Step {
 	{kind = .Type, text = "measure_completion()"},
 	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
 	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
+	// A frame at 1920 x 1080 on the processor, in its three parts, after
+	// the other measures: no other program draws while it runs. The tool
+	// reads the form of its lines after the machine
+	// (processor_frame_measure.odin).
+	{kind = .Type, text = "start(\"processor_frame\")"},
+	// The 24 characters of that line are more than the keys of a line of
+	// the time of a key to the screen: the compositor wrote one, with the
+	// line of the frames, since the last wait (quality_measure.odin).
+	{kind = .Wait, text = QUALITY_FRAME, any_order = true},
+	{kind = .Wait, text = QUALITY_KEY, any_order = true},
+	{kind = .Wait, text = PROCESSOR_FRAME_CLEAR_AND_PRESENT, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_FULL_FRAME, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_FRAME_IN_ITS_DAMAGE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_DRAW_TABLE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_DONE, fails_on = PROCESSOR_FRAME_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -4046,6 +4096,9 @@ Machine_Options :: struct {
 	vnc:            bool, // A display for a film (film.odin).
 	paused:         bool, // The machine waits for the step Monitor "cont".
 	entropy_device: bool,
+	// The sound device, whose output goes to the wave file beside the log
+	// (SOUND_OUTPUT_SUFFIX): the check of the tone reads it after the machine.
+	sound_device:   bool,
 	tpm_device:     bool, // A software TPM, on any firmware.
 	tpm_state:      string, // The state of the TPM that the machines of a part share, or "" for a new one.
 	// The memory of the machine in this file, and one processor: the
@@ -4107,7 +4160,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "")
 		if !ok {
 			return false
 		}

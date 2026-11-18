@@ -105,7 +105,13 @@ scroll_identity :: proc "contextless" () -> interface.Element_Identity {
 text_moved_by_scroll_bar: bool
 
 image: []u8
-built: [16384]u8 // The lines that this program writes: the signatures and the facts.
+// The lines that this program writes: the signatures and the facts. The
+// table of all the modules takes the most: each row is written twice, as
+// its columns and as its line, about 165 bytes for a module, so 32 KiB
+// holds the rows of about 190 modules. 16 KiB held 98, and the boot image
+// passed that.
+built: [32768]u8
+#assert(len(built) >= 190 * 165)
 built_count: int
 selected: int // The index of the module of the list, in the boot image: the module of the page when the page is a module page.
 first_line: int // The first line that the window shows.
@@ -914,7 +920,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 				pressed = down
-			case .None, .Go_To, .Resized:
+			case .None, .Go_To, .Resized, .Copy_Asked, .Pasted:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

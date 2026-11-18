@@ -276,6 +276,8 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			case .Wait:
 				pending[pending_count] = pressed
 				pending_count += 1
+				// The edit line shows each key that waits.
+				key_serial_in_line = max(key_serial_in_line, pressed.serial)
 			case .Drop:
 				// The console must read each key to find an Escape that
 				// stops the call, and it has no place for this one.
@@ -371,6 +373,12 @@ change :: proc "contextless" () {
 // key first when it is open; else Enter runs the line, Tab completes, Up
 // and Down walk the line history, and a printable key edits the line.
 key :: proc "contextless" (pressed: Key) {
+	// A key record with no key code is a character of a paste: the
+	// terminal types a paste so (src/md/features/clipboard.md). A key of
+	// the keyboard always has a code.
+	if pressed.code == 0 && line_editor.printable(pressed.character) {
+		pasted_characters += 1
+	}
 	if completion_key(pressed) {
 		return
 	}
@@ -388,6 +396,7 @@ key :: proc "contextless" (pressed: Key) {
 	case:
 		edit_key := edit_key_of(pressed)
 		if line_editor.line_key(&line, edit_key, pressed.character) {
+			key_serial_in_line = max(key_serial_in_line, pressed.serial)
 			completion_after_edit(edit_key)
 		}
 	}
@@ -447,6 +456,18 @@ history_walk :: proc "contextless" (step: int) {
 shown: [terminal.RUN_LIMIT]u8
 shown_count := -1
 shown_cursor: u64
+// The characters of a paste that the line took since edit_show last gave
+// the line to the terminal, and whether a line with a paste was shown and
+// is not empty again: a machine test waits for the two lines of the log
+// before it takes a picture of the line.
+pasted_characters: u64
+paste_shown: bool
+// The serial of the newest key that changed the edit line
+// (terminal.Key.serial), first thread only: it takes the keys and calls
+// edit_show. Each Edit record names it, and the terminal names
+// it with the picture that shows the line, for the measure of a key to the
+// screen (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
+key_serial_in_line: u64
 
 edit_show :: proc "contextless" () {
 	buffer: [terminal.RUN_LIMIT]u8
@@ -497,7 +518,16 @@ edit_show :: proc "contextless" () {
 			run_count := edit_runs(text, int(cursor), runs[:])
 			terminal.code_runs_send(&output, .Edit, 0, runs[:run_count])
 		}
-		terminal.edit(&output, text, cursor, style)
+		terminal.edit(&output, text, cursor, style, key_serial_in_line)
+		// The terminal has the line now: its next picture shows it.
+		if !running && pasted_characters > 0 {
+			pasted_characters = 0
+			paste_shown = true
+			system.log("console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
+		} else if !running && paste_shown && len(line_editor.line_text(&line)) == 0 {
+			paste_shown = false
+			system.log("console: the line is empty again after a paste")
+		}
 	}
 	completion_show()
 }

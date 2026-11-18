@@ -15,7 +15,10 @@ import "modus:support/graphics"
 // The execution blends with the table of the text state, which a program
 // fills once at its start: the tests of this program fill it once, before
 // the first test that blends reads it, and no test writes it again. Each
-// test file of the package that blends takes the table here: one fill.
+// test that draws calls blend_table first, the tests of the interface font
+// too: a draw of a proportional text that finds the table empty fills it,
+// and that fill would write while another test reads.
+@(private = "file")
 blend_table_once: sync.Once
 
 blend_table :: proc() -> ^[4096]u8 {

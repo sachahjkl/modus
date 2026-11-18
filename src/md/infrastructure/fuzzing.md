@@ -95,7 +95,7 @@ The tool minimizes each finding while its signature stays: for a raw target, by 
 
 The **corpus** of each target is in the repository, in `tools/modustool/fuzzing_corpus/<target>/`, one file for each input, named by the BLAKE3 hash of its bytes. It has two parts:
 
-- **The regression inputs**: each minimized finding after its fix. They are never removed.
+- **The regression inputs**: each minimized finding after its fix. They are never removed. A regression input of the kernel operations holds the answers of the kernel too; when a change of the kernel changes one on purpose, the input is written again in that commit, so its finding stays ([kernel_fuzzing.md](kernel_fuzzing.md), "The corpus of the operations").
 - **The reach inputs**: the smallest set of kept inputs that gives each edge class that the long runs reached. The command that writes them keeps the smallest input for each edge class, then removes each input whose classes another input gives.
 
 The corpus of one target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a file whose name is not the hash of its bytes, and a folder that names no target.
