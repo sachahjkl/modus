@@ -157,6 +157,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/datagram",
 	SOURCE_FOLDER_CONTRACT + "/byte_order",
 	SOURCE_FOLDER_CONTRACT + "/timed_stream",
+	SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"

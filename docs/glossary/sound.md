@@ -14,7 +14,7 @@ Do not use: audio driver, sound server, mixer (for this).
 
 The stream ring is the ring between the sound service and its one client: one command record is `Attach`, `Start` or the `Play` of one record of frames.
 
-The root service makes it and gives it to both, in the slot of the device ring of the client. The service answers the commands in order; the completion of a `Play` comes when the device played its last frame, so a record holds one place of the ring until then. A completion that is not `Ok` carries an error record. It is not a queue of the device: only the service sees those.
+The root service makes it and gives it to both, in the slot of the device ring of the client. The service answers the commands in order; the completion of a `Play` comes when the device took the period that holds its last frame, so a record holds one place of the ring until then. A completion that is not `Ok` carries an error record. It is not a queue of the device: only the service sees those.
 
 The design: `src/library/contract/timed_stream`.
 

@@ -31,6 +31,22 @@ a_ring_word_that_names_no_command_is_refused :: proc(t: ^testing.T) {
 	}
 }
 
+// The kind of a completion comes from the service: one past the last
+// status and the largest word name no status. Then each status comes back
+// from its word.
+@(test)
+a_completion_word_that_names_no_status_is_refused :: proc(t: ^testing.T) {
+	for word in ([]u32{u32(max(Status)) + 1, max(u32)}) {
+		_, ok := status_of_completion_word(word)
+		testing.expectf(t, !ok, "the word %d names no status, and it is taken", word)
+	}
+	for member in Status {
+		read, ok := status_of_completion_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
+}
+
 // A format word that names no member is refused, None too: 0, one past the
 // last member, the largest word. The error record names the value 2 and
 // the word.
@@ -124,6 +140,30 @@ a_damaged_record_is_refused :: proc(t: ^testing.T) {
 	values[6] = 1
 	_, refusal := play_of_record(values)
 	testing.expect_value(t, refusal, Play_Refusal.Damaged)
+}
+
+// Attach names one value and Start none: a value past them that is not 0
+// is a damaged record, named from 1. Then the records with zeros there.
+@(test)
+a_damaged_attach_or_start_is_refused :: proc(t: ^testing.T) {
+	for command in ([]Command{.Attach, .Start}) {
+		for index in COMMAND_VALUE_COUNTS[command] ..< 7 {
+			values: [7]u64
+			values[0] = command == .Attach ? 5 : 0
+			values[index] = max(u64)
+			found, damaged := damaged_value(command, values)
+			testing.expect(t, damaged)
+			testing.expect_value(t, found, index)
+			record := errors.completion_record(damaged_values(command, found, values))
+			testing.expect_value(t, record.kind, i64(errors.Kind.Bad_Value))
+			testing.expect_value(t, record.operation, i64(command))
+			testing.expect_value(t, record.argument, i64(index + 1))
+		}
+	}
+	_, damaged := damaged_value(.Attach, {0 = 5})
+	testing.expect(t, !damaged)
+	_, damaged = damaged_value(.Start, {})
+	testing.expect(t, !damaged)
 }
 
 // A record whose frames pass the end of the region is out; a record that

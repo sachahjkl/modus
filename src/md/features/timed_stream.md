@@ -19,6 +19,10 @@ The device has its own clock: the count of frames that it played. A frame is one
 
 The service sets the anchor at `Start`: frame 0 plays at the time of the answer of the device to its start. It moves the anchor only at an underrun (below). It does not correct a drift of the device clock against the system clock yet: on QEMU both clocks come from the clock of the host. On a real device a crystal differs by up to about 100 parts in a million, 0.36 s in an hour. The correction is left: the service will measure the rate from the times of the completions over a long window, and change the slope of the map.
 
+The service sees the first sign of a drift today, in one direction. A device whose clock runs fast takes the periods faster than their time, so the frames given end further and further after now. When they end more than `AHEAD_OF_THE_DEVICE_LIMIT_NANOSECONDS` (120 ms, three times the periods given) after now, the service holds the next period until the time comes, counts the hold, and writes one line at the first one. At its start QEMU takes some periods at once into its mixer, fewer than the periods given, so the bound is past what a device does at its start. A device whose clock runs slow is the other direction: it takes the periods late, and the latency grows with no sign that the service reads; the correction above covers it.
+
+The stream adds no clock finer than the one that each program has: the completions name times of `system.nanoseconds()`, which reads the cycle counter. Row 17 of property 20 ("a precise clock is a grant") is not met today ([log_side_channels.md](log_side_channels.md) holds the side channels that are closed); the stream neither opens nor closes it.
+
 ## The record
 
 One command `Play` is one record: the time of its first frame, its format, its count of frames, and the place of its samples in the sample region in bytes. The border `timed_stream.play_of_record` reads the record once from its copy, and gives a `Play` with its format as the enum, or the refusal. It refuses:
@@ -27,6 +31,8 @@ One command `Play` is one record: the time of its first frame, its format, its c
 - a count of 0, or past `FRAME_COUNT_LIMIT` (10 s of frames);
 - a place that is not a multiple of the frame size;
 - a damaged record: a value past the four that the command names that is not 0.
+
+`Attach` names one value and `Start` none; a value past them that is not 0 is a damaged record too (`timed_stream.damaged_value`), refused with `Bad_Command`.
 
 The service then checks the place and the count against the size of the region, which it read once at `Attach`. The client can change the bytes of its samples at any time, and any bytes are samples: the service copies them when it fills the period that holds them, and reads no count or place from the region.
 
@@ -54,7 +60,9 @@ The test of an underrun is by time and not by count: the device can take several
 
 ## The latency
 
-The latency that the service holds is the frames that it gave to the device and that the device did not play: from 30 ms to 40 ms. The earliest time that a record can take is the time of the first frame not given, so a program that wants a sound now asks for that time. The answer of `Start` gives the latency in nanoseconds; each completion of `Play` gives the time of its first frame. The device adds its own delay, which the service does not know: virtio-snd reports a `latency_bytes` in each status, and QEMU writes there the size of the period, not a delay.
+The latency that the service holds is the frames that it gave to the device and that the device did not take: from 30 ms to 40 ms. The earliest time that a record can take is the time of the first frame not given, so a program that wants a sound now asks for that time. The answer of `Start` gives the latency in nanoseconds; each completion of `Play` gives the time of its first frame by the stream clock.
+
+A completion says that the device took the period that holds the last frame of the record, not that the frame played. The device adds its own delay after the take, which the service does not know: virtio-snd reports a `latency_bytes` in each status, and QEMU writes there the size of the period, not a delay. QEMU takes a period into its mixer, then into its output, so its latency is higher than the latency that the service holds, by the buffers of its mixer and of its output.
 
 A shorter period gives a lower latency and more wakes of the service: 10 ms is 100 wakes in one second. The choice waits for a measure of underruns on a loaded machine.
 
@@ -64,7 +72,7 @@ One format: 48000 frames in one second, two channels, signed 16-bit samples in l
 
 ## The budget and who pays
 
-- **The client** makes the sample region from its own budget and lends it with `Attach`, with the right Read only: the service never writes it.
+- **The client** makes the sample region from its own budget and lends it with `Attach`, with the right Read only: the service never writes it. The service closes each handle that came through the ring and that it refuses (a second region, a handle that is not memory, a handle with no Read, a damaged `Attach`), so it keeps no handle that it does not use. It never closes a handle that did not come through the ring: such a number can name a handle of the service itself (`sound_device.attach_decision`).
 - **The sound service** pays for its copy of the periods, from the budget that the root service gives it by its name. It declares that memory to the IOMMU with `Memory_Physical`: the device reads the periods and the requests, and writes the statuses, and reaches no other memory. It never declares the sample region, so the device never reads memory of the client.
 - **The root service** pays for the queues of the device (`pci.QUEUE_PAGES`), as for each device service.
 
@@ -73,6 +81,10 @@ A copy in the service costs one pass over each sample. It is there because the s
 ## One program at a time
 
 One program holds the stream: the program with the start grant `Sound_Device`. The root service starts the sound service for it, and stops it when that program stops, as for a block service. A second program with the grant does not start while the first runs: the root service refuses it with the status `Bad_State` and one line. Nothing is mixed.
+
+The refusal lasts a little past the end of the first program. When it stops, the root service stops the sound service, and the place of the sound service stays in its table until the stop of that program is read; a start in that time gets the same `Bad_State` and line. A second try after the reap starts.
+
+The stream ring has the capacity of the contract, `RING_CAPACITY`, and the table of the pending records one place for each place: the service stops at its start when its ring is larger.
 
 Mixing is a sound service of the class, between the programs and the device service, as the storage service is between the programs and the block service: each program gets a stream of its own, and the class service sums the frames of each period. It waits for a second program that plays sound.
 
@@ -87,15 +99,27 @@ The sound service drives a virtio sound device (virtio 1.2, section 5.14; QEMU `
 1. It reads the configuration of the device (the jacks, the streams, the channel maps), and asks `PCM_INFO` for the streams, at most `STREAM_LIMIT`. It takes the first output stream whose formats, rates and channels hold the one format.
 2. It sets the parameters of that stream (`PCM_SET_PARAMS`: the period and the buffer of the device in bytes, the format) and prepares it (`PCM_PREPARE`).
 3. At `Start` it gives the device the periods and sends `PCM_START`.
-4. Each period is a request of the transmit queue: a header with the stream, the frames of the period, and a status that the device writes. The device completes the requests in order.
+4. Each period is a request of the transmit queue: a header with the stream, the frames of the period, and a status that the device writes.
 
-The device writes its answers and the statuses. The service reads each one from its copy, and refuses a used entry that names no request in flight: the device then stops the service, as for each virtio device service.
+The device writes its answers and the statuses. The readers of them are pure procedures in the private part `src/library/private/sound/sound_device`, with host tests: a code shorter than its size, a refused code, a `PCM_INFO` with fewer records than asked, a used entry that names no first descriptor, no period in flight, a period out of order, and a status that is not Ok.
 
-QEMU 10.2 consumes a request of the transmit queue when its frames reach its mixer, and writes to the output only the frames that the stream gave: with no request, the output gets no frame.
+**The order of the periods.** The service requires that the device ends the periods in the order in which it gave them, and stops on a device that breaks it. A period completes the records up to its end, so a period ended out of order would complete a record whose earlier frames the device still holds. The service could instead complete only up to the oldest period in flight, but a device that reorders the periods of one stream plays them out of order too, and no record can be right on it. QEMU 10.2 ends them in order: its stream is one queue.
+
+**A device that does not answer.** A control request waits for its answer until the one hang bound of a program, `system.TEST_HANG_BOUND_MILLISECONDS`: a device answers in microseconds, and the bound only ends a hang. At the start of the service, the service then writes a line that names the request and stops. At `Start`, it first answers the client with `Device_Error` and the record `No_Answer`, then stops, so the client is not left waiting.
+
+QEMU 10.2 consumes a request of the transmit queue when its frames reach its mixer, and its wave output writes the frames that the stream gave: with no request, the output gets no frame. The proof below does not depend on that.
 
 ## The proof
 
-The machine test `sound` starts a machine with `virtio-sound-pci` and an output to a file (`-audiodev wav`), at 48000 frames in one second and two channels, so QEMU converts no rate. The program `tone` starts the stream, asks for a tone of 440 Hz of 500 ms at 500 ms after the frame 0, and writes the frame where it played. It checks that the frame is the frame of its time, and, with no underrun, that it played at the time of that frame. It also sends six records that the service must refuse, and checks each status and error record. The tool then reads the file: the frames there are the frames that the service gave, in order, from the frame 0. It finds the first frame that is not silence, checks that it is at the frame that the line names, and counts the zero crossings of the left channel over 100 ms after it: a tone of 440 Hz crosses 88 times. The check counts frames, never a time of the host.
+The machine test `sound` starts a machine with `virtio-sound-pci` and an output to a file (`-audiodev wav`), at 48000 frames in one second and two channels, so QEMU converts no rate. The program `tone` starts the stream, asks for a tone of 440 Hz of 500 ms at 500 ms after the frame 0, and writes the frame where it played. It checks that the frame is the frame of its time, and, with no underrun, that it played at the time of that frame. It also sends eight commands that the service must refuse (a second region, a damaged `Start`, and six records), and checks each status and error record.
+
+The tool then reads the file. It finds the tone by its own start, the first frame that is not silence, and counts only the frames that are not silence from there:
+
+- **The frequency.** The left channel over the first 4800 frames of the tone crosses zero 88 times, within 2: a tone of 440 Hz.
+- **The length.** The frames that are not silence are the 24000 frames of the tone, within 8.
+- **The place.** The tone must not start before the frame that `tone` names: the file then holds fewer frames before it than the stream gave, a frame lost. When it starts at that frame, within 2, the file starts with the frame 0 of the stream and the place is proved. When it starts later, the device wrote frames that the stream did not give (a backend that pads by its timer, at a stall of the host): the test passes and says that the place is not proved, with the count of those frames.
+
+What the check proves: the service gives the device the frames of the record, whole and in order, and with a file that holds only the frames of the stream, at the frame of their time. What it cannot prove: the time of the host at which the device played a frame, and the place of the tone when the device writes frames of its own. Silence that the device writes inside the tone changes neither the frequency nor the length that it counts.
 
 The tool reads the samples to the end of the file and does not trust the sizes of its header: QEMU writes them only at a clean end.
 
@@ -114,4 +138,4 @@ Refused forms of the proof: a recording of the sound card of the host, which a t
 
 ## State
 
-Built: the class protocol in `src/library/contract/timed_stream` with its host tests, the sound service `sound` for virtio-snd, the start grant `Sound_Device`, the program `tone`, and the machine test `sound` with the check of the file. Left: the correction of the drift, capture, mixing in a class service, a second format, and a measure of the underruns on a loaded machine.
+Built: the class protocol in `src/library/contract/timed_stream` with its host tests, the sound service `sound` for virtio-snd with the readers of the device answers in its private part and their host tests, the hold of a device that takes the periods too fast, the start grant `Sound_Device`, the program `tone`, and the machine test `sound` with the check of the file. Left: the correction of the drift, capture, mixing in a class service, a second format, and a measure of the underruns on a loaded machine.

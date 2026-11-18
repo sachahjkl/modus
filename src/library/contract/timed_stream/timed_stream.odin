@@ -21,8 +21,9 @@
 // The service answers the commands in order. It takes a command only when
 // the completion queue has room for its completion and its table has room
 // for one more pending record, so a full ring stops the client and drops
-// no record. The completion of a Play comes when the device played its
-// last frame.
+// no record. The completion of a Play comes when the device took the
+// period that holds its last frame; the device plays it after a delay of
+// its own.
 //
 // This package allocates no memory and calls no kernel operation.
 //
@@ -82,9 +83,11 @@ Command :: enum u32 {
 	None   = 0, // Not a command: Bad_Command.
 	// values[0]: the handle of the sample region, as the service names it,
 	// with the right Read; it came through the stream ring. Send it once,
-	// before Start.
+	// before Start. values[1] to values[6] are 0. The service closes a
+	// handle that came through the ring and that it refuses.
 	Attach = 1,
 	// The stream starts: the device plays silence until the first record.
+	// Each value is 0.
 	// The completion: values[0] the time of the frame 0 of the stream,
 	// values[1] the latency that the service holds in nanoseconds,
 	// values[2] the word of the Format of the stream.
@@ -92,10 +95,10 @@ Command :: enum u32 {
 	// One record: values[0] the time of its first frame, values[1] the
 	// word of its Format, values[2] its count of frames, values[3] the place
 	// of its first frame in the sample region in bytes, a multiple of
-	// FRAME_BYTES. values[4] to values[6] are 0. The completion, when its
-	// last frame played: values[0] the time at which its first frame
-	// played, values[1] that frame of the stream, values[2] the underruns
-	// since Start.
+	// FRAME_BYTES. values[4] to values[6] are 0. The completion, when the
+	// device took the period of its last frame: values[0] the time of its
+	// first frame by the stream clock, values[1] that frame of the stream,
+	// values[2] the underruns since Start.
 	Play   = 3,
 }
 
@@ -125,6 +128,13 @@ command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok:
 	return member, true
 }
 
+// status_of_completion_word is the border of the kind of a completion
+// record of the stream ring: the status, or false for a word that names no
+// status. The client takes such a word as a refusal, never as a status.
+status_of_completion_word :: proc "contextless" (word: u32) -> (status: Status, ok: bool) {
+	return enum_word.member_of_word(Status, u64(word))
+}
+
 // One record of frames, as the border read it.
 Play :: struct {
 	time:        u64, // The time of its first frame, by the system clock.
@@ -146,15 +156,40 @@ Play_Refusal :: enum {
 // The values that Play names: the time, the format, the count, the place.
 PLAY_VALUES :: 4
 
+// The values that each command names. Each value after them is 0: a value
+// there is a damaged record.
+@(rodata)
+COMMAND_VALUE_COUNTS := [Command]int {
+	.None   = 0,
+	.Attach = 1,
+	.Start  = 0,
+	.Play   = PLAY_VALUES,
+}
+
+// damaged_value gives the first value past those that a command names
+// that is not 0, from 0. false: the record is not damaged.
+damaged_value :: proc "contextless" (command: Command, values: [7]u64) -> (index: int, damaged: bool) {
+	for place in COMMAND_VALUE_COUNTS[command] ..< len(values) {
+		if values[place] != 0 {
+			return place, true
+		}
+	}
+	return 0, false
+}
+
+// damaged_values gives the values of the completion of a damaged record:
+// its error record names the first value that is not 0, from 1.
+damaged_values :: proc "contextless" (command: Command, index: int, values: [7]u64) -> [7]u64 {
+	return errors.ring_fail(u32(command), .Bad_Value, .None, i64(index + 1), record_integer(values[index]), 0)
+}
+
 // play_of_record is the one border of the values of a Play: it reads each
 // value once, from the copy that the caller took, and gives the record
 // with its format as the enum, or the first refusal. It reads and changes
 // no state.
 play_of_record :: proc "contextless" (values: [7]u64) -> (play: Play, refusal: Play_Refusal) {
-	for index in PLAY_VALUES ..< len(values) {
-		if values[index] != 0 {
-			return {}, .Damaged
-		}
+	if _, damaged := damaged_value(.Play, values); damaged {
+		return {}, .Damaged
 	}
 	format, known := enum_word.member_of_word(Format, values[1])
 	if !known || format == .None {
@@ -196,10 +231,8 @@ play_refusal_values :: proc "contextless" (refusal: Play_Refusal, values: [7]u64
 	case .Place_Not_Aligned:
 		return errors.ring_fail(PLAY, .Not_Multiple, .Bytes, 4, record_integer(values[3]), FRAME_BYTES, i64(values[3] % FRAME_BYTES))
 	case .Damaged:
-		for index in PLAY_VALUES ..< len(values) {
-			if values[index] != 0 {
-				return errors.ring_fail(PLAY, .Bad_Value, .None, i64(index + 1), record_integer(values[index]), 0)
-			}
+		if index, damaged := damaged_value(.Play, values); damaged {
+			return damaged_values(.Play, index, values)
 		}
 	}
 	return {}

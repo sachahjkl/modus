@@ -12,7 +12,9 @@
 // 1. It makes a sample region of REGION_PAGES pages from its own budget,
 //    writes 500 ms of a tone of 440 Hz in it, and lends it to the sound
 //    service with `Attach`, with the right Read only.
-// 2. It sends `Start`, and asks for the tone at 500 ms after the frame 0
+// 2. It lends the region a second time and sends `Attach` again, which
+//    the service refuses, and a `Start` with a value, which it refuses.
+//    It sends `Start`, and asks for the tone at 500 ms after the frame 0
 //    of the stream.
 // 3. It sends six records that the service must refuse, and checks the
 //    status and the error record of each: over the tone, late, too far,
@@ -56,7 +58,9 @@ TONE_AMPLITUDE :: 16384.0
 TAG_ATTACH :: 1
 TAG_START :: 2
 TAG_TONE :: 3
-TAG_FIRST_CASE :: 4
+TAG_SECOND_ATTACH :: 4
+TAG_DAMAGED_START :: 5
+TAG_FIRST_CASE :: 6
 
 stream: ring.Ring
 tone_completion: ring.Record
@@ -136,6 +140,17 @@ call :: proc "contextless" (command: timed_stream.Command, tag: u32, values: [7]
 	return record
 }
 
+// status_of reads the status of a completion through the border of the
+// contract. A word that names no status is a refusal that the program
+// cannot read: it stops, and never takes the word for a status.
+status_of :: proc "contextless" (record: ring.Record) -> timed_stream.Status {
+	status, known := timed_stream.status_of_completion_word(record.kind)
+	if !known {
+		fail("tone: the sound service answered the tag ", u64(record.tag), " with the word ", u64(record.kind), ", which names no status")
+	}
+	return status
+}
+
 // A record that the service must refuse, with what its completion holds.
 Refused_Case :: struct {
 	name:   string,
@@ -146,12 +161,12 @@ Refused_Case :: struct {
 	argument: i64,
 }
 
-// case_check sends one record that the service must refuse, and checks
+// case_check sends one command that the service must refuse, and checks
 // its status and its error record.
-case_check :: proc "contextless" (tag: u32, refused: Refused_Case) {
-	record := call(.Play, tag, refused.values)
+case_check :: proc "contextless" (tag: u32, command: timed_stream.Command, refused: Refused_Case) {
+	record := call(command, tag, refused.values)
 	error := errors.completion_record(record.values)
-	if timed_stream.Status(record.kind) != refused.status || error.kind != i64(refused.kind) || error.unit != i64(refused.unit) || error.argument != refused.argument || error.operation != i64(timed_stream.Command.Play) {
+	if status_of(record) != refused.status || error.kind != i64(refused.kind) || error.unit != i64(refused.unit) || error.argument != refused.argument || error.operation != i64(command) {
 		fail("tone: ", refused.name, " got the status ", u64(record.kind), ", the kind ", error.kind, ", the unit ", error.unit, ", the argument ", error.argument)
 	}
 	system.log("tone: ", refused.name, " is refused with ", timed_stream_status_name(refused.status), ": as it must")
@@ -208,11 +223,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if give_status != .Ok {
 		fail("tone: the sound service does not map the stream ring")
 	}
-	if attached := call(.Attach, TAG_ATTACH, {0 = u64(given)}); timed_stream.Status(attached.kind) != .Ok {
+	if attached := call(.Attach, TAG_ATTACH, {0 = u64(given)}); status_of(attached) != .Ok {
 		fail("tone: the sound service refused the sample region with the status ", u64(attached.kind))
 	}
+	// A second region is refused, and the service closes the handle that
+	// it got, as it keeps it not; a damaged Start is refused, and the
+	// stream does not start.
+	second, second_status := system.give(ring_memory, memory, {.Read})
+	if second_status != .Ok {
+		fail("tone: the second give of the region gave the status ", second_status)
+	}
+	case_check(TAG_SECOND_ATTACH, .Attach, {"a second sample region", {0 = u64(second)}, .Bad_Command, .State, .None, 0})
+	case_check(TAG_DAMAGED_START, .Start, {"a Start with a value", {0 = 1}, .Bad_Command, .Bad_Value, .None, 1})
 	started := call(.Start, TAG_START)
-	if timed_stream.Status(started.kind) != .Ok {
+	if status_of(started) != .Ok {
 		fail("tone: the sound service refused Start with the status ", u64(started.kind))
 	}
 	anchor := timed_stream.Anchor{frame = 0, time = started.values[0]}
@@ -237,14 +261,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		{"a record past the end of the region", {0 = tone_time + timed_stream.NANOSECONDS_IN_A_SECOND, 1 = format, 2 = 2, 3 = REGION_BYTES - timed_stream.FRAME_BYTES}, .Out_Of_Range, .Out_Of_Range, .Bytes, 4},
 	}
 	for refused, index in cases {
-		case_check(TAG_FIRST_CASE + u32(index), refused)
+		case_check(TAG_FIRST_CASE + u32(index), .Play, refused)
 	}
 
 	tone, ok := receive_tag(TAG_TONE)
 	if !ok {
 		fail("tone: the tone did not end before the hang bound")
 	}
-	if timed_stream.Status(tone.kind) != .Ok {
+	if status_of(tone) != .Ok {
 		fail("tone: the sound service refused the tone with the status ", u64(tone.kind))
 	}
 	played_time, frame, underruns := tone.values[0], tone.values[1], tone.values[2]

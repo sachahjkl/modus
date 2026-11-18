@@ -32,7 +32,19 @@ wave_make :: proc(frames: int, tone_first: int, hertz: f64, channels: u16 = time
 }
 
 TONE_FRAME_OF_THE_TEST :: 24000
-FRAMES_OF_THE_TEST :: 2 * TONE_FRAME_OF_THE_TEST
+FRAMES_OF_THE_TEST :: TONE_FRAME_OF_THE_TEST + TONE_CHECK_FRAMES
+
+// silence_insert gives a copy of a wave file with `count` frames of
+// silence before the frame `at`: what a device that pads by its timer
+// writes.
+@(private = "file")
+silence_insert :: proc(file: []u8, at: int, count: int) -> []u8 {
+	place := WAVE_HEADER_BYTES + at * timed_stream.FRAME_BYTES
+	padded := make([]u8, len(file) + count * timed_stream.FRAME_BYTES, context.temp_allocator)
+	copy(padded, file[:place])
+	copy(padded[place + count * timed_stream.FRAME_BYTES:], file[place:])
+	return padded
+}
 
 // A file that is not a wave file of PCM is refused: too short for a
 // header, another first word, another fourth word, a format that is not
@@ -65,20 +77,27 @@ a_wave_of_another_format_is_refused :: proc(t: ^testing.T) {
 	}
 }
 
-// Silence only, a header with no frame, a tone one frame past the
-// tolerance on each side, a tone too near the end for the window, and a
-// tone of another frequency are refused.
+// Silence only, a header with no frame, a tone one frame before the
+// tolerance and at the frame 0, a tone too near the end for the window, a
+// tone too long and too short, and a tone of another frequency are
+// refused.
 @(test)
 a_tone_out_of_its_place_or_its_frequency_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, tone_check(wave_make(FRAMES_OF_THE_TEST, -1, 0), TONE_FRAME_OF_THE_TEST).problem, Sound_Output_Problem.No_Sound)
 	testing.expect_value(t, tone_check(wave_make(0, -1, 0), TONE_FRAME_OF_THE_TEST).problem, Sound_Output_Problem.No_Sound)
-	for first in ([]int{TONE_FRAME_OF_THE_TEST + TONE_FRAME_TOLERANCE + 1, TONE_FRAME_OF_THE_TEST - TONE_FRAME_TOLERANCE - 1, 0}) {
-		found := tone_check(wave_make(FRAMES_OF_THE_TEST, first, TONE_CHECK_HERTZ), TONE_FRAME_OF_THE_TEST)
-		testing.expect_value(t, found.problem, Sound_Output_Problem.Tone_Elsewhere)
+	for first in ([]int{TONE_FRAME_OF_THE_TEST - TONE_FRAME_TOLERANCE - 1, 0}) {
+		found := tone_check(wave_make(first + TONE_CHECK_FRAMES, first, TONE_CHECK_HERTZ), TONE_FRAME_OF_THE_TEST)
+		testing.expect_value(t, found.problem, Sound_Output_Problem.Tone_Early)
 		testing.expect_value(t, found.first_sound_frame, first)
 	}
 	short := wave_make(TONE_FRAME_OF_THE_TEST + TONE_WINDOW_FRAMES - 1, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ)
 	testing.expect_value(t, tone_check(short, TONE_FRAME_OF_THE_TEST).problem, Sound_Output_Problem.Too_Short)
+	// Past the tolerance by more than the few frames of a cosine that are
+	// silence.
+	for length in ([]int{TONE_CHECK_FRAMES + 4 * TONE_LENGTH_TOLERANCE, TONE_CHECK_FRAMES - 4 * TONE_LENGTH_TOLERANCE, TONE_WINDOW_FRAMES}) {
+		found := tone_check(wave_make(TONE_FRAME_OF_THE_TEST + length, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ), TONE_FRAME_OF_THE_TEST)
+		testing.expectf(t, found.problem == .Wrong_Length, "a tone of %d frames gives %v", length, found.problem)
+	}
 	// A tone of 455 Hz crosses about 91 times in the window, and one of
 	// 425 Hz about 85 times: each is past the tolerance around 88.
 	for hertz in ([]f64{2 * TONE_CHECK_HERTZ, TONE_CHECK_HERTZ / 2, TONE_CHECK_HERTZ + 15, TONE_CHECK_HERTZ - 15}) {
@@ -101,16 +120,39 @@ the_frame_of_the_line_of_the_tone :: proc(t: ^testing.T) {
 	testing.expect_value(t, frame, 24000)
 }
 
+// Silence that a device writes before the tone and inside it changes
+// neither its frequency nor its length; the place is then not proved, and
+// the check says so.
+@(test)
+silence_from_the_device_does_not_move_the_tone :: proc(t: ^testing.T) {
+	good := wave_make(FRAMES_OF_THE_TEST, TONE_FRAME_OF_THE_TEST, TONE_CHECK_HERTZ)
+	before := silence_insert(good, 0, 1000)
+	inside := silence_insert(before, TONE_FRAME_OF_THE_TEST + 1000 + TONE_WINDOW_FRAMES / 2, 500)
+	for padded in ([][]u8{before, inside}) {
+		found := tone_check(padded, TONE_FRAME_OF_THE_TEST)
+		testing.expect_value(t, found.problem, Sound_Output_Problem.None)
+		testing.expect_value(t, found.place, Tone_Place.After_Frames_Of_The_Device)
+		testing.expect_value(t, found.first_sound_frame, TONE_FRAME_OF_THE_TEST + 1000)
+		testing.expectf(t, abs(found.crossings - tone_crossings_expected()) <= 1, "%d crossings", found.crossings)
+	}
+	// One frame past the tolerance is not proved either.
+	late := wave_make(FRAMES_OF_THE_TEST + 1, TONE_FRAME_OF_THE_TEST + TONE_FRAME_TOLERANCE + 1, TONE_CHECK_HERTZ)
+	found := tone_check(late, TONE_FRAME_OF_THE_TEST)
+	testing.expect_value(t, found.problem, Sound_Output_Problem.None)
+	testing.expect_value(t, found.place, Tone_Place.After_Frames_Of_The_Device)
+}
+
 // The tone at its frame, and at the edge of the tolerance, last: no
-// problem, its first frame, and 88 crossings.
+// problem, the place proved, its first frame, and 88 crossings.
 @(test)
 the_tone_at_its_frame_passes :: proc(t: ^testing.T) {
 	testing.expect_value(t, tone_crossings_expected(), 88)
 	for first in ([]int{TONE_FRAME_OF_THE_TEST, TONE_FRAME_OF_THE_TEST + TONE_FRAME_TOLERANCE, TONE_FRAME_OF_THE_TEST - TONE_FRAME_TOLERANCE}) {
-		found := tone_check(wave_make(FRAMES_OF_THE_TEST, first, TONE_CHECK_HERTZ), TONE_FRAME_OF_THE_TEST)
+		found := tone_check(wave_make(first + TONE_CHECK_FRAMES, first, TONE_CHECK_HERTZ), TONE_FRAME_OF_THE_TEST)
 		testing.expect_value(t, found.problem, Sound_Output_Problem.None)
+		testing.expect_value(t, found.place, Tone_Place.At_The_Frame_Of_The_Line)
 		testing.expect_value(t, found.first_sound_frame, first)
 		testing.expectf(t, abs(found.crossings - tone_crossings_expected()) <= 1, "%d crossings", found.crossings)
-		testing.expect_value(t, found.frames, FRAMES_OF_THE_TEST)
+		testing.expectf(t, abs(found.sound_frames - TONE_CHECK_FRAMES) <= TONE_LENGTH_TOLERANCE, "%d frames that are not silence", found.sound_frames)
 	}
 }

@@ -18,6 +18,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **The bus master off before a device service stops.** The root service turns the bus master of a device off, then stops its device service, for each device service, in place of stopping the service first. A device then makes no access to memory between the stop of its service and the reap, also on a machine with no IOMMU. [Design](src/md/features/device_services.md)
 - **Sound of several programs at once.** A sound service of the class between the programs and the device service gives each program a timed stream of its own and sums their frames, so a second program plays in place of being refused. [Design](src/md/features/timed_stream.md)
 - **The drift of the clock of a sound device.** The sound service measures the rate of its device from the times of the completions and changes its stream clock, so a record plays at its time after an hour on a real device. [Design](src/md/features/timed_stream.md)
 - **Capture of sound.** A program with a grant reads the microphone as records of a timed stream, with a visible indicator while it reads. [Design](src/md/features/timed_stream.md)

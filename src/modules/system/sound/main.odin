@@ -15,19 +15,20 @@
 //
 // **The commands of the stream ring** (`src/library/contract/timed_stream`):
 // `Attach` with the sample region, `Start`, then `Play` for each record.
-// The completion of a `Play` comes when the device played its last frame.
-// A refusal gives a status and the values of an
+// The completion of a `Play` comes when the device took the period that
+// holds its last frame. A refusal gives a status and the values of an
 // [error record](term:error-record), and no frame of the record plays.
 //
 // **What a reader sees.** No window: the line `sound: ok, the output
 // stream <n> of <count>, ...` on the log when the device is ready, the line
 // `sound: the stream started, ...` at `Start`, and one line at the first
-// underrun. A failure writes a line at the level error on the channel
-// `sound` and stops the service.
+// underrun and at the first hold of a period. A failure writes a line at
+// the level error on the channel `sound` and stops the service.
 //
 // **What it does not prove.** It does not know the delay of the device
-// after a period: QEMU reports none. It corrects no drift of the clock of
-// the device.
+// after it took a period: QEMU reports none. It corrects no drift of the
+// clock of the device; it only holds the periods of a device that takes
+// them faster than their time.
 package sound_device_service
 
 import "base:intrinsics"
@@ -35,6 +36,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/timed_stream"
+import "modus:private/sound/sound_device"
 import "modus:support/pci"
 import "modus:support/system"
 import "modus:support/virtio"
@@ -58,7 +60,7 @@ PAGE_MESSAGES :: PAGE_TRANSMIT_QUEUE + virtio.QUEUE_PAGES
 // The places in the page of the messages.
 MESSAGE_REQUEST :: 0 // The control request that the device reads.
 MESSAGE_RESPONSE :: 64 // The control response that the device writes.
-MESSAGE_RESPONSE_BYTES :: 4 + STREAM_LIMIT * PCM_INFO_BYTES
+MESSAGE_RESPONSE_BYTES :: sound_device.ANSWER_CODE_BYTES + sound_device.STREAM_LIMIT * sound_device.PCM_INFO_BYTES
 MESSAGE_HEADERS :: 1024 // The header of the request of each period: the stream.
 MESSAGE_STATUSES :: 2048 // The status of each period, which the device writes.
 MESSAGE_SLOT_BYTES :: 16
@@ -71,39 +73,27 @@ PERIOD_PAGES :: (timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_BYTES + system
 // The queues of a virtio sound device (virtio 1.2, 5.14.2).
 QUEUE_CONTROL :: 0
 QUEUE_TRANSMIT :: 2
-// The descriptors of the request of one period: the header, the frames,
-// the status.
-DESCRIPTORS_OF_A_PERIOD :: 3
 
-// The codes of the requests and of the answers (virtio 1.2, 5.14.6).
+// The codes of the requests (virtio 1.2, 5.14.6).
 REQUEST_PCM_INFO :: 0x0100
 REQUEST_PCM_SET_PARAMS :: 0x0101
 REQUEST_PCM_PREPARE :: 0x0102
 REQUEST_PCM_START :: 0x0104
-ANSWER_OK :: 0x8000
 // The device configuration: jacks, streams and channel maps, 4 bytes each.
 CONFIGURATION_BYTES :: 12
 CONFIGURATION_STREAMS :: 4
-// One record of PCM_INFO, and its fields.
-PCM_INFO_BYTES :: 32
-PCM_INFO_FORMATS :: 8
-PCM_INFO_RATES :: 16
-PCM_INFO_DIRECTION :: 24
-PCM_INFO_CHANNELS_LEAST :: 25
-PCM_INFO_CHANNELS_MOST :: 26
-DIRECTION_OUTPUT :: 0
-// The one format: the bit of S16 in the formats, of 48000 in the rates.
-FORMAT_SIGNED_16 :: 5
-RATE_48000 :: 7
-// The streams that this service reads: QEMU has at most 10.
-STREAM_LIMIT :: 10
+
+// A device answers a control request in microseconds. The bound only ends
+// a hang of the device, and it is the one hang bound of a program, so the
+// line of this service comes before the bound of a step of a machine test.
+DEVICE_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
 
 device: virtio.Device
 control_queue: virtio.Queue
 transmit_queue: virtio.Queue
 messages: [^]u8
 messages_physical: u64
-periods: [^]u8
+periods_memory: [^]u8
 periods_physical: u64
 machine: system.Handle
 clients: ring.Ring
@@ -118,16 +108,12 @@ region_size: u64
 // The stream.
 started: bool
 anchor: timed_stream.Anchor
-next_frame: u64 // The first frame not given to the device.
+periods: sound_device.Periods
 underruns: u64
-
-// A period in the device.
-Period_Slot :: struct {
-	in_flight:   bool,
-	first_frame: u64,
-}
-slots: [timed_stream.PERIODS_GIVEN]Period_Slot
-in_flight: u32
+holds: u64 // The times that the service held a period of a device that took them faster than their time.
+holding: bool
+// A reason to stop once the completion that holds it is in the ring.
+stop_reason: string
 
 // A record that the service accepted and that did not end.
 Pending :: struct {
@@ -146,25 +132,19 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(1)
 }
 
-load_u32 :: proc "contextless" (bytes: []u8, offset: int) -> u32 {
-	return intrinsics.unaligned_load((^u32)(&bytes[offset]))
-}
-
-load_u64 :: proc "contextless" (bytes: []u8, offset: int) -> u64 {
-	return intrinsics.unaligned_load((^u64)(&bytes[offset]))
-}
-
 // control_call gives the device one control request of `request_bytes`
 // bytes, written at MESSAGE_REQUEST, and waits for its answer, of at most
-// `response_bytes` bytes. It gives a copy of the answer and its length,
-// which the device wrote and which is never above response_bytes. Only the
-// start and Start call it, when no period is in flight: no other used
-// entry can come.
-control_call :: proc "contextless" (request_bytes: u32, response_bytes: u32) -> (response: [MESSAGE_RESPONSE_BYTES]u8, length: u32) {
+// `response_bytes` bytes, until DEVICE_ANSWER_BOUND_MILLISECONDS. It gives
+// a copy of the answer and its length, which the device wrote and which is
+// never above response_bytes. answered false: the device did not answer.
+// Only the start and Start call it, when no period is in flight: no other
+// used entry can come.
+control_call :: proc "contextless" (request_bytes: u32, response_bytes: u32) -> (response: [MESSAGE_RESPONSE_BYTES]u8, length: u32, answered: bool) {
 	control_queue.descriptors[0] = {address = messages_physical + MESSAGE_REQUEST, length = request_bytes, flags = virtio.DESCRIPTOR_NEXT, next = 1}
 	control_queue.descriptors[1] = {address = messages_physical + MESSAGE_RESPONSE, length = response_bytes, flags = virtio.DESCRIPTOR_DEVICE_WRITES}
 	virtio.give(&control_queue, 0)
 	virtio.notify(&control_queue)
+	deadline := system.time() + DEVICE_ANSWER_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin() // An interrupt of the device is an event.
 		if used, ok := virtio.used(&control_queue); ok {
@@ -173,7 +153,7 @@ control_call :: proc "contextless" (request_bytes: u32, response_bytes: u32) -> 
 			}
 			length = min(used.length, response_bytes)
 			intrinsics.mem_copy_non_overlapping(&response, &messages[MESSAGE_RESPONSE], int(length))
-			return response, length
+			return response, length, true
 		}
 		if virtio.used_ready(&transmit_queue) {
 			fail("the device used a period that was not given")
@@ -181,51 +161,70 @@ control_call :: proc "contextless" (request_bytes: u32, response_bytes: u32) -> 
 		if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
 			fail("the device needs a reset")
 		}
-		system.wait_end(&wait)
+		if system.time() >= deadline {
+			return response, 0, false
+		}
+		system.wait_end(&wait, deadline)
 	}
 }
 
-// answer_code gives the code of a control answer, or 0 when the device
-// wrote fewer bytes than the code.
-answer_code :: proc "contextless" (response: []u8, length: u32) -> u32 {
-	return length < 4 ? 0 : load_u32(response, 0)
+// control_answered gives the answer of a control request of the start, or
+// stops the service with a line that names the request.
+control_answered :: proc "contextless" (name: string, request_bytes: u32, response_bytes: u32) -> (response: [MESSAGE_RESPONSE_BYTES]u8, length: u32) {
+	answered: bool
+	response, length, answered = control_call(request_bytes, response_bytes)
+	if !answered {
+		system.log_in("sound", .Error, "sound: the device did not answer ", name, " in ", u64(DEVICE_ANSWER_BOUND_MILLISECONDS), " ms")
+		fail("the device does not answer")
+	}
+	return response, length
 }
 
-// stream_choose asks the device for its streams and gives the first output
-// stream that plays the one format. found false: no stream does.
-stream_choose :: proc "contextless" () -> (stream: u32, count: u32, found: bool) {
+// control_ok stops the service with a line when a control answer is not Ok.
+control_ok :: proc "contextless" (name: string, response: []u8, length: u32) {
+	answer, code := sound_device.answer_of(response, length)
+	switch answer {
+	case .Ok:
+		return
+	case .Short:
+		system.log_in("sound", .Error, "sound: the device answered ", name, " with ", u64(length), " bytes, fewer than its code")
+	case .Refused:
+		system.log_in("sound", .Error, "sound: the device refused ", name, " with the code ", u64(code))
+	}
+	fail("the device refused a control request")
+}
+
+// stream_choose asks the device for its streams and takes the first output
+// stream that plays the one format.
+stream_choose :: proc "contextless" () -> (count: u32) {
 	if device.device_config_length < CONFIGURATION_BYTES {
 		fail("the configuration of the device is too short")
 	}
 	count = virtio.load_32(device.device_config + CONFIGURATION_STREAMS)
-	asked := min(count, STREAM_LIMIT)
+	asked := min(count, sound_device.STREAM_LIMIT)
 	if asked == 0 {
-		return 0, count, false
+		fail("the device has no stream")
 	}
 	request := ([^]u32)(&messages[MESSAGE_REQUEST])
 	request[0] = REQUEST_PCM_INFO
 	request[1] = 0 // The first stream.
 	request[2] = asked
-	request[3] = PCM_INFO_BYTES
-	response, length := control_call(16, 4 + asked * PCM_INFO_BYTES)
-	if answer_code(response[:], length) != ANSWER_OK {
-		system.log_in("sound", .Error, "sound: the device refused PCM_INFO with the code ", u64(answer_code(response[:], length)))
-		return 0, count, false
+	request[3] = sound_device.PCM_INFO_BYTES
+	response, length := control_answered("PCM_INFO", 16, sound_device.ANSWER_CODE_BYTES + asked * sound_device.PCM_INFO_BYTES)
+	choice: sound_device.Stream_Choice
+	code: u32
+	stream_number, choice, code = sound_device.stream_of_answer(response[:], length, asked)
+	switch choice {
+	case .Chosen:
+		return count
+	case .Short:
+		system.log_in("sound", .Error, "sound: the device answered PCM_INFO for ", u64(asked), " streams with ", u64(length), " bytes")
+	case .Refused:
+		system.log_in("sound", .Error, "sound: the device refused PCM_INFO with the code ", u64(code))
+	case .None_Of_The_Format:
+		system.log_in("sound", .Error, "sound: the device has ", u64(count), " streams, and none plays 48000 frames in one second of 2 channels of signed 16-bit samples")
 	}
-	// The device says how many bytes it wrote: a record that it did not
-	// write whole is not read.
-	whole := (length - 4) / PCM_INFO_BYTES
-	for index in 0 ..< min(whole, asked) {
-		info := response[4 + index * PCM_INFO_BYTES:][:PCM_INFO_BYTES]
-		formats := load_u64(info, PCM_INFO_FORMATS)
-		rates := load_u64(info, PCM_INFO_RATES)
-		plays_the_format := formats & (1 << FORMAT_SIGNED_16) != 0 && rates & (1 << RATE_48000) != 0
-		holds_the_channels := info[PCM_INFO_CHANNELS_LEAST] <= timed_stream.CHANNELS && timed_stream.CHANNELS <= info[PCM_INFO_CHANNELS_MOST]
-		if info[PCM_INFO_DIRECTION] == DIRECTION_OUTPUT && plays_the_format && holds_the_channels {
-			return index, count, true
-		}
-	}
-	return 0, count, false
+	fail("no output stream of the format")
 }
 
 // stream_prepare sets the one format on the stream and prepares it.
@@ -233,25 +232,19 @@ stream_prepare :: proc "contextless" () {
 	request := ([^]u32)(&messages[MESSAGE_REQUEST])
 	request[0] = REQUEST_PCM_SET_PARAMS
 	request[1] = stream_number
-	request[2] = timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_BYTES // The buffer of the device.
+	request[2] = timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_BYTES // The buffer_bytes of the device.
 	request[3] = timed_stream.PERIOD_BYTES
 	request[4] = 0 // No feature.
 	messages[MESSAGE_REQUEST + 20] = timed_stream.CHANNELS
-	messages[MESSAGE_REQUEST + 21] = FORMAT_SIGNED_16
-	messages[MESSAGE_REQUEST + 22] = RATE_48000
+	messages[MESSAGE_REQUEST + 21] = sound_device.FORMAT_SIGNED_16
+	messages[MESSAGE_REQUEST + 22] = sound_device.RATE_48000
 	messages[MESSAGE_REQUEST + 23] = 0
-	response, length := control_call(24, 4)
-	if code := answer_code(response[:], length); code != ANSWER_OK {
-		system.log_in("sound", .Error, "sound: the device refused PCM_SET_PARAMS with the code ", u64(code))
-		fail("the device does not take the format")
-	}
+	response, length := control_answered("PCM_SET_PARAMS", 24, sound_device.ANSWER_CODE_BYTES)
+	control_ok("PCM_SET_PARAMS", response[:], length)
 	request[0] = REQUEST_PCM_PREPARE
 	request[1] = stream_number
-	response, length = control_call(8, 4)
-	if code := answer_code(response[:], length); code != ANSWER_OK {
-		system.log_in("sound", .Error, "sound: the device refused PCM_PREPARE with the code ", u64(code))
-		fail("the device does not prepare the stream")
-	}
+	response, length = control_answered("PCM_PREPARE", 8, sound_device.ANSWER_CODE_BYTES)
+	control_ok("PCM_PREPARE", response[:], length)
 }
 
 // start resets the device, agrees on the features (the device has none
@@ -280,7 +273,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	base := uintptr(address)
 	errors_of_queues: [2]virtio.Queue_Error
 	control_queue, errors_of_queues[0] = virtio.queue_start(&device, QUEUE_CONTROL, base + PAGE_CONTROL_QUEUE * system.PAGE_SIZE, physical + PAGE_CONTROL_QUEUE * system.PAGE_SIZE, 2, 0)
-	transmit_queue, errors_of_queues[1] = virtio.queue_start(&device, QUEUE_TRANSMIT, base + PAGE_TRANSMIT_QUEUE * system.PAGE_SIZE, physical + PAGE_TRANSMIT_QUEUE * system.PAGE_SIZE, timed_stream.PERIODS_GIVEN * DESCRIPTORS_OF_A_PERIOD, 0)
+	transmit_queue, errors_of_queues[1] = virtio.queue_start(&device, QUEUE_TRANSMIT, base + PAGE_TRANSMIT_QUEUE * system.PAGE_SIZE, physical + PAGE_TRANSMIT_QUEUE * system.PAGE_SIZE, timed_stream.PERIODS_GIVEN * sound_device.DESCRIPTORS_OF_A_PERIOD, 0)
 	for queue_error in errors_of_queues {
 		switch queue_error {
 		case .None:
@@ -307,53 +300,52 @@ start :: proc "contextless" (queues: system.Handle) {
 		system.log_in("sound", .Error, "sound: the map of the periods gave the status ", period_map_status, ", their device address the status ", period_physical_status)
 		fail("no physical address for the periods")
 	}
-	periods = ([^]u8)(period_address)
+	periods_memory = ([^]u8)(period_address)
 	periods_physical = period_physical
 	virtio.ready(&device)
 
-	found: bool
-	count: u32
-	if stream_number, count, found = stream_choose(); !found {
-		system.log_in("sound", .Error, "sound: the device has ", u64(count), " streams, and none plays 48000 frames in one second of 2 channels of signed 16-bit samples")
-		fail("no output stream of the format")
-	}
+	count := stream_choose()
 	stream_prepare()
 	system.log("sound: ok, the output stream ", u64(stream_number), " of ", u64(count), ", 48000 frames in one second, 2 channels of signed 16-bit samples; ", u64(timed_stream.PERIODS_GIVEN), " periods of ", u64(timed_stream.PERIOD_FRAMES), " frames with the device; a transmit queue of ", u64(transmit_queue.size))
 }
 
-// region_refusal_of_a_stream checks the handle of a sample region that the
-// client sent with Attach: memory, with Read, that came through the stream
-// ring. The service never writes the region, so it asks for no Write.
-region_refusal_of_a_stream :: proc "contextless" (handle: system.Handle) -> (values: [7]u64, refused: bool) {
+// attach takes the sample region of the client, once. A handle that came
+// through the ring and that the service refuses is closed: the service
+// keeps no handle that it does not use.
+attach :: proc "contextless" (command: ring.Record) -> (timed_stream.Status, [7]u64) {
 	ATTACH :: u32(timed_stream.Command.Attach)
+	handle := system.Handle(command.values[0])
 	kind, rights, through := system.handle_state(handle, clients_memory)
-	needed := system.Rights{.Read}
-	switch {
-	case kind != .Memory:
-		return errors.ring_fail(ATTACH, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind)), true
-	case !(needed <= rights):
-		return errors.ring_fail(ATTACH, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights)), true
-	case !through:
-		return errors.ring_fail(ATTACH, .Absent, .Region, 1), true
+	refusal, close := sound_device.attach_decision(kind, .Read in rights, through, region_memory != 0)
+	if close {
+		system.close(handle)
 	}
-	return {}, false
-}
-
-// attach takes the sample region of the client, once.
-attach :: proc "contextless" (handle: system.Handle) -> (timed_stream.Status, [7]u64) {
-	ATTACH :: u32(timed_stream.Command.Attach)
-	if region_memory != 0 {
+	switch refusal {
+	case .None:
+	case .Not_Through_The_Ring:
+		return .No_Region, errors.ring_fail(ATTACH, .Absent, .Region, 1)
+	case .Attached_Already:
 		return .Bad_Command, errors.ring_fail(ATTACH, .State, .None, 0)
+	case .Not_Memory:
+		return .No_Region, errors.ring_fail(ATTACH, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
+	case .No_Read:
+		needed := system.Rights{.Read}
+		return .No_Region, errors.ring_fail(ATTACH, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights))
 	}
-	if values, refused := region_refusal_of_a_stream(handle); refused {
-		return .No_Region, values
+	// The damage is checked after the handle: a damaged Attach with a
+	// handle that came through the ring still closes it.
+	if index, damaged := timed_stream.damaged_value(.Attach, command.values); damaged {
+		system.close(handle)
+		return .Bad_Command, timed_stream.damaged_values(.Attach, index, command.values)
 	}
 	pages, size_status := system.memory_size(handle)
 	if size_status != .Ok {
+		system.close(handle)
 		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	address, map_status := system.memory_map(handle, {})
 	if map_status != .Ok {
+		system.close(handle)
 		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(map_status))
 	}
 	region_memory = handle
@@ -368,7 +360,7 @@ attach :: proc "contextless" (handle: system.Handle) -> (timed_stream.Status, [7
 // It copies each sample once from the region; the client can change those
 // bytes, and any bytes are samples.
 period_fill :: proc "contextless" (slot: u32, first_frame: u64) {
-	bytes := periods[slot * timed_stream.PERIOD_BYTES:][:timed_stream.PERIOD_BYTES]
+	bytes := periods_memory[slot * timed_stream.PERIOD_BYTES:][:timed_stream.PERIOD_BYTES]
 	intrinsics.mem_zero(&bytes[0], timed_stream.PERIOD_BYTES)
 	for index in 0 ..< pending_count {
 		record := &pending[(pending_head + index) % timed_stream.RING_CAPACITY]
@@ -388,38 +380,57 @@ period_fill :: proc "contextless" (slot: u32, first_frame: u64) {
 }
 
 // period_give fills the period of a free slot with the next frames and
-// gives it to the device: the header, the frames, the status.
-period_give :: proc "contextless" (slot: u32) {
+// gives it to the device: the header, the frames, the status. false: each
+// slot is in flight.
+period_give :: proc "contextless" () -> bool {
+	slot, first_frame := sound_device.period_take(&periods) or_return
 	header_place := MESSAGE_HEADERS + slot * MESSAGE_SLOT_BYTES
 	status_place := MESSAGE_STATUSES + slot * MESSAGE_SLOT_BYTES
 	(^u32)(&messages[header_place])^ = stream_number
 	// A device that does not write the status then gives no Ok of an
 	// earlier period.
 	(^u32)(&messages[status_place])^ = 0
-	period_fill(slot, next_frame)
-	head := u16(slot * DESCRIPTORS_OF_A_PERIOD)
+	period_fill(slot, first_frame)
+	head := u16(slot * sound_device.DESCRIPTORS_OF_A_PERIOD)
 	transmit_queue.descriptors[head] = {address = messages_physical + u64(header_place), length = 4, flags = virtio.DESCRIPTOR_NEXT, next = head + 1}
 	transmit_queue.descriptors[head + 1] = {address = periods_physical + u64(slot * timed_stream.PERIOD_BYTES), length = timed_stream.PERIOD_BYTES, flags = virtio.DESCRIPTOR_NEXT, next = head + 2}
 	transmit_queue.descriptors[head + 2] = {address = messages_physical + u64(status_place), length = 8, flags = virtio.DESCRIPTOR_DEVICE_WRITES}
 	virtio.give(&transmit_queue, head)
-	slots[slot] = {in_flight = true, first_frame = next_frame}
-	next_frame += timed_stream.PERIOD_FRAMES
-	in_flight += 1
+	return true
 }
 
-// periods_give gives a period for each free slot.
-periods_give :: proc "contextless" () {
-	for slot in 0 ..< u32(timed_stream.PERIODS_GIVEN) {
-		if !slots[slot].in_flight {
-			period_give(slot)
+// periods_give gives a period for each free slot, unless the device took
+// them faster than their time: it then holds the next one, counts the
+// hold, and gives the time in milliseconds at which to look again.
+periods_give :: proc "contextless" () -> (wake_at: u64) {
+	for {
+		held, until := sound_device.refill_hold(&periods, anchor, system.nanoseconds())
+		if held {
+			if !holding {
+				holding = true
+				holds += 1
+				if holds == 1 {
+					system.log_in("sound", .Warning, "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold")
+				}
+			}
+			// The milliseconds of the system clock have the time 0 of its
+			// nanoseconds: the wake comes at or after the time.
+			return until / 1_000_000 + 1
+		}
+		holding = false
+		if !period_give() {
+			return system.WAIT_FOREVER
 		}
 	}
 }
 
 // stream_start starts the device, sets the anchor at its answer, and gives
 // it the first periods: silence until the first record.
-stream_start :: proc "contextless" () -> (timed_stream.Status, [7]u64) {
+stream_start :: proc "contextless" (command: ring.Record) -> (timed_stream.Status, [7]u64) {
 	START :: u32(timed_stream.Command.Start)
+	if index, damaged := timed_stream.damaged_value(.Start, command.values); damaged {
+		return .Bad_Command, timed_stream.damaged_values(.Start, index, command.values)
+	}
 	if started {
 		return .Bad_Command, errors.ring_fail(START, .State, .None, 0)
 	}
@@ -429,13 +440,17 @@ stream_start :: proc "contextless" () -> (timed_stream.Status, [7]u64) {
 	request := ([^]u32)(&messages[MESSAGE_REQUEST])
 	request[0] = REQUEST_PCM_START
 	request[1] = stream_number
-	response, length := control_call(8, 4)
-	if code := answer_code(response[:], length); code != ANSWER_OK {
+	response, length, answered := control_call(8, sound_device.ANSWER_CODE_BYTES)
+	if !answered {
+		stop_reason = "the device did not answer PCM_START"
+		return .Device_Error, errors.ring_fail(START, .No_Answer, .Milliseconds, 0, 0, DEVICE_ANSWER_BOUND_MILLISECONDS, i64(errors.Unanswered.Device))
+	}
+	if answer, code := sound_device.answer_of(response[:], length); answer != .Ok {
 		return .Device_Error, errors.ring_fail(START, .Device, .None, 0, 0, 0, i64(code))
 	}
 	started = true
 	anchor = {frame = 0, time = system.nanoseconds()}
-	next_frame = 0
+	periods = {}
 	periods_give()
 	virtio.notify(&transmit_queue)
 	latency, _ := timed_stream.time_of_frame({}, timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_FRAMES)
@@ -456,11 +471,11 @@ play :: proc "contextless" (command: ring.Record) -> (status: timed_stream.Statu
 	if !timed_stream.play_in_region(record, region_size) {
 		return .Out_Of_Range, errors.ring_fail(PLAY, .Out_Of_Range, .Bytes, 4, i64(min(record.place, 1 << 62) + record.frame_count * timed_stream.FRAME_BYTES), i64(region_size)), false
 	}
-	pending_end := next_frame
+	pending_end := periods.next_frame
 	if pending_count > 0 {
 		pending_end = pending[(pending_head + pending_count - 1) % timed_stream.RING_CAPACITY].end_frame
 	}
-	placement, decision := timed_stream.play_place(record, anchor, next_frame, pending_end)
+	placement, decision := timed_stream.play_place(record, anchor, periods.next_frame, pending_end)
 	if decision != .Accepted {
 		status, values = timed_stream.placement_refusal_values(decision, record, placement, pending_end)
 		return status, values, false
@@ -475,12 +490,13 @@ play :: proc "contextless" (command: ring.Record) -> (status: timed_stream.Statu
 	return .Ok, {}, true
 }
 
-// played completes each pending record whose last frame is before the
-// end of the frames that the device played.
-played :: proc "contextless" (played_end: u64) -> (answered: bool) {
+// taken completes each pending record whose last frame is before the end
+// of the frames that the device took. The periods end in order, so each
+// frame before that end is taken.
+taken :: proc "contextless" (taken_end: u64) -> (answered: bool) {
 	for pending_count > 0 {
 		record := pending[pending_head]
-		if record.end_frame > played_end {
+		if record.end_frame > taken_end {
 			break
 		}
 		ring.push(&clients.completions, ring.Record{kind = u32(timed_stream.Status.Ok), tag = record.tag, values = {0 = record.played_time, 1 = record.first_frame, 2 = underruns}})
@@ -509,6 +525,16 @@ room :: proc "contextless" () -> bool {
 	return ring.count(&clients.completions) + pending_count < ring.capacity(&clients.completions)
 }
 
+// USED_PROBLEM_TEXTS gives the reason of a stop for each refused used entry.
+@(rodata)
+USED_PROBLEM_TEXTS := [sound_device.Used_Problem]string {
+	.None         = "",
+	.Not_A_Head   = "the device used a descriptor that starts no period",
+	.Not_Given    = "the device used a period that was not given",
+	.Out_Of_Order = "the device ended the periods out of the order in which they were given",
+	.Refused      = "the device refused a period",
+}
+
 // entry starts the device and then serves the stream ring, until the root
 // service stops it.
 //
@@ -522,23 +548,25 @@ room :: proc "contextless" () -> bool {
 // **The loop.** After each wake:
 //
 // 1. It reads the used ring of the transmit queue. Each period that the
-//    device played frees its slot; each pending record whose last frame
-//    played gets its completion.
-// 2. When the device played each period that it held and the time is past
-//    the end of the frames given, the service was late: an underrun. It
-//    moves the anchor, so the next frame plays now.
-// 3. It gives a new period for each free slot.
+//    device took frees its slot, in the order of the periods; each pending
+//    record whose last frame was taken gets its completion.
+// 2. When the device holds no period and the time is past the end of the
+//    frames given, the service was late: an underrun. It moves the anchor,
+//    so the next frame plays now.
+// 3. It gives a new period for each free slot, unless the frames given end
+//    too far ahead of now: it then holds the period until its time.
 // 4. While the completion queue has room, it takes the next command
 //    through its border: `Attach`, `Start` or `Play`; any other word
 //    completes at once with its refusal.
 // 5. It tells the device of the new periods, wakes the client when a
-//    completion came, and waits for the interrupt of the device or a new
-//    command.
+//    completion came, and waits for the interrupt of the device, a new
+//    command, or the end of a hold.
 //
-// **The stop**: with no ring, no configuration, no virtio registers, no
-// output stream of the format, a device that needs a reset, or a device
-// that uses a period that was not given, it writes the reason at the level
-// error and stops with the code 1. Else it never returns.
+// **The stop**: with no ring, a ring larger than the contract, no
+// configuration, no virtio registers, no output stream of the format, a
+// device that does not answer, needs a reset, or uses a period out of
+// order or that was not given, it writes the reason at the level error and
+// stops with the code 1. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
@@ -546,6 +574,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	status: system.Status
 	if clients, status = system.ring_open(clients_memory); status != .Ok {
 		fail("no stream ring")
+	}
+	// The table of the pending records has one place for each place of
+	// the ring of the contract.
+	if ring.capacity(&clients.completions) > timed_stream.RING_CAPACITY || ring.capacity(&clients.commands) > timed_stream.RING_CAPACITY {
+		fail("the stream ring is larger than the ring of the contract")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
 	if configuration_status != .Ok {
@@ -560,41 +593,40 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		wait := system.wait_begin() // An interrupt of the device is an event.
 		answered := false
+		wake_at := system.WAIT_FOREVER
 		// The used ring is read at each wake: an entry that no period asked
 		// for is a fault of the device, as a reset is.
 		for {
 			used := virtio.used(&transmit_queue) or_break
-			slot := used.id / DESCRIPTORS_OF_A_PERIOD
-			if used.id % DESCRIPTORS_OF_A_PERIOD != 0 || slot >= timed_stream.PERIODS_GIVEN || !slots[slot].in_flight {
-				device_failed("the device used a period that was not given")
+			answer: u32
+			if slot, named := sound_device.period_status_slot(used.id); named {
+				answer = (^u32)(&messages[MESSAGE_STATUSES + slot * MESSAGE_SLOT_BYTES])^
 			}
-			answer := (^u32)(&messages[MESSAGE_STATUSES + slot * MESSAGE_SLOT_BYTES])^
-			if answer != ANSWER_OK {
-				system.log_in("sound", .Error, "sound: the device answered a period with the code ", u64(answer))
-				device_failed("the device refused a period")
+			taken_end, problem := sound_device.period_used(&periods, used.id, answer)
+			if problem != .None {
+				if problem == .Refused {
+					system.log_in("sound", .Error, "sound: the device answered a period with the code ", u64(answer))
+				}
+				device_failed(USED_PROBLEM_TEXTS[problem])
 			}
-			slots[slot].in_flight = false
-			in_flight -= 1
-			answered = played(slots[slot].first_frame + timed_stream.PERIOD_FRAMES) || answered
+			answered = taken(taken_end) || answered
 		}
 		if virtio.used_ready(&control_queue) {
 			device_failed("the device answered a control request that was not given")
-		}
-		if started && in_flight == 0 {
-			now := system.nanoseconds()
-			if end, known := timed_stream.time_of_frame(anchor, next_frame); !known || now > end {
-				underruns += 1
-				if underruns == 1 {
-					system.log_in("sound", .Warning, "sound: the first underrun: the device played each period before the next one came; the next frame plays now, and each completion counts the underruns")
-				}
-				anchor = {frame = next_frame, time = now}
-			}
 		}
 		if started {
 			if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
 				device_failed("the device needs a reset")
 			}
-			periods_give()
+			now := system.nanoseconds()
+			if sound_device.underrun(&periods, anchor, now) {
+				underruns += 1
+				if underruns == 1 {
+					system.log_in("sound", .Warning, "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns")
+				}
+				anchor = {frame = periods.next_frame, time = now}
+			}
+			wake_at = periods_give()
 		}
 
 		for room() {
@@ -610,11 +642,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The border never gives None: a word 0 is refused above.
 				ring.push(&clients.completions, ring.Record{kind = u32(timed_stream.Status.Bad_Command), tag = command.tag, values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))})
 			case .Attach:
-				attach_status, values := attach(system.Handle(command.values[0]))
+				attach_status, values := attach(command)
 				ring.push(&clients.completions, ring.Record{kind = u32(attach_status), tag = command.tag, values = values})
 			case .Start:
-				start_status, values := stream_start()
+				start_status, values := stream_start(command)
 				ring.push(&clients.completions, ring.Record{kind = u32(start_status), tag = command.tag, values = values})
+				if stop_reason != "" {
+					device_failed(stop_reason)
+				}
 			case .Play:
 				play_status, values, accepted := play(command)
 				if !accepted {
@@ -637,9 +672,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		} else if ring.count(&clients.completions) == ring.capacity(&clients.completions) {
 			system.wait_room(&wait, &clients.completions)
 		}
-		system.wait_end(&wait)
+		system.wait_end(&wait, wake_at)
 	}
 }
 
-#assert(timed_stream.PERIODS_GIVEN * DESCRIPTORS_OF_A_PERIOD <= virtio.QUEUE_SIZE_LIMIT)
+#assert(timed_stream.PERIODS_GIVEN * sound_device.DESCRIPTORS_OF_A_PERIOD <= virtio.QUEUE_SIZE_LIMIT)
 #assert(timed_stream.PERIOD_BYTES % timed_stream.FRAME_BYTES == 0)
