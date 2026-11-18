@@ -616,9 +616,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// both amounts, and the compositor stops with its code, so the root
 	// service runs on with no desktop.
 	canvas_pages := (u64(width) * u64(height) * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	needed_pages: u64 = 2 * canvas_pages
 	budget_left, budget_status := system.budget_read()
-	if budget_status != .Ok || budget_left.pages < 2 * canvas_pages {
-		system.log("compositor: a screen of ", u64(width), "x", u64(height), " needs ", 2 * canvas_pages, " pages, the budget holds ", budget_left.pages)
+	if budget_status != .Ok || budget_left.pages < needed_pages {
+		system.log("compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
 		system.stop(1)
 	}
 	frame = canvas_create(width, height)
