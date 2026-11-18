@@ -1,6 +1,5 @@
 package resources
 
-import "core:image/png"
 import "core:os"
 import "core:testing"
 import "modustool:foundation"
@@ -21,24 +20,6 @@ test_picture_pixels :: proc(width, height, channels: int) -> []u8 {
 		}
 	}
 	return pixels
-}
-
-// test_picture_with_stored_data gives a PNG file whose data is stored, as the earlier
-// writer of the tool gave it.
-test_picture_with_stored_data :: proc(width, height, channels: int, pixels: []u8) -> []u8 {
-	picture := png.Image {
-		width    = width,
-		height   = height,
-		channels = channels,
-		depth    = 8,
-	}
-	picture.pixels = make([dynamic]u8, len(pixels), len(pixels), context.temp_allocator)
-	copy(picture.pixels[:], pixels)
-	output := make([dynamic]u8, context.temp_allocator)
-	if save_error := png.save_to_buffer(&output, &picture, level = .Stored, filter = .None, allocator = context.temp_allocator); save_error != nil {
-		return nil
-	}
-	return output[:]
 }
 
 // The encoder gives the same bytes for the same pixels, compressed, and the
@@ -68,7 +49,7 @@ png_encode_gives_the_same_bytes_and_the_same_pixels :: proc(t: ^testing.T) {
 png_data_is_stored_reads_the_first_block :: proc(t: ^testing.T) {
 	pixels := test_picture_pixels(16, 16, 3)
 	defer delete(pixels)
-	stored_file := test_picture_with_stored_data(16, 16, 3, pixels)
+	stored_file := png_with_stored_data(16, 16, 3, pixels)
 	testing.expect(t, stored_file != nil)
 	stored, readable := png_data_is_stored(stored_file)
 	testing.expect(t, readable && stored)
@@ -101,7 +82,7 @@ pictures_compress_converts_only_stored_files :: proc(t: ^testing.T) {
 	defer os.remove_all(folder)
 	pixels := test_picture_pixels(64, 48, 3)
 	defer delete(pixels)
-	stored_file := test_picture_with_stored_data(64, 48, 3, pixels)
+	stored_file := png_with_stored_data(64, 48, 3, pixels)
 	compressed_file, encode_error := png_encode(64, 48, 3, pixels)
 	testing.expect(t, stored_file != nil && encode_error == nil)
 	testing.expect(t, os.write_entire_file(folder + "/inner/stored.png", stored_file) == nil)
