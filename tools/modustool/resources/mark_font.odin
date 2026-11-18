@@ -14,7 +14,7 @@
 // baseline and one empty row under it. At a font size of 8 pixels a cell is
 // one pixel, so each font size that is a multiple of 8 pixels draws whole
 // cells.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:os"
@@ -676,3 +676,7 @@ mark_font_check :: proc() -> bool {
 	foundation.test_passed_print("%s is the font of the letters of " + MARK_SOURCE_FOLDER, MARK_FONT_FILE)
 	return true
 }
+
+// The license of the repository: the font of the name of the mark carries
+// its text, and the site, the release and the reuse list read it.
+SITE_LICENSE_FILE :: "LICENSE"

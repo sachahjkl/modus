@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 SITE_BOOT_STAGE_PREFIX :: "kernel: boot: "
 // The file of the table of the commands of the tool.
@@ -539,8 +540,8 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
-		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
-		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
+		site_source_line(site, &b, resources.SITE_LICENSE_FILE, SITE_FONT_FOLDER, resources.SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, resources.HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
+		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(resources.SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}
 
@@ -839,13 +840,13 @@ site_who_class :: proc(who: string) -> string {
 site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	// The still picture of the home, as the table of the uses of the mark
 	// gives it: the smooth variant, at its own size.
-	home_picture, _ := mark_use_picture(SITE_MARK_HOME)
-	width, height := mark_picture_size(home_picture)
+	home_picture, _ := resources.mark_use_picture(resources.SITE_MARK_HOME)
+	width, height := resources.mark_picture_size(home_picture)
 	// The box of the heron: the script of the mark makes it a control that
 	// plays an animation. With no script it is the box of a picture.
 	strings.write_string(b, "<header class=\"home-head\">\n<div class=\"" + SITE_MARK_BOX_CLASS + "\"><picture>")
-	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
-	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)
+	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", resources.SITE_PICTURE_FOLDER, resources.SITE_MARK_HOME_LIGHT)
+	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", resources.SITE_PICTURE_FOLDER, resources.SITE_MARK_HOME, width, height)
 	site_plain(b, site_heron_description(site.readme.mark_description))
 	strings.write_string(b, "\"></picture></div>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
 	site_inline(b, site.readme.tagline)

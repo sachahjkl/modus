@@ -17,6 +17,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 SITE_SITEMAP :: "sitemap.xml"
 SITE_ROBOTS :: "robots.txt"
@@ -177,7 +178,7 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 		return
 	}
 	page_address := site_page_address(site.address, page.path)
-	card_address := site_file_address(site.address, SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD)
+	card_address := site_file_address(site.address, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_CARD)
 	meta :: proc(b: ^strings.Builder, property, value: string) {
 		fmt.sbprintf(b, "<meta property=\"%s\" content=\"", property)
 		foundation.site_escape(b, value)
@@ -420,7 +421,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 	{
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "ImageObject", card_id)
-		card := site_file_address(address, SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD)
+		card := site_file_address(address, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_CARD)
 		site_json_text(&node, "url", card)
 		site_json_text(&node, "contentUrl", card)
 		site_json_number(&node, "width", SITE_CARD_WIDTH)
@@ -695,7 +696,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 		site_xml_escape(&b, site_feed_address(site, SITE_RELEASES_FEED))
 		strings.write_string(&b, "\"/>\n")
 	}
-	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, SITE_PICTURE_FOLDER + "/" + SITE_ICON_192))
+	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_192))
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
 		anchor := site_release_id(number)
@@ -758,13 +759,13 @@ site_manifest :: proc(site: ^Site) -> string {
 	// The size of each icon is the size of its row of the table of the uses
 	// of the mark.
 	for icon, icon_index in site_manifest_icons {
-		picture, _ := mark_use_picture(icon.file_name)
-		icon_width, icon_height := mark_picture_size(picture)
+		picture, _ := resources.mark_use_picture(icon.file_name)
+		icon_width, icon_height := resources.mark_picture_size(picture)
 		if icon_index > 0 {
 			strings.write_byte(&b, ',')
 		}
 		entry := site_json_open(&b, "")
-		site_json_text(&entry, "src", strings.concatenate({SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator))
+		site_json_text(&entry, "src", strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator))
 		site_json_text(&entry, "sizes", fmt.tprintf("%dx%d", icon_width, icon_height))
 		site_json_text(&entry, "type", "image/png")
 		site_json_text(&entry, "purpose", icon.maskable ? "maskable" : "any")

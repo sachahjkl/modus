@@ -708,7 +708,7 @@ The section "Reuse list" of `PROPERTIES.md` names each work of others that the s
 
 | Works | Record |
 |---|---|
-| The fonts | The three lists of `tools/modustool/vector_fonts.odin`; for each, `resources/fonts/<name>.license`, its line `License of the source: <words>.`, and the license file of the list |
+| The fonts | The three lists of `tools/modustool/resources/vector_fonts.odin`; for each, `resources/fonts/<name>.license`, its line `License of the source: <words>.`, and the license file of the list |
 | Spleen 8x16 | `src/library/support/graphics/FONT_LICENSE`, its line `SPDX-License-Identifier: <identifier>` |
 | The pointer themes | Each theme that the build makes (`pointer_theme_builds`) whose manifest has a line `license` that is not the license of `LICENSE` |
 | The cryptography of Odin | `src/library/support/cryptography/origin.manifest`: one line or more gives the work of `LICENSE.odin.txt`; a line under `_fiat/` gives the work of `LICENSE.fiat-crypto.txt` |
@@ -1603,7 +1603,7 @@ These times never stand for a condition. After each key of `Film_Type` the tool 
 
 ### The pictures of the mark
 
-One generator makes each file of the mark (`tools/modustool/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
+One generator makes each file of the mark (`tools/modustool/resources/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
 
 | Command | What it asks |
 |---|---|

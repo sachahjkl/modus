@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
+import "modustool:resources"
 
 // Each folder of the sources of the system is a folder of the repository:
 // a constant that names nothing is a folder that no check reads.
@@ -16,7 +17,7 @@ source_folders_are_folders_of_the_repository :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, os.is_dir(foundation.SOURCE_FOLDER_LIBRARY), "%s is not a folder of the repository", foundation.SOURCE_FOLDER_LIBRARY)
 	// The files that the tool names by a path of their own.
-	for file in ([]string{RUNTIME_MEMORY, BOOT_PROGRAM_JUMP_SOURCE, RELEASE_NUMBER_SOURCE, foundation.CRYPTOGRAPHY_MANIFEST, CRYPTOGRAPHY_SYSTEM_FILES, FAULT_SOURCE_FILE, DEBUG_TARGET_SOURCE_FILE, SITE_SEARCH_MATCH_SOURCE, SITE_OPERATION_FILE, SITE_ERRORS_FILE, SITE_FIXED_ADDRESSES_FILE, foundation.SITE_SYSTEM_GRANTS_FILE, foundation.SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE, SITE_START_GRANT_FILE, foundation.FONT_OUTPUT, HALL_OF_FAME_CREDITS_FILE, HALL_OF_FAME_MODULE_FILE}) {
+	for file in ([]string{RUNTIME_MEMORY, BOOT_PROGRAM_JUMP_SOURCE, RELEASE_NUMBER_SOURCE, foundation.CRYPTOGRAPHY_MANIFEST, CRYPTOGRAPHY_SYSTEM_FILES, FAULT_SOURCE_FILE, DEBUG_TARGET_SOURCE_FILE, SITE_SEARCH_MATCH_SOURCE, SITE_OPERATION_FILE, SITE_ERRORS_FILE, SITE_FIXED_ADDRESSES_FILE, foundation.SITE_SYSTEM_GRANTS_FILE, foundation.SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE, SITE_START_GRANT_FILE, foundation.FONT_OUTPUT, resources.HALL_OF_FAME_CREDITS_FILE, resources.HALL_OF_FAME_MODULE_FILE}) {
 		testing.expectf(t, os.is_file(file), "%s is not a file of the repository", file)
 	}
 	// The folder of each module of the table, and of each host test.

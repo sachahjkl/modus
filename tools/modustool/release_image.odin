@@ -15,6 +15,7 @@ import crypto "modus:support/cryptography/compatibility_crypto"
 import "modus:support/cryptography/ed25519"
 import "modus:support/cryptography/sha2"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The release image (src/md/infrastructure/release_image.md): the disk
 // image that a release publishes, its checksum list, and the release
@@ -369,7 +370,7 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 		return fmt.tprintf("cannot read %s, the boot image of %s", signed_image_path(volume_path), volume_path)
 	}
 	image_path := signed_image_path(volume_path)
-	modules, resources, valid := info.image_tables(image)
+	modules, image_resources, valid := info.image_tables(image)
 	build_modules_table, build_resources, build_valid := info.image_tables(build_image)
 	if !valid || !build_valid {
 		return fmt.tprintf("%s or the boot image of the build is not a boot image", image_path)
@@ -384,11 +385,11 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 		return problem
 	}
 	added := RELEASE_VOLUME_RESOURCES
-	if len(modules) != len(build_modules_table) || len(resources) != len(build_resources) + len(added) {
+	if len(modules) != len(build_modules_table) || len(image_resources) != len(build_resources) + len(added) {
 		return fmt.tprintf("%s does not hold the modules and the resources of the boot image of the build: a boot image of a test, such as a measure run, is never published", image_path)
 	}
 	for index in 0 ..< len(modules) + len(build_resources) {
-		entry := index < len(modules) ? &modules[index] : &resources[index - len(modules)]
+		entry := index < len(modules) ? &modules[index] : &image_resources[index - len(modules)]
 		build_entry := index < len(modules) ? &build_modules_table[index] : &build_resources[index - len(modules)]
 		name := system_description.name_of(&entry.name)
 		bytes, inside := info.image_entry_bytes(image, entry)
@@ -401,7 +402,7 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 		}
 	}
 	for name, index in added {
-		if system_description.name_of(&resources[len(build_resources) + index].name) != name {
+		if system_description.name_of(&image_resources[len(build_resources) + index].name) != name {
 			return fmt.tprintf("%s does not end with the resource %s", image_path, name)
 		}
 	}
@@ -420,9 +421,9 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	if packaging == .Publisher_Keys_Only {
 		repository_license, license_found := repository_license_read()
 		if !license_found {
-			return fmt.tprintf("cannot read the license of the repository in %s", SITE_LICENSE_FILE)
+			return fmt.tprintf("cannot read the license of the repository in %s", resources.SITE_LICENSE_FILE)
 		}
-		if problem := release_pointer_theme_problem(image_path, image, resources, repository_license); problem != "" {
+		if problem := release_pointer_theme_problem(image_path, image, image_resources, repository_license); problem != "" {
 			return problem
 		}
 	}
@@ -432,7 +433,7 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 // repository_license_read gives the SPDX identifier of the license of the
 // repository, from the first line of LICENSE, as the reuse list reads it.
 repository_license_read :: proc() -> (license: string, ok: bool) {
-	text, read_error := os.read_entire_file(SITE_LICENSE_FILE, context.temp_allocator)
+	text, read_error := os.read_entire_file(resources.SITE_LICENSE_FILE, context.temp_allocator)
 	if read_error != nil {
 		return "", false
 	}
@@ -912,7 +913,7 @@ release_image_command :: proc() -> int {
 	test_build_checks = true
 	// The theme of the system only, whatever the environment names: the
 	// license of the theme of the owner allows no public download.
-	build_pointer_theme_of_the_owner = false
+	resources.build_pointer_theme_of_the_owner = false
 	build_measure_start()
 	if !build_modules() {
 		return foundation.EXIT_FAILURE

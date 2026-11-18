@@ -2,7 +2,7 @@
 // a part of the generator of the pictures of the mark (mark_pictures.odin;
 // docs/TOOLS.md, "The pictures of the mark"). The row of the drawn forms of
 // an animation that moves is in mark_tile_map.odin.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:os"

@@ -9,12 +9,12 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 SITE_NOT_RECORDED :: "not recorded"
 SITE_FLAKE_FILE :: "flake.nix"
 SITE_FLAKE_LOCK_FILE :: "flake.lock"
 SITE_FONT_FOLDER :: "resources/fonts"
-SITE_SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
 SITE_POSY_MANIFEST :: "resources/pointers/posy.manifest"
 SITE_SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest"
 SITE_ODIN_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
@@ -333,11 +333,11 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	nixpkgs_version := strings.concatenate({"nixpkgs ", nixpkgs_revision[:min(12, len(nixpkgs_revision))]}, context.temp_allocator)
 
 	// The system itself.
-	license_text := foundation.site_read(SITE_LICENSE_FILE) or_return
+	license_text := foundation.site_read(resources.SITE_LICENSE_FILE) or_return
 	license_lines := foundation.site_lines(license_text)
 	system_row := Site_License_Row {
 		what          = SITE_SYSTEM_NAME,
-		place         = SITE_LICENSE_FILE,
+		place         = resources.SITE_LICENSE_FILE,
 		license       = site_spdx(strings.trim_space(license_lines[0])),
 		author        = site_line_after(license_text, "Copyright "),
 		version       = release_number,
@@ -350,10 +350,10 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 
 	// The fonts that the repository holds as subsets: the candidates, the
 	// emphasis and the interface fonts of vector_fonts.odin.
-	fonts := make([dynamic]Vector_Font_Candidate, context.temp_allocator)
-	append(&fonts, ..vector_font_candidates[:])
-	append(&fonts, ..vector_font_emphasis[:])
-	append(&fonts, ..vector_font_interface[:])
+	fonts := make([dynamic]resources.Vector_Font_Candidate, context.temp_allocator)
+	append(&fonts, ..resources.vector_font_candidates[:])
+	append(&fonts, ..resources.vector_font_emphasis[:])
+	append(&fonts, ..resources.vector_font_interface[:])
 	for candidate in fonts {
 		file_name := strings.concatenate({SITE_FONT_FOLDER, "/", candidate.name, ".license"}, context.temp_allocator)
 		text := foundation.site_read(file_name) or_return
@@ -377,16 +377,16 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 		}
 		// The glyph caches of the boot image are made from the default font
 		// and from its emphasis (vector_fonts.odin).
-		row.in_boot_image = candidate.name == DEFAULT_VECTOR_FONT || candidate.name == EMPHASIS_VECTOR_FONT ? "yes, as a glyph cache" : "no"
+		row.in_boot_image = candidate.name == resources.DEFAULT_VECTOR_FONT || candidate.name == resources.EMPHASIS_VECTOR_FONT ? "yes, as a glyph cache" : "no"
 		append(&system_rows, row)
 	}
 
 	// Spleen: the fallback font, compiled into src/library/support/graphics.
-	spleen_text := foundation.site_read(SITE_SPLEEN_LICENSE_FILE) or_return
+	spleen_text := foundation.site_read(resources.SITE_SPLEEN_LICENSE_FILE) or_return
 	spleen_lines := foundation.site_lines(spleen_text)
 	spleen := Site_License_Row {
 		what          = "Spleen 8x16",
-		place         = SITE_SPLEEN_LICENSE_FILE,
+		place         = resources.SITE_SPLEEN_LICENSE_FILE,
 		license       = site_line_after(spleen_text, SPDX_IDENTIFIER_LINE_START),
 		author        = site_line_after(spleen_text, "Copyright "),
 		in_boot_image = "yes, in each process that draws text",
@@ -488,18 +488,18 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	// The portraits of the module hall_of_fame: one row for each picture
 	// of its credits file. The place is the file of pixels that the module
 	// holds, so the card of the module links each row.
-	credits, credits_problem := hall_of_fame_credits_read()
+	credits, credits_problem := resources.hall_of_fame_credits_read()
 	if credits_problem != "" {
 		return {}, fail(credits_problem)
 	}
 	for credit in credits {
 		append(&system_rows, Site_License_Row {
 			what           = strings.concatenate({"Portrait of ", credit.person, " in the module hall_of_fame"}, context.temp_allocator),
-			place          = hall_of_fame_pixels_path(credit.file),
+			place          = resources.hall_of_fame_pixels_path(credit.file),
 			license        = site_spdx(credit.license),
 			author         = credit.author,
 			author_address = credit.address,
-			version        = fmt.tprintf("a crop of %d x %d pixels of the source, reduced to %d x %d", HALL_OF_FAME_SOURCE_WIDTH, HALL_OF_FAME_SOURCE_HEIGHT, HALL_OF_FAME_PORTRAIT_WIDTH, HALL_OF_FAME_PORTRAIT_HEIGHT),
+			version        = fmt.tprintf("a crop of %d x %d pixels of the source, reduced to %d x %d", resources.HALL_OF_FAME_SOURCE_WIDTH, resources.HALL_OF_FAME_SOURCE_HEIGHT, resources.HALL_OF_FAME_PORTRAIT_WIDTH, resources.HALL_OF_FAME_PORTRAIT_HEIGHT),
 			in_boot_image  = in_image(boot_image, "hall_of_fame"),
 		})
 	}

@@ -10,11 +10,12 @@ import "core:math"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The font of the diagrams in the site, and the name of its family in the
 // style sheet. The text of a picture asks for this font only, so the
 // widths that the layout measured are the widths that the browser draws.
-SITE_DIAGRAM_FONT :: "fonts/" + INTERFACE_VECTOR_FONT + ".ttf"
+SITE_DIAGRAM_FONT :: "fonts/" + resources.INTERFACE_VECTOR_FONT + ".ttf"
 SITE_DIAGRAM_FONT_FAMILY :: "modus diagram"
 SITE_DIAGRAM_LANGUAGE :: "mermaid"
 

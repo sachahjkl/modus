@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "modus:support/mark"
 import "modustool:foundation"
+import "modustool:resources"
 
 @(private = "file")
 TEST_ADDRESS :: "https://example.invalid/modus"
@@ -26,7 +27,7 @@ metadata_test_site :: proc(address: string) -> Site {
 	site.address = address
 	site.release = "0.1.0"
 	site.picture_sizes = make(map[string][2]int, context.temp_allocator)
-	site.picture_sizes[SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD] = {SITE_CARD_WIDTH, SITE_CARD_HEIGHT}
+	site.picture_sizes[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_CARD] = {SITE_CARD_WIDTH, SITE_CARD_HEIGHT}
 	site.picture_sizes["pictures/a.png"] = {8, 8}
 	site.readme.lead = "A small operating system."
 	site.readme.mark_description = "The heron and the name"
@@ -230,7 +231,7 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_copyright_holder("Copyright (c) 2026"), "")
 	testing.expect_value(t, site_copyright_holder(""), "")
 	// The line of LICENSE of the repository gives a name, not a year.
-	if text, read := foundation.site_read_quiet(SITE_LICENSE_FILE); read {
+	if text, read := foundation.site_read_quiet(resources.SITE_LICENSE_FILE); read {
 		holder := site_copyright_holder(site_line_after(text, "Copyright "))
 		testing.expect(t, holder != "")
 		testing.expect(t, len(holder) > 0 && (holder[0] < '0' || holder[0] > '9') && holder[0] != '(')
@@ -430,15 +431,15 @@ site_icon_file_of_the_root :: proc(t: ^testing.T) {
 	first := metadata_test_png(2, 2, 4, []u8{1, 2, 3, 255, 4, 5, 6, 0, 7, 8, 9, 128, 10, 11, 12, 255})
 	second := metadata_test_png(3, 1, 3, []u8{1, 2, 3, 4, 5, 6, 7, 8, 9})
 	pictures := [][]u8{first, second}
-	file, ok := mark_ico_encode(pictures)
+	file, ok := resources.mark_ico_encode(pictures)
 	testing.expect(t, ok)
-	entries, problem := mark_ico_read(file)
+	entries, problem := resources.mark_ico_read(file)
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, len(entries), 2)
 	if len(entries) == 2 {
 		testing.expect_value(t, entries[0].width, 2)
 		testing.expect_value(t, entries[0].height, 2)
-		testing.expect_value(t, entries[0].offset, MARK_ICO_HEADER_SIZE + 2 * MARK_ICO_ENTRY_SIZE)
+		testing.expect_value(t, entries[0].offset, resources.MARK_ICO_HEADER_SIZE + 2 * resources.MARK_ICO_ENTRY_SIZE)
 		testing.expect_value(t, entries[0].bytes, len(first))
 		testing.expect_value(t, entries[1].width, 3)
 		testing.expect_value(t, entries[1].height, 1)
@@ -448,18 +449,18 @@ site_icon_file_of_the_root :: proc(t: ^testing.T) {
 		testing.expect(t, string(file[entries[1].offset:][:entries[1].bytes]) == string(second))
 	}
 	// A damaged file: cut, another type, an entry outside the file.
-	_, cut_problem := mark_ico_read(file[:len(file) - 1])
+	_, cut_problem := resources.mark_ico_read(file[:len(file) - 1])
 	testing.expect(t, cut_problem != "")
 	other_type := make([]u8, len(file), context.temp_allocator)
 	copy(other_type, file)
 	other_type[2] = 2
-	_, type_problem := mark_ico_read(other_type)
+	_, type_problem := resources.mark_ico_read(other_type)
 	testing.expect(t, type_problem != "")
-	_, short_problem := mark_ico_read(file[:MARK_ICO_HEADER_SIZE + 4])
+	_, short_problem := resources.mark_ico_read(file[:resources.MARK_ICO_HEADER_SIZE + 4])
 	testing.expect(t, short_problem != "")
-	_, empty_ok := mark_ico_encode(nil)
+	_, empty_ok := resources.mark_ico_encode(nil)
 	testing.expect(t, !empty_ok)
-	_, not_png_ok := mark_ico_encode([][]u8{[]u8{1, 2, 3}})
+	_, not_png_ok := resources.mark_ico_encode([][]u8{[]u8{1, 2, 3}})
 	testing.expect(t, !not_png_ok)
 }
 
@@ -467,7 +468,7 @@ site_icon_file_of_the_root :: proc(t: ^testing.T) {
 site_icons_of_the_site :: proc(t: ^testing.T) {
 	// The files of the mark of the site, as the generator makes them from
 	// the table of the uses of the mark.
-	files, files_ok := mark_site_files()
+	files, files_ok := resources.mark_site_files()
 	testing.expect(t, files_ok)
 	if !files_ok {
 		return
@@ -481,43 +482,43 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 		size:      int,
 		opaque:    bool,
 	}
-	raster_icons := [?]Raster_Icon{{SITE_ICON_TOUCH, 180, true}, {SITE_ICON_192, 192, false}, {SITE_ICON_512, 512, false}, {SITE_ICON_MASKABLE, 512, true}}
+	raster_icons := [?]Raster_Icon{{resources.SITE_ICON_TOUCH, 180, true}, {resources.SITE_ICON_192, 192, false}, {resources.SITE_ICON_512, 512, false}, {resources.SITE_ICON_MASKABLE, 512, true}}
 	for icon in raster_icons {
-		picture, in_table := mark_use_picture(icon.file_name)
+		picture, in_table := resources.mark_use_picture(icon.file_name)
 		testing.expectf(t, in_table, "%s is not a row of the table of the uses of the mark", icon.file_name)
 		drawing := 24 * picture.heron_cell
 		testing.expectf(t, drawing <= icon.size && (icon.size - drawing) % 2 == 0, "the icon of %d has a drawing of %d", icon.size, drawing)
 		testing.expect_value(t, picture.opaque, icon.opaque)
 		testing.expect_value(t, picture.on_light, !icon.opaque)
-		data := files[strings.concatenate({SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator)]
+		data := files[strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator)]
 		width, height, _ := foundation.site_png_size(data)
 		testing.expect_value(t, width, icon.size)
 		testing.expect_value(t, height, icon.size)
 		testing.expect_value(t, site_png_is_opaque(data), icon.opaque)
-		if icon.file_name == SITE_ICON_MASKABLE {
+		if icon.file_name == resources.SITE_ICON_MASKABLE {
 			// The corners of the drawing: 2 * (drawing / 2)^2 <= (0.4 * size)^2.
 			testing.expect(t, 200 * drawing * drawing <= 64 * icon.size * icon.size)
 		}
 	}
 	// The entries of favicon.ico are rows of the same table: transparent,
 	// in the light scheme, each with an even margin.
-	favicon_entries, favicon_kind := mark_use_entries(SITE_FAVICON)
+	favicon_entries, favicon_kind := resources.mark_use_entries(resources.SITE_FAVICON)
 	testing.expect_value(t, len(favicon_entries), 2)
-	testing.expect_value(t, favicon_kind, Mark_Use_Kind.Icon_File_Entry)
+	testing.expect_value(t, favicon_kind, resources.Mark_Use_Kind.Icon_File_Entry)
 	for entry in favicon_entries {
-		entry_width, entry_height := mark_picture_size(entry)
+		entry_width, entry_height := resources.mark_picture_size(entry)
 		testing.expect(t, entry_width == entry_height && (entry_width - 24 * entry.heron_cell) % 2 == 0 && entry_width >= 24 * entry.heron_cell)
 		testing.expect(t, entry.on_light && !entry.opaque)
 	}
 	// Each icon of the manifest is a row of the table.
 	for icon in site_manifest_icons {
-		picture, in_table := mark_use_picture(icon.file_name)
+		picture, in_table := resources.mark_use_picture(icon.file_name)
 		testing.expectf(t, in_table && picture.opaque == icon.maskable, "%s of the manifest is not a row of the table, or a maskable icon is not opaque", icon.file_name)
 	}
 
 	// The SVG icon: the cells of the heron as rectangles, one for each run
 	// of cells of one color in a row.
-	svg := string(files[SITE_PICTURE_FOLDER + "/" + SITE_ICON_SVG])
+	svg := string(files[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_SVG])
 	testing.expect(t, strings.has_prefix(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\""))
 	testing.expect(t, strings.contains(svg, "shape-rendering=\"crispEdges\""))
 	testing.expect(t, strings.contains(svg, "@media (prefers-color-scheme: dark)"))
@@ -550,7 +551,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 
 	// The files: favicon.ico at the root with 32 and 48, and the checks of a
 	// good site and of damaged ones.
-	entries, favicon_problem := mark_ico_read(files[SITE_FAVICON])
+	entries, favicon_problem := resources.mark_ico_read(files[resources.SITE_FAVICON])
 	testing.expect_value(t, favicon_problem, "")
 	testing.expect_value(t, len(entries), 2)
 	site := metadata_test_site("")
@@ -568,7 +569,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 
 	without_favicon := make(map[string][]u8, context.temp_allocator)
 	for path, data in files {
-		if path != SITE_FAVICON {
+		if path != resources.SITE_FAVICON {
 			without_favicon[path] = data
 		}
 	}
@@ -577,13 +578,13 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 	for path, data in files {
 		transparent_touch[path] = data
 	}
-	transparent_touch[SITE_PICTURE_FOLDER + "/" + SITE_ICON_TOUCH] = files[SITE_PICTURE_FOLDER + "/" + SITE_ICON_192]
+	transparent_touch[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_TOUCH] = files[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_192]
 	testing.expect(t, len(site_icon_problems(site.pages[:], written, manifest, transparent_touch)) > 0)
 	transparent_maskable := make(map[string][]u8, context.temp_allocator)
 	for path, data in files {
 		transparent_maskable[path] = data
 	}
-	transparent_maskable[SITE_PICTURE_FOLDER + "/" + SITE_ICON_MASKABLE] = files[SITE_PICTURE_FOLDER + "/" + SITE_ICON_512]
+	transparent_maskable[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_MASKABLE] = files[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_512]
 	testing.expect(t, len(site_icon_problems(site.pages[:], written, manifest, transparent_maskable)) > 0)
 	wrong_size, replaced := strings.replace(manifest, "\"192x192\"", "\"190x190\"", 1, context.temp_allocator)
 	testing.expect(t, replaced)
@@ -678,11 +679,11 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 	testing.expect(t, !damaged_ok)
 
 	// The picture for other sites that the tool draws.
-	for picture in mark_uses_pictures(.Site, .Picture) {
-		if picture.file_name != SITE_MARK_CARD {
+	for picture in resources.mark_uses_pictures(.Site, .Picture) {
+		if picture.file_name != resources.SITE_MARK_CARD {
 			continue
 		}
-		data, encoded := mark_picture_png(picture)
+		data, encoded := resources.mark_picture_png(picture)
 		testing.expect(t, encoded)
 		card_width, card_height, _ := foundation.site_png_size(data)
 		testing.expect_value(t, card_width, SITE_CARD_WIDTH)
@@ -695,11 +696,11 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 @(private = "file")
 metadata_test_files :: proc() -> map[string]int {
 	files := make(map[string]int, context.temp_allocator)
-	for path in ([]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_MARK_FONT, SITE_FAVICON, SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_MANIFEST, "pictures/a.png"}) {
+	for path in ([]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_MARK_FONT, resources.SITE_FAVICON, SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_MANIFEST, "pictures/a.png"}) {
 		files[path] = 1
 	}
-	for name in ([]string{SITE_ICON_SVG, SITE_ICON_TOUCH, SITE_MARK_BAR, SITE_MARK_BAR_LIGHT, SITE_MAKER_PICTURE}) {
-		files[strings.concatenate({SITE_PICTURE_FOLDER, "/", name}, context.temp_allocator)] = 1
+	for name in ([]string{resources.SITE_ICON_SVG, resources.SITE_ICON_TOUCH, resources.SITE_MARK_BAR, resources.SITE_MARK_BAR_LIGHT, SITE_MAKER_PICTURE}) {
+		files[strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", name}, context.temp_allocator)] = 1
 	}
 	return files
 }

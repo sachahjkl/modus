@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "core:fmt"
 import "core:os"

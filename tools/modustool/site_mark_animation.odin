@@ -31,6 +31,7 @@ import "core:image/png"
 import "core:strings"
 import "modus:support/mark"
 import "modustool:foundation"
+import "modustool:resources"
 
 SITE_MARK_ANIMATION_SCRIPT :: "mark_animation.js"
 // The icon of the tab that the script draws during an animation: the size
@@ -62,16 +63,16 @@ SITE_MARK_FIRST_PRESS_ANIMATION :: mark.Animation.Dash
 // scheme, with the drawn forms of the moves; and the one of the icon of
 // the tab, the frames only.
 Site_Mark_Tile_Maps :: struct {
-	dark:  Mark_Tile_Map,
-	light: Mark_Tile_Map,
-	icon:  Mark_Tile_Map,
+	dark:  resources.Mark_Tile_Map,
+	light: resources.Mark_Tile_Map,
+	icon:  resources.Mark_Tile_Map,
 }
 
 site_mark_tile_maps :: proc() -> (tile_maps: Site_Mark_Tile_Maps, ok: bool) {
-	dark, has_dark := mark_use_picture(SITE_MARK_ANIMATION_HOME)
-	light, has_light := mark_use_picture(SITE_MARK_ANIMATION_HOME_LIGHT)
-	icon, has_icon := mark_use_picture(SITE_MARK_ANIMATION_ICON)
-	home, has_home := mark_use_picture(SITE_MARK_HOME)
+	dark, has_dark := resources.mark_use_picture(resources.SITE_MARK_ANIMATION_HOME)
+	light, has_light := resources.mark_use_picture(resources.SITE_MARK_ANIMATION_HOME_LIGHT)
+	icon, has_icon := resources.mark_use_picture(resources.SITE_MARK_ANIMATION_ICON)
+	home, has_home := resources.mark_use_picture(resources.SITE_MARK_HOME)
 	// A tile of the home is the still picture of the home, so that the
 	// heron does not change when the script starts; the two tile maps of
 	// the home differ by their colors only.
@@ -79,9 +80,9 @@ site_mark_tile_maps :: proc() -> (tile_maps: Site_Mark_Tile_Maps, ok: bool) {
 		fmt.eprintln("modustool: site: the tile maps of the home and of the icon of the tab are not in the table of the uses of the mark, or a tile of the home is not drawn as the still picture of the home")
 		return {}, false
 	}
-	tile_maps.dark = mark_tile_map_build(dark, false, .Blink, true, 0) or_return
-	tile_maps.light = mark_tile_map_build(light, false, .Blink, true, 0) or_return
-	tile_maps.icon = mark_tile_map_build(icon, false, .Blink, false, 0) or_return
+	tile_maps.dark = resources.mark_tile_map_build(dark, false, .Blink, true, 0) or_return
+	tile_maps.light = resources.mark_tile_map_build(light, false, .Blink, true, 0) or_return
+	tile_maps.icon = resources.mark_tile_map_build(icon, false, .Blink, false, 0) or_return
 	return tile_maps, true
 }
 
@@ -89,10 +90,10 @@ site_mark_tile_maps :: proc() -> (tile_maps: Site_Mark_Tile_Maps, ok: bool) {
 // that the script draws again from the tile map of the icon during an
 // animation: the entry of SITE_MARK_ANIMATION_ICON_SIZE pixels, among the
 // rows of favicon.ico of the table of the uses of the mark.
-site_mark_tab_icon_picture :: proc() -> (icon: Mark_Picture, ok: bool) {
-	entries, _ := mark_use_entries(SITE_FAVICON)
+site_mark_tab_icon_picture :: proc() -> (icon: resources.Mark_Picture, ok: bool) {
+	entries, _ := resources.mark_use_entries(resources.SITE_FAVICON)
 	for entry in entries {
-		if width, height := mark_picture_size(entry); width == SITE_MARK_ANIMATION_ICON_SIZE && height == SITE_MARK_ANIMATION_ICON_SIZE {
+		if width, height := resources.mark_picture_size(entry); width == SITE_MARK_ANIMATION_ICON_SIZE && height == SITE_MARK_ANIMATION_ICON_SIZE {
 			return entry, true
 		}
 	}
@@ -104,7 +105,7 @@ site_mark_tab_icon_picture :: proc() -> (icon: Mark_Picture, ok: bool) {
 SITE_MARK_SHEET_COUNT :: 3
 
 site_mark_sheet_path :: proc(file_name: string) -> string {
-	return strings.concatenate({SITE_PICTURE_FOLDER, "/", file_name}, context.temp_allocator)
+	return strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", file_name}, context.temp_allocator)
 }
 
 // site_mark_animation_files gives the files of the animations, by their
@@ -117,8 +118,8 @@ site_mark_animation_files :: proc() -> (files: map[string][]u8, ok: bool) {
 	tile_maps := site_mark_tile_maps() or_return
 	files = make(map[string][]u8, context.temp_allocator)
 	addresses: [SITE_MARK_SHEET_COUNT]string
-	for tile_map, index in ([SITE_MARK_SHEET_COUNT]^Mark_Tile_Map{&tile_maps.dark, &tile_maps.light, &tile_maps.icon}) {
-		data := mark_tile_map_png(tile_map) or_return
+	for tile_map, index in ([SITE_MARK_SHEET_COUNT]^resources.Mark_Tile_Map{&tile_maps.dark, &tile_maps.light, &tile_maps.icon}) {
+		data := resources.mark_tile_map_png(tile_map) or_return
 		path := site_mark_sheet_path(tile_map.picture.file_name)
 		files[path] = data
 		addresses[index] = strings.concatenate({path, "?v=", site_bytes_version(data)}, context.temp_allocator)
@@ -142,7 +143,7 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 	for path, data in files {
 		site_write_file(site, path, data) or_return
 	}
-	sprites, _ := mark_sprites()
+	sprites, _ := resources.mark_sprites()
 	still_least, still_most := mark.still_bounds()
 	fmt.printfln(
 		"modustool: site: the animations of the mark: %d animations, %d ms in all, %d sprites; a still time of %d to %d ms; %s %d bytes, %s %d bytes, %s %d bytes, %s %d bytes",
@@ -151,12 +152,12 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 		len(sprites.cells),
 		still_least,
 		still_most,
-		SITE_MARK_ANIMATION_HOME,
-		len(files[site_mark_sheet_path(SITE_MARK_ANIMATION_HOME)]),
-		SITE_MARK_ANIMATION_HOME_LIGHT,
-		len(files[site_mark_sheet_path(SITE_MARK_ANIMATION_HOME_LIGHT)]),
-		SITE_MARK_ANIMATION_ICON,
-		len(files[site_mark_sheet_path(SITE_MARK_ANIMATION_ICON)]),
+		resources.SITE_MARK_ANIMATION_HOME,
+		len(files[site_mark_sheet_path(resources.SITE_MARK_ANIMATION_HOME)]),
+		resources.SITE_MARK_ANIMATION_HOME_LIGHT,
+		len(files[site_mark_sheet_path(resources.SITE_MARK_ANIMATION_HOME_LIGHT)]),
+		resources.SITE_MARK_ANIMATION_ICON,
+		len(files[site_mark_sheet_path(resources.SITE_MARK_ANIMATION_ICON)]),
 		SITE_MARK_ANIMATION_SCRIPT,
 		len(files[SITE_MARK_ANIMATION_SCRIPT]),
 	)
@@ -174,7 +175,7 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 		append(&problems, "the tile maps of the animations of the mark cannot be built")
 		return problems[:]
 	}
-	for tile_map in ([SITE_MARK_SHEET_COUNT]^Mark_Tile_Map{&tile_maps.dark, &tile_maps.light, &tile_maps.icon}) {
+	for tile_map in ([SITE_MARK_SHEET_COUNT]^resources.Mark_Tile_Map{&tile_maps.dark, &tile_maps.light, &tile_maps.icon}) {
 		path := site_mark_sheet_path(tile_map.picture.file_name)
 		data, found := files[path]
 		if !found {
@@ -186,23 +187,23 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 			append(&problems, fmt.tprintf("%s does not decode", path))
 			continue
 		}
-		expected, width, height, channels := mark_tile_map_pixels(tile_map)
+		expected, width, height, channels := resources.mark_tile_map_pixels(tile_map)
 		same := image.width == width && image.height == height && image.channels == channels && image.depth == 8 && len(image.pixels) == len(expected)
 		for index := 0; same && index < len(expected); index += 1 {
 			same = image.pixels[index] == expected[index]
 		}
 		if !same {
-			append(&problems, fmt.tprintf("%s is not the frames of the animations of " + MARK_SOURCE_FOLDER, path))
+			append(&problems, fmt.tprintf("%s is not the frames of the animations of " + resources.MARK_SOURCE_FOLDER, path))
 		}
-		if width > MARK_PICTURE_SIDE_MOST || height > MARK_PICTURE_SIDE_MOST {
-			append(&problems, fmt.tprintf("%s is %d by %d pixels: a browser decodes at most %d", path, width, height, MARK_PICTURE_SIDE_MOST))
+		if width > resources.MARK_PICTURE_SIDE_MOST || height > resources.MARK_PICTURE_SIDE_MOST {
+			append(&problems, fmt.tprintf("%s is %d by %d pixels: a browser decodes at most %d", path, width, height, resources.MARK_PICTURE_SIDE_MOST))
 		}
 	}
 	script, has_script := files[SITE_MARK_ANIMATION_SCRIPT]
 	if !has_script || strings.contains(string(script), "/*TABLE*/") {
 		append(&problems, SITE_MARK_ANIMATION_SCRIPT + " has no table of the frames")
 	}
-	if fault := mark_move_fault_text(mark.move_keys[:]); fault != "" {
+	if fault := resources.mark_move_fault_text(mark.move_keys[:]); fault != "" {
 		append(&problems, fault)
 	}
 	return problems[:]
@@ -234,7 +235,7 @@ site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_ad
 	// The table of the tile map of the home, as the generator writes it:
 	// the sprites, the tiles, the drawn forms, the animations.
 	write(&b, "{")
-	mark_tile_map_table_fields_write(&b, &tile_maps.dark)
+	resources.mark_tile_map_table_fields_write(&b, &tile_maps.dark)
 	// What the site adds: the addresses of the three tile maps, and where
 	// a sprite is in the tile map of the icon of the tab and in that icon.
 	write(&b, ",\"sheets\":{\"dark\":")
@@ -318,7 +319,7 @@ SITE_MARK_NO_SMOOTHING :: "image-rendering: crisp-edges; image-rendering: pixela
 // for reduced motion the stage is never shown, also when a script puts it
 // in the page.
 site_mark_animation_rules :: proc() -> string {
-	home, _ := mark_use_picture(SITE_MARK_HOME)
+	home, _ := resources.mark_use_picture(resources.SITE_MARK_HOME)
 	factor := home.heron_cell
 	b := strings.builder_make(context.temp_allocator)
 	// The braces are written as text, never through a format of fmt.
@@ -338,8 +339,8 @@ site_mark_animation_rules :: proc() -> string {
 		"left: -%dpx; bottom: %dpx; width: %dpx; height: %dpx; ",
 		mark.FORM_REACH_LEFT * factor,
 		mark.WATER_ROWS * factor,
-		MARK_FORM_BOX_COLUMNS * factor,
-		MARK_FORM_BOX_ROWS * factor,
+		resources.MARK_FORM_BOX_COLUMNS * factor,
+		resources.MARK_FORM_BOX_ROWS * factor,
 	)
 	strings.write_string(&b, "}\n")
 	strings.write_string(&b, "." + SITE_MARK_STAGE_CLASS + " ." + SITE_MARK_WATER_CLASS + " { bottom: 0; ")

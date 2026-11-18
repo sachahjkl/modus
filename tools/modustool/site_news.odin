@@ -7,6 +7,7 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 SITE_NEWS_FEED :: "news.xml"
 // The entries that the home shows.
@@ -70,13 +71,13 @@ site_news_read :: proc(site: ^Site) -> bool {
 		if entry.picture != NEWS_NONE {
 			data := foundation.read_file(entry.picture) or_return
 			item.picture_width, item.picture_height, _ = foundation.site_png_size(data)
-			item.picture = strings.concatenate({SITE_PICTURE_FOLDER, "/", site_file_name(entry.picture)}, context.temp_allocator)
+			item.picture = strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", site_file_name(entry.picture)}, context.temp_allocator)
 			site.copies[item.picture] = entry.picture
 			// The alt text: the caption of the picture in README.md, the
 			// description of the mark, or the title of the entry.
 			if caption, has_caption := site.readme.captions[entry.picture]; has_caption && caption != "" {
 				item.picture_alt = caption
-			} else if strings.has_prefix(entry.picture, LOGO_FOLDER + "/") {
+			} else if strings.has_prefix(entry.picture, resources.LOGO_FOLDER + "/") {
 				item.picture_alt = site.readme.mark_description
 			} else {
 				item.picture_alt = entry.title
@@ -344,7 +345,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 		site_xml_escape(&b, site_feed_address(site, SITE_NEWS_FEED))
 		strings.write_string(&b, "\"/>\n")
 	}
-	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, SITE_PICTURE_FOLDER + "/" + SITE_ICON_192))
+	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_192))
 	for item in site.news {
 		entry := item.entry
 		strings.write_string(&b, "<entry>\n<title>")

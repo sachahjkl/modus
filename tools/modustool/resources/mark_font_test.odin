@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "core:strings"
 import "core:testing"
@@ -197,15 +197,6 @@ mark_font_measures_are_those_of_the_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, mark.NAME_LETTER_COUNT * MARK_FONT_ADVANCE - mark.NAME_GAP_COLUMNS * cell, mark.NAME_COLUMNS * cell)
 	testing.expect_value(t, MARK_FONT_ASCENT, mark.NAME_ROWS * cell)
 	testing.expect_value(t, MARK_FONT_UNITS_OF_THE_EM, MARK_FONT_CELLS_OF_THE_EM * cell)
-	// The sizes of the site: a whole count of pixels for a cell, and the
-	// box of the name that name_size gives at that cell size.
-	for cell_size in ([]int{SITE_MARK_NAME_CELL_SIZE, SITE_MARK_NAME_HOME_CELL_SIZE}) {
-		width, height := mark.name_size(cell_size)
-		testing.expect_value(t, site_mark_name_font_size(cell_size) * MARK_FONT_UNITS_OF_A_CELL, cell_size * MARK_FONT_UNITS_OF_THE_EM)
-		testing.expect_value(t, site_mark_name_font_size(cell_size) % MARK_FONT_CELLS_OF_THE_EM, 0)
-		testing.expect_value(t, width, mark.NAME_COLUMNS * cell_size)
-		testing.expect_value(t, height, mark.NAME_ROWS * cell_size)
-	}
 }
 
 // The file: the tables that a browser needs, by their tags, each at a

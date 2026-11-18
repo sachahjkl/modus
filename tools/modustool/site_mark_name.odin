@@ -11,11 +11,12 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "modus:support/mark"
+import "modustool:resources"
 
 // The font in the site. Its address carries no version: the preload of a
 // page and the rule of the style sheet must name the same address, and its
 // bytes change only when a letter of the mark changes.
-SITE_MARK_FONT :: "fonts/" + MARK_FONT_FILE_NAME
+SITE_MARK_FONT :: "fonts/" + resources.MARK_FONT_FILE_NAME
 
 SITE_MARK_NAME_CLASS :: "mark-name"
 // The name of the system as the mark: the one markup of the bar, of the
@@ -34,7 +35,7 @@ SITE_MARK_NAME_HOME_CELL_SIZE :: 6
 // of the name is cell_size pixels: the em of the font is a whole count of
 // cells.
 site_mark_name_font_size :: proc(cell_size: int) -> int {
-	return cell_size * MARK_FONT_CELLS_OF_THE_EM
+	return cell_size * resources.MARK_FONT_CELLS_OF_THE_EM
 }
 
 // site_mark_name_rules gives the rules of the style sheet for the name of
@@ -54,8 +55,8 @@ site_mark_name_font_size :: proc(cell_size: int) -> int {
 site_mark_name_rules :: proc() -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "/* The name of the mark: text in the font of its letters. */\n")
-	strings.write_string(&b, "@font-face { font-family: \"" + MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\"); font-weight: 100 900; font-style: normal; font-display: block; }\n")
-	strings.write_string(&b, "." + SITE_MARK_NAME_CLASS + " { display: inline-block; overflow: hidden; white-space: nowrap; font-family: \"" + MARK_FONT_FAMILY + "\", var(--mono); font-weight: 400; font-style: normal; font-synthesis: none; font-kerning: none; font-variant-ligatures: none; letter-spacing: 0; text-transform: none; ")
+	strings.write_string(&b, "@font-face { font-family: \"" + resources.MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\"); font-weight: 100 900; font-style: normal; font-display: block; }\n")
+	strings.write_string(&b, "." + SITE_MARK_NAME_CLASS + " { display: inline-block; overflow: hidden; white-space: nowrap; font-family: \"" + resources.MARK_FONT_FAMILY + "\", var(--mono); font-weight: 400; font-style: normal; font-synthesis: none; font-kerning: none; font-variant-ligatures: none; letter-spacing: 0; text-transform: none; ")
 	site_mark_name_size_write(&b, SITE_MARK_NAME_CELL_SIZE)
 	strings.write_string(&b, "}\n.foot ." + SITE_MARK_NAME_CLASS + " { color: var(--text); margin-right: 4px; }\n")
 	strings.write_string(&b, ".home-head ." + SITE_MARK_NAME_CLASS + " { ")

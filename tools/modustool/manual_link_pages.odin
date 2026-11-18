@@ -13,6 +13,7 @@ import "core:strings"
 import "modus:contract/manual_pages"
 import module "modus:contract/module"
 import "modustool:foundation"
+import "modustool:resources"
 
 MANUAL_PAGES_FILE :: foundation.BUILD_FOLDER + "/manual_pages.resource"
 
@@ -52,7 +53,7 @@ Manual_Module_File :: struct {
 
 // build_manual_pages writes the resource of the link pages from the module
 // files of the boot image and the documents and sources of the repository.
-build_manual_pages :: proc() -> (resource: Resource_File, ok: bool) {
+build_manual_pages :: proc() -> (resource: resources.Resource_File, ok: bool) {
 	modules := make([dynamic]Manual_Module_File, context.temp_allocator)
 	for build in foundation.module_builds {
 		if foundation.module_in_boot_image(build) {

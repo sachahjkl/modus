@@ -10,7 +10,7 @@
 // The rule of the animations and of the moves is the data of src/library/support/mark
 // (animation.odin, motion.odin). Also here: the row of the drawn forms of
 // the picture for a developer.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:strings"

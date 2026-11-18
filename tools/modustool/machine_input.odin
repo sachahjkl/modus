@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:thread"
 import "core:time"
 import "modustool:foundation"
+import "modustool:resources"
 
 // How the machine test sends input and saves pictures
 // (docs/TOOLS.md, "How the tool sends input and waits").
@@ -325,7 +326,7 @@ Picture_Job :: struct {
 picture_job_run :: proc(job: ^Picture_Job) {
 	defer free_all(context.temp_allocator)
 	started := time.tick_now()
-	file, encode_error := png_encode(job.width, job.height, 3, job.pixels)
+	file, encode_error := resources.png_encode(job.width, job.height, 3, job.pixels)
 	job.conversion = time.tick_since(started)
 	if encode_error != nil {
 		job.failure = fmt.aprintf("cannot encode %s: %v", job.path, encode_error)

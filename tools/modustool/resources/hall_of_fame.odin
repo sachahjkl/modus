@@ -4,7 +4,7 @@
 // holds, so that a build decodes no PNG file. The credits file is the one
 // list of the portraits: the command, the page of the licenses of the site
 // and a host test read it.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:image/png"

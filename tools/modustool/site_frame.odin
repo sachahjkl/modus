@@ -15,6 +15,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The address of the site: the pages get canonical addresses, Open Graph,
 // a JSON-LD graph and a sitemap from it. An empty address gives a site of
@@ -614,16 +615,16 @@ site_build :: proc(address: string) -> bool {
 	// generator makes it. favicon.ico is at the root, where a browser asks
 	// for it by default, and the others are in the picture folder. The
 	// check of the icons reads these files.
-	icon_files, icons_ok := mark_site_files()
+	icon_files, icons_ok := resources.mark_site_files()
 	if !icons_ok {
 		fmt.eprintln("modustool: site: cannot draw the pictures and the icons of the mark")
 		return false
 	}
-	if card, has_card := icon_files[SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD]; has_card {
+	if card, has_card := icon_files[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_CARD]; has_card {
 		// Other sites show the card on any background and at this size.
 		width, height, _ := foundation.site_png_size(card)
 		if width != SITE_CARD_WIDTH || height != SITE_CARD_HEIGHT || !site_png_is_opaque(card) {
-			fmt.eprintfln("modustool: site: %s is %d by %d or not opaque; the picture for other sites is opaque, %d by %d", SITE_MARK_CARD, width, height, SITE_CARD_WIDTH, SITE_CARD_HEIGHT)
+			fmt.eprintfln("modustool: site: %s is %d by %d or not opaque; the picture for other sites is opaque, %d by %d", resources.SITE_MARK_CARD, width, height, SITE_CARD_WIDTH, SITE_CARD_HEIGHT)
 			return false
 		}
 	}
@@ -636,11 +637,11 @@ site_build :: proc(address: string) -> bool {
 		fmt.eprintfln("modustool: site: cannot read %s", SITE_MAKER_PICTURE_SOURCE)
 		return false
 	}
-	site_write_file(&site, SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE, maker_picture) or_return
+	site_write_file(&site, resources.SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE, maker_picture) or_return
 	// The font of the name of the mark, built from the letters of
 	// src/library/support/mark as the pictures above are drawn from its cells: the bytes
 	// of the file of the repository, which `modustool check` compares.
-	mark_font := mark_font_of_the_repository() or_return
+	mark_font := resources.mark_font_of_the_repository() or_return
 	site_write_file(&site, SITE_MARK_FONT, mark_font) or_return
 	// The font of the text of the diagrams of the guides: the file whose
 	// advances the layout of each diagram measured (site_diagram.odin).
@@ -997,9 +998,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site_color(site_light_colors().background))
 	// The icons, in the order that lets an old browser take the ICO and a
 	// new one the SVG; all links are relative, as every link of the site.
-	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" sizes=\"32x32\">\n", link(page, SITE_FAVICON))
-	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" type=\"image/svg+xml\">\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_ICON_SVG))
-	fmt.sbprintf(&b, "<link rel=\"apple-touch-icon\" href=\"%s\" sizes=\"180x180\">\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_ICON_TOUCH))
+	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" sizes=\"32x32\">\n", link(page, resources.SITE_FAVICON))
+	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" type=\"image/svg+xml\">\n", link(page, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_SVG))
+	fmt.sbprintf(&b, "<link rel=\"apple-touch-icon\" href=\"%s\" sizes=\"180x180\">\n", link(page, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_ICON_TOUCH))
 	if site_page_exists(site, site_section_page(.News)) {
 		fmt.sbprintf(&b, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"News of %s\" href=\"%s\">\n", SITE_SYSTEM_NAME, link(page, SITE_NEWS_FEED))
 	}
@@ -1039,8 +1040,8 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// The picture is the heron alone; the name is text in the font of the
 	// name of the mark.
 	write(&b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
-	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", site_page_link(site, page.path, site_section_page(.Home)), link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR_LIGHT))
-	fmt.sbprintf(&b, "<img src=\"%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR), SITE_MARK_NAME_HTML)
+	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", site_page_link(site, page.path, site_section_page(.Home)), link(page, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_BAR_LIGHT))
+	fmt.sbprintf(&b, "<img src=\"%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", link(page, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_BAR), SITE_MARK_NAME_HTML)
 	// The sections and the search are in one menu: one list of links for
 	// every width. Under 720 pixels the menu is a square button; on a wide
 	// screen the style sheet and the script show it open, as a bar
@@ -1097,7 +1098,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 
 	// The foot: the build that the page comes from, and its sources.
 	write(&b, "<footer class=\"foot\">\n<div class=\"page\">\n")
-	fmt.sbprintf(&b, "<p class=\"foot-maker\">%s · by <span class=\"maker\"><img src=\"%s\" width=\"16\" height=\"16\" alt=\"\"><a href=\"%s\">%s</a></span></p>\n", SITE_MARK_NAME_HTML, link(page, SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE), SITE_MAKER_ADDRESS, SITE_MAKER_NAME)
+	fmt.sbprintf(&b, "<p class=\"foot-maker\">%s · by <span class=\"maker\"><img src=\"%s\" width=\"16\" height=\"16\" alt=\"\"><a href=\"%s\">%s</a></span></p>\n", SITE_MARK_NAME_HTML, link(page, resources.SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE), SITE_MAKER_ADDRESS, SITE_MAKER_NAME)
 	write(&b, "<p>Generated by <code>modustool site</code> from ")
 	if site.commit != "" {
 		fmt.sbprintf(&b, "the commit <a href=\"%s/commit/%s\"><code>%s</code></a>", SITE_REPOSITORY_ADDRESS, site.commit, site.commit[:12])

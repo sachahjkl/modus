@@ -11,12 +11,13 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "modus:support/vector_font"
+import "modustool:resources"
 
 // The font of the text of the diagrams: the interface font of the system,
 // which the site serves, so its advances are known when the tool lays out
 // a diagram. The reading font of a page is the font of the system of the
 // reader, whose advances no build can know.
-SITE_DIAGRAM_FONT_SOURCE :: VECTOR_FONT_FOLDER + "/" + INTERFACE_VECTOR_FONT + ".ttf"
+SITE_DIAGRAM_FONT_SOURCE :: resources.VECTOR_FONT_FOLDER + "/" + resources.INTERFACE_VECTOR_FONT + ".ttf"
 SITE_DIAGRAM_FONT_SIZE :: 14
 SITE_DIAGRAM_LINE_HEIGHT :: 20 // The least height of a line of text; a font with a taller ascent and descent gets more.
 

@@ -18,7 +18,7 @@
 //   mark_developer_picture.odin: the picture of every frame for a
 //     developer;
 //   mark_command.odin: the command.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:image/png"
@@ -622,3 +622,7 @@ mark_generate :: proc(request: Mark_Request) -> (file: []u8, refusal: string) {
 	}
 	return file, ""
 }
+
+// The folder of the pictures of the site, under the folder of the site: a
+// use of the mark of the place Site is a file there.
+SITE_PICTURE_FOLDER :: "pictures"

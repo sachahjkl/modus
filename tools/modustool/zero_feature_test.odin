@@ -4,12 +4,13 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:support/vector_font"
+import "modustool:resources"
 
 // source_font_path gives the path of a source font from VECTOR_FONT_SOURCES,
 // which the development shell and the check of the flake set.
 @(private = "file")
 source_font_path :: proc(name: string) -> (path: string, ok: bool) {
-	sources := os.get_env(VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)
+	sources := os.get_env(resources.VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)
 	rest := sources
 	prefix := strings.concatenate({name, "="}, context.temp_allocator)
 	for item in strings.split_iterator(&rest, ";") {
@@ -38,7 +39,7 @@ the_zero_feature_of_paper_mono :: proc(t: ^testing.T) {
 	outline := vector_font.Outline{points = memory.points[:], contour_ends = memory.contours[:]}
 	for expected in fonts {
 		path, found := source_font_path(expected.name)
-		testing.expectf(t, found, "%s names %s: run the tests in the development shell or in the check of the flake", VECTOR_FONT_SOURCES_VARIABLE, expected.name)
+		testing.expectf(t, found, "%s names %s: run the tests in the development shell or in the check of the flake", resources.VECTOR_FONT_SOURCES_VARIABLE, expected.name)
 		if !found {
 			continue
 		}
@@ -49,7 +50,7 @@ the_zero_feature_of_paper_mono :: proc(t: ^testing.T) {
 		zero, zero_problem := vector_font.glyph_of(&font, '0')
 		testing.expect_value(t, zero_problem, vector_font.Font_Problem.None)
 		testing.expect_value(t, zero, 294)
-		slashed, substitution_problem := vector_font.single_substitution(&font, ZERO_FEATURE, zero)
+		slashed, substitution_problem := vector_font.single_substitution(&font, resources.ZERO_FEATURE, zero)
 		testing.expect_value(t, substitution_problem, vector_font.Font_Problem.None)
 		testing.expect_value(t, slashed, 304)
 		testing.expect_value(t, vector_font.glyph_outline(&font, zero, &outline), vector_font.Font_Problem.None)
@@ -62,7 +63,7 @@ the_zero_feature_of_paper_mono :: proc(t: ^testing.T) {
 		testing.expect_value(t, outline.advance, default_advance) // The subset stays monospace.
 		// No other feature is taken for "zero": the capital O has no substitution.
 		capital, _ := vector_font.glyph_of(&font, 'O')
-		_, capital_problem := vector_font.single_substitution(&font, ZERO_FEATURE, capital)
+		_, capital_problem := vector_font.single_substitution(&font, resources.ZERO_FEATURE, capital)
 		testing.expect_value(t, capital_problem, vector_font.Font_Problem.No_Feature)
 	}
 }

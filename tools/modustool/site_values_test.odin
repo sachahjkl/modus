@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:support/graphics"
+import "modustool:resources"
 
 // The table of the kinds is complete: each kind has a name of its own, a
 // title, a meaning, a kind icon of 12 by 12 cells that no other kind has, and
@@ -46,14 +47,14 @@ site_value_kinds_are_complete :: proc(t: ^testing.T) {
 			colors := is_light ? light : dark
 			color := site_value_color(kind, is_light)
 			for under in ([]graphics.Color{colors.background, colors.card_top}) {
-				ratio := site_contrast_ratio(color, under)
+				ratio := resources.site_contrast_ratio(color, under)
 				testing.expectf(t, ratio >= SITE_VALUE_CONTRAST_LEAST, "the kind %v on %06x (light form: %v): a contrast of %.2f; at least %.1f", kind, u32(under), is_light, ratio, SITE_VALUE_CONTRAST_LEAST)
 			}
 		}
 	}
 	// The contrast itself: white on black is 21, and a color on itself is 1.
-	testing.expect(t, site_contrast_ratio(0xFFFFFF, 0x000000) > 20.9)
-	testing.expect(t, site_contrast_ratio(0x4A9CF0, 0x4A9CF0) < 1.01)
+	testing.expect(t, resources.site_contrast_ratio(0xFFFFFF, 0x000000) > 20.9)
+	testing.expect(t, resources.site_contrast_ratio(0x4A9CF0, 0x4A9CF0) < 1.01)
 }
 
 // The icon of each kind is an SVG picture: one rect for each run of cells
@@ -114,7 +115,7 @@ site_value_graphics_contrast :: proc(t: ^testing.T) {
 			colors := is_light ? light : dark
 			color := site_value_color(value_kind, is_light)
 			for under in ([]graphics.Color{colors.background, colors.card_top, colors.card_bottom, colors.track}) {
-				ratio := site_contrast_ratio(color, under)
+				ratio := resources.site_contrast_ratio(color, under)
 				testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "the search kind %v (%v) on %06x (light form: %v): a contrast of %.2f; at least %.1f", kind, value_kind, u32(under), is_light, ratio, SITE_VALUE_GRAPHIC_CONTRAST_LEAST)
 			}
 		}

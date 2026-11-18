@@ -11,6 +11,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 Site_Heading :: struct {
 	level:           int,
@@ -829,7 +830,7 @@ site_write_picture :: proc(renderer: ^Site_Renderer, alt, target: string) {
 		foundation.site_escape(&renderer.builder, alt)
 		return
 	}
-	site_path := strings.concatenate({SITE_PICTURE_FOLDER, "/", site_file_name(resolved)}, context.temp_allocator)
+	site_path := strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", site_file_name(resolved)}, context.temp_allocator)
 	renderer.site.copies[site_path] = resolved
 	fmt.sbprintf(&renderer.builder, "<img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", site_relative(renderer.page, site_path), width, height)
 	site_plain(&renderer.builder, alt)

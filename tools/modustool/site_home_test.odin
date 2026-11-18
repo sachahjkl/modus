@@ -7,6 +7,7 @@ import "core:testing"
 import "modus:support/graphics"
 import "modus:support/mark"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The stages of the start as a run of the main machine test logged them.
 @(private = "file")
@@ -352,7 +353,7 @@ site_controls_have_their_states :: proc(t: ^testing.T) {
 			{"a button of a current section", form.text, form.track},
 		}
 		for pair in pairs {
-			ratio := site_contrast_ratio(pair.text, pair.under)
+			ratio := resources.site_contrast_ratio(pair.text, pair.under)
 			testing.expectf(t, ratio >= 4.5, "%s (light form: %v): a contrast of %.2f", pair.what, light, ratio)
 		}
 	}
@@ -390,7 +391,7 @@ site_home_card_rules_and_graphic_colors :: proc(t: ^testing.T) {
 		for accent in site_accents {
 			color := site_accent_graphic_color(accent, light)
 			for under in ([]graphics.Color{form.card_top, form.card_bottom, form.track}) {
-				ratio := site_contrast_ratio(color, under)
+				ratio := resources.site_contrast_ratio(color, under)
 				testing.expectf(t, ratio >= 3, "%s on %06x (light form: %v): a contrast of %.2f; a graphic needs 3", accent.class_name, u32(under) & 0xFFFFFF, light, ratio)
 			}
 		}

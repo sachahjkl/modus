@@ -75,11 +75,13 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 	// tool, which can import a kernel part.
 	package_of_the_tool := strings.join(host_test_command(foundation.TOOL_SOURCE_FOLDER + "/foundation", "/temporary"), " ", context.temp_allocator)
 	testing.expect(t, strings.contains(package_of_the_tool, foundation.KERNEL_LIBRARY_FLAG) && strings.contains(package_of_the_tool, foundation.TOOL_LIBRARY_FLAG), "a package of the tool takes the kernel parts and the source library of the tool")
-	listed := false
-	for folder in folders {
-		listed = listed || folder == foundation.TOOL_SOURCE_FOLDER + "/foundation"
+	for package_folder in ([]string{foundation.TOOL_SOURCE_FOLDER + "/foundation", foundation.TOOL_SOURCE_FOLDER + "/resources"}) {
+		listed := false
+		for folder in folders {
+			listed = listed || folder == package_folder
+		}
+		testing.expectf(t, listed, "the host tests of the package %s run in the check", package_folder)
 	}
-	testing.expect(t, listed, "the host tests of the package foundation run in the check")
 	// With no temporary folder of its own, a folder keeps the temporary
 	// folder of the check: its command sets no variable.
 	inherited := host_test_command(foundation.SOURCE_FOLDER_CONTRACT + "/ring", "")

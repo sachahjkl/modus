@@ -47,6 +47,7 @@ import "modus:contract/remote"
 import "modus:contract/timed_stream"
 import "modus:support/pci"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -67,6 +68,7 @@ import "modustool:foundation"
 // last makes the whole run longer.
 HOST_TEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER,
+	foundation.TOOL_SOURCE_FOLDER + "/resources",
 	foundation.TOOL_SOURCE_FOLDER + "/foundation",
 	foundation.SOURCE_FOLDER_RUNTIME,
 	foundation.SOURCE_FOLDER_CONTRACT + "/blake3",
@@ -418,7 +420,7 @@ COMMANDS :: [?]Command {
 	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only
 	// to change the font.
-	{name = "font", about = "convert the BDF file of the font to " + foundation.FONT_OUTPUT, run = run_font},
+	{name = "font", about = "convert the BDF file of the font to " + foundation.FONT_OUTPUT, run = resources.run_font},
 	// Converts the pointer manifests of `resources/pointers` to the pointer
 	// theme files of the boot image, in `build/pointers`.
 	//
@@ -427,12 +429,12 @@ COMMANDS :: [?]Command {
 	//
 	// It prints a table of each theme: each pointer, its size and its hot
 	// spot (docs/POINTERS.md).
-	{name = "pointers", about = "convert the pointer manifests of resources/pointers to pointer theme files in " + POINTER_BUILD_FOLDER + ", with the Xcursor folder of " + POINTER_THEME_SOURCE_VARIABLE + " or of the path after the command; print a table of each theme", run = run_pointers},
+	{name = "pointers", about = "convert the pointer manifests of resources/pointers to pointer theme files in " + resources.POINTER_BUILD_FOLDER + ", with the Xcursor folder of " + resources.POINTER_THEME_SOURCE_VARIABLE + " or of the path after the command; print a table of each theme", run = resources.run_pointers},
 	// Takes the subset of each vector font candidate of `VECTOR_FONT_SOURCES`
 	// that the system draws, writes it to `resources/fonts`, and draws one
 	// picture that compares the candidates. Run it to change a font; a build
 	// reads the files of the repository (docs/FONTS.md).
-	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
+	{name = "vector_fonts", about = "subset the vector font candidates of " + resources.VECTOR_FONT_SOURCES_VARIABLE + " to " + resources.VECTOR_FONT_FOLDER + " and draw " + resources.CANDIDATES_PICTURE, run = resources.run_vector_fonts},
 	// Draws the files of the mark of the system from its geometry in
 	// `src/library/support/mark`: the icons in `resources/logo`, the font of the name of
 	// the mark, the picture of the project, and one picture of every frame
@@ -441,7 +443,7 @@ COMMANDS :: [?]Command {
 	// - `check`: draws them again and compares them with the files of the
 	//   repository; `modustool check` runs it, so a mark that changed in
 	//   the code and not in the files fails.
-	{name = "logo", about = "draw the files of the mark of the system from " + MARK_SOURCE_FOLDER + ": " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
+	{name = "logo", about = "draw the files of the mark of the system from " + resources.MARK_SOURCE_FOLDER + ": " + resources.LOGO_FOLDER + " and " + resources.PROJECT_IMAGE + "; `check` verifies them; and " + resources.MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = resources.run_logo},
 	// Draws one picture of the mark: the one entry to the generator of the
 	// pictures of the mark, which `logo` and `site` also ask.
 	//
@@ -463,12 +465,12 @@ COMMANDS :: [?]Command {
 	// with a sentence: the smooth variant at one pixel for a cell, a part
 	// of a pixel, a picture smaller than its drawing (docs/TOOLS.md, "The
 	// pictures of the mark").
-	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
+	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = resources.run_mark},
 	// Converts each picture of `resources/hall_of_fame/CREDITS.md` to the
 	// pixels of a portrait of the process `hall_of_fame`, in
 	// `src/modules/demonstrations/hall_of_fame/portraits`. The result is in the
 	// repository, so a build decodes no PNG file.
-	{name = "portraits", about = "convert the pictures of " + HALL_OF_FAME_CREDITS_FILE + " to the portraits of " + HALL_OF_FAME_PORTRAIT_FOLDER, run = run_portraits},
+	{name = "portraits", about = "convert the pictures of " + resources.HALL_OF_FAME_CREDITS_FILE + " to the portraits of " + resources.HALL_OF_FAME_PORTRAIT_FOLDER, run = resources.run_portraits},
 	// Calls an export of a service of the machine that `modustool run`
 	// started, from the host, and prints the typed result.
 	//
@@ -887,7 +889,7 @@ CHECKS_PASSED_FILE :: foundation.BUILD_FOLDER + "/checks_passed.txt"
 // the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "compress" {
-		count, compressed_all := pictures_compress([]string{foundation.DOCUMENT_SCREENSHOT_FOLDER, foundation.RESOURCE_FOLDER})
+		count, compressed_all := resources.pictures_compress([]string{foundation.DOCUMENT_SCREENSHOT_FOLDER, foundation.RESOURCE_FOLDER})
 		fmt.printfln("modustool: %d PNG files, %d compressed: %d bytes before, %d bytes after", count.picture_count, count.compressed_count, count.bytes_before, count.bytes_after)
 		return compressed_all ? 0 : foundation.EXIT_FAILURE
 	}
@@ -1089,7 +1091,7 @@ run_check :: proc(args: []string) -> int {
 	if !cryptography_origin_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !logo_check() {
+	if !resources.logo_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !readme_pictures_check() {
