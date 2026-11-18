@@ -39,27 +39,39 @@ execute_in_rectangles :: proc "contextless" (table: ^Draw_Table, canvas: graphic
 // surface, cut to it. A color with alpha blends with the table of the text
 // state of the graphics package, which the process fills once at its start
 // (graphics.text_state_start; display.text_settings_load calls it).
+//
+// The clips are a stack of cuts: the cut at a depth is the rectangle cut by
+// the box of each push open, so it depends on the records only, and each
+// rectangle of a damage gives the pixels of one draw. The order is the
+// order of the kind words, walked again here whatever a check before found,
+// since the table can change during the call: a push that the border
+// refuses is an empty clip, a push past CLIP_DEPTH_LIMIT hides each record
+// until its pop, and a pop with no push changes nothing. So a table draws
+// less than it asks, never outside a clip that it pushed.
 execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, rectangle: Rectangle, origin_x: int = 0, origin_y: int = 0) {
 	limit := intersection(rectangle, {-origin_x, -origin_y, canvas.width - origin_x, canvas.height - origin_y})
 	if empty(limit) {
 		return
 	}
-	cut := limit
+	// One cut for each depth of the clips, on the stack: 544 bytes.
+	cuts: [draw_record.CLIP_DEPTH_LIMIT + 1]Rectangle
+	cuts[0] = limit
+	order: draw_record.Clip_Order
 	for index in 0 ..< table.record_count {
 		// One copy of each record, read through the border: a table can be
 		// in memory that another process writes during the call, and each
 		// check and each draw reads this copy.
 		record := draw_record.copy_once(&table.records[index])
 		primitive, problem := draw_record.read(record)
-		if problem != .None {
+		if kind, known := draw_record.draw_kind_of_word(record.kind); known && (kind == .Clip_Push || kind == .Clip_Pop) {
+			clip_step(&cuts, &order, kind == .Clip_Push, problem == .None ? record_rectangle(record) : Rectangle{})
+			continue
+		}
+		if problem != .None || order.excess > 0 {
 			continue
 		}
 		place := record_rectangle(record)
-		if _, is_clip := primitive.(draw_record.Draw_Clip); is_clip {
-			cut = place.right == place.left ? limit : intersection(limit, place)
-			continue
-		}
-		area := intersection(cut, place)
+		area := intersection(cuts[order.depth], place)
 		if empty(area) {
 			continue
 		}
@@ -69,7 +81,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		x, y := place.left - area.left, place.top - area.top
 		width, height := place.right - place.left, place.bottom - place.top
 		switch fields in primitive {
-		case draw_record.Draw_Nothing, draw_record.Draw_Clip:
+		case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop:
 		case draw_record.Draw_Rectangle:
 			switch {
 			case fields.repetition != (draw_record.Repetition{}):
@@ -114,6 +126,23 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		case draw_record.Draw_Path:
 			path_draw(table, view, area, fields)
 		}
+	}
+}
+
+// clip_step takes one push or one pop of a clip into the cuts of the stack.
+// A push holds the cut before it, cut by box; at the bound it is counted
+// and not held (draw_record.clip_order_push). box is the box of the push in
+// pixels, or an empty rectangle for a push that the border refuses: each of
+// its edges is 0, so its intersection with any cut holds no pixel.
+@(private)
+clip_step :: proc "contextless" (cuts: ^[draw_record.CLIP_DEPTH_LIMIT + 1]Rectangle, order: ^draw_record.Clip_Order, push: bool, box: Rectangle) {
+	if !push {
+		draw_record.clip_order_pop(order)
+		return
+	}
+	outer := cuts[order.depth]
+	if draw_record.clip_order_push(order) == .None {
+		cuts[order.depth] = intersection(outer, box)
 	}
 }
 

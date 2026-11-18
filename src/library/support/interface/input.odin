@@ -253,8 +253,13 @@ frame_begin :: proc "contextless" (table: ^Draw_Table, state: ^Interface_State, 
 	return {table = table, state = state, input = input, time = time}
 }
 
-// frame_end keeps what the next frame needs.
+// frame_end keeps what the next frame needs. It pops each clip that the
+// frame left open, so the table ends in an order that the drawing module
+// takes (draw_clips_close).
 frame_end :: proc "contextless" (frame: ^Frame) {
+	if frame.table != nil {
+		draw_clips_close(frame.table)
+	}
 	state := frame.state
 	state.under_pointer = frame.under_pointer
 	state.focus_order = frame.focus_order

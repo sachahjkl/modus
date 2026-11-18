@@ -69,27 +69,27 @@ canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 	column := [1]Damage_Rectangle{{0, 0, 1, 4}}
 	places := rectangles_to_read(column[:])
 	shape := Canvas_Shape{width = 1, height = 4, stride = (1 << 62) + 1}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Small))
 	testing.expect_value(t, refused.argument, 4)
 	shape = {width = 1, height = 0, stride = 1}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
 	testing.expect_value(t, refused.argument, 5)
 	shape = {width = 4, height = 4, stride = 1}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
 	testing.expect(t, pixels == [16]u32{}, "a refused call draws nothing")
 	// An address of the pixels that is not a multiple of 4.
 	shifted := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0])[1:], count = 16, capacity = 16}
 	shape = {width = 1, height = 4, stride = 1}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &shifted, &shape, &places, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &shifted, &shape, &places, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
 	testing.expect_value(t, refused.argument, 4)
 	// An address of the picture memory that is not a multiple of 4.
 	shifted_pictures := system.Bytes_To_Read{bytes = ([^]u8)(&pixels[0])[1:], count = 16, capacity = 16}
 	shape = {width = 1, height = 4, stride = 4}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &shifted_pictures, &bytes, &shape, &places, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &shifted_pictures, &bytes, &shape, &places, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
 	testing.expect_value(t, refused.argument, 3)
 	testing.expect(t, pixels == [16]u32{}, "a refused call draws nothing")
@@ -101,23 +101,87 @@ canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 		rectangle = {0, 0, 1, 4}
 	}
 	too_many := rectangles_to_read(nine[:])
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &too_many, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &too_many, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, refused.argument, 6)
 	testing.expect_value(t, refused.value, RECTANGLE_CAPACITY + 1)
 	testing.expect_value(t, refused.limit, RECTANGLE_CAPACITY)
 	wild_count := system.Table_To_Read(Damage_Rectangle){records = &column[0], count = 1 << 62, capacity = 1}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &wild_count, &refused), -1)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &wild_count, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, refused.argument, 6)
 	testing.expect(t, pixels == [16]u32{}, "a refused call draws nothing")
 	// No rectangle: the call is good, and draws nothing.
 	no_rectangles := system.Table_To_Read(Damage_Rectangle){}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &no_rectangles, &refused), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &no_rectangles, &refused), 0)
 	testing.expect(t, pixels == [16]u32{}, "a call with no rectangle draws nothing")
 	// A good shape with its rectangle, and no error record asked.
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
 	testing.expect_value(t, pixels[4], 0xFFFFFF)
+}
+
+// Tables whose clips are out of order, as a hostile caller gives them: a
+// pop with no push, a push past the bound, a push with no pop. The export
+// refuses each before the first pixel, with -1 and the error record
+// Bad_Value of the argument now, unit Records, the problem as the value and
+// the number from 1 of the record as found, and the pixels stay as they
+// were. The same table in order draws.
+@(test)
+clips_out_of_order_are_refused :: proc(t: ^testing.T) {
+	sync.mutex_lock(&draw_lock)
+	defer sync.mutex_unlock(&draw_lock)
+	SIDE :: 8
+	pixels: [SIDE * SIDE]u32
+	for &pixel in pixels {
+		pixel = 0x00ABCDEF
+	}
+	kept := pixels
+	push := record_in_pixels(draw_record.Draw_Clip_Push{}, 0, 0, 4, 4)
+	pop := record_in_pixels(draw_record.Draw_Clip_Pop{}, 0, 0, 0, 0)
+	fill := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 0, 0, SIDE, SIDE)
+	text := system.Bytes_To_Read{}
+	no_pictures := system.Bytes_To_Read{}
+	bytes := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0]), count = size_of(pixels), capacity = size_of(pixels)}
+	shape := Canvas_Shape{width = SIDE, height = SIDE, stride = SIDE}
+	whole := [1]Damage_Rectangle{{0, 0, SIDE, SIDE}}
+	places := rectangles_to_read(whole[:])
+	Out_Of_Order :: struct {
+		records: [draw_record.CLIP_DEPTH_LIMIT + 2]interface.Draw_Record,
+		count:   int,
+		problem: draw_record.Clip_Order_Problem,
+		found:   i64,
+	}
+	cases: [3]Out_Of_Order
+	cases[0].records[0], cases[0].records[1], cases[0].records[2] = fill, pop, fill
+	cases[0].count, cases[0].problem, cases[0].found = 3, .Pop_Without_Push, 2
+	for place in 0 ..= draw_record.CLIP_DEPTH_LIMIT {
+		cases[1].records[place] = push
+	}
+	cases[1].records[draw_record.CLIP_DEPTH_LIMIT + 1] = fill
+	cases[1].count, cases[1].problem, cases[1].found = draw_record.CLIP_DEPTH_LIMIT + 2, .Push_Past_Depth_Limit, draw_record.CLIP_DEPTH_LIMIT + 1
+	cases[2].records[0], cases[2].records[1], cases[2].records[2] = fill, push, fill
+	cases[2].count, cases[2].problem, cases[2].found = 3, .Push_Without_Pop, 2
+	for &item in cases {
+		now := system.Table_To_Read(interface.Draw_Record){records = &item.records[0], count = u64(item.count), capacity = u64(len(item.records))}
+		refused: errors.Error_Record
+		testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, &refused), -1)
+		testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
+		testing.expect_value(t, refused.unit, i64(errors.Unit.Records))
+		testing.expect_value(t, refused.argument, ARGUMENT_NOW)
+		testing.expect_value(t, refused.value, i64(item.problem))
+		testing.expect_value(t, refused.found, item.found)
+		testing.expectf(t, pixels == kept, "a table refused for %v changed a pixel", item.problem)
+	}
+	// In order: the fill under the clip covers its 4 by 4 pixels only.
+	in_order := [3]interface.Draw_Record{push, fill, pop}
+	now := system.Table_To_Read(interface.Draw_Record){records = &in_order[0], count = 3, capacity = 3}
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
+	for y in 0 ..< SIDE {
+		for x in 0 ..< SIDE {
+			expected := u32(x < 4 && y < 4 ? 0xFFFFFF : 0x00ABCDEF)
+			testing.expectf(t, pixels[y * SIDE + x] == expected, "the pixel (%d, %d) of a table in order", x, y)
+		}
+	}
 }
 
 // A text record that names bytes past the text table, and a count of
@@ -135,21 +199,21 @@ hostile_records_are_refused :: proc(t: ^testing.T) {
 	buffer: [8]Damage_Rectangle
 	result := buffer[:]
 	refused: errors.Error_Record
-	testing.expect_value(t, damage_of_draw_table_16(&before, &text, &now, &text, &result, &refused), 1)
+	testing.expect_value(t, damage_of_draw_table_17(&before, &text, &now, &text, &result, &refused), 1)
 	testing.expect_value(t, buffer[0], Damage_Rectangle{8, 0, 16, 16})
 	testing.expect_value(t, refused.kind, 0)
 	// A buffer of no rectangle: the count of the full table, and no write.
 	none := buffer[:0]
 	buffer[0] = {}
-	testing.expect_value(t, damage_of_draw_table_16(&before, &text, &now, &text, &none, &refused), 1)
+	testing.expect_value(t, damage_of_draw_table_17(&before, &text, &now, &text, &none, &refused), 1)
 	testing.expect_value(t, buffer[0], Damage_Rectangle{})
 	now.count = 1 << 41
-	testing.expect_value(t, damage_of_draw_table_16(&before, &text, &now, &text, &result, &refused), -1)
+	testing.expect_value(t, damage_of_draw_table_17(&before, &text, &now, &text, &result, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, refused.argument, 3)
 	now.count = 1
 	long_text := system.Bytes_To_Read{bytes = &text_bytes[0], count = 1 << 41, capacity = 4}
-	testing.expect_value(t, damage_of_draw_table_16(&before, &long_text, &now, &text, &result, &refused), -1)
+	testing.expect_value(t, damage_of_draw_table_17(&before, &long_text, &now, &text, &result, &refused), -1)
 	testing.expect_value(t, refused.argument, 2)
 }
 
@@ -197,17 +261,17 @@ hostile_interface_text_records :: proc(t: ^testing.T) {
 		records := [1]interface.Draw_Record{record}
 		now := system.Table_To_Read(interface.Draw_Record){records = &records[0], count = 1, capacity = 1}
 		pixels = {}
-		testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
+		testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
 		testing.expectf(t, pixels == [64 * 16]u32{}, "the hostile record %v draws", index)
 		if index == 0 {
 			buffer: [8]Damage_Rectangle
 			result := buffer[:]
-			testing.expect_value(t, damage_of_draw_table_16(&now, &text, &now, &text, &result, nil), 1)
+			testing.expect_value(t, damage_of_draw_table_17(&now, &text, &now, &text, &result, nil), 1)
 		}
 	}
 	good_records := [1]interface.Draw_Record{good}
 	good_table := system.Table_To_Read(interface.Draw_Record){records = &good_records[0], count = 1, capacity = 1}
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&good_table, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&good_table, &text, &no_pictures, &bytes, &shape, &places, nil), 0)
 	testing.expect(t, pixels != [64 * 16]u32{}, "the good record draws")
 }
 
@@ -242,12 +306,12 @@ fill_of_the_background_pictures_and_grids :: proc(t: ^testing.T) {
 	shape := Canvas_Shape{width = 8, height = 8, stride = 8}
 	middle := [1]Damage_Rectangle{{2, 2, 6, 6}}
 	places := rectangles_to_read(middle[:])
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
 	for pixel in pixels {
 		testing.expect_value(t, pixel, 0x123456)
 	}
 	shape.fill_background, shape.background = 1, 0xABCDEF
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
 	for pixel, index in pixels {
 		x, y := index % 8, index / 8
 		expected: u32 = 0x123456
@@ -258,7 +322,7 @@ fill_of_the_background_pictures_and_grids :: proc(t: ^testing.T) {
 	}
 	// The good picture: the whole memory, in the rectangle of the area.
 	records[0] = record_in_pixels(draw_record.Draw_Picture{stride = 8, generation = 1}, 0, 0, 8, 8)
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
 	for pixel, index in pixels {
 		x, y := index % 8, index / 8
 		expected: u32 = 0x123456
@@ -301,7 +365,7 @@ picture_with_alpha_through_the_exports :: proc(t: ^testing.T) {
 	shape := Canvas_Shape{width = SIDE, height = SIDE, stride = SIDE}
 	parts := [2]Damage_Rectangle{{0, 0, SIDE, 3}, {0, 3, SIDE, SIDE}}
 	places := rectangles_to_read(parts[:])
-	testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
+	testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &text, &picture_memory, &bytes, &shape, &places, nil), 0)
 	graphics.blend_copy({pixels = raw_data(expected[:]), width = SIDE, height = SIDE, stride = SIDE}, 1, 1, {pixels = raw_data(picture_pixels[:]), width = 4, height = 4, stride = 4}, &table)
 	testing.expect(t, pixels == expected, "a picture with alpha through the export draws other pixels than blend_copy")
 	// The format changes and the generation stays: the box is damaged.
@@ -309,10 +373,10 @@ picture_with_alpha_through_the_exports :: proc(t: ^testing.T) {
 	before := system.Table_To_Read(interface.Draw_Record){records = &before_records[0], count = 1, capacity = 1}
 	damage: [RECTANGLE_CAPACITY]Damage_Rectangle
 	result := damage[:]
-	testing.expect_value(t, damage_of_draw_table_16(&before, &text, &now, &text, &result, nil), 1)
+	testing.expect_value(t, damage_of_draw_table_17(&before, &text, &now, &text, &result, nil), 1)
 	testing.expect_value(t, damage[0], Damage_Rectangle{1, 1, 5, 5})
 	// The same record in the two frames damages nothing.
-	testing.expect_value(t, damage_of_draw_table_16(&now, &text, &now, &text, &result, nil), 0)
+	testing.expect_value(t, damage_of_draw_table_17(&now, &text, &now, &text, &result, nil), 0)
 }
 
 // The proof of the same pixels (docs/INTERFACE.md, section 7): the frames
@@ -425,13 +489,16 @@ build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int)
 	interface.draw_folded_gap(table, 328, 8, 40 + pick(&state, &part, changed) % 16, 16)
 	interface.draw_line(table, 256 + pick(&state, &part, changed) % 100, 92, 384, 92 + pick(&state, &part, changed) % 36, 1 + pick(&state, &part, changed) % 4, color(colors[:], &state, &part, changed))
 	interface.draw_outline(table, 250, 134, 144, 60, 2, color(colors[:], &state, &part, changed))
-	// Two texts cut by a clip: the second passes the right edge of the clip.
-	interface.draw_clip(table, 256, 138, 120, 52)
+	// Two texts cut by two clips: the second passes the right edge of the
+	// outer clip, and the inner clip, larger than the outer one, keeps it.
+	interface.draw_clip_push(table, 256, 138, 120, 52)
 	medium := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 250 + pick(&state, &part, changed) % 30, 140, medium, color(colors[:], &state, &part, changed), interface.FONT_MEDIUM)
+	interface.draw_clip_push(table, 240, 160, 200 + pick(&state, &part, changed) % 20, 40)
 	bold := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 300, 174, bold, graphics.colors.text, interface.FONT_BOLD)
-	interface.draw_clip(table, 0, 0, 0, 0)
+	interface.draw_clip_pop(table)
+	interface.draw_clip_pop(table)
 	large := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 8, 140, large[:min(len(large), 5)], color(colors[:], &state, &part, changed), interface.FONT_LARGE)
 	// The interface font, when the table has it; else the font of the cells.
@@ -536,13 +603,13 @@ draw_through_the_exports :: proc(t: ^testing.T, table: ^interface.Draw_Table, pi
 	refused: errors.Error_Record
 	if !one_call_for_each {
 		places := rectangles_to_read(rectangles)
-		testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &now_text, &picture_memory, &bytes, &shape, &places, &refused), 0)
+		testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &now_text, &picture_memory, &bytes, &shape, &places, &refused), 0)
 		testing.expect_value(t, refused.kind, 0)
 		return 1
 	}
 	for index in 0 ..< len(rectangles) {
 		places := rectangles_to_read(rectangles[index:][:1])
-		testing.expect_value(t, execute_draw_table_in_rectangles_16(&now, &now_text, &picture_memory, &bytes, &shape, &places, &refused), 0)
+		testing.expect_value(t, execute_draw_table_in_rectangles_17(&now, &now_text, &picture_memory, &bytes, &shape, &places, &refused), 0)
 		testing.expect_value(t, refused.kind, 0)
 		calls += 1
 	}
@@ -633,7 +700,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 			before_records, before_text := records_to_read(&before), text_to_read(&before)
 			now_records, now_text := records_to_read(&now), text_to_read(&now)
 			refused: errors.Error_Record
-			count := damage_of_draw_table_16(&before_records, &before_text, &now_records, &now_text, &buffer, &refused)
+			count := damage_of_draw_table_17(&before_records, &before_text, &now_records, &now_text, &buffer, &refused)
 			if !testing.expect_value(t, count, i64(package_damage.count)) {
 				return
 			}
@@ -936,7 +1003,7 @@ the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 			before_records, before_text := records_to_read(&before), text_to_read(&before)
 			now_records, now_text := records_to_read(&now), text_to_read(&now)
 			refused: errors.Error_Record
-			count := damage_of_draw_table_16(&before_records, &before_text, &now_records, &now_text, &buffer, &refused)
+			count := damage_of_draw_table_17(&before_records, &before_text, &now_records, &now_text, &buffer, &refused)
 			if !testing.expect_value(t, count, i64(package_damage.count)) {
 				return
 			}
@@ -1138,7 +1205,7 @@ the_parts_of_a_screen_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) 
 				picture_memory := system.Bytes_To_Read{bytes = ([^]u8)(raw_data(part.memory)), count = memory_size, capacity = memory_size}
 				shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE}
 				refused: errors.Error_Record
-				testing.expect_value(t, execute_draw_table_in_rectangles_16(&records, &now_text, &picture_memory, &bytes, &shape, &places, &refused), 0)
+				testing.expect_value(t, execute_draw_table_in_rectangles_17(&records, &now_text, &picture_memory, &bytes, &shape, &places, &refused), 0)
 				testing.expect_value(t, refused.kind, 0)
 				calls += 1
 			}
@@ -1311,7 +1378,7 @@ a_scrolling_grid_in_two_pictures_is_each_frame :: proc(t: ^testing.T) {
 			buffer := ([^]Damage_Rectangle)(&changed.rectangles[0])[:interface.DAMAGE_CAPACITY]
 			before_records, before_text := records_to_read(&before), text_to_read(&before)
 			now_records, now_text := records_to_read(&now), text_to_read(&now)
-			count := damage_of_draw_table_16(&before_records, &before_text, &now_records, &now_text, &buffer, nil)
+			count := damage_of_draw_table_17(&before_records, &before_text, &now_records, &now_text, &buffer, nil)
 			if !testing.expectf(t, count >= 0, "frame %v: the difference was refused", frame) {
 				return
 			}
