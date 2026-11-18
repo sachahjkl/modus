@@ -553,7 +553,8 @@ Operation_Wait_End :: enum u8 {
 	Counted,        // The service counted the sequence: the header and the results are read.
 	Machine_Ended,  // QEMU ended before the service counted the sequence.
 	Stalled,        // The count of executions stayed still for HANG_BOUND.
-	Mailbox_Broken, // The mailbox counts what the tool did not write, or the memory file cannot be read or written.
+	Mailbox_Broken, // The mailbox counts what the tool did not write: the machine wrote it.
+	Tool_Error,     // The tool cannot read or write the memory file, or its sequence is larger than its place: never a fault of the machine.
 }
 
 // operation_execute_watched is operation_execute that also watches QEMU,
@@ -561,20 +562,20 @@ Operation_Wait_End :: enum u8 {
 // not at the hang bound, with the state of its end.
 operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, process: ^os.Process) -> (end: Operation_Wait_End, ended: os.Process_State, problem: string) {
 	if len(bytes) > operation_sequence.SEQUENCE_BYTES_MOST {
-		return .Mailbox_Broken, {}, "the sequence is larger than its place in the mailbox"
+		return .Tool_Error, {}, "the sequence is larger than its place in the mailbox"
 	}
 	if !operation_mailbox_write(mailbox, operation_sequence.MAILBOX_SEQUENCE_OFFSET, bytes) || !operation_mailbox_write_word(mailbox, offset_of(operation_sequence.Mailbox_Header, sequence_bytes), u64(len(bytes))) {
-		return .Mailbox_Broken, {}, "cannot write the sequence in the mailbox"
+		return .Tool_Error, {}, "cannot write the sequence in the mailbox"
 	}
 	// The count last: the service reads the sequence only after it.
 	mailbox.written += 1
 	if !operation_mailbox_write_word(mailbox, offset_of(operation_sequence.Mailbox_Header, sequences_written), mailbox.written) {
-		return .Mailbox_Broken, {}, "cannot write the count of the sequences"
+		return .Tool_Error, {}, "cannot write the count of the sequences"
 	}
 	started := time.now()
 	for {
 		if !operation_mailbox_read(mailbox, 0, ([^]u8)(header)[:size_of(header^)]) {
-			return .Mailbox_Broken, {}, "cannot read the mailbox"
+			return .Tool_Error, {}, "cannot read the mailbox"
 		}
 		if header.executions == mailbox.written {
 			break
@@ -595,7 +596,7 @@ operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, head
 	}
 	mailbox.executions = header.executions
 	if !operation_mailbox_read(mailbox, operation_sequence.MAILBOX_RESULTS_OFFSET, ([^]u8)(results)[:size_of(results^)]) {
-		return .Mailbox_Broken, {}, "cannot read the results"
+		return .Tool_Error, {}, "cannot read the results"
 	}
 	return .Counted, {}, ""
 }

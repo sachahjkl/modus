@@ -25,9 +25,8 @@ import "modus:contract/operation_sequence"
 // commands names it.
 OPERATION_FUZZING_COMMAND :: "operation_fuzzing"
 // The files of a run, which git ignores: the repository never holds a
-// finding of a run.
+// finding of a run. The findings of a run are in a folder of its seed.
 OPERATION_FUZZING_FOLDER :: FUZZING_BUILD_FOLDER + "/operations"
-OPERATION_FINDINGS_FOLDER :: OPERATION_FUZZING_FOLDER + "/" + FUZZ_FINDINGS_PART
 OPERATION_FUZZING_OUTPUT :: OPERATION_FUZZING_FOLDER + "/machine_log.txt"
 OPERATION_FUZZING_MEMORY_FILE :: OPERATION_FUZZING_FOLDER + "/machine_memory.raw"
 
@@ -36,12 +35,12 @@ OPERATION_FUZZING_MEMORY_FILE :: OPERATION_FUZZING_FOLDER + "/machine_memory.raw
 // sequences has a short prefix to search.
 OPERATION_MACHINE_SEQUENCES_MOST :: 1024
 // The findings that end a run: each one costs up to
-// OPERATION_MINIMIZE_MACHINES_MOST boots, and a kernel with that many
-// faults is fixed first.
+// OPERATION_MINIMIZE_BOOTS_MOST boots, and a kernel with that many faults
+// is fixed first.
 OPERATION_FINDINGS_MOST :: 8
-// The machines that the minimization of one finding boots, at most: each
-// try is a new machine.
-OPERATION_MINIMIZE_MACHINES_MOST :: 256
+// The boots that the minimization of one finding makes, at most: each try
+// is a new machine, and a try can boot twice.
+OPERATION_MINIMIZE_BOOTS_MOST :: 256
 // The boots in a row with no line of the mailbox that end a run: then the
 // build is wrong, and no sequence is the cause.
 OPERATION_BOOT_TRIES :: 2
@@ -51,6 +50,21 @@ OPERATION_CHOICE_BYTES :: 4096
 // The hexadecimal digits of the hash of a signature that name the folder
 // of its finding: enough that two signatures of one run never share them.
 OPERATION_FINDING_NAME_DIGITS :: 16
+// The digits of a value that the kernel writes in hexadecimal, with no
+// prefix (src/kernel/serial.odin, the type Hex).
+OPERATION_KERNEL_HEX_DIGITS :: 16
+// How long the tool reads the log after the last sequence of a life, for a
+// line of a fault that a queued record of the log brings after the count.
+// The kernel writes the queued records to the serial port at each tick of
+// the first processor, many times in this bound; no line is a state that
+// the tool can wait for, so the bound is the end of the look, and a line
+// past it is lost with the life.
+OPERATION_LOG_DRAIN_BOUND :: 1 * time.Second
+// The byte that replaces the first byte of a protected program name in a
+// generated sequence.
+OPERATION_PROTECTED_NAME_CHANGE :: '_'
+// The module of the root service.
+OPERATION_ROOT_MODULE :: "root"
 
 // ---------------------------------------------------------------------
 // The arguments.
@@ -115,10 +129,11 @@ operation_fuzzing_arguments_read :: proc(args: []string) -> (arguments: Operatio
 Operation_Fault_Kind :: enum u8 {
 	None,      // The sequence ran, and each oracle held.
 	Stop,      // The machine stopped: QEMU ended.
-	Hang,      // The runner did not end its sequence within the hang bound.
+	Hang,      // The runner did not end its sequence within the hang bound, or the end line of the sequence did not come.
 	Isolation, // operation_fuzzing or the root service stopped: a sequence reached a program whose handle it did not hold.
 	Mailbox,   // The mailbox counts what the tool did not write: a sequence changed the memory of operation_fuzzing.
 	Oracle,    // An oracle of the results broke.
+	Tool,      // An error of the tool, never a fault of the kernel: the run ends with an error and keeps no finding.
 }
 
 Operation_Fault :: struct {
@@ -157,9 +172,20 @@ operation_is_word_byte :: proc(character: u8) -> bool {
 	return false
 }
 
-// operation_numbers_removed writes each word that holds a digit as `#`: an
-// address, a count, a slot or a hash changes from one run of a fault to the
-// next, and the words around them do not.
+@(private = "file")
+operation_is_hexadecimal_byte :: proc(character: u8) -> bool {
+	switch character {
+	case '0' ..= '9', 'a' ..= 'f', 'A' ..= 'F':
+		return true
+	}
+	return false
+}
+
+// operation_numbers_removed writes as `#` each word that holds a decimal
+// digit, and each word of the 16 hexadecimal digits of a value of the
+// kernel, which can hold letters only (`ffffffffffffffff`): an address, a
+// count, a slot or a hash changes from one run of a fault to the next, and
+// the words around them do not.
 operation_numbers_removed :: proc(text: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	place := 0
@@ -171,11 +197,14 @@ operation_numbers_removed :: proc(text: string) -> string {
 		}
 		end := place
 		has_digit := false
+		all_hexadecimal := true
 		for end < len(text) && operation_is_word_byte(text[end]) {
 			has_digit ||= text[end] >= '0' && text[end] <= '9'
+			all_hexadecimal &&= operation_is_hexadecimal_byte(text[end])
 			end += 1
 		}
-		strings.write_string(&builder, has_digit ? "#" : text[place:end])
+		is_number := has_digit || (all_hexadecimal && end - place == OPERATION_KERNEL_HEX_DIGITS)
+		strings.write_string(&builder, is_number ? "#" : text[place:end])
 		place = end
 	}
 	return strings.to_string(builder)
@@ -201,9 +230,8 @@ operation_report_line :: proc(log: string) -> string {
 }
 
 // The text before the address of the instruction in the report of an
-// exception, which the kernel writes as 16 hexadecimal digits.
+// exception, which the kernel writes in hexadecimal.
 OPERATION_REPORT_ADDRESS_MARK :: " at "
-OPERATION_REPORT_ADDRESS_DIGITS :: 16
 
 // operation_report_procedure names the procedure of the kernel at the
 // address of a report, from the debug object of the kernel of the volume.
@@ -214,11 +242,11 @@ operation_report_procedure :: proc(report: string, kernel_object: []u8) -> strin
 		return "no address"
 	}
 	digits := report[at + len(OPERATION_REPORT_ADDRESS_MARK):]
-	if len(digits) < OPERATION_REPORT_ADDRESS_DIGITS {
+	if len(digits) < OPERATION_KERNEL_HEX_DIGITS {
 		return "no address"
 	}
 	address: u64
-	for character in transmute([]u8)digits[:OPERATION_REPORT_ADDRESS_DIGITS] {
+	for character in transmute([]u8)digits[:OPERATION_KERNEL_HEX_DIGITS] {
 		value: u64
 		switch character {
 		case '0' ..= '9':
@@ -284,6 +312,9 @@ operation_hang_signature :: proc(sequence: ^operation_sequence.Sequence, step_st
 	return fmt.tprintf("hang: %s", operation_word_name(sequence.steps[step_started - 1].operation))
 }
 
+// The signature of a sequence whose count came and whose end line did not.
+OPERATION_END_LINE_HANG_SIGNATURE :: "hang: the end line of the sequence did not come"
+
 // operation_oracle_signature names the oracle of a finding and the
 // operation of its step, or the outcome for an oracle of the whole
 // sequence. The text of the finding has the values, and is no part of it.
@@ -301,10 +332,15 @@ operation_oracle_signature :: proc(finding: Operation_Finding, sequence: ^operat
 	return fmt.tprintf("oracle %v: the outcome %v", finding.oracle, outcome)
 }
 
-// The starts of the lines of the kernel when a program that a sequence
-// must never reach stops.
+// The programs that a sequence must never reach. The generator never names
+// a child with one of these names, so the line of a fault of a child is
+// never the line of a fault of isolation.
 @(rodata)
-operation_isolation_marks := [?]string{"kernel: program " + OPERATION_FUZZING_MODULE + " stopped", "kernel: program root stopped"}
+operation_protected_names := [?]string{OPERATION_FUZZING_MODULE, OPERATION_ROOT_MODULE}
+
+// The starts of the lines of the kernel when one of them stops.
+@(rodata)
+operation_isolation_marks := [?]string{"kernel: program " + OPERATION_FUZZING_MODULE + " stopped", "kernel: program " + OPERATION_ROOT_MODULE + " stopped"}
 
 // operation_isolation_line gives the first line of the log that starts
 // with a mark of operation_isolation_marks, or "".
@@ -335,6 +371,41 @@ operation_isolation_fault :: proc(line, log: string) -> Operation_Fault {
 	return {kind = .Isolation, signature = fmt.tprintf("isolation: %s", operation_numbers_removed(line)), text = line, log = log}
 }
 
+// The start of each line of the program operation_fuzzing on the log.
+OPERATION_SERVICE_LINE_START :: "[" + OPERATION_FUZZING_MODULE + "] "
+
+// operation_end_line_through gives the bytes of a text up to the end of the
+// end line of the sequence `number`, which the service writes after each
+// sequence (operation_sequence.SEQUENCE_END_LINE_START). The line must
+// start a line and end with its number, so the line of the sequence 1 is
+// not the line of the sequence 12, and a program that quotes it in its
+// own line is not taken. found is false while the whole line has not come.
+operation_end_line_through :: proc(text: string, number: u64) -> (through: int, found: bool) {
+	line := fmt.tprintf("%s%s%d%s", OPERATION_SERVICE_LINE_START, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END)
+	place := 0
+	for place < len(text) {
+		at := strings.index(text[place:], line)
+		if at < 0 {
+			return 0, false
+		}
+		at += place
+		after := at + len(line)
+		place = at + 1
+		if at > 0 && text[at - 1] != '\n' {
+			continue
+		}
+		if after >= len(text) || (text[after] != '\n' && text[after] != '\r') {
+			continue
+		}
+		newline := strings.index_byte(text[after:], '\n')
+		if newline < 0 {
+			return 0, false
+		}
+		return after + newline + 1, true
+	}
+	return 0, false
+}
+
 // operation_findings_text gives each broken oracle of one execution, one
 // line each.
 operation_findings_text :: proc(findings: []Operation_Finding) -> string {
@@ -361,8 +432,12 @@ Operation_Machine :: struct {
 	// not reach the line of the mailbox.
 	start:   proc(data: rawptr) -> bool,
 	// Runs one sequence that check accepted, as bytes and as the copy that
-	// check read.
+	// check read. A fault that it gives belongs to this sequence.
 	execute: proc(data: rawptr, sequence: ^operation_sequence.Sequence, bytes: []u8) -> Operation_Fault,
+	// After the last sequence of a life: a fault that comes after its
+	// count, within OPERATION_LOG_DRAIN_BOUND. It belongs to the last
+	// sequence.
+	drain:   proc(data: rawptr) -> Operation_Fault,
 	// Ends the machine, whatever its state.
 	end:     proc(data: rawptr),
 }
@@ -386,16 +461,20 @@ operation_sequence_encode :: proc(sequence: ^operation_sequence.Sequence, alloca
 }
 
 Operation_Life_Outcome :: struct {
-	booted:   bool,
-	fault:    Operation_Fault,
-	faulting: int, // The place in the life of the sequence of the fault; -1 with no fault.
+	booted:     bool,
+	boots:      int,  // The boots that the life made: 1 or more.
+	tool_error: bool, // An error of the tool ended the life: fault holds its text.
+	fault:      Operation_Fault,
+	faulting:   int, // The place in the life of the sequence of the fault; -1 with no fault.
 }
 
-// operation_life_run runs a life on a new machine, up to its first fault,
-// then ends the machine.
-operation_life_run :: proc(machine: ^Operation_Machine, life: [][]u8) -> (outcome: Operation_Life_Outcome) {
+// operation_life_run runs a life on a new machine, with at most
+// boot_tries boots, up to its first fault, then drains the log after its
+// last sequence and ends the machine.
+operation_life_run :: proc(machine: ^Operation_Machine, life: [][]u8, boot_tries := OPERATION_BOOT_TRIES) -> (outcome: Operation_Life_Outcome) {
 	outcome.faulting = -1
-	for _ in 0 ..< OPERATION_BOOT_TRIES {
+	for _ in 0 ..< boot_tries {
+		outcome.boots += 1
 		if machine.start(machine.data) {
 			outcome.booted = true
 			break
@@ -413,11 +492,30 @@ operation_life_run :: proc(machine: ^Operation_Machine, life: [][]u8) -> (outcom
 		if operation_sequence.check(bytes, sequence).problem != .None {
 			return outcome
 		}
-		if fault := machine.execute(machine.data, sequence, bytes); fault.kind != .None {
+		fault := machine.execute(machine.data, sequence, bytes)
+		if fault.kind == .Tool {
+			outcome.tool_error = true
+			outcome.fault = fault
+			return outcome
+		}
+		if fault.kind != .None {
 			outcome.fault = fault
 			outcome.faulting = place
 			return outcome
 		}
+	}
+	if len(life) == 0 {
+		return outcome
+	}
+	fault := machine.drain(machine.data)
+	switch fault.kind {
+	case .None:
+	case .Tool:
+		outcome.tool_error = true
+		outcome.fault = fault
+	case .Stop, .Hang, .Isolation, .Mailbox, .Oracle:
+		outcome.fault = fault
+		outcome.faulting = len(life) - 1
 	}
 	return outcome
 }
@@ -425,38 +523,56 @@ operation_life_run :: proc(machine: ^Operation_Machine, life: [][]u8) -> (outcom
 // ---------------------------------------------------------------------
 // The minimization.
 
+// Why a minimization ended.
+Operation_Minimize_End :: enum u8 {
+	Done,       // Each pass ran.
+	Bound,      // The bound of the boots stopped the passes: the life is the smallest found before it.
+	No_Boot,    // Two boots in a row did not reach the mailbox: an error of the build.
+	Tool_Error, // An error of the tool stopped the passes.
+}
+
 Operation_Minimized :: struct {
 	life:       [][]u8, // In the allocator of the context.
-	machines:   int,    // The machines that the minimization booted.
+	boots:      int,    // The boots that the minimization made.
 	reproduced: bool,   // The fault came again on a new machine; else the life is the life of the run.
-	booted:     bool,   // false: two boots in a row did not reach the mailbox, and the minimization stopped.
+	end:        Operation_Minimize_End,
 }
 
 @(private = "file")
 Operation_Minimizer :: struct {
-	machine:   ^Operation_Machine,
-	signature: string,
-	machines:  int,
-	booted:    bool,
+	machine:    ^Operation_Machine,
+	signature:  string,
+	boots_most: int,
+	boots:      int,
+	end:        Operation_Minimize_End,
 }
 
 // operation_life_holds runs a candidate life on a new machine. It holds
 // when its last sequence gives the fault of the signature: a fault at an
 // earlier sequence does not hold, so the last sequence stays the one of the
-// fault. Past the bound of the machines no try holds. The temporary memory
-// is freed after each try: a minimization boots up to
-// OPERATION_MINIMIZE_MACHINES_MOST machines, and each execution uses some.
+// fault. The boots of the tries never pass the bound: a try gets the boots
+// that are left, and with none left no try runs. The temporary memory is
+// freed after each try: a minimization boots up to its bound, and each
+// execution uses some.
 @(private = "file")
 operation_life_holds :: proc(minimizer: ^Operation_Minimizer, life: [][]u8) -> bool {
-	if !minimizer.booted || minimizer.machines >= OPERATION_MINIMIZE_MACHINES_MOST {
+	if minimizer.end != .Done {
 		return false
 	}
-	minimizer.machines += 1
-	outcome := operation_life_run(minimizer.machine, life)
-	holds := outcome.booted && outcome.faulting == len(life) - 1 && outcome.fault.signature == minimizer.signature
-	if !outcome.booted {
-		minimizer.booted = false
+	left := minimizer.boots_most - minimizer.boots
+	if left <= 0 {
+		minimizer.end = .Bound
+		return false
 	}
+	outcome := operation_life_run(minimizer.machine, life, min(OPERATION_BOOT_TRIES, left))
+	minimizer.boots += outcome.boots
+	if outcome.tool_error {
+		fmt.eprintfln("modustool: fuzz operations: an error of the tool during a minimization: %s", outcome.fault.text)
+		minimizer.end = .Tool_Error
+	} else if !outcome.booted {
+		minimizer.end = outcome.boots >= OPERATION_BOOT_TRIES ? .No_Boot : .Bound
+	}
+	holds := outcome.booted && !outcome.tool_error && outcome.faulting == len(life) - 1 && outcome.fault.signature == minimizer.signature
 	free_all(context.temp_allocator)
 	return holds
 }
@@ -466,10 +582,10 @@ operation_life_holds :: proc(minimizer: ^Operation_Minimizer, life: [][]u8) -> b
 // the whole life; then the sequences before the last, by ranges; then the
 // steps of the last sequence, by ranges
 // (src/md/infrastructure/kernel_fuzzing.md, "The loop and the speed"). It
-// frees the temporary memory after each machine: the caller keeps nothing
-// there.
-operation_fault_minimize :: proc(machine: ^Operation_Machine, life: [][]u8, signature: string) -> (minimized: Operation_Minimized) {
-	minimizer := Operation_Minimizer{machine = machine, signature = signature, booted = true}
+// boots at most boots_most machines. It frees the temporary memory after
+// each machine: the caller keeps nothing there.
+operation_fault_minimize :: proc(machine: ^Operation_Machine, life: [][]u8, signature: string, boots_most := OPERATION_MINIMIZE_BOOTS_MOST) -> (minimized: Operation_Minimized) {
+	minimizer := Operation_Minimizer{machine = machine, signature = signature, boots_most = boots_most}
 	current := make([dynamic][]u8)
 	last := life[len(life) - 1]
 	alone := [1][]u8{last}
@@ -487,8 +603,8 @@ operation_fault_minimize :: proc(machine: ^Operation_Machine, life: [][]u8, sign
 		operation_steps_minimize(&minimizer, &current)
 	}
 	minimized.life = current[:]
-	minimized.machines = minimizer.machines
-	minimized.booted = minimizer.booted
+	minimized.boots = minimizer.boots
+	minimized.end = minimizer.end
 	return minimized
 }
 
@@ -521,8 +637,10 @@ operation_prefix_minimize :: proc(minimizer: ^Operation_Minimizer, current: ^[dy
 
 // operation_steps_removed copies a sequence with `count` steps from `first`
 // removed. An argument that names the result of a removed step becomes the
-// plain value 0; one that names a later step names it at its new place. The
-// new first step joins no earlier kernel entry.
+// plain value 0; one that names a later step names it at its new place.
+// The step that comes after the range joins no earlier kernel entry: the
+// entry that it joined lost steps, and a smaller entry passes check more
+// often, so more candidates run.
 operation_steps_removed :: proc(from: ^operation_sequence.Sequence, first, count: int, into: ^operation_sequence.Sequence) {
 	into^ = from^
 	into.step_count = from.step_count - count
@@ -546,6 +664,9 @@ operation_steps_removed :: proc(from: ^operation_sequence.Sequence, first, count
 	}
 	if into.step_count > 0 {
 		into.steps[0].flags -= {.Same_Entry}
+	}
+	if count > 0 && first < into.step_count {
+		into.steps[first].flags -= {.Same_Entry}
 	}
 }
 
@@ -601,10 +722,10 @@ Operation_Run_Bounds :: struct {
 }
 
 Operation_Kept_Fault :: struct {
-	fault:     Operation_Fault, // In the allocator of the context.
-	life:      [][]u8,          // The life up to the fault, as the run gave it.
-	minimized: Operation_Minimized,
-	execution: u64, // The number of the execution of the fault, from 1.
+	fault:       Operation_Fault, // In the allocator of the context.
+	life:        [][]u8,          // The life up to the fault, as the run gave it.
+	minimized:   Operation_Minimized,
+	execution:   u64, // The number of the execution of the fault, from 1.
 	life_number: int, // The number of the machine life of the fault, from 1.
 }
 
@@ -619,8 +740,8 @@ Operation_Run :: struct {
 }
 
 // The procedure that writes a kept fault where the run keeps them; nil
-// keeps it in the run only.
-Operation_Fault_Keeper :: #type proc(kept: ^Operation_Kept_Fault, seed: u64)
+// keeps it in the run only. false: it could not, an error of the tool.
+Operation_Fault_Keeper :: #type proc(kept: ^Operation_Kept_Fault, seed: u64) -> bool
 
 operation_life_free :: proc(life: [][]u8) {
 	for bytes in life {
@@ -651,12 +772,14 @@ operation_signature_kept :: proc(kept: []Operation_Kept_Fault, signature: string
 }
 
 // operation_fuzzing_loop runs generated sequences on machines, one machine
-// at a time, until the count of executions, the bound of the findings, or
-// two boots in a row with no mailbox. A machine life ends at its bound of
-// sequences or at a fault; a fault with a new signature is minimized and
-// kept, a fault with a known one is only counted. ok is false at an error
-// of the build or of the tool. The loop frees the temporary memory after
-// each execution: the caller keeps nothing there.
+// at a time, until the count of executions, the bound of the findings, an
+// error of the tool, or two boots in a row with no mailbox. A machine life
+// ends at its bound of sequences, at the end of the run, or at a fault;
+// before a life ends with no fault, the machine drains its log, and a fault
+// found there belongs to the last sequence. A fault with a new signature is
+// minimized and kept, a fault with a known one is only counted. ok is
+// false at an error of the build or of the tool. The loop frees the
+// temporary memory after each execution: the caller keeps nothing there.
 operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_Generator, seed: u64, bounds: Operation_Run_Bounds, keeper: Operation_Fault_Keeper = nil) -> (run: Operation_Run, ok: bool) {
 	random := Fuzz_Random{state = seed}
 	life := make([dynamic][]u8)
@@ -710,8 +833,16 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 		fault := machine.execute(machine.data, checked, bytes)
 		run.sequence_time += time.tick_since(execution_started)
 		run.executions += 1
+		life_ends := len(life) >= bounds.life_sequences || run.executions >= bounds.executions
+		if fault.kind == .None && life_ends {
+			fault = machine.drain(machine.data)
+		}
+		if fault.kind == .Tool {
+			fmt.eprintfln("modustool: fuzz operations: an error of the tool, not a finding: %s", fault.text)
+			return run, false
+		}
 		if fault.kind == .None {
-			if len(life) >= bounds.life_sequences {
+			if life_ends {
 				machine.end(machine.data)
 				running = false
 			}
@@ -734,12 +865,16 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 		free_all(context.temp_allocator)
 		kept.minimized = operation_fault_minimize(machine, kept.life, kept.fault.signature)
 		append(&run.kept, kept)
-		if keeper != nil {
-			keeper(&run.kept[len(run.kept) - 1], seed)
+		if keeper != nil && !keeper(&run.kept[len(run.kept) - 1], seed) {
+			return run, false
 		}
 		free_all(context.temp_allocator)
-		if !kept.minimized.booted {
+		switch kept.minimized.end {
+		case .Done, .Bound:
+		case .No_Boot:
 			fmt.eprintfln("modustool: fuzz operations: %d machines in a row did not reach the line \"%s\" during a minimization: an error of the build, not a finding", OPERATION_BOOT_TRIES, OPERATION_MAILBOX_LINE)
+			return run, false
+		case .Tool_Error:
 			return run, false
 		}
 		if len(run.kept) >= bounds.findings_most {
@@ -750,10 +885,58 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 	return run, true
 }
 
+// operation_parameter_place gives the place of a parameter of an operation
+// by its name in OPERATIONS, or -1.
+operation_parameter_place :: proc(chosen: operation.Operation, name: string) -> int {
+	for parameter, place in operation.OPERATIONS[chosen].parameters {
+		if parameter.name == name {
+			return place
+		}
+	}
+	return -1
+}
+
+// operation_protected_names_changed changes the first byte of each name of
+// a Program_Create that is the name of a protected program, in the content
+// of the area that the step names: a child with that name would make the
+// line of its fault the line of a fault of isolation. The rule reads only
+// the sequence, so a seed still gives one sequence. A name that is not in
+// the content of its area, or whose length is not a plain value, stays.
+operation_protected_names_changed :: proc(sequence: ^operation_sequence.Sequence) -> (changed: int) {
+	name_place := operation_parameter_place(.Program_Create, "name")
+	length_place := operation_parameter_place(.Program_Create, "name_length")
+	if name_place < 0 || length_place < 0 {
+		return 0
+	}
+	for &item in sequence.steps[:sequence.step_count] {
+		if item.operation != u32(operation.Operation.Program_Create) {
+			continue
+		}
+		name, length := item.arguments[name_place], item.arguments[length_place]
+		if name.source != .Area_Address || length.source != .Value || name.area < 0 || name.area >= sequence.area_count {
+			continue
+		}
+		content := operation_sequence.area_content(sequence, name.area)
+		if name.offset > u64(len(content)) || length.value == 0 || length.value > u64(len(content)) - name.offset {
+			continue
+		}
+		bytes := content[name.offset:][:length.value]
+		for protected in operation_protected_names {
+			if string(bytes) == protected {
+				bytes[0] = OPERATION_PROTECTED_NAME_CHANGE
+				changed += 1
+				break
+			}
+		}
+	}
+	return changed
+}
+
 // operation_sequence_generate_random draws the choices of one sequence
 // from the random state, then builds it with the generator of the fuzz
 // target operation_sequence_generated, which a host test and that target
-// check: each sequence that it builds is one that check accepts.
+// check: each sequence that it builds is one that check accepts. It then
+// changes each protected program name.
 operation_sequence_generate_random :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence) {
 	choice_bytes: [OPERATION_CHOICE_BYTES]u8
 	for place := 0; place < len(choice_bytes); place += 8 {
@@ -764,13 +947,21 @@ operation_sequence_generate_random :: proc(random: ^Fuzz_Random, sequence: ^oper
 	}
 	choices := fuzz_choices_of(choice_bytes[:])
 	fuzz_operation_sequence_generate(&choices, sequence)
+	_ = operation_protected_names_changed(sequence)
 }
 
 // ---------------------------------------------------------------------
 // The findings in the build folder.
 
+// operation_run_folder gives the folder of the findings of the run of a
+// seed: a run never mixes its findings with those of another seed, and
+// the same seed writes the same findings again.
+operation_run_folder :: proc(seed: u64) -> string {
+	return fmt.tprintf("%s/%d", OPERATION_FUZZING_FOLDER, seed)
+}
+
 // operation_life_write writes each sequence of a life in a folder, in its
-// order, after it removed the files of an earlier run.
+// order, after it removed the files of an earlier run of the same seed.
 @(private = "file")
 operation_life_write :: proc(folder: string, life: [][]u8) -> bool {
 	_ = os.remove_all(folder)
@@ -780,20 +971,30 @@ operation_life_write :: proc(folder: string, life: [][]u8) -> bool {
 	for bytes, place in life {
 		path := fmt.tprintf("%s/sequence_%04d", folder, place)
 		if error := os.write_entire_file(path, bytes); error != nil {
-			fmt.eprintfln("modustool: cannot write %s: %v", path, error)
+			fmt.eprintfln("modustool: fuzz operations: an error of the tool: cannot write %s: %v", path, error)
 			return false
 		}
 	}
 	return true
 }
 
-// operation_fault_write writes a kept fault in its folder, named by the
-// start of the hash of its signature, and prints where it is.
-operation_fault_write :: proc(kept: ^Operation_Kept_Fault, seed: u64) {
+@(private = "file")
+operation_text_write :: proc(path, text: string) -> bool {
+	if error := os.write_entire_file(path, transmute([]u8)text); error != nil {
+		fmt.eprintfln("modustool: fuzz operations: an error of the tool: cannot write %s: %v", path, error)
+		return false
+	}
+	return true
+}
+
+// operation_fault_write writes a kept fault in the folder of its run,
+// named by the start of the hash of its signature, and prints where it is.
+// false: a file was not written, an error of the tool.
+operation_fault_write :: proc(kept: ^Operation_Kept_Fault, seed: u64) -> bool {
 	name := fuzz_input_name(transmute([]u8)kept.fault.signature)
-	folder := fmt.tprintf("%s/%s", OPERATION_FINDINGS_FOLDER, name[:OPERATION_FINDING_NAME_DIGITS])
+	folder := fmt.tprintf("%s/%s", operation_run_folder(seed), name[:OPERATION_FINDING_NAME_DIGITS])
 	if !make_folder(folder) || !operation_life_write(fmt.tprintf("%s/life", folder), kept.life) || !operation_life_write(fmt.tprintf("%s/minimized", folder), kept.minimized.life) {
-		return
+		return false
 	}
 	minimized := kept.minimized.life
 	last := new(operation_sequence.Sequence)
@@ -802,17 +1003,53 @@ operation_fault_write :: proc(kept: ^Operation_Kept_Fault, seed: u64) {
 	if len(minimized) > 0 && operation_sequence.check(minimized[len(minimized) - 1], last).problem == .None {
 		steps = last.step_count
 	}
-	summary := kept.minimized.reproduced ? fmt.tprintf("minimized to %d sequences, %d steps in the last one, with %d machines", len(minimized), steps, kept.minimized.machines) : fmt.tprintf("the fault did not come again on a new machine, in %d machines: the life is kept whole", kept.minimized.machines)
+	summary := kept.minimized.reproduced ? fmt.tprintf("minimized to %d sequences, %d steps in the last one, with %d boots (%v)", len(minimized), steps, kept.minimized.boots, kept.minimized.end) : fmt.tprintf("the fault did not come again on a new machine, in %d boots: the life is kept whole", kept.minimized.boots)
 	text := fmt.tprintf("%s\n%s\nthe seed %d, the execution %d, the machine life %d of %d sequences\n%s\n", kept.fault.signature, kept.fault.text, seed, kept.execution, kept.life_number, len(kept.life), summary)
-	_ = os.write_entire_file(fmt.tprintf("%s/finding.txt", folder), transmute([]u8)text)
-	if kept.fault.log != "" {
-		_ = os.write_entire_file(fmt.tprintf("%s/machine_log.txt", folder), transmute([]u8)kept.fault.log)
+	if !operation_text_write(fmt.tprintf("%s/finding.txt", folder), text) {
+		return false
+	}
+	if kept.fault.log != "" && !operation_text_write(fmt.tprintf("%s/machine_log.txt", folder), kept.fault.log) {
+		return false
 	}
 	fmt.eprintfln("modustool:   %s", kept.fault.text)
 	fmt.eprintfln("modustool:   %s: %s", summary, folder)
 	if len(minimized) == 1 {
 		fmt.eprintfln("modustool:   `modustool fuzz replay operations %s/minimized/sequence_0000` runs it again", folder)
 	}
+	return true
+}
+
+// ---------------------------------------------------------------------
+// The log of a machine.
+
+// operation_log_lines_from gives the whole lines of a log file from the
+// byte `from`: a last line that QEMU has not ended yet is not given, so a
+// line is never read in two parts.
+operation_log_lines_from :: proc(path: string, from: i64) -> string {
+	information, stat_error := os.stat(path, context.temp_allocator)
+	if stat_error != nil || information.size <= from {
+		return ""
+	}
+	file, open_error := os.open(path, {.Read})
+	if open_error != nil {
+		return ""
+	}
+	defer os.close(file)
+	bytes := make([]u8, information.size - from, context.temp_allocator)
+	count, _ := os.read_at(file, bytes, from)
+	if count <= 0 {
+		return ""
+	}
+	text := string(bytes[:count])
+	return text[:strings.last_index_byte(text, '\n') + 1]
+}
+
+// operation_log_new_lines gives the whole lines from `scanned`, and moves
+// `scanned` past them.
+operation_log_new_lines :: proc(path: string, scanned: ^i64) -> string {
+	text := operation_log_lines_from(path, scanned^)
+	scanned^ += i64(len(text))
+	return text
 }
 
 // ---------------------------------------------------------------------
@@ -829,35 +1066,11 @@ Operation_Qemu :: struct {
 	mailbox_open:  bool,
 	running:       bool,
 	exited:        bool, // QEMU ended, and the tool read the state of its end.
-	log_scanned:   i64,  // The bytes of the log whose whole lines the tool read.
+	log_scanned:   i64,  // The bytes of the log that belong to the sequences counted and ended.
 	grammar:       Operation_Grammar,
 	kernel_object: []u8, // The debug object of the kernel of the volume, or nil.
 	header:        ^operation_sequence.Mailbox_Header,
 	results:       ^operation_sequence.Runner_Results,
-}
-
-// operation_log_new_lines gives the whole lines that the machine wrote
-// since the last read: a check after each execution reads only them.
-@(private = "file")
-operation_log_new_lines :: proc(state: ^Operation_Qemu) -> string {
-	information, stat_error := os.stat(OPERATION_FUZZING_OUTPUT, context.temp_allocator)
-	if stat_error != nil || information.size <= state.log_scanned {
-		return ""
-	}
-	file, open_error := os.open(OPERATION_FUZZING_OUTPUT, {.Read})
-	if open_error != nil {
-		return ""
-	}
-	defer os.close(file)
-	bytes := make([]u8, information.size - state.log_scanned, context.temp_allocator)
-	count, _ := os.read_at(file, bytes, state.log_scanned)
-	if count <= 0 {
-		return ""
-	}
-	text := string(bytes[:count])
-	whole := strings.last_index_byte(text, '\n') + 1
-	state.log_scanned += i64(whole)
-	return text[:whole]
 }
 
 @(private = "file")
@@ -867,6 +1080,24 @@ operation_log_whole :: proc() -> string {
 		return ""
 	}
 	return string(bytes)
+}
+
+@(private = "file")
+operation_stop_fault :: proc(state: ^Operation_Qemu, exit_code: int) -> Operation_Fault {
+	state.exited = true
+	log := operation_log_whole()
+	signature, text := operation_stop_signature(exit_code, log, state.kernel_object)
+	return {kind = .Stop, signature = signature, text = text, log = log}
+}
+
+// operation_machine_stopped says if QEMU ended, with the fault of its stop.
+@(private = "file")
+operation_machine_stopped :: proc(state: ^Operation_Qemu) -> (fault: Operation_Fault, stopped: bool) {
+	// A wait of 0 does not block: Timeout says that QEMU runs.
+	if ended, wait_error := os.process_wait(state.process, 0); wait_error == nil && ended.exited {
+		return operation_stop_fault(state, ended.exit_code), true
+	}
+	return {}, false
 }
 
 // operation_machine_kernel_object reads the debug object of the kernel of
@@ -919,7 +1150,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 	state.monitor_read, state.monitor_write = monitor_read, monitor_write
 	state.running, state.exited, state.mailbox_open, state.log_scanned = true, false, false, 0
 	for started := time.tick_now(); time.tick_since(started) < BOOT_HANG_BOUND; {
-		if address, found := number_after(operation_log_new_lines(state), OPERATION_MAILBOX_LINE); found {
+		if address, found := number_after(operation_log_new_lines(OPERATION_FUZZING_OUTPUT, &state.log_scanned), OPERATION_MAILBOX_LINE); found {
 			mailbox, problem := operation_mailbox_open(OPERATION_FUZZING_MEMORY_FILE, address)
 			if problem != "" {
 				fmt.eprintfln("modustool: fuzz operations: %s", problem)
@@ -943,8 +1174,12 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 }
 
 // operation_machine_execute runs one sequence and reads its fault: the
-// stop of QEMU, a stall, a broken mailbox, the stop of a program that no
-// sequence reaches, then the oracles of the results.
+// stop of QEMU, a stall, a broken mailbox, then, after the end line of the
+// sequence, the stop of a program that no sequence reaches in the lines of
+// this sequence only, then the oracles of the results. Each line of the
+// kernel that this sequence caused comes before its end line, and each line
+// of an earlier sequence came before the end line of that one, so a fault
+// belongs to the sequence that caused it.
 @(private = "file")
 operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Sequence, bytes: []u8) -> Operation_Fault {
 	state := (^Operation_Qemu)(data)
@@ -952,20 +1187,37 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 	switch end {
 	case .Counted:
 	case .Machine_Ended:
-		state.exited = true
-		log := operation_log_whole()
-		signature, text := operation_stop_signature(ended.exit_code, log, state.kernel_object)
-		return {kind = .Stop, signature = signature, text = text, log = log}
+		return operation_stop_fault(state, ended.exit_code)
 	case .Stalled:
-		log := operation_log_whole()
-		if line := operation_isolation_line(log); line != "" {
-			return operation_isolation_fault(line, log)
+		if line := operation_isolation_line(operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)); line != "" {
+			return operation_isolation_fault(line, operation_log_whole())
 		}
-		return {kind = .Hang, signature = operation_hang_signature(sequence, operation_runner_step_started(&state.mailbox)), text = problem, log = log}
+		return {kind = .Hang, signature = operation_hang_signature(sequence, operation_runner_step_started(&state.mailbox)), text = problem, log = operation_log_whole()}
 	case .Mailbox_Broken:
 		return {kind = .Mailbox, signature = "mailbox: the counts of the mailbox are not the counts that the tool wrote", text = problem, log = operation_log_whole()}
+	case .Tool_Error:
+		return {kind = .Tool, text = problem}
 	}
-	if line := operation_isolation_line(operation_log_new_lines(state)); line != "" {
+	number := state.mailbox.written
+	lines := ""
+	found := false
+	for started := time.tick_now(); time.tick_since(started) < HANG_BOUND; {
+		text := operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)
+		if through, has_end := operation_end_line_through(text, number); has_end {
+			lines = text[:through]
+			state.log_scanned += i64(through)
+			found = true
+			break
+		}
+		if fault, stopped := operation_machine_stopped(state); stopped {
+			return fault
+		}
+		time.sleep(CONDITION_POLL_PERIOD)
+	}
+	if !found {
+		return {kind = .Hang, signature = OPERATION_END_LINE_HANG_SIGNATURE, text = fmt.tprintf("operation_fuzzing counted the sequence %d and wrote no line \"%s%d%s\" within %v", number, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END, HANG_BOUND), log = operation_log_whole()}
+	}
+	if line := operation_isolation_line(lines); line != "" {
 		return operation_isolation_fault(line, operation_log_whole())
 	}
 	if outcome, known := enum_word.member_of_word(operation_sequence.Execution_Outcome, state.header.outcome); known && outcome == .Hung {
@@ -973,6 +1225,27 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 	}
 	if findings := operation_findings(sequence, state.header, state.results, &state.grammar); len(findings) > 0 {
 		return {kind = .Oracle, signature = operation_oracle_signature(findings[0], sequence, state.header), text = operation_findings_text(findings)}
+	}
+	return {}
+}
+
+// operation_machine_drain reads the log after the end line of the last
+// sequence of a life, for OPERATION_LOG_DRAIN_BOUND, or until QEMU ends:
+// a line of isolation, or a stop, belongs to the last sequence.
+@(private = "file")
+operation_machine_drain :: proc(data: rawptr) -> Operation_Fault {
+	state := (^Operation_Qemu)(data)
+	if !state.running || state.exited {
+		return {}
+	}
+	for started := time.tick_now(); time.tick_since(started) < OPERATION_LOG_DRAIN_BOUND; {
+		if line := operation_isolation_line(operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)); line != "" {
+			return operation_isolation_fault(line, operation_log_whole())
+		}
+		if fault, stopped := operation_machine_stopped(state); stopped {
+			return fault
+		}
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	return {}
 }
@@ -1050,7 +1323,7 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 		_ = os.remove(machine_file(OPERATION_FUZZING_OUTPUT, SCRATCH_DISK_SUFFIX))
 		_ = os.remove(machine_file(OPERATION_FUZZING_OUTPUT, FIRMWARE_VARIABLES_SUFFIX))
 	}
-	machine := Operation_Machine{data = state, start = operation_machine_start, execute = operation_machine_execute, end = operation_machine_end}
+	machine := Operation_Machine{data = state, start = operation_machine_start, execute = operation_machine_execute, drain = operation_machine_drain, end = operation_machine_end}
 	fmt.printfln("modustool: fuzz operations: %d executions from the seed %d, one machine at a time, at most %d sequences in a machine life", arguments.executions, seed, OPERATION_MACHINE_SEQUENCES_MOST)
 	run_started := time.tick_now()
 	bounds := Operation_Run_Bounds{executions = arguments.executions, life_sequences = OPERATION_MACHINE_SEQUENCES_MOST, findings_most = OPERATION_FINDINGS_MOST}
@@ -1059,7 +1332,7 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 	run_seconds := time.duration_seconds(time.tick_since(run_started))
 	sequence_seconds := time.duration_seconds(run.sequence_time)
 	fmt.printfln("modustool: measure: fuzz operations: %d executions in %d machine lives; %.1f executions in one second of the sequences (%.1f s), %.1f in one second of the whole run with the boots and the minimizations (%.1f s, the boots of the lives %.1f s)", run.executions, run.lives, sequence_seconds > 0 ? f64(run.executions) / sequence_seconds : 0, sequence_seconds, run_seconds > 0 ? f64(run.executions) / run_seconds : 0, run_seconds, time.duration_seconds(run.boot_time))
-	fmt.printfln("modustool: fuzz operations: %d faults of the kernel, %d signatures kept in %s%s", run.faults, len(run.kept), OPERATION_FINDINGS_FOLDER, run.ended_by_findings ? fmt.tprintf("; the run ended at %d findings", OPERATION_FINDINGS_MOST) : "")
+	fmt.printfln("modustool: fuzz operations: %d faults of the kernel, %d signatures kept in %s%s", run.faults, len(run.kept), operation_run_folder(seed), run.ended_by_findings ? fmt.tprintf("; the run ended at %d findings", OPERATION_FINDINGS_MOST) : "")
 	for kept in run.kept {
 		fmt.printfln("modustool:   %s", kept.fault.signature)
 	}

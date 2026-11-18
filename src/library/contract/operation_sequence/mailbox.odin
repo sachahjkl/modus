@@ -33,6 +33,15 @@ RUNNER_END_CODE :: 0x0F0F
 RUNNER_SEQUENCE_REFUSED_CODE :: 0x0F01
 RUNNER_BATCH_REFUSED_CODE :: 0x0F02
 
+// The line that the service writes on the log after each sequence, before
+// it adds one to `executions`: "operation_fuzzing: sequence <number>
+// ended", with the number of executions after this one. The line passes
+// through the same queue of the log as each line of the kernel during the
+// sequence, so it reaches the serial port after them: the tool names the
+// sequence of a line of the kernel by the end line that comes after it.
+SEQUENCE_END_LINE_START :: "operation_fuzzing: sequence "
+SEQUENCE_END_LINE_END :: " ended"
+
 // What happened to the last sequence that the service took.
 Execution_Outcome :: enum u64 {
 	None        = 0, // No sequence ran yet.
