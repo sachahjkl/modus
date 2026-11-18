@@ -11,6 +11,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 // One icon of the manifest: a file of the table of the uses of the mark,
 // for any use or for a phone that cuts the icon to a shape.
@@ -22,9 +23,9 @@ Site_Manifest_Icon :: struct {
 // The icons of the manifest, in the order of the manifest. favicon.ico,
 // the vector icon and the icon of a phone are named by the head.
 site_manifest_icons := [?]Site_Manifest_Icon {
-	{file_name = SITE_ICON_192},
-	{file_name = SITE_ICON_512},
-	{file_name = SITE_ICON_MASKABLE, maskable = true},
+	{file_name = resources.SITE_ICON_192},
+	{file_name = resources.SITE_ICON_512},
+	{file_name = resources.SITE_ICON_MASKABLE, maskable = true},
 }
 
 // site_icon_problems checks the icons that the pages and the manifest name:
@@ -39,19 +40,19 @@ site_manifest_icons := [?]Site_Manifest_Icon {
 // in the site and their bytes.
 site_icon_problems :: proc(pages: []Site_Page, written: map[string]string, manifest: string, icon_files: map[string][]u8) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
-	if favicon, has_favicon := icon_files[SITE_FAVICON]; !has_favicon {
-		append(&problems, SITE_FAVICON + " is not at the root of the site")
+	if favicon, has_favicon := icon_files[resources.SITE_FAVICON]; !has_favicon {
+		append(&problems, resources.SITE_FAVICON + " is not at the root of the site")
 	} else {
-		entries, problem := mark_ico_read(favicon)
+		entries, problem := resources.mark_ico_read(favicon)
 		if problem != "" {
-			append(&problems, fmt.tprintf("%s: %s", SITE_FAVICON, problem))
+			append(&problems, fmt.tprintf("%s: %s", resources.SITE_FAVICON, problem))
 		}
 		has_32 := false
 		for entry in entries {
 			has_32 ||= entry.width == 32 && entry.height == 32
 		}
 		if problem == "" && !has_32 {
-			append(&problems, SITE_FAVICON + " has no picture of 32 by 32")
+			append(&problems, resources.SITE_FAVICON + " has no picture of 32 by 32")
 		}
 	}
 	// size_problem checks one icon: it exists, a stated size is its size,

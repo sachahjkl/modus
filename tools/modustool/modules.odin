@@ -11,6 +11,7 @@ import "core:strings"
 import "core:sys/linux"
 import "core:time"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The modules of the build with no debug information: the check that the
 // debug objects change no byte of a module builds every module there
@@ -68,12 +69,12 @@ build_modules :: proc() -> bool {
 	build_measure_step("the debug image", step_started)
 	step_started = time.tick_now()
 	// The pointer themes: the resources of the boot image (pointers.odin).
-	resources := build_pointer_themes(pointer_theme_source_of_the_build(), false) or_return
+	pointer_themes := resources.build_pointer_themes(resources.pointer_theme_source_of_the_build(), false) or_return
 	build_measure_step("the pointer themes", step_started)
 	step_started = time.tick_now()
 	// The glyph caches of the default font and of the interface font, and
 	// the font outlines: six more resources (vector_fonts.odin).
-	glyph_caches := build_glyph_caches() or_return
+	glyph_caches := resources.build_glyph_caches() or_return
 	build_measure_step("the glyph caches", step_started)
 	step_started = time.tick_now()
 	// The pages of the links of the documentation of the modules: one more
@@ -81,8 +82,8 @@ build_modules :: proc() -> bool {
 	link_pages := build_manual_pages() or_return
 	build_measure_step("the link pages of the manual", step_started)
 	step_started = time.tick_now()
-	all_resources := make([dynamic]Resource_File, context.temp_allocator)
-	append(&all_resources, ..resources)
+	all_resources := make([dynamic]resources.Resource_File, context.temp_allocator)
+	append(&all_resources, ..pointer_themes)
 	append(&all_resources, ..glyph_caches[:])
 	append(&all_resources, link_pages)
 	// The second boot image has no compositor: with it, the start fails.
@@ -99,7 +100,7 @@ build_modules :: proc() -> bool {
 			fmt.eprintfln("modustool: cannot write %s: %v", MEASURE_RUN_RESOURCE_FILE, err)
 			return false
 		}
-		append(&all_resources, Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
+		append(&all_resources, resources.Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
 		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
 	}
 	build_measure_step("the five boot images", step_started)
@@ -430,7 +431,7 @@ module_convert :: proc(build: foundation.Module_Build) -> bool {
 // module `without`. A resource has its name and the hash of its bytes, as a
 // module. This image has no system description: each boot
 // volume gets a copy with its own (system_description.odin).
-build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
+build_boot_image :: proc(path: string, without: string, resource_files: []resources.Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in foundation.module_builds {
 		in_this_image := foundation.module_in_boot_image(build) && build.name != without || foundation.module_in_a_boot_image(build) && build.only_in_image == path
@@ -440,7 +441,7 @@ build_boot_image :: proc(path: string, without: string, resources: []Resource_Fi
 		append(&files, Image_File{name = build.name, file = foundation.read_file(foundation.module_path(build.name)) or_return})
 	}
 	module_count := len(files)
-	for resource in resources {
+	for resource in resource_files {
 		append(&files, Image_File{name = resource.name, file = foundation.read_file(resource.path) or_return})
 	}
 	image := boot_image_encode(files[:], module_count)

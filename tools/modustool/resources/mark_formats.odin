@@ -10,7 +10,7 @@
 //     animation, with the time of each frame.
 // So a format adds no second way to compute a color of the heron, and a
 // test reads each format back into the pixels of the picture.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:hash"

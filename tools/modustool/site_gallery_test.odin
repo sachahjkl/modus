@@ -4,6 +4,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modustool:resources"
 
 // One picture of a test, with a guide that the site of the tests has.
 @(private = "file")
@@ -12,7 +13,7 @@ gallery_test_picture :: proc(name: string, group: Site_Gallery_Group, home: bool
 	caption := strings.concatenate({"What the picture ", name, " shows: a <window> & its text."}, context.temp_allocator)
 	return Site_Gallery_Picture {
 		row = {file = file, group = group, caption = caption, guide = "docs/NETWORK.md", home = home},
-		site_path = strings.concatenate({SITE_PICTURE_FOLDER, "/", file}, context.temp_allocator),
+		site_path = strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", file}, context.temp_allocator),
 		thumbnail_path = strings.concatenate({SITE_THUMBNAIL_FOLDER, "/", file}, context.temp_allocator),
 		width = SITE_SCREEN_PICTURE_WIDTH,
 		height = SITE_SCREEN_PICTURE_HEIGHT,
@@ -226,12 +227,12 @@ site_gallery_thumbnail_is_the_mean :: proc(t: ^testing.T) {
 	// Through the files: the thumbnail of a PNG file is a PNG file of half
 	// its width and its height, with those pixels, and the same bytes at
 	// each call.
-	file, encode_error := png_encode(4, 2, 3, pixels)
+	file, encode_error := resources.png_encode(4, 2, 3, pixels)
 	testing.expect(t, encode_error == nil)
 	first, first_ok := site_thumbnail_encode(file)
 	second, second_ok := site_thumbnail_encode(file)
 	testing.expect(t, first_ok && second_ok)
-	testing.expect(t, png_has_pixels(first, 2, 1, 3, thumbnail))
+	testing.expect(t, resources.png_has_pixels(first, 2, 1, 3, thumbnail))
 	testing.expect_value(t, string(first), string(second))
 	_, not_png_ok := site_thumbnail_encode(transmute([]u8)string("not a PNG file"))
 	testing.expect(t, !not_png_ok)

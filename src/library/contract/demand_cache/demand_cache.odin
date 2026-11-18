@@ -101,7 +101,7 @@ face_forms := [Face]Face_Form {
 // The characters that the subset of a face holds past the glyph cache, in
 // the order of the code points, as runs with no gap. The modus tool adds
 // them to the subset of the font file of the face, after the characters of
-// the glyph cache (tools/modustool/vector_fonts.odin), so the glyphs of the
+// the glyph cache (tools/modustool/resources/vector_fonts.odin), so the glyphs of the
 // glyph cache of the build do not change; only the hash of the font file
 // in its header does. Each count of a subset comes from these
 // lists (subset_count).

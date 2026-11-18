@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "modus:contract/pointer_pictures"
 import "modus:support/graphics"
@@ -521,8 +521,11 @@ system_pointer_theme_file_round_trip :: proc(t: ^testing.T) {
 	again, _, again_problem := pointer_theme_make(manifest, "")
 	testing.expect_value(t, again_problem, "")
 	testing.expect(t, slice.equal(file, again), "two makes of the theme of the system give the same bytes")
-	folder, err := os.make_directory_temp("", "pointers_test_*", context.temp_allocator)
+	// The test frees its temporary memory at its end, before its deferred
+	// calls run, so the folder lives in the memory of the heap.
+	folder, err := os.make_directory_temp("", "pointers_test_*", context.allocator)
 	testing.expect_value(t, err, nil)
+	defer delete(folder)
 	defer os.remove_all(folder)
 	path := fmt.tprintf("%s/system.pointers", folder)
 	testing.expect_value(t, os.write_entire_file(path, file), nil)
@@ -616,8 +619,11 @@ manifest_errors_name_the_place :: proc(t: ^testing.T) {
 // scales with the size; a link out of the folder is refused.
 @(test)
 manifest_of_sources_follows_the_links :: proc(t: ^testing.T) {
-	folder, err := os.make_directory_temp("", "pointers_test_*", context.temp_allocator)
+	// The test frees its temporary memory at its end, before its deferred
+	// calls run, so the folder lives in the memory of the heap.
+	folder, err := os.make_directory_temp("", "pointers_test_*", context.allocator)
 	testing.expect_value(t, err, nil)
+	defer delete(folder)
 	defer os.remove_all(folder)
 	_ = os.write_entire_file(fmt.tprintf("%s/real", folder), xcursor_write(two_sizes[:]))
 	_ = os.symlink("real", fmt.tprintf("%s/middle", folder))

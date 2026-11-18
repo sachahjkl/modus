@@ -262,7 +262,10 @@ PATTERN_NUMBERS :: 40
 @(private = "file")
 part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 	paths := make([dynamic][2]string, context.temp_allocator)
-	files, listed := foundation.files_with_suffix(foundation.TOOL_SOURCE_FOLDER, ".odin")
+	// Each package of the tool is a folder under the folder of the tool.
+	listed_files := make([dynamic]string, context.temp_allocator)
+	listed := foundation.source_files_of_a_folder(foundation.TOOL_SOURCE_FOLDER, &listed_files)
+	files := listed_files[:]
 	testing.expect(t, listed, "the test runs from the root of the repository")
 	for path in files {
 		if strings.has_suffix(path, "_test.odin") {

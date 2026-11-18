@@ -7,6 +7,7 @@ import "core:strings"
 import "core:testing"
 import "modus:support/line_editor"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The matcher of the console over the table that the script also carries:
 // a change of the score or of the order in src/library/support/line_editor fails here
@@ -334,7 +335,7 @@ site_docs_home_holds_the_chart :: proc(t: ^testing.T) {
 	// name of the system before it is text in the font of the name of the
 	// mark.
 	testing.expect_value(t, strings.count(html, "<span class=\"maker\">"), 1)
-	testing.expect(t, strings.contains(html, "<p class=\"foot-maker\"><span class=\"mark-name\">" + SITE_SYSTEM_NAME + "</span> · by <span class=\"maker\"><img src=\"../" + SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE + "\" width=\"16\" height=\"16\" alt=\"\"><a href=\"" + SITE_MAKER_ADDRESS + "\">" + SITE_MAKER_NAME + "</a></span></p>"), "the foot has not the line of the maker")
+	testing.expect(t, strings.contains(html, "<p class=\"foot-maker\"><span class=\"mark-name\">" + SITE_SYSTEM_NAME + "</span> · by <span class=\"maker\"><img src=\"../" + resources.SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE + "\" width=\"16\" height=\"16\" alt=\"\"><a href=\"" + SITE_MAKER_ADDRESS + "\">" + SITE_MAKER_NAME + "</a></span></p>"), "the foot has not the line of the maker")
 	// The page has no row of doors, and no card ends with a link to all.
 	testing.expect(t, !strings.contains(body, "Where to start") && !strings.contains(body, ">All "), "the docs home repeats the doors of the bar")
 	testing.expect_value(t, site_inline_code_problem(html), "")

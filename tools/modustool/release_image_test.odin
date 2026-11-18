@@ -12,6 +12,7 @@ import "modus:contract/replacement_list"
 import "modus:contract/system_description"
 import "modus:support/cryptography/ed25519"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The seed of a release signing key of these tests only: 32 bytes.
 @(private = "file")
@@ -204,9 +205,9 @@ a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 @(private = "file")
 release_test_pointer_theme :: proc(t: ^testing.T, license: string) -> []u8 {
 	text := fmt.tprintf("theme Small\nlicense %s\nattribution a theme of a test\nsizes 12\nshape arrow hot 0 0\nlayer fill\ncontour 0 0 line 6 0 line 0 6\n", license)
-	manifest, problem := manifest_parse("release_test.manifest", text)
+	manifest, problem := resources.manifest_parse("release_test.manifest", text)
 	testing.expect_value(t, problem, "")
-	file, _, made_problem := pointer_theme_make(manifest, "")
+	file, _, made_problem := resources.pointer_theme_make(manifest, "")
 	testing.expect_value(t, made_problem, "")
 	return file
 }

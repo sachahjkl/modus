@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "modus:contract/pointer_pictures"
 import "modus:support/graphics"
@@ -1398,4 +1398,24 @@ pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, r
 		return nil, nil, fmt.tprintf("the theme file is not valid: %s", pointer_pictures.sentence(found, buffer[:]))
 	}
 	return file, table[:], ""
+}
+
+// site_relative_luminance gives the relative luminance of a color (WCAG 2).
+site_relative_luminance :: proc(color: graphics.Color) -> f64 {
+	channel :: proc(value: u32) -> f64 {
+		part := f64(value) / 255
+		return part <= 0.03928 ? part / 12.92 : math.pow((part + 0.055) / 1.055, 2.4)
+	}
+	value := u32(color)
+	return 0.2126 * channel((value >> 16) & 0xFF) + 0.7152 * channel((value >> 8) & 0xFF) + 0.0722 * channel(value & 0xFF)
+}
+
+// site_contrast_ratio gives the contrast ratio of two colors (WCAG 2).
+site_contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
+	lighter := site_relative_luminance(first)
+	darker := site_relative_luminance(second)
+	if lighter < darker {
+		lighter, darker = darker, lighter
+	}
+	return (lighter + 0.05) / (darker + 0.05)
 }

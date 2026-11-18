@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "core:fmt"
 import "core:image/png"
@@ -190,4 +190,24 @@ picture_compress :: proc(path: string, count: ^Picture_Compression_Count) -> boo
 	count.bytes_after += len(after)
 	fmt.printfln("modustool: compressed %s: %d bytes before, %d bytes after", path, len(before), len(after))
 	return true
+}
+
+// png_with_stored_data gives a PNG file whose data is stored, not
+// compressed, as the earlier writer of the tool gave it: the tests of the
+// compression and of the site read such a file. It gives nil when the
+// encoder refuses the pixels.
+png_with_stored_data :: proc(width, height, channels: int, pixels: []u8) -> []u8 {
+	picture := png.Image {
+		width    = width,
+		height   = height,
+		channels = channels,
+		depth    = 8,
+	}
+	picture.pixels = make([dynamic]u8, len(pixels), len(pixels), context.temp_allocator)
+	copy(picture.pixels[:], pixels)
+	output := make([dynamic]u8, context.temp_allocator)
+	if save_error := png.save_to_buffer(&output, &picture, level = .Stored, filter = .None, allocator = context.temp_allocator); save_error != nil {
+		return nil
+	}
+	return output[:]
 }

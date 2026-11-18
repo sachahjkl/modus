@@ -5,6 +5,7 @@ import "core:image/png"
 import "core:strings"
 import "core:testing"
 import "modus:support/mark"
+import "modustool:resources"
 
 // The files of the animations read back as the frames of src/library/support/mark, and
 // the first sprite of each sheet is the still picture that the site shows
@@ -39,11 +40,11 @@ site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 	// The first tile of each tile map of the home is the still picture of
 	// the home of its color scheme, pixel for pixel: the heron does not
 	// change when the script starts.
-	stills := [2]string{SITE_MARK_HOME, SITE_MARK_HOME_LIGHT}
-	for tile_map, index in ([2]^Mark_Tile_Map{&tile_maps.dark, &tile_maps.light}) {
-		still_picture, still_found := mark_use_picture(stills[index])
+	stills := [2]string{resources.SITE_MARK_HOME, resources.SITE_MARK_HOME_LIGHT}
+	for tile_map, index in ([2]^resources.Mark_Tile_Map{&tile_maps.dark, &tile_maps.light}) {
+		still_picture, still_found := resources.mark_use_picture(stills[index])
 		testing.expect(t, still_found)
-		still_file, encoded := mark_picture_png(still_picture)
+		still_file, encoded := resources.mark_picture_png(still_picture)
 		testing.expect(t, encoded)
 		still_image, still_error := png.load_from_bytes(still_file, allocator = context.temp_allocator)
 		sheet_image, sheet_error := png.load_from_bytes(files[site_mark_sheet_path(tile_map.picture.file_name)], allocator = context.temp_allocator)
@@ -71,7 +72,7 @@ site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 	for path, data in files {
 		damaged[path] = data
 	}
-	damaged[SITE_PICTURE_FOLDER + "/" + SITE_MARK_ANIMATION_HOME] = files[SITE_PICTURE_FOLDER + "/" + SITE_MARK_ANIMATION_HOME_LIGHT]
+	damaged[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_ANIMATION_HOME] = files[resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_ANIMATION_HOME_LIGHT]
 	testing.expect(t, len(site_mark_animation_problems(damaged)) == 1)
 }
 
@@ -79,7 +80,7 @@ site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 // the still heron again is the sprite 0.
 @(test)
 site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
-	sprites, ok := mark_sprites()
+	sprites, ok := resources.mark_sprites()
 	testing.expect(t, ok)
 	still := mark.still_cells()
 	testing.expect_value(t, mark.cells_differ_count(&sprites.cells[0], &still), 0)
@@ -114,20 +115,20 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 	// A sprite of the home is the heron alone, 192 pixels wide. The sprites
 	// are in rows, and no side of a tile map is longer than a browser
 	// decodes.
-	home, _ := mark_use_picture(SITE_MARK_HOME)
-	sprite_width, sprite_height := mark_picture_size(home)
+	home, _ := resources.mark_use_picture(resources.SITE_MARK_HOME)
+	sprite_width, sprite_height := resources.mark_picture_size(home)
 	testing.expect_value(t, sprite_width, mark.heron_size(home.heron_cell))
 	testing.expect_value(t, sprite_height, mark.heron_size(home.heron_cell))
-	columns, rows := mark_sheet_shape(len(sprites.cells))
+	columns, rows := resources.mark_sheet_shape(len(sprites.cells))
 	testing.expect(t, columns * rows >= len(sprites.cells))
-	testing.expect(t, columns <= MARK_TILE_MAP_COLUMNS)
-	testing.expect(t, sprite_width * columns <= MARK_PICTURE_SIDE_MOST)
-	testing.expect(t, sprite_height * rows <= MARK_PICTURE_SIDE_MOST)
-	single_columns, single_rows := mark_sheet_shape(1)
+	testing.expect(t, columns <= resources.MARK_TILE_MAP_COLUMNS)
+	testing.expect(t, sprite_width * columns <= resources.MARK_PICTURE_SIDE_MOST)
+	testing.expect(t, sprite_height * rows <= resources.MARK_PICTURE_SIDE_MOST)
+	single_columns, single_rows := resources.mark_sheet_shape(1)
 	testing.expect_value(t, single_columns, 1)
 	testing.expect_value(t, single_rows, 1)
-	full_columns, full_rows := mark_sheet_shape(MARK_TILE_MAP_COLUMNS + 1)
-	testing.expect_value(t, full_columns, MARK_TILE_MAP_COLUMNS)
+	full_columns, full_rows := resources.mark_sheet_shape(resources.MARK_TILE_MAP_COLUMNS + 1)
+	testing.expect_value(t, full_columns, resources.MARK_TILE_MAP_COLUMNS)
 	testing.expect_value(t, full_rows, 2)
 	for animation in mark.Animation {
 		testing.expect_value(t, len(sprites.of_frame[animation]), mark.animation_frame_count(animation))
@@ -161,7 +162,7 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	count, _ := root["sprites"].(json.Float) // parse_string with no integers: each number is a float.
 	testing.expect_value(t, int(count), len(sprites.cells))
 	columns, _ := root["columns"].(json.Float)
-	testing.expect_value(t, int(columns), MARK_TILE_MAP_COLUMNS)
+	testing.expect_value(t, int(columns), resources.MARK_TILE_MAP_COLUMNS)
 	// The three tile maps, by their addresses.
 	sheets_table, _ := root["sheets"].(json.Object)
 	dark, _ := sheets_table["dark"].(json.String)
@@ -189,7 +190,7 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 	testing.expect_value(t, int(icon_size), 32)
 	testing.expect_value(t, int(icon_margin), 4)
 	testing.expect_value(t, int(icon_tile), 24)
-	testing.expect_value(t, int(icon_columns), MARK_TILE_MAP_COLUMNS)
+	testing.expect_value(t, int(icon_columns), resources.MARK_TILE_MAP_COLUMNS)
 	// Where the drawn forms are in a tile map of the home, in pixels: under
 	// the three rows of the sprites, twelve boxes of 256 by 208 in a row,
 	// the natural heron 48 from the left of its box and 32 from its top.
@@ -341,7 +342,7 @@ site_mark_animation_table_parses :: proc(t: ^testing.T) {
 @(test)
 site_mark_animation_rules_keep_the_page :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
-	home, home_found := mark_use_picture(SITE_MARK_HOME)
+	home, home_found := resources.mark_use_picture(resources.SITE_MARK_HOME)
 	testing.expect(t, home_found)
 	factor := home.heron_cell
 	testing.expect_value(t, factor, 8)
@@ -406,22 +407,22 @@ site_mark_animation_rules_keep_the_page :: proc(t: ^testing.T) {
 @(test)
 site_mark_tab_icon_is_a_tile_of_its_tile_map :: proc(t: ^testing.T) {
 	icon, icon_ok := site_mark_tab_icon_picture()
-	heron_light, pictures_ok := mark_use_picture(SITE_MARK_ANIMATION_ICON)
+	heron_light, pictures_ok := resources.mark_use_picture(resources.SITE_MARK_ANIMATION_ICON)
 	testing.expect(t, icon_ok && pictures_ok)
 	if !icon_ok || !pictures_ok {
 		return
 	}
 	testing.expect_value(t, SITE_MARK_ANIMATION_ICON_MARGIN, 4)
-	icon_width, icon_height := mark_picture_size(icon)
+	icon_width, icon_height := resources.mark_picture_size(icon)
 	testing.expect_value(t, icon_width, SITE_MARK_ANIMATION_ICON_SIZE)
 	testing.expect_value(t, icon_height, SITE_MARK_ANIMATION_ICON_SIZE)
-	testing.expect_value(t, mark_picture_channels(icon), 4)
+	testing.expect_value(t, resources.mark_picture_channels(icon), 4)
 	testing.expect(t, heron_light.on_light)
 	testing.expect_value(t, heron_light.variant, icon.variant)
 	testing.expect_value(t, heron_light.heron_cell, icon.heron_cell)
 	still := mark.still_cells()
-	icon_pixels := mark_picture_pixels(icon, &still)
-	heron_pixels := mark_picture_pixels(heron_light, &still)
+	icon_pixels := resources.mark_picture_pixels(icon, &still)
+	heron_pixels := resources.mark_picture_pixels(heron_light, &still)
 	for row in 0 ..< SITE_MARK_ANIMATION_ICON_SIZE {
 		for column in 0 ..< SITE_MARK_ANIMATION_ICON_SIZE {
 			from_icon := icon_pixels[(row * SITE_MARK_ANIMATION_ICON_SIZE + column) * 4:][:4]
@@ -496,8 +497,8 @@ sheet_rule_of_pixels :: proc() -> string {
 // of src/library/support/mark at its time, and the sprite of the frame at its time.
 @(test)
 site_mark_steps_follow_the_frames_and_the_keys :: proc(t: ^testing.T) {
-	sprites, ok := mark_sprites()
-	forms, forms_ok := mark_forms(&sprites)
+	sprites, ok := resources.mark_sprites()
+	forms, forms_ok := resources.mark_forms(&sprites)
 	testing.expect(t, ok && forms_ok)
 	if !ok || !forms_ok {
 		return
@@ -548,30 +549,30 @@ site_mark_steps_follow_the_frames_and_the_keys :: proc(t: ^testing.T) {
 	// The dash: the wind-up in two forms, the run in one, the stop in two,
 	// the rebound: 7 drawings; then the natural heron.
 	dash := forms.steps[.Dash]
-	testing.expect_value(t, dash[0], Mark_Play_Step{milliseconds = 90, sprite = sprites.of_frame[.Dash][0], form = -1})
+	testing.expect_value(t, dash[0], resources.Mark_Play_Step{milliseconds = 90, sprite = sprites.of_frame[.Dash][0], form = -1})
 	testing.expect_value(t, dash[1].milliseconds, 90)
 	testing.expect_value(t, forms.forms[dash[1].form], mark.Form.Gather)
 	testing.expect_value(t, dash[2].milliseconds, 200)
 	testing.expect_value(t, forms.forms[dash[2].form], mark.Form.Crouch)
 	testing.expect_value(t, dash[3].milliseconds, 70)
 	testing.expect_value(t, forms.forms[dash[3].form], mark.Form.Run)
-	testing.expect_value(t, dash[len(dash) - 1], Mark_Play_Step{milliseconds = 100, sprite = sprites.of_frame[.Dash][16], form = -1})
+	testing.expect_value(t, dash[len(dash) - 1], resources.Mark_Play_Step{milliseconds = 100, sprite = sprites.of_frame[.Dash][16], form = -1})
 	// A fault of the keys has a sentence, and the keys of src/library/support/mark
 	// have none.
-	testing.expect_value(t, mark_move_fault_text(mark.move_keys[:]), "")
+	testing.expect_value(t, resources.mark_move_fault_text(mark.move_keys[:]), "")
 	faulty := mark.move_keys
 	for &key in faulty {
 		if key.animation == .Hop && key.at_milliseconds == 120 {
 			key.cells_up = 1
 		}
 	}
-	testing.expect_value(t, mark_move_fault_text(faulty[:]), "the move of hop, the key at 120 ms: the key moves the heron while a foot is in the water")
+	testing.expect_value(t, resources.mark_move_fault_text(faulty[:]), "the move of hop, the key at 120 ms: the key moves the heron while a foot is in the water")
 }
 
 // merged_frames gives the count of the frames of an animation that show
 // the sprite of the frame before them: the play shows them as one step.
 @(private = "file")
-merged_frames :: proc(sprites: ^Mark_Sprites, animation: mark.Animation) -> int {
+merged_frames :: proc(sprites: ^resources.Mark_Sprites, animation: mark.Animation) -> int {
 	merged := 0
 	for sprite, index in sprites.of_frame[animation] {
 		if index > 0 && sprites.of_frame[animation][index - 1] == sprite {
@@ -616,15 +617,15 @@ site_mark_check_steps_follow_the_rule :: proc(t: ^testing.T) {
 @(test)
 site_mark_name_rules_name_the_font :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
-	mark_face := "@font-face { font-family: \"" + MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\");"
+	mark_face := "@font-face { font-family: \"" + resources.MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\");"
 	diagram_face := "@font-face { font-family: \"" + SITE_DIAGRAM_FONT_FAMILY + "\"; src: url(\"" + SITE_DIAGRAM_FONT + "\") format(\"truetype\");"
 	testing.expect_value(t, strings.count(sheet, "@font-face"), 2)
 	testing.expect_value(t, strings.count(sheet, mark_face), 1)
 	testing.expect_value(t, strings.count(sheet, diagram_face), 1)
-	testing.expect(t, SITE_MARK_FONT != SITE_DIAGRAM_FONT && MARK_FONT_FAMILY != SITE_DIAGRAM_FONT_FAMILY)
+	testing.expect(t, SITE_MARK_FONT != SITE_DIAGRAM_FONT && resources.MARK_FONT_FAMILY != SITE_DIAGRAM_FONT_FAMILY)
 	testing.expect(t, strings.contains(sheet, "font-display: block;"))
 	testing.expect(t, strings.contains(sheet, "." + SITE_MARK_NAME_CLASS + " { display: inline-block;"))
-	testing.expect(t, strings.contains(sheet, "font-family: \"" + MARK_FONT_FAMILY + "\", var(--mono);"))
+	testing.expect(t, strings.contains(sheet, "font-family: \"" + resources.MARK_FONT_FAMILY + "\", var(--mono);"))
 	testing.expect(t, strings.contains(sheet, "font-synthesis: none;"))
 	// The bar and the foot: cells of 2 pixels. The home: cells of 6 pixels,
 	// the cell of the name that the picture of the home had.

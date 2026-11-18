@@ -13,6 +13,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The machine test: the tool starts the machine under QEMU, and it acts as
 // the input. It presses keys and moves the mouse through the QEMU monitor,
@@ -3866,9 +3867,9 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 	sync.mutex_lock(&machine_interface_cache_lock)
 	defer sync.mutex_unlock(&machine_interface_cache_lock)
 	if machine_interface_cache_words == nil {
-		bytes, read_error := os.read_entire_file(INTERFACE_GLYPH_CACHE_OUTPUT, context.allocator)
+		bytes, read_error := os.read_entire_file(resources.INTERFACE_GLYPH_CACHE_OUTPUT, context.allocator)
 		if read_error != nil {
-			fmt.eprintfln("modustool: test failed: cannot read %s: %v", INTERFACE_GLYPH_CACHE_OUTPUT, read_error)
+			fmt.eprintfln("modustool: test failed: cannot read %s: %v", resources.INTERFACE_GLYPH_CACHE_OUTPUT, read_error)
 			return {}, false
 		}
 		// validate needs memory aligned on 8 bytes.
@@ -3879,7 +3880,7 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 		refused: glyph_cache.Problem
 		machine_interface_cache, refused = glyph_cache.validate(aligned)
 		if refused.kind != .None {
-			fmt.eprintfln("modustool: test failed: %s is refused: %s", INTERFACE_GLYPH_CACHE_OUTPUT, glyph_cache.problem_sentences[refused.kind])
+			fmt.eprintfln("modustool: test failed: %s is refused: %s", resources.INTERFACE_GLYPH_CACHE_OUTPUT, glyph_cache.problem_sentences[refused.kind])
 			delete(machine_interface_cache_words)
 			machine_interface_cache_words = nil
 			return {}, false

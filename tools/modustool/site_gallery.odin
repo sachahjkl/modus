@@ -12,6 +12,7 @@ import "core:fmt"
 import "core:image/png"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The folder of the pictures of the screen that the machine tests take.
 SITE_SCREEN_PICTURE_FOLDER :: "docs/screenshots"
@@ -22,7 +23,7 @@ SITE_GALLERY_FOLDER :: "gallery"
 SITE_SCREEN_PICTURE_WIDTH :: 1024
 SITE_SCREEN_PICTURE_HEIGHT :: 768
 // The folder of the site that holds the thumbnails of the gallery.
-SITE_THUMBNAIL_FOLDER :: SITE_PICTURE_FOLDER + "/thumbnails"
+SITE_THUMBNAIL_FOLDER :: resources.SITE_PICTURE_FOLDER + "/thumbnails"
 // A thumbnail has one pixel for each square of this side of its picture:
 // a whole divisor, so that each pixel of the thumbnail is the mean of
 // whole pixels.
@@ -396,7 +397,7 @@ site_gallery_read :: proc(site: ^Site) -> bool {
 			return false
 		}
 		picture := Site_Gallery_Picture{row = row, width = width, height = height}
-		picture.site_path = strings.concatenate({SITE_PICTURE_FOLDER, "/", row.file}, context.temp_allocator)
+		picture.site_path = strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", row.file}, context.temp_allocator)
 		site.copies[picture.site_path] = source
 		if row.film == "" {
 			picture.thumbnail_path = strings.concatenate({SITE_THUMBNAIL_FOLDER, "/", row.file}, context.temp_allocator)
@@ -463,7 +464,7 @@ site_thumbnail_encode :: proc(data: []u8) -> (file: []u8, ok: bool) {
 	if !halved {
 		return nil, false
 	}
-	encoded, encode_error := png_encode(width, height, source.channels, pixels)
+	encoded, encode_error := resources.png_encode(width, height, source.channels, pixels)
 	if encode_error != nil {
 		return nil, false
 	}

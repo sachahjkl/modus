@@ -3,7 +3,7 @@
 // command line. It computes no picture: it reads the options into a
 // request, asks the generator, and writes the file that the generator
 // gives, or prints its refusal.
-package modustool
+package resources
 
 import "core:fmt"
 import "core:os"

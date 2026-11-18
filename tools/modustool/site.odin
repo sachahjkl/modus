@@ -14,13 +14,11 @@ import "modustool:foundation"
 SITE_FOLDER :: foundation.BUILD_FOLDER + "/site"
 SITE_PAGE :: "index.html"
 SITE_STYLE_SHEET :: "style.css"
-SITE_PICTURE_FOLDER :: "pictures"
 // The address of the repository: the one place that names it, because its
 // name can change with the name of the system.
 SITE_REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/modus"
 SITE_SYSTEM_NAME :: "modus"
 SITE_RELEASE_COUNT :: 5
-SITE_LICENSE_FILE :: "LICENSE"
 SITE_NOT_MEASURED :: "Not measured."
 // `modustool check` writes here the line of its comparison of two builds.
 REPRODUCIBLE_BUILD_RECORD :: foundation.BUILD_FOLDER + "/reproducible_build.txt"

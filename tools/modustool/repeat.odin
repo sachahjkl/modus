@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 // One source must give one module: the identity of a module is the hash of
 // its content, so a build must be deterministic. Two commands check it:
@@ -305,7 +306,7 @@ outputs_same_after_second_build :: proc() -> bool {
 			append(&all, Distinct_Results{owner = build.name, output = output})
 		}
 	}
-	theme_paths := foundation.files_with_suffix(POINTER_BUILD_FOLDER, ".pointers") or_return
+	theme_paths := foundation.files_with_suffix(resources.POINTER_BUILD_FOLDER, ".pointers") or_return
 	for path in theme_paths {
 		append(&all, Distinct_Results{owner = "pointers", output = {kind = "pointer theme file", path = path}})
 	}

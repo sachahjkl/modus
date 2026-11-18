@@ -321,7 +321,10 @@ volume_constants_are_found_in_the_procedures_of_a_source :: proc(t: ^testing.T) 
 // the repository.
 @(test)
 each_volume_that_a_scenario_names_is_in_the_table_of_its_part :: proc(t: ^testing.T) {
-	paths, listed := foundation.files_with_suffix(foundation.TOOL_SOURCE_FOLDER, ".odin")
+	// Each package of the tool is a folder under the folder of the tool.
+	listed_paths := make([dynamic]string, context.temp_allocator)
+	listed := foundation.source_files_of_a_folder(foundation.TOOL_SOURCE_FOLDER, &listed_paths)
+	paths := listed_paths[:]
 	testing.expect(t, listed, "the test runs from the root of the repository")
 	named := make([dynamic]Named_Volume, context.temp_allocator)
 	declared := make([dynamic]string, context.temp_allocator)

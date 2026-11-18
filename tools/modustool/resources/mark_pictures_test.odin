@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "core:encoding/json"
 import "core:image/png"
@@ -424,12 +424,12 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 
 // The files of the tool that draw a picture of the mark: the generator.
 @(private = "file")
-MARK_DRAWING_FILES :: [?]string{"tools/modustool/mark_pictures.odin", "tools/modustool/mark_tile_map.odin", "tools/modustool/mark_developer_picture.odin"}
+MARK_DRAWING_FILES :: [?]string{"tools/modustool/resources/mark_pictures.odin", "tools/modustool/resources/mark_tile_map.odin", "tools/modustool/resources/mark_developer_picture.odin"}
 
 // The files of the tool that build a file of the mark in a format: the
 // generator, with its file of the formats.
 @(private = "file")
-MARK_FORMAT_FILES :: [?]string{"tools/modustool/mark_pictures.odin", "tools/modustool/mark_formats.odin"}
+MARK_FORMAT_FILES :: [?]string{"tools/modustool/resources/mark_pictures.odin", "tools/modustool/resources/mark_formats.odin"}
 
 // No other file of the tool calls a drawing procedure of src/library/support/mark:
 // each picture file of the mark comes from the generator. The same for

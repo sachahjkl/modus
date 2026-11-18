@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "core:fmt"
 import "core:os"
@@ -100,3 +100,7 @@ run_font :: proc(args: []string) -> int {
 	fmt.printfln("modustool: wrote %s: %d characters of %dx%d pixels", foundation.FONT_OUTPUT, found, FONT_WIDTH, FONT_HEIGHT)
 	return 0
 }
+
+// The license of the font of the terminal, beside the data that this
+// command writes; the reuse list and the site read it.
+SITE_SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"

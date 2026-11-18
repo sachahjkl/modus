@@ -11,6 +11,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:resources"
 
 REUSE_LIST_DOCUMENT :: SITE_PROPERTIES_FILE
 REUSE_LIST_HEADING :: "## Reuse list"
@@ -248,14 +249,14 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	// The license of the repository: a pointer theme under it is a work of
 	// the system, not of others.
 	repository_license := ""
-	if text, ok := foundation.site_read_quiet(SITE_LICENSE_FILE); ok {
+	if text, ok := foundation.site_read_quiet(resources.SITE_LICENSE_FILE); ok {
 		repository_license = reuse_spdx_of_record_words(strings.trim_space(foundation.site_lines(text)[0]))
 	} else {
-		missing(problems, SITE_LICENSE_FILE, "the license of the repository")
+		missing(problems, resources.SITE_LICENSE_FILE, "the license of the repository")
 	}
 
 	// The fonts that the repository holds as subsets.
-	font_lists := [?][]Vector_Font_Candidate{vector_font_candidates[:], vector_font_emphasis[:], vector_font_interface[:]}
+	font_lists := [?][]resources.Vector_Font_Candidate{resources.vector_font_candidates[:], resources.vector_font_emphasis[:], resources.vector_font_interface[:]}
 	for list in font_lists {
 		for candidate in list {
 			record := foundation.join(SITE_FONT_FOLDER, "/", candidate.name, ".license")
@@ -279,20 +280,20 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	}
 
 	// Spleen, the fallback font.
-	if text, ok := foundation.site_read_quiet(SITE_SPLEEN_LICENSE_FILE); ok {
+	if text, ok := foundation.site_read_quiet(resources.SITE_SPLEEN_LICENSE_FILE); ok {
 		append(&works, Reused_Work {
 			what         = "Spleen 8x16",
 			place        = REUSE_SPLEEN_FONT_DATA,
 			license      = site_line_after(text, SPDX_IDENTIFIER_LINE_START),
-			license_file = SITE_SPLEEN_LICENSE_FILE,
+			license_file = resources.SITE_SPLEEN_LICENSE_FILE,
 		})
 	} else {
-		missing(problems, SITE_SPLEEN_LICENSE_FILE, "Spleen 8x16")
+		missing(problems, resources.SITE_SPLEEN_LICENSE_FILE, "Spleen 8x16")
 	}
 
 	// Each pointer theme that the build makes and that is not under the
 	// license of the repository. Its manifest is its notice.
-	for theme in pointer_theme_builds {
+	for theme in resources.pointer_theme_builds {
 		text, ok := foundation.site_read_quiet(theme.manifest)
 		if !ok {
 			missing(problems, theme.manifest, "a pointer theme")
@@ -373,16 +374,16 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	}
 
 	// The portraits of the module hall_of_fame.
-	credits, credits_problem := hall_of_fame_credits_read()
+	credits, credits_problem := resources.hall_of_fame_credits_read()
 	if credits_problem != "" {
 		append(problems, credits_problem)
 	}
 	for credit in credits {
 		append(&works, Reused_Work {
 			what         = foundation.join("the portrait of ", credit.person),
-			place        = foundation.join(HALL_OF_FAME_RESOURCE_FOLDER, "/", credit.file),
+			place        = foundation.join(resources.HALL_OF_FAME_RESOURCE_FOLDER, "/", credit.file),
 			license      = reuse_spdx_of_record_words(credit.license),
-			license_file = HALL_OF_FAME_CREDITS_FILE,
+			license_file = resources.HALL_OF_FAME_CREDITS_FILE,
 		})
 	}
 	return works[:]

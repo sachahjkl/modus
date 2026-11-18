@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "modus:support/mark"
 import "modustool:foundation"
+import "modustool:resources"
 
 test_site :: proc() -> Site {
 	site: Site
@@ -284,18 +285,18 @@ site_stages_of_the_start :: proc(t: ^testing.T) {
 
 @(test)
 site_size_of_the_pictures_of_the_mark :: proc(t: ^testing.T) {
-	for picture in mark_uses_pictures(.Site, .Picture) {
-		width, height := mark_picture_size(picture)
-		drawing_width, drawing_height := mark_picture_drawing_size(picture)
+	for picture in resources.mark_uses_pictures(.Site, .Picture) {
+		width, height := resources.mark_picture_size(picture)
+		drawing_width, drawing_height := resources.mark_picture_drawing_size(picture)
 		testing.expectf(t, drawing_width <= width && drawing_height <= height, "%s: the drawing does not fit", picture.file_name)
 		// The bar is a small icon: the cells variant, one pixel for a cell.
 		// The head of the home is a picture: the smooth variant.
-		if picture.file_name == SITE_MARK_BAR || picture.file_name == SITE_MARK_BAR_LIGHT {
+		if picture.file_name == resources.SITE_MARK_BAR || picture.file_name == resources.SITE_MARK_BAR_LIGHT {
 			testing.expect_value(t, width, 24)
 			testing.expect_value(t, height, 24)
 			testing.expect_value(t, picture.variant, mark.Variant.Cells)
 		}
-		if picture.file_name == SITE_MARK_HOME || picture.file_name == SITE_MARK_HOME_LIGHT {
+		if picture.file_name == resources.SITE_MARK_HOME || picture.file_name == resources.SITE_MARK_HOME_LIGHT {
 			testing.expect_value(t, width, 192)
 			testing.expect_value(t, height, 192)
 			testing.expect_value(t, picture.variant, mark.Variant.Smooth)
@@ -303,8 +304,8 @@ site_size_of_the_pictures_of_the_mark :: proc(t: ^testing.T) {
 		// A picture of a page is the heron alone: the name is text in the
 		// font of the name of the mark. Only the picture for other sites
 		// holds the name.
-		testing.expectf(t, (picture.name_cell > 0) == (picture.file_name == SITE_MARK_CARD), "%s: the name is in the picture", picture.file_name)
-		if picture.file_name == SITE_MARK_CARD {
+		testing.expectf(t, (picture.name_cell > 0) == (picture.file_name == resources.SITE_MARK_CARD), "%s: the name is in the picture", picture.file_name)
+		if picture.file_name == resources.SITE_MARK_CARD {
 			testing.expect_value(t, width, 1200)
 			testing.expect_value(t, height, 630)
 		}

@@ -1,4 +1,4 @@
-package modustool
+package resources
 
 import "modus:contract/pointer_pictures"
 import "modus:support/graphics"

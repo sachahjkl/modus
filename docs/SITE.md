@@ -798,7 +798,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 | Rows | Files and the form the reader relies on |
 |---|---|
 | The system | `LICENSE`: line 1 names the license, a line `Copyright ...` |
-| The vector fonts | The lists `vector_font_candidates`, `vector_font_emphasis` and `vector_font_interface` of `tools/modustool/vector_fonts.odin`; for each, `resources/fonts/<name>.license`: line 1 the copyright, with the address of the source in parentheses at its end; a line `... carries the name "<family>".`; a line `License of the source: <words>.` In the boot image: the default font and its emphasis, as glyph caches |
+| The vector fonts | The lists `vector_font_candidates`, `vector_font_emphasis` and `vector_font_interface` of `tools/modustool/resources/vector_fonts.odin`; for each, `resources/fonts/<name>.license`: line 1 the copyright, with the address of the source in parentheses at its end; a line `... carries the name "<family>".`; a line `License of the source: <words>.` In the boot image: the default font and its emphasis, as glyph caches |
 | Spleen | `src/library/support/graphics/FONT_LICENSE`: line 1 `... comes from Spleen 8x16 <version>`, line 2 `(<address>).`, a line `SPDX-License-Identifier: <identifier>`, a line `Copyright ...` |
 | The pointer themes | `resources/pointers/system.manifest` and `posy.manifest`: the lines `theme <name>`, `license <SPDX identifier>`, `attribution <text>` |
 | The cryptography | `src/library/support/cryptography/LICENSE.odin.txt` (`(zlib)`, `tag <release>`, `(https://...)`), `LICENSE.fiat-crypto.txt` (`(BSD-1-Clause)`), the count of the lines of `origin.manifest` |
@@ -1131,7 +1131,7 @@ What it cannot do:
 
 ## The mark on the site
 
-The site asks the generator of the pictures of the mark for its pictures (`tools/modustool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). The list is the rows of the site of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"); the site holds no number of a picture of its own:
+The site asks the generator of the pictures of the mark for its pictures (`tools/modustool/resources/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). The list is the rows of the site of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"); the site holds no number of a picture of its own:
 
 | File | Variant, cells | Size | Use |
 |---|---|---|---|
@@ -1240,7 +1240,7 @@ A development aid: `#heron=<name>` at the end of the address of the home plays o
 
 ### The moves of the heron
 
-An animation of `src/library/support/mark` changes cells. On the home, four animations also move the heron: the dash, the hop, the stretch and the flap. The rule of a move is data of `src/library/support/mark` (`DESIGN.md`, "The moves"): the forms of the heron, each drawn in whole cells, and the keys of each move, in whole cells. The site holds no rule of its own: the generator of the pictures of the mark writes the tile maps and their table (`tools/modustool/mark_tile_map.odin`).
+An animation of `src/library/support/mark` changes cells. On the home, four animations also move the heron: the dash, the hop, the stretch and the flap. The rule of a move is data of `src/library/support/mark` (`DESIGN.md`, "The moves"): the forms of the heron, each drawn in whole cells, and the keys of each move, in whole cells. The site holds no rule of its own: the generator of the pictures of the mark writes the tile maps and their table (`tools/modustool/resources/mark_tile_map.odin`).
 
 The rule of the site: a cell of the heron is always a square of 8 pixels of the page at a place of the grid. Each picture and each canvas of the home has 8 pixels for a cell, and the page shows each at its own size (see "The mark on the site"). No transform changes the size of a picture of the heron. A squashed or a stretched heron is a drawing in whole cells that the tool made; a move puts the heron at a whole count of cells from its place: in pixels of the page, a multiple of 8.
 
