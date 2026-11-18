@@ -275,9 +275,13 @@ List_Options :: struct {
 // a scroll bar at the right when the lines do not fit. With the focus, up
 // and down move the choice; Enter, or a press on a line, activates it. The
 // scroll bar, and the wheel over the list, move the choice, which the view
-// follows. It gives changed when the choice changed.
+// follows. It gives changed when the choice changed. Its records are cut to
+// its area by a clip, and by each clip open around it: an area shorter than
+// one line shows the part of the line that it holds.
 list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, names: []string, choice: ^int, options: List_Options = {}) -> Element_Result {
 	result := element_interact(frame, element, area, .List)
+	draw_clip_push(frame.table, area.x, area.y, area.width, area.height)
+	defer draw_clip_pop(frame.table)
 	rows := max(area.height / TABLE_LINE, 1)
 	before := choice^
 	if len(names) > 0 {
@@ -534,9 +538,12 @@ draw_kind_icon :: proc "contextless" (table: ^Draw_Table, x, y: int, icon: ^kind
 // list. The rows take no input; the scroll bar takes the pointer, and the
 // wheel over the rows, when the caller names it
 // (List_Rows_Options.scroll_bar). It gives the count of the
-// rows that it drew.
+// rows that it drew. Its records are cut to its area by a clip, and by each
+// clip open around it.
 list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row, options: List_Rows_Options) -> int {
 	table := frame.table
+	draw_clip_push(table, area.x, area.y, area.width, area.height)
+	defer draw_clip_pop(table)
 	shown_count := min(len(rows), area.height / TABLE_LINE, LIST_MEASURE_CAPACITY)
 	visible_rows := area.height / TABLE_LINE
 	scroll_width := options.total > visible_rows ? LIST_ROW_SCROLL_WIDTH : 0

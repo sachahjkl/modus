@@ -6,7 +6,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **A clip stack in the draw record.** A clip is pushed and popped, so an element that clips inside a clipped area keeps the outer clip. A list inside a scrolled card then needs no intersection by hand. [Design](src/md/api/draw_table.md)
 - **The text grid measured against text runs.** The terminal draws a full grid both ways through the drawing module, and the kind `Text_Grid` stays only if the runs cost more than 1 ms more for a frame or more than 4 096 records. The format then has one text form, or a measured reason for two. [Design](src/md/api/draw_table.md)
 - **The counted kernel.** A test kernel counts the edges of the kernel code that each operation sequence reaches, which only the tool reads, and the engine keeps the sequences that reach new code, which become the reach inputs of the corpus. The release refuses it by its hash, its signature and its bytes. [Design](src/md/infrastructure/kernel_fuzzing.md)
 - **Text at any size.** Each process draws the glyphs of its text at any size into its own glyph cache, with the pixels of today at the sizes of today, and the boot image no longer carries glyphs drawn at three sizes. A developer then draws a text at the size that a layout asks for. [Design](src/md/features/text_rendering.md)

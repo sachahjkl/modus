@@ -284,7 +284,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each process that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_16` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_16` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 16 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
+It is the first library module. A window calls `damage_of_draw_table_17` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_17` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 17 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each process, the drawing in a module".
 
@@ -339,6 +339,16 @@ The part is the product of the parts on each axis, in 1/64 of a pixel, so an edg
 The design: `docs/INTERFACE.md`, "2.1 Draw record".
 
 Do not use: antialiasing value, edge alpha, opacity.
+
+### Clip stack
+
+The clip stack is the nesting of the clips of a draw table: a push cuts the records after it to its box and to each clip open before it, until its pop.
+
+A clip inside a clip keeps the outer one, so an element that clips inside a clipped card needs no intersection by hand: `draw_clip_push` and `draw_clip_pop` write the two draw records `Clip_Push` and `Clip_Pop`. At most 16 clips are open; the drawing module refuses a table whose pops and pushes do not match. A clip is a rectangle of whole pixels. It cuts what the records draw, not where the pointer acts, and it is not a mask.
+
+The design: `src/md/api/draw_table.md`, "The kinds".
+
+Do not use: clip region, clip mask, clip list.
 
 ### Draw table
 

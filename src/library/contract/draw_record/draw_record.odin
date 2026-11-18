@@ -33,7 +33,12 @@
 // opaque, and a color of 0 is transparent. A record blends its color over
 // the pixels by one rule, in linear light (graphics.blend_fill).
 //
-// See [draw record](term:draw-record) and [draw table](term:draw-table).
+// A Clip_Push cuts the records after it to its box and to the cut before
+// it, until its Clip_Pop. The order of the clips is a fact of the table,
+// not of one record: clip_order_check is its border.
+//
+// See [draw record](term:draw-record), [draw table](term:draw-table) and
+// [clip stack](term:clip-stack).
 package draw_record
 
 import "base:intrinsics"
@@ -43,7 +48,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 16
+VERSION :: 17
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -101,24 +106,38 @@ INTERFACE_TEXT_LIMIT :: 256
 // font at scale 3 is far smaller.
 INK_MARGIN_LIMIT :: 16
 
+// The most clips that are open at one time. A reader keeps one rectangle
+// for each depth on its stack, with no allocator, so the bound is a bound
+// of its memory; a push and a pop cost the same at each depth.
+CLIP_DEPTH_LIMIT :: 16
+
 // What one draw record draws. The values cross the border of the drawing
 // module, so they are stated. The format holds primitives only: the look
 // of the system (the grid of points, the folded gap) is elements of the
 // interface package, drawn with them. A text run is one kind for each font:
-// its font is a field, a gradient is one kind along any line, and a line is
-// the stroke of a path. The values 2, 3, 6, 7, 10 and 11 name no kind: each
-// named a kind that left the format, and a new kind takes a new value, so
-// that a record of an older form is refused and never read with other
-// fields.
+// its font is a field, a gradient is one kind along any line, a line is
+// the stroke of a path, and a clip is pushed and popped. The values 2, 3,
+// 5, 6, 7, 10 and 11 name no kind: each named a kind that left the format,
+// and a new kind takes a new value, so that a record of an older form is
+// refused and never read with other fields.
 Draw_Kind :: enum u8 {
 	None      = 0, // Nothing.
 	Rectangle = 1, // The box in one color, or a pattern of cells of that color that repeats, cut to the box.
 	Text      = 4, // A text run in a font, from its origin at the top of the box.
-	Clip      = 5, // The next records are cut to the box; a box of no width ends the cut.
 	Picture   = 8, // The pixels of a picture of the caller, by values in a picture memory.
 	Text_Grid = 9, // A grid of text cells, copied into the text table.
 	Gradient  = 12, // The box in a color that goes from a color at one point to a color at another, along the line of the two points.
 	Path      = 13, // Lines and quadratic curves, from points in the text table: filled, then stroked, with antialiased edges, cut to the box.
+	Clip_Push = 14, // The records after it, until its Clip_Pop, are cut to the box and to the cut before it. The box is on whole pixels.
+	Clip_Pop  = 15, // Gives back the cut before the last Clip_Push that is open. The box is 0.
+}
+
+// Why the border of the order of the clips refuses a table.
+Clip_Order_Problem :: enum u8 {
+	None                  = 0, // Each push has its pop, and no push is past CLIP_DEPTH_LIMIT.
+	Pop_Without_Push      = 1, // A Clip_Pop with no Clip_Push open.
+	Push_Past_Depth_Limit = 2, // A Clip_Push with CLIP_DEPTH_LIMIT pushes open already.
+	Push_Without_Pop      = 3, // The table ends with a Clip_Push open.
 }
 
 // The command of one point of a path. The values cross the border of the
@@ -192,7 +211,7 @@ Problem :: enum u8 {
 // Example: `record_of(Draw_Rectangle{color = 0xFF102030}, 0, 0, 0, 640, 1536)`
 // is an opaque rectangle of 10 by 24 pixels at the corner of the surface.
 Draw_Record :: struct {
-	kind:     u8, // The word of the kind: draw_kind_of_word gives its Draw_Kind.
+	kind:     u8, // The word of the kind: draw_kind_of_word gives its Draw_Kind. A Clip_Push and a Clip_Pop have no field; the order of the clips is the order of these words.
 	reserved: [3]u8, // 0.
 	element:  u32, // The low 32 bits of the identity of the element that wrote the record, 0 for none: a tool can say which element changed.
 	left:     i32, // The left edge of the box, in 1/64 pixel. The record draws no pixel outside its box.
@@ -206,7 +225,8 @@ Draw_Record :: struct {
 #assert(offset_of(Draw_Record, fields) == HEADER_SIZE)
 
 // The layouts of the fields of each kind, in the 24 bytes at the offset 24
-// of a record. A kind with no field (None, Clip) has 24 bytes of 0.
+// of a record. A kind with no field (None, Clip_Push, Clip_Pop) has 24
+// bytes of 0.
 
 // The fields of a Rectangle. With both steps at 0, the rectangle is its
 // box, and the other fields of the repetition are 0. With both steps above
@@ -338,7 +358,10 @@ Draw_Text :: struct {
 	scale:               u8,
 	weight:              Font_Weight,
 }
-Draw_Clip :: struct {}
+// A push of a clip: its box is the clip. A pop of a clip: its box is 0.
+// Both have no field.
+Draw_Clip_Push :: struct {}
+Draw_Clip_Pop :: struct {}
 Draw_Picture :: struct {
 	memory:                    u8,
 	format:                    Picture_Format,
@@ -366,7 +389,8 @@ Draw_Primitive :: union {
 	Draw_Rectangle,
 	Draw_Gradient,
 	Draw_Text,
-	Draw_Clip,
+	Draw_Clip_Push,
+	Draw_Clip_Pop,
 	Draw_Picture,
 	Draw_Text_Grid,
 	Draw_Path,
@@ -450,7 +474,9 @@ copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Rec
 // limit or too far apart, and a path whose range is not a whole count of
 // 2 to PATH_POINT_LIMIT points from a multiple of 4, or whose stroke has a
 // width of 0, a width past STROKE_WIDTH_LIMIT, or a width with no color,
-// too. A refused record draws nothing.
+// too; and a Clip_Pop whose box is not 0, as bytes that the kind does not
+// name. A refused record draws nothing. The order of the clips is checked
+// on the table (clip_order_check), not here.
 // The checks run in that order, so a record with two faults gives the
 // problem of the first check.
 //
@@ -494,11 +520,18 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Nothing{}, .None
-	case .Clip:
+	case .Clip_Push:
 		if !all_zero(record.fields) {
 			return nil, .Reserved_Not_Zero
 		}
-		return Draw_Clip{}, .None
+		return Draw_Clip_Push{}, .None
+	case .Clip_Pop:
+		// A pop names no byte of its box: the cut that it gives back is
+		// the cut before its push.
+		if !all_zero(record.fields) || record.left != 0 || record.top != 0 || record.right != 0 || record.bottom != 0 {
+			return nil, .Reserved_Not_Zero
+		}
+		return Draw_Clip_Pop{}, .None
 	case .Rectangle:
 		fields := transmute(Rectangle_Fields)record.fields
 		if !all_zero(fields.reserved) {
@@ -579,14 +612,17 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 // record_of writes the record of a primitive in a box, in 1/64 pixel. The
 // kind comes from the primitive, so a record never holds the fields of
 // another kind, and each byte that the kind does not name is 0. A nil
-// primitive is a record of the kind None.
+// primitive is a record of the kind None. The box of a Clip_Pop is the
+// box that the caller gives: the border reads one of 0 only.
 record_of :: proc "contextless" (primitive: Draw_Primitive, element: u32, left, top, right, bottom: i32) -> Draw_Record {
 	record := Draw_Record{element = element, left = left, top = top, right = right, bottom = bottom}
 	switch value in primitive {
 	case Draw_Nothing:
 		record.kind = u8(Draw_Kind.None)
-	case Draw_Clip:
-		record.kind = u8(Draw_Kind.Clip)
+	case Draw_Clip_Push:
+		record.kind = u8(Draw_Kind.Clip_Push)
+	case Draw_Clip_Pop:
+		record.kind = u8(Draw_Kind.Clip_Pop)
 	case Draw_Rectangle:
 		record.kind = u8(Draw_Kind.Rectangle)
 		pattern := value.repetition
@@ -621,7 +657,7 @@ byte_range_of :: proc "contextless" (primitive: Draw_Primitive) -> (first, count
 		return value.first, value.count, true
 	case Draw_Path:
 		return value.first, value.count, true
-	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture:
+	case Draw_Nothing, Draw_Clip_Push, Draw_Clip_Pop, Draw_Rectangle, Draw_Gradient, Draw_Picture:
 	}
 	return 0, 0, false
 }
@@ -644,7 +680,7 @@ with_byte_place :: proc "contextless" (primitive: Draw_Primitive, first: u32) ->
 		moved := value
 		moved.first = first
 		return moved
-	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture:
+	case Draw_Nothing, Draw_Clip_Push, Draw_Clip_Pop, Draw_Rectangle, Draw_Gradient, Draw_Picture:
 	}
 	return primitive
 }
@@ -958,5 +994,87 @@ color_canonical :: proc "contextless" (color: Draw_Color) -> bool {
 // both be 0.
 gradient_colors_canonical :: proc "contextless" (first, second: Draw_Color) -> bool {
 	return alpha_of(first) != 0 || alpha_of(second) != 0 || (first == 0 && second == 0)
+}
+
+// The order of the clips of a table, as a reader walks its records. The
+// pushes past the bound are counted and not held: the records under them
+// draw nothing, and each pop ends one of them first. So a reader holds at
+// most CLIP_DEPTH_LIMIT clips, and a table that a hostile caller wrote
+// never makes a clip wider than the clips that it pushed.
+Clip_Order :: struct {
+	depth:  int, // The pushes open that a reader holds: 0 to CLIP_DEPTH_LIMIT.
+	excess: int, // The pushes open past CLIP_DEPTH_LIMIT, under the deepest one held.
+}
+
+// clip_order_push takes a Clip_Push: one depth more, or, at the bound, one
+// push more past it, which it refuses.
+clip_order_push :: proc "contextless" (order: ^Clip_Order) -> Clip_Order_Problem {
+	if order.depth >= CLIP_DEPTH_LIMIT {
+		order.excess += 1
+		return .Push_Past_Depth_Limit
+	}
+	order.depth += 1
+	return .None
+}
+
+// clip_order_pop takes a Clip_Pop: it ends the last push open, a push past
+// the bound first. A pop with no push open is refused, and changes nothing.
+clip_order_pop :: proc "contextless" (order: ^Clip_Order) -> Clip_Order_Problem {
+	switch {
+	case order.excess > 0:
+		order.excess -= 1
+	case order.depth > 0:
+		order.depth -= 1
+	case:
+		return .Pop_Without_Push
+	}
+	return .None
+}
+
+// clip_order_end says if a table that ends in this order leaves a push
+// open.
+clip_order_end :: proc "contextless" (order: Clip_Order) -> Clip_Order_Problem {
+	if order.depth != 0 || order.excess != 0 {
+		return .Push_Without_Pop
+	}
+	return .None
+}
+
+// clip_order_check is the border of the order of the clips of a table. It
+// loads the kind word of each record once, and gives the first problem in
+// the order of the records, with the index of the record: a pop with no
+// push open, a push past CLIP_DEPTH_LIMIT, and, for a table that ends with
+// a push open, the outermost push open. With no problem the index is 0.
+//
+// The kind word alone decides: a record whose word is a Clip_Push is a
+// push, also when the border of the record refuses its box, so each reader
+// of a table walks one order. A word that names no kind is no clip.
+clip_order_check :: proc "contextless" (records: []Draw_Record) -> (problem: Clip_Order_Problem, index: int) {
+	order: Clip_Order
+	outermost := 0
+	for place in 0 ..< len(records) {
+		kind, known := draw_kind_of_word(intrinsics.volatile_load(&records[place].kind))
+		if !known {
+			continue
+		}
+		switch kind {
+		case .Clip_Push:
+			if order.depth == 0 {
+				outermost = place
+			}
+			if step := clip_order_push(&order); step != .None {
+				return step, place
+			}
+		case .Clip_Pop:
+			if step := clip_order_pop(&order); step != .None {
+				return step, place
+			}
+		case .None, .Rectangle, .Text, .Picture, .Text_Grid, .Gradient, .Path:
+		}
+	}
+	if end := clip_order_end(order); end != .None {
+		return end, outermost
+	}
+	return .None, 0
 }
 
