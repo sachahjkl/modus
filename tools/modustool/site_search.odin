@@ -57,7 +57,7 @@ Site_Search_Kind :: enum u8 {
 	Release,
 	License_Row,
 	Type,
-	checks.Roadmap_Entry,
+	Roadmap_Entry,
 }
 
 // What the site shows of a kind of entry: its name for one entry (the list
