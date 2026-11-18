@@ -16,7 +16,7 @@
 // Odin and its comment. An address of another host is shown after its link, and does not open.
 // This process reads the file only: it **does not load the module**, and it does not start it.
 //
-// The page of a module also says how the module can be used. The system has *one kind of file* for a process, a
+// The page of a module also says how the module can be used. The system has *one kind of file* for a module with an entry, a
 // library and a service, so the answer comes from two facts: the module has an entry or not, and it has exports
 // or not.
 //
@@ -613,9 +613,9 @@ list_has_entry: [LIST_ENTRY_CAPACITY]bool
 list_count: int
 
 // module_color gives the color of a module, in the list and in the title of
-// its page: a process that also serves calls, in the color of a process; a
-// library, the color of a module with no entry; a process with no exports,
-// the text; anything else, the dim text.
+// its page: a module with an entry that also serves calls, in the color of a
+// process; a library, the color of a module with no entry; a module with an
+// entry and no exports, the text; anything else, the dim text.
 module_color :: proc "contextless" (exports: int, has_entry: bool) -> graphics.Color {
 	switch {
 	case exports > 0 && has_entry:

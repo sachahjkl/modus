@@ -21,9 +21,9 @@
 //
 // **What it does not hold**: the damage of a frame and the draw of its
 // records into pixels. They are the two exports of the drawing module
-// (`src/modules/libraries/drawing`), which each process with a window imports. This
+// (`src/modules/libraries/drawing`), which each module with a window imports. This
 // module keeps the elements only: it shows what one element call through a
-// border costs, and why the elements stay compiled into each process.
+// border costs, and why the elements stay compiled into each module.
 package interface_module
 
 import "base:intrinsics"

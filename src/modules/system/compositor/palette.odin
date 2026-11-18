@@ -16,7 +16,7 @@ import "base:intrinsics"
 // The palette of the desktop (docs/DESIGN.md, "Palette"): the panel that
 // the key super opens. This file is its part in the compositor: the keys
 // and the pointer that reach it, its two sources of entries (the names of
-// the processes and the client table), what a chosen entry does, its draw
+// the modules and the client table), what a chosen entry does, its draw
 // table and its lines in the log. The state, the ranking and the draw
 // records are in src/library/private/compositor/palette, where the host tests run them.
 //
@@ -376,7 +376,7 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 }
 
 // palette_provider_remove ends the palette provider: the process stopped,
-// or its grant ended. The palette keeps the processes and the windows. A
+// or its grant ended. The palette keeps the modules and the windows. A
 // panel that waits for an answer shows that none comes.
 palette_provider_remove :: proc "contextless" () {
 	if palette_provider_ring.head == nil {

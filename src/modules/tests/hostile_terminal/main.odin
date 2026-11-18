@@ -1,4 +1,4 @@
-// A test process that writes to its terminal three records whose kind
+// A test module that writes to its terminal three records whose kind
 // names no record, then one line, and stops.
 //
 // The three words are None, the word one past the last kind, and the

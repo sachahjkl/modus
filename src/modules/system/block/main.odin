@@ -8,7 +8,7 @@
 // Physical only, and a copy of the configuration of the device. The root
 // service found the device, enabled it and set its interrupt
 // (src/library/support/pci). The kernel has no code for this device: the code that
-// knows a device is a process or a library. The code that each virtio
+// knows a device is a module: a service or a library. The code that each virtio
 // device service shares is in src/library/support/virtio.
 //
 // The device reads and writes the data region of the client: the kernel is

@@ -73,7 +73,7 @@ fail :: proc "contextless" (parts: ..system.Part) -> ! {
 
 // cosine gives the cosine of a small angle by its series: the step of the
 // tone, 0.058 radians, needs eight terms for the precision of a double.
-// The process has no library of mathematics.
+// The module has no library of mathematics.
 cosine :: proc "contextless" (angle: f64) -> (sum: f64) {
 	term := 1.0
 	for order in 0 ..< 8 {

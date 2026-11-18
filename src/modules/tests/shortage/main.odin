@@ -23,8 +23,8 @@
 // so the frame table never becomes empty.
 //
 // **Start**: no reader starts it. The root service starts it in place of
-// the desktop when the boot image has the process `shortage` and no
-// process `input`: the tool builds that image for the test of the shortage.
+// the desktop when the boot image has the module `shortage` and no
+// module `input`: the tool builds that image for the test of the shortage.
 // Its row of `process_roles` has no grant: `shortage_start` in the root service
 // gives it the machine and nearly all the pages of the root service.
 //

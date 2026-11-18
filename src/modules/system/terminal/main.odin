@@ -711,7 +711,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 // the completion list, the same as a row of the palette has for the same
 // kind (src/library/private/compositor/palette, entry_icon). nil: no icon.
 //
-// - A service, a module and a process are modules: the form of a module.
+// - A service, a module and a process take the form of a module.
 // - An export is a part of a module: its own form, in the color of a module.
 // - A command that makes a record gives a type; a variable holds a value;
 //   a line of the history has the form of a time.

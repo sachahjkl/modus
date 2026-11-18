@@ -65,7 +65,7 @@
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
 // call that succeeds and one that fails; a refused `Log` over the limit of
-// a budget, measured by a child (a copy of this process with no log
+// a budget, measured by a child (a process of this module with no log
 // records in its budget); a refused `Memory_Create`, with the takes of the
 // locks of the kernel; a kernel command that succeeds and one that is
 // refused, each with no table of error details and with one.
@@ -934,7 +934,7 @@ measure :: proc "contextless" () {
 
 // The refusals that read a budget: a Log over the limit of the budget of the
 // process, and a Memory_Create that a budget cannot pay. A refused Log needs
-// a process with a log limit of 0: this process starts a copy of itself as
+// a process with a log limit of 0: this process starts its own module as
 // a child (VALUE_CHILD), with a budget of 0 log records, which measures and
 // writes its time in a page that the two map. The locks: System_Report.locks
 // before and after each loop, for all the processors.

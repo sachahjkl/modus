@@ -2,8 +2,8 @@
 // lines of the system in each candidate font and in Spleen 8x16, one word of
 // each enlarged, and the measures of the text path.
 //
-// The process carries the six subsets of resources/fonts (ASCII only) and
-// builds a glyph cache of each one in its own memory: the time of that
+// The module carries the six subsets of resources/fonts (ASCII only), and
+// its process builds a glyph cache of each one in its own memory: the time of that
 // build is the measure of a cache made by each process at run time (the
 // first of the three places of docs/FONTS.md, "Where it lives: three places
 // weighed").

@@ -1,4 +1,4 @@
-// A process that the process `locks` starts several times, to load the
+// A module that the process `locks` starts several times, to load the
 // kernel from several processes at one time (package modus:support/lockers). It
 // works only on its own objects: another process never waits for it, unless
 // the kernel makes it wait.

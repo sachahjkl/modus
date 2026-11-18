@@ -1,6 +1,6 @@
 // A module of commands that imports the module calendar.
 //
-// Each export calls days_in_month of calendar through an import slot: one indirect call. The loader puts calendar in the same process, or the module that a replacement gives in its place: the file of this module does not change, so its hash does not change. The module is also a process that waits: two processes that import calendar at two places share one copy of its code.
+// Each export calls days_in_month of calendar through an import slot: one indirect call. The loader puts calendar in the same process, or the module that a replacement gives in its place: the file of this module does not change, so its hash does not change. The module also runs as a process that waits: two processes that import calendar at two places share one copy of its code.
 //
 // **What it is for.** It is the importer of the test of the replacement of an import. The process `imports` loads it with calendar, then with calendar_fixed in place of calendar, and compares: year_days(2000) is 365 with the fault and 366 with the correction, from the same file of agenda.
 //
