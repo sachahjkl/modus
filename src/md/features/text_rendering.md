@@ -129,7 +129,7 @@ The numbers:
 | The first frame of a window | 0 µs for the 192 characters at the three sizes | Each glyph once: 3.3 to 4.1 µs for a glyph of cells and 16.2 µs for a placed glyph at a line of 16 ([glyphs_on_demand.md](glyphs_on_demand.md), "The measures") |
 | A later frame | One load of a glyph | One hash of a key |
 
-[glyphs_on_demand.md](glyphs_on_demand.md) refused "every glyph drawn at run time" for two reasons. The first was the boot display, drawn before any service runs. The boot display now keeps its Spleen bitmaps, at a whole scale that fits the resolution, and is not part of this module. The second was that each frame draws the 192 characters of its texts again. The cache draws each glyph once in each process, so the second reason does not hold.
+[glyphs_on_demand.md](glyphs_on_demand.md) refused "every glyph drawn at run time" for two reasons. The first was the boot display, drawn before any service runs. The boot display now keeps its Spleen bitmaps, at the size of Spleen that fits the resolution (8x16, 12x24, 16x32 or 32x64), and is not part of this module ([boot_display_scale.md](boot_display_scale.md)). The second was that each frame draws the 192 characters of its texts again. The cache draws each glyph once in each process, so the second reason does not hold.
 
 One rule of the design rules weighed the other way: "no work at run time that the build can do" ([`docs/FONTS.md`](../../../docs/FONTS.md), first paragraph). The build cannot do this work: the size of the text on the screen is known only when the principal chooses the scale. The build still does the work that it can: the subsets, the font outlines, the check of each font.
 
@@ -183,7 +183,7 @@ The scale factor of [desktop_to_browser.md](desktop_to_browser.md), "The referen
 - **The terminal**: its grid through the drawing module.
 - **The console**: through its terminal and through the palette of the compositor. It draws no pixel.
 - **The windows that draw with `graphics`** (`tables`, `server`, `log`, `pages`): `graphics` draws a text through the package, and holds one cache in that copy.
-- **Not the boot display.** The boot program and the root service draw in Spleen 8x16 at a whole scale. The root service no longer draws the boot display again in B612, so it needs no vector font.
+- **Not the boot display.** The boot program, the root service and the process `boot` draw it in Spleen, at the size of Spleen of its scale: 8x16, 12x24, 16x32 or 32x64 ([boot_display_scale.md](boot_display_scale.md)). The root service no longer draws the boot display again in B612, so it needs no vector font.
 - **Spleen** stays the fallback of a process whose font outlines are absent or refused, and the value `spleen` of the setting `font`. It draws at the largest whole scale whose line is not above the size, in the middle of the line. The list of the added characters and the character index stay, for the Spleen data only ([../data/text_encoding.md](../data/text_encoding.md)): a character that a vector font lacks takes its fallback chain, and needs no place in a list.
 
 ### The cost of the first frame and of a full frame
@@ -246,9 +246,9 @@ So the work row at the width of the glyph is part of the first step: with the ra
 
 ## State
 
-Designed, not built. The steps are the entries of `ROADMAP.md`, each a working system:
+Designed, not built. The boot display in Spleen only, which this module needs first, is built ([boot_display_scale.md](boot_display_scale.md)). The steps are the entries of `ROADMAP.md`, each a working system:
 
-1. The module and its cache at any size, with the look of the desktop unchanged: the package `text_rendering`, the work row at the width of the glyph, the cache that holds every glyph, the removal of the glyph caches of the boot image, of the demand cache and of the font service, and the boot display in Spleen only. The callers still give the sizes 1 024, 2 048 and 3 072.
+1. The module and its cache at any size, with the look of the desktop unchanged: the package `text_rendering`, the work row at the width of the glyph, the cache that holds every glyph, the removal of the glyph caches of the boot image, of the demand cache and of the font service. The callers still give the sizes 1 024, 2 048 and 3 072.
 2. The draw record with sizes: version 17, `size` in place of `scale` in the text record and in the text grid, and the elements that take their sizes from the text size tokens, with `text_caption` and `text_heading` in the elements of "The text size tokens".
 3. The scale factor of the desktop ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen").
 4. The grid as spacing tokens ([spacing_tokens.md](spacing_tokens.md)). It depends on no other step, and is written in parallel with the first.

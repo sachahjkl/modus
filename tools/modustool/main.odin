@@ -31,7 +31,7 @@
 //   MODUS_SYSTEM (not set by the shell): the folder of the system, for the
 //     command "module-build" run from the folder of another project
 //     (outside_module.odin)
-//   FONT_SOURCE: the BDF file of the font, for the command "font"
+//   FONT_SOURCE: the folder of the BDF files of the font, for the command "font"
 //   POINTER_THEME_SOURCE: the folder of the Xcursor theme of the owner (docs/POINTERS.md);
 //     only the default shell sets it, and `release image` ignores it
 //   VECTOR_FONT_SOURCES: the font files of the vector font candidates, for the command "vector_fonts"
@@ -246,11 +246,12 @@ COMMANDS :: [?]foundation.Command {
 	// - `palette`: the film of the palette.
 	// - `heron`: the film of the process heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + machine.FILM_NAMES + "; no argument: terminal), and write " + machine.FILM_FOLDER + "/<name>.mp4, " + machine.FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + checks.FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = machine.run_film},
-	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
-	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
-	// is in the repository, so a build does not need the BDF file: run it only
+	// Converts the BDF files of Spleen (8x16, 12x24, 16x32 and 32x64, from the
+	// folder `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`
+	// and `src/library/support/bootscreen/spleen_sizes.odin`. The results are
+	// in the repository, so a build does not need the BDF files: run it only
 	// to change the font.
-	{name = "font", about = "convert the BDF file of the font to " + foundation.FONT_OUTPUT, run = resources.run_font},
+	{name = "font", about = "convert the BDF files of the font to " + foundation.FONT_OUTPUT + " and " + foundation.BOOT_DISPLAY_FONT_OUTPUT, run = resources.run_font},
 	// Converts the pointer manifests of `resources/pointers` to the pointer
 	// theme files of the boot image, in `build/pointers`.
 	//

@@ -14,7 +14,7 @@
 //
 // **What a reader sees.** Start it from the start menu, or with
 // `start("boot")` in the console. The window is the boot display at its
-// full size (`bootscreen.WIDTH` by `bootscreen.HEIGHT`), with the message
+// base size (`bootscreen.WIDTH` by `bootscreen.HEIGHT`), at scale 1, with the message
 // "the desktop runs". It draws again each 500 ms, with the records of the
 // kernel of that time. At its first draw it writes `boot: ok, <count>
 // stages, <count> memory ranges, <count> processes` on the log.
@@ -65,7 +65,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The canvas is the picture that the compositor does not read,
 		// after it took the picture before: the whole canvas is drawn.
 		if display.canvas_wait(&window) {
-			bootscreen.draw(window.canvas, &data)
+			// The procedure of the screen: a canvas of the base size
+			// takes scale 1, as the other drawers find for that size.
+			bootscreen.draw_screen(window.canvas, &data)
 			display.present(&window)
 		}
 		if !logged {

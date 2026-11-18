@@ -9,7 +9,14 @@
 // Three parts of the system draw it. The boot program draws what it knows before the
 // kernel exists. The root service draws it while it starts the first
 // processes: if the start fails, the display stays, with the failure. The
-// process `boot` draws it in a window at any time.
+// process `boot` draws it in a window at any time. Each one calls
+// draw_screen with its whole canvas: the display takes the scale of that
+// canvas (scale.odin), so one size gives one scale in each drawer.
+//
+// The layout is in logical pixels, a panel of WIDTH x HEIGHT; each place
+// becomes a screen place at the one border of the drawing procedures of
+// this file (src/md/features/boot_display_scale.md). Each text is Spleen,
+// at the size of the scale, in each drawer (spleen_cells.odin).
 //
 // A record that is all zero is valid: its card shows that the fact is
 // not known yet. This package uses no kernel operation: package collect
@@ -18,7 +25,7 @@
 // ```odin
 // data: bootscreen.Data
 // collect.data(&data, machine) // Fills it from the reports of the kernel.
-// bootscreen.draw(canvas, &data)
+// bootscreen.draw_screen(canvas, &data)
 // ```
 //
 // See [boot display](term:boot-display).
@@ -26,15 +33,14 @@ package bootscreen
 
 import info "modus:contract/boot_info"
 import "modus:support/bootscreen/image_card"
-import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/mark"
 import op "modus:contract/operation"
 import "base:intrinsics"
 
-WIDTH :: 976 // The size that the display needs.
-HEIGHT :: 708 // Pixels: a window of this height fits the window bound of 768 lines under the bar and its title.
+WIDTH :: 976 // The logical size of the panel: the size of the display at scale 1.
+HEIGHT :: 708 // Logical pixels: a window of this height fits the window bound of 768 lines under the bar and its title.
 PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
 PROCESS_ROWS :: 12 // The processes that the card of the processes shows.
 
@@ -86,11 +92,111 @@ Data :: struct {
 
 LINE :: graphics.LINE_HEIGHT // One line of text.
 MARGIN :: graphics.CARD_GAP // The gap around the cards.
+CELL :: graphics.CELL_WIDTH // The logical width of one character of the text.
+LARGE_CELL :: 2 * CELL // The logical width of one large digit.
 
-// The order of the channels of the canvas of the draw that runs: the boot
-// program draws on a framebuffer that can have red in the low byte.
+// The state of the draw that runs: one draw at a time in each drawer.
+// The order of the channels of the canvas: the boot program draws on a
+// framebuffer that can have red in the low byte.
 @(private)
 red_first: bool
+// The canvas of the panel, in screen pixels.
+@(private)
+panel: graphics.Canvas
+// The scale of the panel, in eighths.
+@(private)
+scale_eighths: int = SCALE_ONE
+
+// A part of the panel, in logical pixels from its top left: the whole
+// panel, or the content of a card. A place inside an area is the place of
+// the area plus the place in it, rounded once.
+@(private)
+Area :: struct {
+	x, y, width, height: int,
+}
+
+@(private)
+WHOLE :: Area{0, 0, WIDTH, HEIGHT}
+
+// The kind of a box that a draw records for the host test.
+Box_Kind :: enum u8 {
+	Element, // A rectangle, a gradient or the mark.
+	Text, // The cells of a text.
+}
+
+// One box that a draw drew, in screen pixels from the top left of the
+// panel, with the area that held it.
+Drawn_Box :: struct {
+	kind:                     Box_Kind,
+	left, top, right, bottom: int,
+	area_left, area_top:      int,
+	area_right, area_bottom:  int,
+}
+
+// The capacity of the record: the header and the grid of points are many
+// small rectangles.
+DRAWN_BOX_CAPACITY :: 1 << 15
+
+// The boxes of one draw, for the host test that checks the layout at each
+// scale. lost counts the boxes past the capacity.
+Drawn_Boxes :: struct {
+	boxes: [DRAWN_BOX_CAPACITY]Drawn_Box,
+	count: int,
+	lost:  int,
+}
+
+// The record of the boxes of the next draws: nil in each drawer, so a draw
+// records nothing. The host test sets it.
+drawn_boxes: ^Drawn_Boxes
+
+// to_screen gives the screen place of a logical place of the panel.
+@(private)
+to_screen :: #force_inline proc "contextless" (logical: int) -> int {
+	return scaled(logical, scale_eighths)
+}
+
+// box_record notes a box of the draw for the host test.
+@(private)
+box_record :: proc "contextless" (kind: Box_Kind, area: Area, left, top, right, bottom: int) {
+	record := drawn_boxes
+	if record == nil {
+		return
+	}
+	if record.count == len(record.boxes) {
+		record.lost += 1
+		return
+	}
+	record.boxes[record.count] = {
+		kind        = kind,
+		left        = left,
+		top         = top,
+		right       = right,
+		bottom      = bottom,
+		area_left   = to_screen(area.x),
+		area_top    = to_screen(area.y),
+		area_right  = to_screen(area.x + area.width),
+		area_bottom = to_screen(area.y + area.height),
+	}
+	record.count += 1
+}
+
+// view_cut gives the part of a canvas in a rectangle, cut to the canvas:
+// graphics.view needs a rectangle inside it.
+@(private)
+view_cut :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int) -> graphics.Canvas {
+	left, top := clamp(x, 0, canvas.width), clamp(y, 0, canvas.height)
+	right, bottom := clamp(x + width, left, canvas.width), clamp(y + height, top, canvas.height)
+	return graphics.view(canvas, left, top, right - left, bottom - top)
+}
+
+// area_canvas gives the canvas of an area, and the screen place of its top
+// left in the panel.
+@(private)
+area_canvas :: proc "contextless" (area: Area) -> (canvas: graphics.Canvas, left, top: int) {
+	left, top = to_screen(area.x), to_screen(area.y)
+	canvas = view_cut(panel, left, top, to_screen(area.x + area.width) - left, to_screen(area.y + area.height) - top)
+	return
+}
 
 // tone gives a color in the order of the channels of the canvas.
 @(private)
@@ -98,10 +204,28 @@ tone :: #force_inline proc "contextless" (color: graphics.Color) -> graphics.Col
 	return red_first ? color >> 16 & 0xFF | color & 0xFF00 | color << 16 & 0xFF0000 : color
 }
 
-// fill paints a rectangle in a color, in the order of the canvas.
+// fill paints a rectangle of an area in a color, in the order of the canvas.
 @(private)
-fill :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, color: graphics.Color) {
-	graphics.fill(canvas, x, y, width, height, tone(color))
+fill :: proc "contextless" (area: Area, x, y, width, height: int, color: graphics.Color) {
+	canvas, left, top := area_canvas(area)
+	x0, y0 := to_screen(area.x + x), to_screen(area.y + y)
+	x1, y1 := to_screen(area.x + x + width), to_screen(area.y + y + height)
+	box_record(.Element, area, x0, y0, x1, y1)
+	graphics.fill(canvas, x0 - left, y0 - top, x1 - x0, y1 - y0, tone(color))
+}
+
+// block draws a rectangle of an area. Its color goes from top_color, on
+// its first screen line, to bottom_color, on its last.
+@(private)
+block :: proc "contextless" (area: Area, x, y, width, height: int, top_color, bottom_color: graphics.Color) {
+	canvas, left, top := area_canvas(area)
+	x0, y0 := to_screen(area.x + x), to_screen(area.y + y)
+	x1, y1 := to_screen(area.x + x + width), to_screen(area.y + y + height)
+	box_record(.Element, area, x0, y0, x1, y1)
+	rows := y1 - y0
+	for row in 0 ..< rows {
+		graphics.fill(canvas, x0 - left, y0 - top + row, x1 - x0, 1, tone(graphics.mix(top_color, bottom_color, u32(row * 255 / max(rows - 1, 1)))))
+	}
 }
 
 // A short text that the display builds from parts.
@@ -190,114 +314,91 @@ put_size :: proc "contextless" (text: ^Text, bytes: u64) {
 	}
 }
 
-// show draws a text and empties it. It gives the x after the text.
+// show draws a text and empties it. It gives the logical x after the text.
 @(private)
-show :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, color: graphics.Color) -> int {
-	after := write(canvas, x, y, string(text.bytes[:text.count]), color)
+show :: proc "contextless" (area: Area, x, y: int, text: ^Text, color: graphics.Color) -> int {
+	after := write(area, x, y, string(text.bytes[:text.count]), color)
 	text.count = 0
 	return after
 }
 
-// write draws a text in the font of the cells, in the order of the canvas.
-// It gives the x after the text.
+// write_in_cells draws a text of an area in cells of cell logical pixels,
+// and gives the logical x after it.
 @(private)
-write :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, color: graphics.Color) -> int {
-	order := graphics.text_state.order
-	graphics.text_state.order = stripes_of_screen(order)
-	defer graphics.text_state.order = order
-	return graphics.text(canvas, x, y, characters, tone(color))
+write_in_cells :: proc "contextless" (area: Area, x, y: int, characters: string, color: graphics.Color, cell: int) -> int {
+	count := text_count(characters)
+	if count == 0 {
+		return x
+	}
+	canvas, left, top := area_canvas(area)
+	x0, y0 := to_screen(area.x + x), to_screen(area.y + y)
+	// A cell of 8 logical pixels is eighths screen pixels exactly: the cells
+	// of a text are whole and the same at each place.
+	cell_width := cell * scale_eighths / SCALE_ONE
+	box_record(.Text, area, x0, y0, x0 + count * cell_width, y0 + 2 * cell_width)
+	spleen_text_draw(canvas, x0 - left, y0 - top, characters, tone(color), cell_width)
+	return x + count * cell
+}
+
+// text_count gives the cells of a text: one for each character of the
+// UTF-8 text, and one for each invalid sequence.
+@(private)
+text_count :: proc "contextless" (characters: string) -> int {
+	return graphics.text_width(characters) / graphics.CELL_WIDTH
+}
+
+// write draws a text in the font of the cells, in the order of the canvas.
+// It gives the logical x after the text.
+@(private)
+write :: proc "contextless" (area: Area, x, y: int, characters: string, color: graphics.Color) -> int {
+	return write_in_cells(area, x, y, characters, color, CELL)
 }
 
 // show_right draws a text that ends at x.
 @(private)
-show_right :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, color: graphics.Color) {
-	show(canvas, x - text.count * 8, y, text, color)
+show_right :: proc "contextless" (area: Area, x, y: int, text: ^Text, color: graphics.Color) {
+	show(area, x - text.count * CELL, y, text, color)
 }
 
-// block draws a rectangle. Its color goes from top, on its first line, to
-// bottom, on its last line.
+// write_large draws characters in cells of twice the size of a cell: the
+// large digits of the times. It gives the logical x after the last
+// character.
 @(private)
-block :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, top, bottom: graphics.Color) {
-	for row in 0 ..< height {
-		fill(canvas, x, y + row, width, 1, graphics.mix(top, bottom, u32(row * 255 / max(height - 1, 1))))
-	}
-}
-
-// write_large draws characters with each pixel of the font as a square of
-// scale pixels. It gives the x after the last character.
-@(private)
-write_large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
-	order := graphics.text_state.order
-	graphics.text_state.order = stripes_of_screen(order)
-	defer graphics.text_state.order = order
-	return graphics.text_scaled(canvas, x, y, characters, tone(color), scale)
-}
-
-// stripes_of_screen gives the order of the stripes of the vector font for
-// the words of the screen: a screen with red in the low byte has the
-// channels of a color in the other order.
-@(private)
-stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> graphics.Subpixel_Order {
-	if !red_first {
-		return order
-	}
-	switch order {
-	case .Red_Green_Blue:
-		return .Blue_Green_Red
-	case .Blue_Green_Red:
-		return .Red_Green_Blue
-	case .None:
-	}
-	return order
+write_large :: proc "contextless" (area: Area, x, y: int, characters: string, color: graphics.Color) -> int {
+	return write_in_cells(area, x, y, characters, color, LARGE_CELL)
 }
 
 CARD_MARGIN :: graphics.CARD_MARGIN // The margin inside a card.
+CARD_TITLE :: graphics.CARD_TITLE // The height of the title of a card.
 
-// The interface font of the boot display (docs/DESIGN.md, section 5): the
-// root service gives it after it validated the caches of the boot image
-// (interface_font_use), so its titles and the names of its facts are in
-// B612 and its values in the font of the cells. The boot program holds no
-// glyph cache: its first screen is in Spleen 8x16, the one font of its
-// binary.
-boot_interface_font: ^display.Interface_Font
-
-// interface_font_use gives the display the interface font that the root
-// service validated. nil: the font of the cells for each text.
-interface_font_use :: proc "contextless" (font: ^display.Interface_Font) {
-	boot_interface_font = font
+// write_name draws a name cut to room, in the cells of Spleen as each text
+// of the display, and gives the logical x after it. The whole name is on
+// the log or in another card: text_fit is the rule of such a name.
+@(private)
+write_name :: proc "contextless" (area: Area, x, y: int, name: string, room: int, color: graphics.Color) -> int {
+	return write(area, x, y, interface.text_fit(nil, {}, name, room), color)
 }
 
-// write_name draws a name in the interface font when the display has it,
-// cut to room, else in the font of the cells, and gives the x after it.
+// card draws the frame of one part of the display, as the card of the
+// interface package (the same card as in each window) at the scale: a
+// border of 1 logical pixel in its accent, the surface, a bar of 4 x 16 and
+// the title in the accent, the caption of its record in the dim color. It
+// keeps reserved logical pixels free at the right of the title row, for
+// the number that the display writes there, and gives the area of its
+// content.
 @(private)
-write_name :: proc "contextless" (canvas: graphics.Canvas, x, y: int, name: string, room: int, color: graphics.Color) -> int {
-	records: [1]interface.Draw_Record
-	text: [64]u8
-	table := interface.Draw_Table{records = records[:], text = text[:], interface_font = boot_interface_font}
-	shown := interface.text_fit(&table, interface.FONT_INTERFACE, name, room)
-	if interface.font_in_use(&table, interface.FONT_INTERFACE, len(shown)).kind != .Interface || len(shown) > len(text) {
-		return write(canvas, x, y, shown, color)
+card :: proc "contextless" (x, y, width, height: int, title, caption: string, accent: graphics.Color, reserved := 0) -> Area {
+	block(WHOLE, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
+	block(WHOLE, x + 1, y + 1, width - 2, height - 2, graphics.DARK_CARD_TOP, graphics.DARK_CARD_BOTTOM)
+	block(WHOLE, x + CARD_MARGIN, y + 12, 4, 16, graphics.shade(accent, 130), accent)
+	title_left := x + CARD_MARGIN + 12
+	right := x + width - CARD_MARGIN
+	if reserved > 0 {
+		right -= reserved + 16
 	}
-	order := graphics.text_state.order
-	graphics.text_state.order = stripes_of_screen(order)
-	defer graphics.text_state.order = order
-	after := interface.draw_text(&table, x, y, shown, tone(color), interface.FONT_INTERFACE)
-	interface.execute(&table, canvas)
-	return after
-}
-
-// card draws the frame of one part of the display with the card of the
-// interface package (the same card as in each window), and gives the place
-// of its content. The caption says which record the card shows.
-@(private)
-card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) -> graphics.Canvas {
-	records: [8]interface.Draw_Record
-	text: [128]u8
-	table := interface.Draw_Table{records = records[:], text = text[:], interface_font = boot_interface_font}
-	frame := interface.Frame{table = &table}
-	content := interface.card(&frame, {x, y, width, height}, title, caption, accent)
-	interface.execute(&table, canvas)
-	return graphics.view(canvas, content.x, content.y, content.width, content.height)
+	after := write_name(WHOLE, title_left, y + 12, title, right - title_left, accent)
+	write_name(WHOLE, after + 16, y + 12, caption, right - (after + 16), graphics.DARK_DIM)
+	return {x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - 8}
 }
 
 // fact draws "name value", and gives the count of the lines of the value.
@@ -305,18 +406,18 @@ card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, t
 // rule of interface.text_wrap_line): the caller places the next fact under
 // them. The value is empty after the call.
 @(private)
-fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: ^Text, color: graphics.Color = graphics.DARK_TEXT) -> (lines: int) {
-	write_name(canvas, 0, y, name, FACT_VALUE - 8, graphics.DARK_DIM)
+fact :: proc "contextless" (area: Area, y: int, name: string, value: ^Text, color: graphics.Color = graphics.DARK_TEXT) -> (lines: int) {
+	write_name(area, 0, y, name, FACT_VALUE - 8, graphics.DARK_DIM)
 	if value.count == 0 {
 		put(value, "not known yet")
-		show(canvas, FACT_VALUE, y, value, graphics.DARK_DIM)
+		show(area, FACT_VALUE, y, value, graphics.DARK_DIM)
 		return 1
 	}
 	rest := string(value.bytes[:value.count])
 	for len(rest) > 0 {
 		line: string
-		line, rest = interface.text_wrap_line(nil, {}, rest, canvas.width - FACT_VALUE)
-		write(canvas, FACT_VALUE, y + lines * LINE, line, color)
+		line, rest = interface.text_wrap_line(nil, {}, rest, area.width - FACT_VALUE)
+		write(area, FACT_VALUE, y + lines * LINE, line, color)
 		lines += 1
 	}
 	value.count = 0
@@ -381,7 +482,7 @@ step_names := [Step]string {
 
 // The card of the boot image (docs/DESIGN.md, section 12): the size
 // strip, the rows of names by kind, the line of the check and the line of
-// the trust. Package image_card computes the places.
+// the trust. Package image_card computes the places, in logical pixels.
 IMAGE_STRIP_HEIGHT :: 12
 IMAGE_ROWS_Y :: 20 // The y of the first row of names, in the card.
 IMAGE_ROW_PITCH :: 18 // The distance between two rows of names.
@@ -412,18 +513,22 @@ image_kind_colors := [image_card.File_Kind]graphics.Color {
 	.Resource = graphics.DARK_RESOURCE,
 }
 
-// draw draws the display in the top left of a canvas. The canvas must
-// have WIDTH x HEIGHT pixels or more.
-draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
+// draw_panel draws the display on the canvas of its panel, at a scale of
+// eighths: the canvas has the panel at that scale, cut by the screen when
+// the screen is smaller.
+@(private)
+draw_panel :: proc "contextless" (canvas: graphics.Canvas, data: ^Data, eighths: int) {
 	red_first = data.red_first
+	panel = canvas
+	scale_eighths = eighths
 	text: Text
 	boot := &data.boot
 	HEADER :: 72
-	fill(canvas, 0, HEADER, canvas.width, canvas.height - HEADER, graphics.DARK_BACKGROUND)
+	fill(WHOLE, 0, HEADER, WIDTH, HEIGHT - HEADER, graphics.DARK_BACKGROUND)
 	// A grid of points under the cards.
 	for y := HEADER + 12; y < HEIGHT; y += 24 {
 		for x := 12; x < WIDTH; x += 24 {
-			fill(canvas, x, y, 2, 2, graphics.DARK_POINT)
+			fill(WHOLE, x, y, 2, 2, graphics.DARK_POINT)
 		}
 	}
 
@@ -432,26 +537,37 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		level := u32(column * 255 / WIDTH)
 		top := graphics.mix(0x24509A, 0x0C1830, level)
 		for row := 0; row < HEADER; row += 8 {
-			fill(canvas, column, row, 1, 8, graphics.mix(top, graphics.shade(top, 62), u32(row * 255 / HEADER)))
+			fill(WHOLE, column, row, 1, 8, graphics.mix(top, graphics.shade(top, 62), u32(row * 255 / HEADER)))
 		}
 	}
 	// The mark of the system where the name of the system was: the heron
-	// with cells of 2 pixels (48 by 48, the height of the large text that was
-	// there), and the name of the mark with cells of 3 pixels, at the right
-	// of the heron, its bottom on the bottom of the heron. Both end before
-	// the path of the steps.
+	// in a box of 48 by 48 (cells of 2 pixels at scale 1, the height of the
+	// large text that was there), and the name of the mark (cells of 3
+	// pixels at scale 1) at the right of the box, its bottom on the bottom
+	// of the heron. A cell of the mark is whole pixels, so each takes the
+	// largest whole cell inside its box at the scale. Both end before the
+	// path of the steps.
 	{
 		MARK_LEFT :: 20
 		MARK_TOP :: 12
-		MARK_CELL_SIZE :: 2
+		MARK_SIDE :: 48
 		NAME_GAP :: 12
-		NAME_CELL_SIZE :: 3
+		heron_cell := max(2 * scale_eighths / SCALE_ONE, 1)
+		name_cell := max(3 * scale_eighths / SCALE_ONE, 1)
 		channel_order := mark.Channel_Order.Red_In_Low_Byte if red_first else mark.Channel_Order.Red_In_High_Byte
-		// Two pixels for a cell: the smooth variant.
-		mark.mark_draw(canvas, MARK_LEFT, MARK_TOP, MARK_CELL_SIZE, .Smooth, false, channel_order)
-		heron_side := mark.heron_size(MARK_CELL_SIZE)
-		_, name_height := mark.name_size(NAME_CELL_SIZE)
-		mark.name_draw(canvas, MARK_LEFT + heron_side + NAME_GAP, MARK_TOP + heron_side - name_height, NAME_CELL_SIZE, false, channel_order)
+		box_left, box_top := to_screen(MARK_LEFT), to_screen(MARK_TOP)
+		box_side := to_screen(MARK_TOP + MARK_SIDE) - box_top
+		heron_side := mark.heron_size(heron_cell)
+		heron_left := box_left + (box_side - heron_side) / 2
+		heron_top := box_top + (box_side - heron_side) / 2
+		// A cell of more than one pixel: the smooth variant.
+		mark.mark_draw(panel, heron_left, heron_top, heron_cell, .Smooth, false, channel_order)
+		box_record(.Element, WHOLE, heron_left, heron_top, heron_left + heron_side, heron_top + heron_side)
+		name_width, name_height := mark.name_size(name_cell)
+		name_left := to_screen(MARK_LEFT + MARK_SIDE + NAME_GAP)
+		name_top := heron_top + heron_side - name_height
+		mark.name_draw(panel, name_left, name_top, name_cell, false, channel_order)
+		box_record(.Element, WHOLE, name_left, name_top, name_left + name_width, name_top + name_height)
 	}
 	state_color := graphics.Color(graphics.DARK_BOOT_PROGRAM)
 	switch data.state {
@@ -461,8 +577,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	case .Failed:
 		state_color = graphics.DARK_FAILED
 	}
+	// The time since the machine started, at the right of the head: the
+	// message of the line of the steps ends before its words.
+	SINCE_WORDS :: "since the machine started"
+	SINCE_RIGHT :: WIDTH - 20
+	since_left := SINCE_RIGHT - len(SINCE_WORDS) * CELL
 	// The steps of the start as a path: a point for each step. A step that
 	// is done is full, the step of now has a ring, a step to come is empty.
+	message_fits := true
 	{
 		PATH_X :: 208
 		PATH_Y :: 26
@@ -471,44 +593,45 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		for step in 0 ..< len(Step) {
 			x := PATH_X + step * PATH_STEP
 			if step != 0 {
-				fill(canvas, x - PATH_STEP + 8, PATH_Y - 1, PATH_STEP - 16, 2, step <= now ? graphics.shade(graphics.DARK_PROCESS, 80) : 0x33507C)
+				fill(WHOLE, x - PATH_STEP + 8, PATH_Y - 1, PATH_STEP - 16, 2, step <= now ? graphics.shade(graphics.DARK_PROCESS, 80) : 0x33507C)
 			}
 			switch {
 			case step < now:
-				block(canvas, x - 5, PATH_Y - 5, 10, 10, graphics.shade(graphics.DARK_PROCESS, 130), graphics.DARK_PROCESS)
+				block(WHOLE, x - 5, PATH_Y - 5, 10, 10, graphics.shade(graphics.DARK_PROCESS, 130), graphics.DARK_PROCESS)
 			case step == now:
-				block(canvas, x - 8, PATH_Y - 8, 16, 16, graphics.shade(state_color, 140), state_color)
-				block(canvas, x - 5, PATH_Y - 5, 10, 10, 0x10203C, 0x10203C)
-				block(canvas, x - 2, PATH_Y - 2, 4, 4, graphics.shade(state_color, 140), state_color)
+				block(WHOLE, x - 8, PATH_Y - 8, 16, 16, graphics.shade(state_color, 140), state_color)
+				block(WHOLE, x - 5, PATH_Y - 5, 10, 10, 0x10203C, 0x10203C)
+				block(WHOLE, x - 2, PATH_Y - 2, 4, 4, graphics.shade(state_color, 140), state_color)
 			case:
-				block(canvas, x - 5, PATH_Y - 5, 10, 10, 0x33507C, 0x33507C)
-				block(canvas, x - 3, PATH_Y - 3, 6, 6, 0x162C54, 0x162C54)
+				block(WHOLE, x - 5, PATH_Y - 5, 10, 10, 0x33507C, 0x33507C)
+				block(WHOLE, x - 3, PATH_Y - 3, 6, 6, 0x162C54, 0x162C54)
 			}
 		}
 		put_number(&text, u64(min(now + 1, len(Step))))
 		put(&text, "/")
 		put_number(&text, len(Step))
-		after_count := show(canvas, PATH_X - 8, 44, &text, 0x9CB8E0)
-		write(canvas, after_count + 12, 44, data.message, graphics.shade(state_color, 135))
+		after_count := show(WHOLE, PATH_X - 8, 44, &text, 0x9CB8E0)
+		message_after := write(WHOLE, after_count + 12, 44, data.message, graphics.shade(state_color, 135))
+		message_fits = message_after + 12 <= since_left
 	}
 	if boot.time != 0 {
 		put_duration(&text, boot.time)
-		write_large(canvas, WIDTH - 20 - text.count * 16, 8, string(text.bytes[:text.count]), 2, graphics.COLOR_WHITE)
+		write_large(WHOLE, SINCE_RIGHT - text.count * LARGE_CELL, 8, string(text.bytes[:text.count]), graphics.COLOR_WHITE)
 		text.count = 0
-		put(&text, "since the machine started")
-		show_right(canvas, WIDTH - 20, 46, &text, 0x9CB8E0)
+		// A long message takes the line: the words go, the large time stays.
+		if message_fits {
+			put(&text, SINCE_WORDS)
+			show_right(WHOLE, SINCE_RIGHT, 46, &text, 0x9CB8E0)
+		}
 	}
 	// A line of the color of the state, that fades to the right.
 	for column := 0; column < WIDTH; column += 4 {
-		fill(canvas, column, HEADER, 4, 2, graphics.mix(state_color, graphics.DARK_BACKGROUND, u32(column * 255 / WIDTH)))
+		fill(WHOLE, column, HEADER, 4, 2, graphics.mix(state_color, graphics.DARK_BACKGROUND, u32(column * 255 / WIDTH)))
 	}
 
 	// The stages, on one line of time. The line starts with the boot
 	// program: the firmware before it takes most of the time.
 	{
-		// 236: the six rows of names end at the bottom of its content; the
-		// card of the boot image takes the rest for the line of the trust.
-		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 236, "THE LINE OF TIME", "Boot_Report.stages, Process_Report.start_time: the cycle counter", graphics.DARK_KERNEL)
 		origin := boot.stage_count > 1 ? boot.stages[1].start : 0
 		last := origin
 		for stage in boot.stages[:boot.stage_count] {
@@ -526,11 +649,17 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		place :: proc "contextless" (time, origin, span: u64, width: int) -> int {
 			return time <= origin ? 0 : int(min(time - origin, span) * u64(width) / span)
 		}
-		// The time from the boot program to the last process, in large digits.
+		// The time from the boot program to the last process, in large
+		// digits in the title row of the card: the card keeps their room.
+		span_text: Text
 		if boot.stage_count != 0 {
-			put_duration(&text, span)
-			write_large(canvas, WIDTH - MARGIN - CARD_MARGIN - text.count * 16, 84 + 6, string(text.bytes[:text.count]), 2, graphics.DARK_TEXT)
-			text.count = 0
+			put_duration(&span_text, span)
+		}
+		// 236: the six rows of names end at the bottom of its content; the
+		// card of the boot image takes the rest for the line of the trust.
+		area := card(MARGIN, 84, WIDTH - 2 * MARGIN, 236, "THE LINE OF TIME", "Boot_Report.stages, Process_Report.start_time: the cycle counter", graphics.DARK_KERNEL, span_text.count * LARGE_CELL)
+		if span_text.count != 0 {
+			write_large(WHOLE, WIDTH - MARGIN - CARD_MARGIN - span_text.count * LARGE_CELL, 84 + 6, string(span_text.bytes[:span_text.count]), graphics.DARK_TEXT)
 		}
 
 		// The tube: the firmware as a short part with lines, then the line of time.
@@ -579,8 +708,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			width := max(right - left - 1, 2)
 			block(area, track_x + 4 + left, TUBE_Y + 4, width, TUBE_HEIGHT - 8, graphics.shade(color, 125), graphics.shade(color, 78))
 			put_duration(&text, stage.duration)
-			if text.count * 8 + 8 <= width {
-				show(area, track_x + 4 + left + (width - text.count * 8) / 2, TUBE_Y + 12, &text, graphics.DARK_BACKGROUND)
+			if text.count * CELL + 8 <= width {
+				show(area, track_x + 4 + left + (width - text.count * CELL) / 2, TUBE_Y + 12, &text, graphics.DARK_BACKGROUND)
 			}
 			text.count = 0
 		}
@@ -613,8 +742,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 					write(area, x - 3, TUBE_Y + TUBE_HEIGHT + 10, "0", graphics.DARK_DIM)
 				} else {
 					put_duration(&text, time)
-					if x + text.count * 4 <= area.width {
-						show(area, x - text.count * 4, TUBE_Y + TUBE_HEIGHT + 10, &text, graphics.DARK_DIM)
+					if x + text.count * CELL / 2 <= area.width {
+						show(area, x - text.count * CELL / 2, TUBE_Y + TUBE_HEIGHT + 10, &text, graphics.DARK_DIM)
 					}
 					text.count = 0
 				}
@@ -671,7 +800,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	MIDDLE_Y :: 328
 	MIDDLE_HEIGHT :: 186 // The card of the machine: the squares of the processors, then seven lines of facts.
 	{
-		area := card(canvas, MARGIN, MIDDLE_Y, LEFT_WIDTH, MIDDLE_HEIGHT, "MEMORY", "Boot_Report.ranges, System_Report", graphics.DARK_MEMORY)
+		area := card(MARGIN, MIDDLE_Y, LEFT_WIDTH, MIDDLE_HEIGHT, "MEMORY", "Boot_Report.ranges, System_Report", graphics.DARK_MEMORY)
 		top: u64
 		totals: [3]u64
 		for range in boot.ranges[:boot.range_count] {
@@ -746,7 +875,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	// The machine.
 	RIGHT_X :: 2 * MARGIN + LEFT_WIDTH
 	{
-		area := card(canvas, RIGHT_X, MIDDLE_Y, WIDTH - RIGHT_X - MARGIN, MIDDLE_HEIGHT, "MACHINE", "Boot_Report, cpuid", graphics.DARK_MACHINE)
+		area := card(RIGHT_X, MIDDLE_Y, WIDTH - RIGHT_X - MARGIN, MIDDLE_HEIGHT, "MACHINE", "Boot_Report, cpuid", graphics.DARK_MACHINE)
 		// One square for each processor that runs, with its number.
 		write(area, 0, 2, "processors", graphics.DARK_DIM)
 		if data.machine.processors == 0 {
@@ -763,7 +892,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			}
 			block(area, x, 0, 20, 20, graphics.shade(graphics.DARK_MACHINE, 112), graphics.shade(graphics.DARK_MACHINE, 66))
 			put_number(&text, processor.apic_id)
-			show(area, x + 10 - text.count * 4, 2, &text, graphics.DARK_BACKGROUND)
+			show(area, x + 10 - text.count * CELL / 2, 2, &text, graphics.DARK_BACKGROUND)
 		}
 		// The six facts, each under the lines of the fact before it. The
 		// name that a processor gives of itself has up to 47 characters,
@@ -811,15 +940,20 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	BOTTOM_Y :: MIDDLE_Y + MIDDLE_HEIGHT + MARGIN
 	BOTTOM_HEIGHT :: HEIGHT - BOTTOM_Y - MARGIN
 	{
-		area := card(canvas, MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry, Boot_Report.trust", graphics.DARK_BOOT_PROGRAM)
+		CONTENT_WIDTH :: LEFT_WIDTH - 2 * CARD_MARGIN
 		layout := &image_layout
-		image_card.layout_compute(layout, data.image, data.failed_name, area.width, area.width - IMAGE_NAMES_X)
+		image_card.layout_compute(layout, data.image, data.failed_name, CONTENT_WIDTH, CONTENT_WIDTH - IMAGE_NAMES_X)
+		// The count of the files, at the right of the title row.
+		count_text: Text
+		if layout.valid {
+			put_number(&count_text, u64(image_card.file_total(layout)))
+			put(&count_text, " files, ")
+			put_size(&count_text, u64(len(data.image)))
+		}
+		area := card(MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry, Boot_Report.trust", graphics.DARK_BOOT_PROGRAM, count_text.count * CELL)
 		if layout.valid {
 			image_card_draw(area, layout)
-			put_number(&text, u64(image_card.file_total(layout)))
-			put(&text, " files, ")
-			put_size(&text, u64(len(data.image)))
-			show_right(canvas, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.DARK_TEXT)
+			show_right(WHOLE, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &count_text, graphics.DARK_TEXT)
 		} else {
 			write(area, 0, 0, "not known yet", graphics.DARK_DIM)
 		}
@@ -829,12 +963,15 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 
 	// The processes.
 	{
-		area := card(canvas, RIGHT_X, BOTTOM_Y, WIDTH - RIGHT_X - MARGIN, BOTTOM_HEIGHT, "PROCESSES", "threads, pages, created", graphics.DARK_PROCESS)
+		total_text: Text
+		if data.process_count != 0 {
+			put_number(&total_text, u64(data.process_total))
+		}
+		area := card(RIGHT_X, BOTTOM_Y, WIDTH - RIGHT_X - MARGIN, BOTTOM_HEIGHT, "PROCESSES", "threads, pages, created", graphics.DARK_PROCESS, total_text.count * CELL)
 		if data.process_count == 0 {
 			write(area, 0, 0, "No process runs yet.", graphics.DARK_DIM)
 		} else {
-			put_number(&text, u64(data.process_total))
-			show_right(canvas, WIDTH - MARGIN - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.DARK_TEXT)
+			show_right(WHOLE, WIDTH - MARGIN - CARD_MARGIN, BOTTOM_Y + 13, &total_text, graphics.DARK_TEXT)
 		}
 		most: u64 = 1
 		for &process in data.processes[:data.process_count] {
@@ -877,7 +1014,7 @@ put_hex_bytes :: proc "contextless" (text: ^Text, bytes: []u8) {
 // the failed file is in the color of a failure, in the strip and on its
 // tile.
 @(private)
-image_card_draw :: proc "contextless" (area: graphics.Canvas, layout: ^image_card.Layout) {
+image_card_draw :: proc "contextless" (area: Area, layout: ^image_card.Layout) {
 	text: Text
 	block(area, 0, 0, area.width, IMAGE_STRIP_HEIGHT, graphics.DARK_TRACK, graphics.DARK_TRACK)
 	for &file, index in layout.files[:layout.file_count] {
@@ -924,7 +1061,7 @@ image_card_draw :: proc "contextless" (area: graphics.Canvas, layout: ^image_car
 // files that have the hash of the system description, or the whole name of
 // the file that failed, in the color of a failure.
 @(private)
-check_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
+check_line :: proc "contextless" (area: Area, y: int, data: ^Data) {
 	text: Text
 	x := write_name(area, 0, y, "check", FACT_VALUE - 8, graphics.DARK_DIM)
 	x = max(x + 8, 56)
@@ -948,11 +1085,11 @@ check_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
 // trust_part draws one part of the line of the trust, with a comma after
 // it unless it is the last, and gives the x of the next part.
 @(private)
-trust_part :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, color: graphics.Color, last: bool) -> int {
+trust_part :: proc "contextless" (area: Area, x, y: int, text: ^Text, color: graphics.Color, last: bool) -> int {
 	if !last {
 		put(text, ",")
 	}
-	return show(canvas, x, y, text, color) + (last ? 0 : 8)
+	return show(area, x, y, text, color) + (last ? 0 : CELL)
 }
 
 // trust_line draws the trust record in one line (docs/TRUSTED_BOOT.md,
@@ -962,7 +1099,7 @@ trust_part :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Tex
 // verified and a refused measure are said in plain words: a reader must not
 // take such a system for a trusted one.
 @(private)
-trust_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
+trust_line :: proc "contextless" (area: Area, y: int, data: ^Data) {
 	trust := &data.boot.trust
 	text: Text
 	x := write_name(area, 0, y, "trust", FACT_VALUE - 8, graphics.DARK_DIM)
@@ -1020,18 +1157,21 @@ trust_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
 	_ = trust_part(area, x, y, &text, color, true)
 }
 
-// draw_screen draws the display in the middle of a screen.
-draw_screen :: proc "contextless" (screen: graphics.Canvas, data: ^Data) {
-	if screen.width < WIDTH || screen.height < HEIGHT {
-		draw(screen, data)
+// draw_screen draws the display on a whole canvas: a screen, or the
+// canvas of a window. It takes the place and the scale of display_place,
+// fills the canvas outside the panel, and draws the panel. A canvas of no
+// pixels draws nothing.
+draw_screen :: proc "contextless" (screen_canvas: graphics.Canvas, data: ^Data) {
+	place, ok := display_place(screen_canvas.width, screen_canvas.height)
+	if !ok {
 		return
 	}
 	red_first = data.red_first
-	x := (screen.width - WIDTH) / 2
-	y := (screen.height - HEIGHT) / 2
-	fill(screen, 0, 0, screen.width, y, graphics.DARK_BACKGROUND)
-	fill(screen, 0, y + HEIGHT, screen.width, screen.height - y - HEIGHT, graphics.DARK_BACKGROUND)
-	fill(screen, 0, y, x, HEIGHT, graphics.DARK_BACKGROUND)
-	fill(screen, x + WIDTH, y, screen.width - x - WIDTH, HEIGHT, graphics.DARK_BACKGROUND)
-	draw(graphics.view(screen, x, y, WIDTH, HEIGHT), data)
+	background := tone(graphics.DARK_BACKGROUND)
+	right, bottom := place.x + place.width, place.y + place.height
+	graphics.fill(screen_canvas, 0, 0, screen_canvas.width, place.y, background)
+	graphics.fill(screen_canvas, 0, bottom, screen_canvas.width, screen_canvas.height - bottom, background)
+	graphics.fill(screen_canvas, 0, place.y, place.x, place.height, background)
+	graphics.fill(screen_canvas, right, place.y, screen_canvas.width - right, place.height, background)
+	draw_panel(view_cut(screen_canvas, place.x, place.y, place.width, place.height), data, place.eighths)
 }
