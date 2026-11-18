@@ -22,6 +22,13 @@ SOURCE_FOLDER_PRIVATE :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_PRIVATE // T
 // the order of a list can be the order of an output.
 SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE}
 
+// The folder of the programs of the host that build, test and tell the
+// system: this tool. It is not a folder of the sources of the system, but
+// a document names its files, and the check of the source paths reads
+// such a span, so a move of a file of the tool cannot leave a dead
+// pointer in silence.
+TOOLS_FOLDER :: "tools"
+
 // The folders of the sources that a move removed. The check of the source
 // paths in the documents reads a code span that starts with one of them,
 // and refuses it: a document that still names the old place is stale.
@@ -125,6 +132,27 @@ source_library_package_folder :: proc(import_path: string, allocator := context.
 	}
 	if len(import_path) > len(KERNEL_IMPORT_START) && strings.has_prefix(import_path, KERNEL_IMPORT_START) {
 		return strings.concatenate({SOURCE_FOLDER_KERNEL, "/", import_path[len(KERNEL_IMPORT_START):]}, allocator), true
+	}
+	return "", false
+}
+
+// The source library of the tool: each package of the tool under
+// tools/modustool imports another one by one line, "modustool:foundation",
+// in each file that imports it
+// (src/md/infrastructure/repository_layout.md, "The tool in packages"). It
+// is a library of the tool, not of the system: no source of src/ may name
+// it, and the readers of the system sources do not resolve it.
+TOOL_LIBRARY_NAME :: "modustool"
+TOOL_IMPORT_START :: TOOL_LIBRARY_NAME + ":"
+
+// tool_library_package_folder gives the folder of the package of the tool
+// that the path of an import line names: "modustool:build" is the folder
+// build of the tool. The identity of the tool follows these imports, so a
+// change of a file of a package of the tool builds each module again. A
+// path of another library and a path with no package are not found.
+tool_library_package_folder :: proc(import_path: string, allocator := context.temp_allocator) -> (folder: string, found: bool) {
+	if len(import_path) > len(TOOL_IMPORT_START) && strings.has_prefix(import_path, TOOL_IMPORT_START) {
+		return strings.concatenate({TOOL_SOURCE_FOLDER, "/", import_path[len(TOOL_IMPORT_START):]}, allocator), true
 	}
 	return "", false
 }

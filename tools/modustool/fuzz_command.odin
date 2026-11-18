@@ -272,15 +272,23 @@ fuzz_finding_keep :: proc(binary: string, target: ^Fuzz_Target, outcome: Fuzz_Ch
 // sources run the same inputs; a change of the code under test explores
 // other ones.
 fuzz_sources_seed :: proc() -> u64 {
+	return fuzz_sources_seed_of_folders(TOOL_SOURCE_FOLDER, SOURCE_FOLDER_LIBRARY, SOURCE_FOLDER_KERNEL)
+}
+
+// fuzz_sources_seed_of_folders gives the seed of the sources under three
+// folders. The tool is read to any depth: each package of the tool is a
+// folder under the folder of the tool, and a seed that skips one would
+// run the same inputs after a change of its code.
+fuzz_sources_seed_of_folders :: proc(tool_folder, library_folder, kernel_folder: string) -> u64 {
 	paths := make([dynamic]string, context.temp_allocator)
-	fuzz_sources_list(TOOL_SOURCE_FOLDER, &paths, recursive = false)
-	fuzz_sources_list(SOURCE_FOLDER_LIBRARY, &paths, recursive = true)
+	fuzz_sources_list(tool_folder, &paths)
+	fuzz_sources_list(library_folder, &paths)
 	// The kernel parts are the folders under the kernel; the files of the
 	// kernel itself are no input of the child.
-	if kernel_entries, kernel_error := os.read_all_directory_by_path(SOURCE_FOLDER_KERNEL, context.temp_allocator); kernel_error == nil {
+	if kernel_entries, kernel_error := os.read_all_directory_by_path(kernel_folder, context.temp_allocator); kernel_error == nil {
 		for entry in kernel_entries {
 			if entry.type == .Directory {
-				fuzz_sources_list(entry.fullpath, &paths, recursive = true)
+				fuzz_sources_list(entry.fullpath, &paths)
 			}
 		}
 	}
@@ -299,14 +307,16 @@ fuzz_sources_seed :: proc() -> u64 {
 	return fuzz_word_read(hash[:], 0, 8, false)
 }
 
-fuzz_sources_list :: proc(folder: string, paths: ^[dynamic]string, recursive: bool) {
+// fuzz_sources_list adds each .odin file of a folder and of its folders,
+// to any depth.
+fuzz_sources_list :: proc(folder: string, paths: ^[dynamic]string) {
 	entries, error := os.read_all_directory_by_path(folder, context.temp_allocator)
 	if error != nil {
 		return
 	}
 	for entry in entries {
-		if entry.type == .Directory && recursive {
-			fuzz_sources_list(entry.fullpath, paths, recursive)
+		if entry.type == .Directory {
+			fuzz_sources_list(entry.fullpath, paths)
 		} else if entry.type == .Regular && strings.has_suffix(entry.name, ".odin") {
 			append(paths, strings.concatenate({folder, "/", entry.name}, context.temp_allocator))
 		}

@@ -539,9 +539,11 @@ A code span of a document that names a file of the repository is a link on the s
 
 **Which span is a source path.** A span that starts with the path of a folder of the sources, or with the last part of that path, then a `/`. The folders of the sources are the constants of `tools/modustool/source_folders.odin`. The last part is the name that a folder had before a move: a span that still starts with it is read, and is refused, so an old path cannot stay in a document. The first part of a path that has more parts is not a start: under it, an intent file names a folder of a later state or of a refused form, and such a span names nothing on purpose.
 
+A span that starts with `tools/` is read too: the tool is no source of the system, but a guide names its files, and a file of the tool that moves into a package must change each document that names it. A future folder of the tool is then named in words, not in a span.
+
 | Span | How the check reads it |
 |---|---|
-| `src/kernel/enter.odin`, `src/library/support/system` | A file or a folder: it must exist |
+| `src/kernel/enter.odin`, `src/library/support/system`, `tools/modustool/main.odin` | A file or a folder: it must exist |
 | `src/kernel/enter.odin:34` | The path before the `:`. A line number is not checked |
 | `src/modules/system/*/main.odin`, `src/modules/system/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `src/modules/system` must exist |
 | `build/modules/x`, `docs/reference/modules/` | Not a source path: the name of a source folder is inside a longer path |
@@ -918,7 +920,7 @@ outsider_fault  visitor::fault_three  outsider/main.odin   169
 
 ## The commands of the tool
 
-All the automation of the project is one program of the host, `tools/modustool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
+All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The design is in `src/md/infrastructure/repository_layout.md`, which also says which concerns are packages today. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
 
 | Command | What it does |
 |---|---|
@@ -1023,7 +1025,7 @@ A raw target reads its input as the bytes that the system reads. A generated tar
 
 **The corpus.** The corpus of each target is in `tools/modustool/fuzzing_corpus/<target>/`: the regression inputs in `regression/` and the reach inputs in `reach/`, one file for each input, named by the BLAKE3 hash of its bytes. A target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a name that is not the hash of its bytes, and a folder that names no target, but `operations`, the corpus of the kernel operations ("The corpus of the kernel operations").
 
-**In `modustool check`.** For each target, the child runs each input of its corpus, then a fixed count of new executions (20 000, fewer for a target whose execution does much). The seed is the BLAKE3 hash of the sources of the tool and of the source library: the same sources run the same inputs. The check fails on any fuzz finding. The line of each target prints the edges that it reached.
+**In `modustool check`.** For each target, the child runs each input of its corpus, then a fixed count of new executions (20 000, fewer for a target whose execution does much). The seed is the BLAKE3 hash of the sources of the tool, with each of its packages, of the source library and of the kernel parts: the same sources run the same inputs. The check fails on any fuzz finding. The line of each target prints the edges that it reached.
 
 **A long run.** `modustool fuzz <target> <executions>` runs for its count of executions, with one child for each host process. With no count it runs the count of the check, and it refuses a count of 0: a forgotten argument never starts a run with no end. The children share the inputs that they keep through `build/fuzzing/<target>/kept/`. It prints the executions in one second as a measure, never as a condition.
 
@@ -1278,7 +1280,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 | The assembly files that the module links: `src/runtime/memory.asm`, the `.asm` files of its folder, and those of `src/library/support/system` for a module with an entry | The tool lists them as the build does |
 | The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, the kind of debug information (`-debug-info:same-code`), the direction of the instruction scheduler of `llc` (`-misched-topdown`), the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
 | The host programs `odin`, `llc`, `nasm` and `ld.lld` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
-| The tool | One hash over every file of `tools/modustool` and of each package of the repository that it imports, to any depth. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
+| The tool | One hash over every file of `tools/modustool` and of each package of the repository that it imports, to any depth: an import of the source library (`modus:`), of the kernel parts (`kernel:`), of a package of the tool (`modustool:`), or by a relative path. A change of a file of a package of the tool thus builds each module again. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
 
 **The inputs of the conversion.**
 

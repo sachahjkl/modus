@@ -125,6 +125,48 @@ source_path_starts_of_the_folders :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.join(source_path_starts(at_the_root[:]), " ", context.temp_allocator), "kernel/ processes/ modules/ support/")
 }
 
+// The files of a small tree of the tool.
+@(private = "file")
+tree_of_the_tool_exists :: proc(path: string) -> bool {
+	switch path {
+	case "tools", "tools/modustool", "tools/modustool/main.odin", "tools/modustool/build", "tools/modustool/build/modules.odin":
+		return true
+	}
+	return false
+}
+
+// A span that names a file of the tool is read: a file that is gone, also
+// one that moved into a package of the tool, is refused. A span with the
+// name of the tool inside a longer path or alone is not read.
+@(test)
+source_path_of_a_file_of_the_tool_is_read :: proc(t: ^testing.T) {
+	folders := [?]string{TOOLS_FOLDER}
+	problems, count := source_path_problems("docs/TOOLS.md", "Good: `tools/modustool/main.odin`, `tools/modustool/build/modules.odin`, `tools/modustool/*_scenario.odin`, `tools/modustool`.\nGone: `tools/modustool/modules.odin`, `tools/modustool/gone/*.odin`.\nNot read: `modustool check`, `build/tools/gone`, `./tools/gone`.\n", folders[:], tree_of_the_tool_exists)
+	testing.expect_value(t, count, 6)
+	if !testing.expect_value(t, len(problems), 2) {
+		return
+	}
+	testing.expect(t, strings.contains(problems[0], "line 2") && strings.contains(problems[0], "names tools/modustool/modules.odin,") && strings.contains(problems[0], "no such file"), problems[0])
+	testing.expect(t, strings.contains(problems[1], "names tools/modustool/gone,"), problems[1])
+}
+
+// The check of the repository reads the spans of the files of the tool,
+// and each one names a file or a folder that exists.
+@(test)
+source_paths_of_the_tool_in_the_documents_of_the_repository :: proc(t: ^testing.T) {
+	folders := [?]string{TOOLS_FOLDER}
+	problems, span_count, _, read := source_path_problems_of_the_documents(folders[:])
+	if !testing.expect(t, read, "the documents are read") {
+		return
+	}
+	for problem in problems {
+		testing.expectf(t, false, "%s", problem)
+	}
+	testing.expect(t, span_count > 100, "the documents hold too few spans of the tool: the check reads none")
+	checked := source_path_checked_folders()
+	testing.expect_value(t, checked[len(checked) - 1], TOOLS_FOLDER)
+}
+
 // The documents of the repository name sources that exist.
 @(test)
 source_paths_of_the_documents_of_the_repository :: proc(t: ^testing.T) {
