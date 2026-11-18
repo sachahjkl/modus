@@ -143,6 +143,21 @@ read_refuses_a_pattern_past_its_bounds :: proc(t: ^testing.T) {
 		{cell_y = COORDINATE_UNIT_LIMIT + pixel, cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
 		{cell_x = min(i32), cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
 		{cell_width = max(u16), cell_height = 2 * pixel, step_x = max(u16), step_y = 24 * pixel},
+		// The other axis and the other fields, one by one.
+		{cell_width = 2 * pixel, cell_height = 2 * pixel + 1, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel - 1},
+		{cell_y = 1, cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_width = 2 * pixel, cell_height = 0, step_x = 24 * pixel, step_y = 24 * pixel},
+		// Both steps at 0, with one other field set.
+		{cell_y = pixel},
+		{cell_height = pixel},
+		{step_x = pixel},
+		// A place one pixel past each limit, and the largest place.
+		{cell_x = COORDINATE_UNIT_LIMIT + pixel, cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_y = -COORDINATE_UNIT_LIMIT - pixel, cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		{cell_x = max(i32), cell_width = 2 * pixel, cell_height = 2 * pixel, step_x = 24 * pixel, step_y = 24 * pixel},
+		// A step of 63 units under a cell of 1 pixel.
+		{cell_width = pixel, cell_height = pixel, step_x = pixel - 1, step_y = 24 * pixel},
 	}
 	for pattern, index in refused {
 		_, problem := read(sample_record(Draw_Rectangle{color = 1, repetition = pattern}))

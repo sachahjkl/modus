@@ -9,7 +9,7 @@ This file records the rationalised form of the record: a closed set of primitive
 Version 10 is a record of 40 bytes with one set of fields for all kinds. A review of it as a general interface found five faults:
 
 - A field changes its meaning with the kind. `second_color` is a color, an ink margin, a stride or a count of columns. `text_start` and `text_count` are also a pixel index and a generation. It is a union with no tag for each field.
-- Two kinds are the look of the system, not primitives: `Point_Grid` and `Folded_Gap`.
+- Two kinds were the look of the system, not primitives: `Point_Grid` and `Folded_Gap`.
 - Three text kinds overlap: `Text`, `Interface_Text` and `Text_Grid`.
 - Primitives are missing: alpha and blending (a color is `0x00RRGGBB`), antialiasing, paths and curves (the vector font has them inside, the table does not), a gradient along a line other than the two axes, a stack of clips (a `Clip` replaces the cut), and places that are not whole pixels.
 - The comments of the format tell its history.
@@ -83,7 +83,9 @@ with d the pixel, c the color and a the cover. It is the blend of the text of to
 | 7 | `Clip_Pop` | None, and a box of zeros |
 | 8 | `Text_Grid` | `first` u32 at 24, `count` u32 at 28, `columns` u32 at 32; kept until the measure below decides |
 
-**Rectangle.** The box in one color. With `step_x` and `step_y` above 0, the rectangle repeats: a cell of `cell_width` by `cell_height` at (`cell_x` + n × `step_x`, `cell_y` + m × `step_y`) of the surface for each integers n and m, cut to the box. A step of 0 on both axes is one rectangle, the whole box, and then each field of the pattern is 0. The border refuses a cell or a step below 1 pixel, a step below the cell, one step of 0 with the other above 0, and a place past `COORDINATE_LIMIT`. So a rectangle reaches each pixel at most one time, and its cost is bounded by the pixels of its box. A repeated rectangle is a pattern: points, stripes, the lines of a grid. The sizes are u16 in 1/64 pixel, so a step is at most 1 023 pixels, and the record keeps 24 bytes of fields.
+**Rectangle.** The box in one color. With `step_x` and `step_y` above 0, the rectangle repeats: a cell of `cell_width` by `cell_height` at (`cell_x` + n × `step_x`, `cell_y` + m × `step_y`) of the surface for each integers n and m, cut to the box. A step of 0 on both axes is one rectangle, the whole box, and then each field of the pattern is 0. The border refuses a cell or a step below 1 pixel, a step below the cell, one step of 0 with the other above 0, and a place past `COORDINATE_LIMIT`. So a rectangle reaches each pixel at most one time, and its pixel writes are at most the pixels of its box. A repeated rectangle is a pattern: points, stripes, the lines of a grid.
+
+The bound in calls of a fill: cells that touch are one fill. A cell as wide as its step makes each row of cells one span across the area, a cell as high as its step makes each column one span down it, and both make the area one fill, as a solid rectangle. The most calls come from a cell of 1 pixel each 2 pixels on each axis: one call for each cell, a quarter of the pixels of the area, about 518 000 calls of one pixel for an area of 1920 by 1080. With a cell as wide as its step and a step of 2 down, it is one call for each second line: 540 calls. The border does not refuse a dense pattern, nor a cell of 1 each 2: each is a look, and the format bounds a cost, never a look ("The limits of the format: cost, never look"). The sizes are u16 in 1/64 pixel, so a step is at most 1 023 pixels, and the record keeps 24 bytes of fields.
 
 The pattern is placed on the surface by one of its cells, not on the box: two boxes of one surface, two damage rectangles and two areas show one pattern, and an element that draws the pattern in a part of a surface needs no clip and no second record. A pattern placed at the top left corner of its box was refused: the box of the grid of points would then start before its area, at the point of the grid before it, and the element would need a clip around it, three records in place of one, and a clip that replaces the cut of its caller until the clip stack exists.
 
@@ -173,6 +175,8 @@ Each line is an estimate to measure, not a claim:
 | The line and the folded gap as antialiased strokes in place of the line of Bresenham | More for each pixel; the count of the pixels is about the same | `inspect`: the frame of its band of folded gaps |
 | The grid of points as one repeated rectangle | The same loop over the points as the kind `Point_Grid`, and two divisions for each damage rectangle | `clock`: the whole frame |
 | The folded gap as three records | Two records more for each gap to compare, to copy and to read; the same pixels to draw | `inspect`: the frame of its band of folded gaps |
+| A dense pattern (cell = step) | One fill, as a solid rectangle of the same box | A host test: the pattern of cell and step 1 against a solid rectangle, over 1920 by 1080 |
+| The worst pattern (a cell of 1 each 2 pixels) | One call of a fill for each cell: a quarter of the pixels of the box, about 518 000 calls for 1920 by 1080 | The same host test, with a cell of 1 and a step of 2 |
 | A general gradient | One multiply and add for each pixel; an axis keeps the form of today | A host test: a gradient at 45 degrees over 512 by 512 |
 
 The text, the pictures and the opaque rectangles on whole pixels cost what they cost today.
@@ -209,7 +213,13 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 ## What is built and what is left
 
-Built: version 12 of the record. The look of the system left the format: the grid of points is one `Rectangle` with a pattern placed on the surface, and the folded gap is a `Rectangle` and two `Line` records with the box of the gap, both drawn by elements of the interface package with the pixels of the kinds that they replaced. The words 6 and 7 of those kinds name no kind, and the border refuses them as unknown. The pixels can differ only for a folded gap narrower than 6 pixels, whose line the execution draws from the other end (the program `inspect` draws gaps of 16 pixels), and for a grid of points in an area left of or above the pixel -10 of a surface, where the pattern has cells that the kind did not draw.
+Built: version 12 of the record. The look of the system left the format: the grid of points is one `Rectangle` with a pattern placed on the surface, and the folded gap is a `Rectangle` and two `Line` records with the box of the gap, both drawn by elements of the interface package with the pixels of the kinds that they replaced. The words 6 and 7 of those kinds name no kind, and the border refuses them as unknown. The pixels can differ in three cases:
+
+- a folded gap narrower than 6 pixels, whose line the execution draws from the other end (the program `inspect` draws gaps of 16 pixels);
+- a grid of points in an area left of or above the pixel -10 of a surface, where the pattern has cells that the kind did not draw;
+- a folded gap with an end of a line past `LINE_COORDINATE_LIMIT` (2^15 pixels): its track is drawn, and the line is left out, where the kind drew its lines up to `COORDINATE_LIMIT` (2^23 pixels). No surface of the system reaches 2^15 pixels.
+
+A pattern draws the cells that touch as one fill, so a dense pattern costs one call, and the worst is a cell of 1 pixel each 2 pixels.
 
 Before it, version 11 of the record, the tagged form: the header with the box in 1/64 pixel and the fields of each kind, in the contract package `src/library/contract/draw_record`, with its border, the writer of each kind, its byte layouts on the site and its fuzz target. The kinds are still those of version 10, each with its own fields, and every window draws the pixels of version 10: no kind draws inside a pixel yet, so the border refuses a box off the whole pixels. Two fields of version 10 became places: the ink margin of a text in the interface font is the distance from the left edge of its box to its origin, which is a place in 1/64 pixel on a third of a pixel; a line holds its two ends, and its box holds each square of its path. A record that the border refuses damages its box when its bytes change: in version 10 a refused line damaged nothing. The border refuses a color whose high byte is not 0, so a record that it reads is canonical, and the difference compares the 48 bytes of two records first and reads through the border only the records that differ. `COORDINATE_LIMIT` is 2^23 pixels, so the width of the widest box in units fits an i32. The text table keeps its name `text`; the name `bytes` comes with the paths, which put points in it.
 

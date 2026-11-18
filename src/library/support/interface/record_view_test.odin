@@ -65,6 +65,17 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 	return view
 }
 
+// is_solid_rectangle says if a record is a Rectangle that fills its box:
+// a Rectangle with a pattern, such as the grid of points, is not one.
+is_solid_rectangle :: proc(view: Record_View) -> bool {
+	return view.kind == .Rectangle && view.repetition == (draw_record.Repetition{})
+}
+
+// is_pattern says if a record is a Rectangle with a pattern.
+is_pattern :: proc(view: Record_View) -> bool {
+	return view.kind == .Rectangle && view.repetition != (draw_record.Repetition{})
+}
+
 // is_text_record says if a record is a text that the border reads, in the
 // font of the cells or in the interface font.
 is_text_record :: proc(record: Draw_Record) -> bool {

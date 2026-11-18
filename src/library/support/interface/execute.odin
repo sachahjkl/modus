@@ -123,13 +123,42 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 // reaches into it, cut by the view. The border keeps each size a whole
 // pixel of at least 1 and each cell inside its step, so the loop draws each
 // pixel of the area at most once.
+//
+// Cells that touch are one fill: a cell as wide as its step makes each row
+// of cells one span across the area, a cell as high as its step makes each
+// column of cells one span down it, and both make the area one fill. So a
+// dense pattern costs what a solid rectangle costs, and the most calls come
+// from a cell of 1 pixel and a step of 2 on each axis: one call for each
+// cell, a quarter of the pixels of the area. The pixel writes are never
+// more than the pixels of the area.
 @(private)
 pattern_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, pattern: draw_record.Repetition, color: graphics.Color) {
 	cell_x, cell_y := draw_record.pixels_floor(pattern.cell_x), draw_record.pixels_floor(pattern.cell_y)
 	cell_width, cell_height := int(pattern.cell_width) >> draw_record.UNIT_SHIFT, int(pattern.cell_height) >> draw_record.UNIT_SHIFT
 	step_x, step_y := int(pattern.step_x) >> draw_record.UNIT_SHIFT, int(pattern.step_y) >> draw_record.UNIT_SHIFT
+	width, height := area.right - area.left, area.bottom - area.top
+	rows_touch := cell_width == step_x
+	columns_touch := cell_height == step_y
+	if rows_touch && columns_touch {
+		graphics.fill(view, 0, 0, width, height, color)
+		return
+	}
 	first_x := cell_x + (divide_down(area.left - cell_x - cell_width, step_x) + 1) * step_x
 	first_y := cell_y + (divide_down(area.top - cell_y - cell_height, step_y) + 1) * step_y
+	if rows_touch {
+		// Each row of cells is one span across the area.
+		for top := first_y; top < area.bottom; top += step_y {
+			graphics.fill(view, 0, top - area.top, width, cell_height, color)
+		}
+		return
+	}
+	if columns_touch {
+		// Each column of cells is one span down the area.
+		for left := first_x; left < area.right; left += step_x {
+			graphics.fill(view, left - area.left, 0, cell_width, height, color)
+		}
+		return
+	}
 	for top := first_y; top < area.bottom; top += step_y {
 		for left := first_x; left < area.right; left += step_x {
 			graphics.fill(view, left - area.left, top - area.top, cell_width, cell_height, color)

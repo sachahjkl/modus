@@ -179,7 +179,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 		draw_damage_on_surface(&now, partial_canvas, damage.rectangles[:damage.count])
 		graphics.clear(whole_canvas, graphics.colors.background)
 		execute(&now, whole_canvas)
-		if string(transmute([]u8)partial) != string(transmute([]u8)whole) {
+		if !same_pixels(partial, whole) {
 			differing_frames += 1
 		}
 	}

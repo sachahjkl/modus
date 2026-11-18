@@ -1,6 +1,7 @@
 #+build !freestanding
 package palette
 
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "modus:contract/draw_record"
@@ -917,7 +918,9 @@ the_damage_of_a_key_is_never_too_small :: proc(t: ^testing.T) {
 		whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = SCREEN_WIDTH, height = SCREEN_HEIGHT, stride = SCREEN_WIDTH}
 		graphics.clear(whole_canvas, OUTSIDE_COLOR)
 		interface.execute(&now.table, whole_canvas)
-		testing.expectf(t, string(transmute([]u8)before.pixels) == string(transmute([]u8)whole), "step %d (%v): the panel in its damage differs from the whole panel", number, step.key)
+		// slice.equal compares each pixel: a transmute of a slice of colors to
+		// bytes keeps the count of colors, so it compares a quarter of them.
+		testing.expectf(t, slice.equal(before.pixels, whole), "step %d (%v): the panel in its damage differs from the whole panel", number, step.key)
 		testing.expect(t, interface.draw_table_copy(&before.table, &now.table))
 	}
 }
@@ -2315,12 +2318,13 @@ the_match_of_an_act_name :: proc(t: ^testing.T) {
 }
 
 // The rectangle and the color of a record of the kind Rectangle, read
-// through the border of the draw record; false for another record.
+// through the border of the draw record; false for another record, and
+// for a Rectangle with a pattern, which fills no box.
 @(private = "file")
 rectangle_of_record :: proc(record: interface.Draw_Record) -> (place: interface.Rectangle, color: graphics.Color, is_rectangle: bool) {
 	primitive, problem := draw_record.read(record)
 	fields, is_kind := primitive.(draw_record.Draw_Rectangle)
-	if problem != .None || !is_kind {
+	if problem != .None || !is_kind || fields.repetition != (draw_record.Repetition{}) {
 		return {}, 0, false
 	}
 	return interface.record_rectangle(record), fields.color, true
