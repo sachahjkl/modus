@@ -114,7 +114,7 @@ measure_runs_of_the_record :: proc() -> bool {
 	part := test_part_run_make(MEASURE_COMMAND)
 	defer test_part_run_free(&part)
 	test_part_run_start(&part) or_return
-	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) {
+	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) {
 		return false
 	}
 	for name in ([]string{"clock", "disk"}) {

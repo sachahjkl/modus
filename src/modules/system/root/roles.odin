@@ -342,6 +342,8 @@ program_roles := [?]Program_Role_Row {
 	{name = "host"},
 	// The elements of the interface package, in its window.
 	{name = "interface_elements"},
+	// A frame at 1920 x 1080 drawn into memory of its own budget.
+	{name = "processor_frame"},
 	// The candidate fonts, in its window.
 	{name = "vector_glyphs"},
 	// The interface font, in its window.

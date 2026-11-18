@@ -144,6 +144,7 @@ module_builds := [?]Module_Build {
 	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", program = true, image = true},
 	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "extended_state", source = DEMONSTRATION_MODULE_SOURCES + "extended_state", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", program = true, image = true},

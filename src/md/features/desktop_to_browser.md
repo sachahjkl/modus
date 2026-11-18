@@ -25,6 +25,51 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 - **Its thresholds come from numbers.** The first measure is a frame of the desktop at 1920 × 1080 drawn on the processor, before any GPU work. Its number gives the resolution, the rate and the effects of the processor profile.
 - **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads to the flip; the time from the interrupt of a key to the flip that shows it; the time from `Program_Start` to the first frame of the window.
 
+### The thresholds of the processor profile
+
+| Threshold | Value |
+|---|---|
+| The resolution | Set from the first measure |
+| The rate | Set from the first measure |
+| The time of a frame | Set from the first measure |
+| The effects that the profile keeps | Set from the first measure |
+
+No value of this table is written before the numbers of the first measure below exist. A value names the line of the measure record that gave it.
+
+### The first measure: a frame at 1920 × 1080 on the processor
+
+**Its purpose.** It gives the numbers from which the thresholds above come: what a frame of the desktop at the reference screen costs on the processor, with no GPU, split into the parts that a later change moves one by one.
+
+**The three parts.** Each part is drawn 21 times, after one frame that is not counted: that frame pays the pages on first use of each canvas.
+
+1. **A clear and a present.** `graphics.clear` of a canvas of 1920 × 1080, then `graphics.copy` of it into a second canvas, as the compositor copies its frame into a screen page. It writes 8.3 MB, then reads and writes 8.3 MB: the bound of the memory bandwidth. No frame of this size on this path costs less.
+2. **A frame of the compositor with four windows**, of 1280 × 800, 960 × 640, 800 × 640 and 640 × 480, in the phases of the compositor ([`docs/SIMD.md`](../../../docs/SIMD.md), "4. The compositor"): the background copied into the frame, one call of the drawing module for each window (the records of its frame and the Picture record of its surface) and one for the bar, then the copy of the frame into a screen page. One line for a full frame. One line for a frame in its damage: a rectangle of 400 × 300 of the surface of the front window and the clock of the bar, the damage of one `Present` and of one second of the bar.
+3. **A draw table that fills the screen** with the records of a desktop: twelve cards, each with a gradient, a title and a caption in the interface font, ten lines of a label in the interface font and a value in the font of the cells, a bar, an opaque picture, a picture with alpha and a rectangle with alpha. One call of the drawing module draws it into a canvas of 1920 × 1080, with the fill of the background. The table is built once: the time is its execution, which a GPU back end of the draw table replaces.
+
+**Where it runs: a program on the machine.** The program `processor_frame` runs in the measure run of `modustool measure`, after the other measures of that run, when no other program draws. It makes its canvases and its surfaces with its own budget, and calls the code that the compositor calls: `graphics.clear`, `graphics.copy` (that is `copy_bytes_without_overlap`), and the drawing module through `interface.draw_part_through_module`. So the number is a number of the code of the system, built as the system is, under its kernel, on the machine of the other measures. The test machine keeps its screen of 1024 × 768: the move of the screen is the entry "The reference screen", and the measure comes before it, to give the thresholds.
+
+**What it does not measure.** The procedures of the frame of the compositor (`screen_build`, `frame_records`, `draw_areas`) are in the compositor module, and no other module imports them. The program builds the records of each window in the form of the compositor (the gradients of the title bar, the borders, the title, the close button) and runs the same phases. It leaves out the pointer, a blend of at most 48 × 48 pixels, the read of the rings, the page flip, and the swap of red and blue of a screen in that order. When the test machine shows 1920 × 1080, the line "compositor: a full frame of 1920x1080 with ..." of the compositor itself is the number of the compositor, and part 2 is read against it.
+
+**How it reports.** One line for each part, with the least of the 21 frames and their median, in microseconds with one decimal, and the frames in one second that the median gives:
+
+```
+processor_frame: measure: a clear and a present of 1920x1080: least <t> us, median <t> us, <n> frames in one second at the median, over 21 frames
+```
+
+The least is the cost when the host did not stop the processor during the frame. The median holds the noise of the host. The chart of the measure history follows the least ([measure_history.md](measure_history.md)). The frames in one second come from the median, because a screen shows each frame and not only the fastest one. The line of the draw table names its count of records of each kind before its times.
+
+**No time is a condition.** The scenario of the measure run waits for each line and for the last line of the program. Then the tool reads the four lines and checks their form only: each part ran once, each number is a number, the least is not above the median, the frames in one second agree with the median, and the count of frames is not 0. The program checks its pixels: after each part a pixel that the part writes has its color, and no call of the drawing module was refused.
+
+**The refused forms.**
+
+- **The measure inside the compositor, at its start**, as its measures of the bar and of a title bar. Three canvases of 1920 × 1080 and the four surfaces are about 8 500 pages. The budget of the compositor would hold them at each start of each machine, for a run that only measures. The compositor already prints its full frame at the size of its screen.
+- **The frame of the compositor in a support package** that the compositor and the program both import. It measures the code of the compositor itself, but it moves the loop of the compositor for one measure. The reference screen gives the number of the compositor itself with no move.
+- **A host benchmark alone.** A host test has another runtime of memory, no kernel, no page on first use and no QEMU: its number is a second number, never the only one. It is not built.
+- **A rate over one second.** A count of 21 frames needs no duration, and runs the same work on a slow host. The frames in one second are computed from the median.
+- **Large pages for the canvases.** The surfaces of today have 4 KiB pages ("Large pages for large buffers" below). The measure takes the pages of today; a measure with both forms is a later step.
+
+**The hazards.** A measure is valid when the load of the host is under 8 ([`docs/SIMD.md`](../../../docs/SIMD.md), "6. How to measure on the machine"). The measure record says the host of the run. A change of the host is not a change of the system.
+
 ## The reference screen
 
 The reference screen is 1920 × 1080, with a scale factor from 1.25 to 2, in place of 1024 × 768 at scale 1. A layout is made in logical pixels, and the scale factor turns them into pixels of the screen. The change moves:
@@ -221,4 +266,6 @@ Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
 ## State
 
-Not built. The draw table, phase C, is the next work of `ROADMAP.md`; the measure of a frame on the processor, arenas, windows that change size, the clipboard and sound come next.
+Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form.
+
+Left: the values of the thresholds of the processor profile, set from the first measure; the measure of a key to the screen and of the start of a window; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size, the clipboard and sound come next.
