@@ -65,7 +65,7 @@ grant_by_command :: proc "contextless" (grant: start_grant.Grant) -> (given: Dis
 	switch grant {
 	case .Store:
 		return .Store, .Given
-	case .Root_Ring, .Connect, .Principals, .Tpm, .Debugger, .Inspect, .Stop, .Schedule, .Events, .Counters, .Data_Disk, .Scratch_Disk, .Network_Device, .Settings, .Clock, .Replace, .System_Part, .Acts_For_Principal, .Versions_Erase, .Remote_Clients:
+	case .Root_Ring, .Connect, .Principals, .Tpm, .Debugger, .Inspect, .Stop, .Schedule, .Events, .Counters, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Settings, .Clock, .Replace, .System_Part, .Acts_For_Principal, .Versions_Erase, .Remote_Clients:
 		return .Store, .Never
 	case .Image, .Log_Records, .Serve, .Terminal, .Replacements, .Network, .History_Store, .Debug_Image, .Palette:
 		return .Store, .Not_Built

@@ -133,6 +133,18 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		work.driver, work.device_ring, status = driver_start(place, name == "iommu" ? DRIVER_IOMMU_DEVICE : DRIVER_BLOCK)
 	} else if .Network_Device in grants {
 		work.driver, work.device_ring, status = driver_start(pci.Place{device = pci.NETWORK_DEVICE}, DRIVER_FRAME)
+	} else if .Sound_Device in grants {
+		// One program plays at a time: a second one finds the sound service
+		// of the device started, and does not start (src/md/features/timed_stream.md,
+		// "One program at a time").
+		place := pci.Place{device = pci.SOUND_DEVICE}
+		for &item in started {
+			if item.program != 0 && item.is_driver && item.device == place {
+				system.log_in("devices", .Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another program; one program plays at a time")
+				return .Bad_State
+			}
+		}
+		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
 	return status
 }

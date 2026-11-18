@@ -247,6 +247,9 @@ program_roles := [?]Program_Role_Row {
 	// A listen grant of UDP: QUIC in the program, the module cryptography
 	// through its imports.
 	{name = "quic_echo", grants = {.Network}},
+	// It plays a tone through the sound service of the sound device, its
+	// one client while it runs (src/md/features/timed_stream.md).
+	{name = "tone", grants = {.Sound_Device}},
 	// It is the one client of the frame service of the network device, and
 	// it receives from this service the endpoint of each program with the
 	// grant Network.
@@ -287,6 +290,8 @@ program_roles := [?]Program_Role_Row {
 	{name = "iommu_device", grants = {.System_Part}},
 	// The entropy device, whose one client is this service (driver_start).
 	{name = "entropy", grants = {.System_Part}},
+	// The sound device and the ring of its one client (driver_start).
+	{name = "sound", grants = {.System_Part}},
 	// The registers of the TPM, and the ring and the region that `unlock`
 	// receives (tpm_service_start).
 	{name = "tpm", grants = {.System_Part}},
@@ -361,7 +366,7 @@ program_roles := [?]Program_Role_Row {
 // (tools/modustool/program_roles_check.odin), because the debug access to
 // a program reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "glyphs"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "glyphs"}
 #assert(FONT_SERVICE_NAME == "glyphs")
 
 // name_is_a_system_part says if a name is one of system_part_names.

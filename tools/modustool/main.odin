@@ -44,6 +44,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "modus:contract/remote"
+import "modus:contract/timed_stream"
 import "modus:support/pci"
 
 EXIT_FAILURE :: 1
@@ -156,6 +157,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
 	SOURCE_FOLDER_CONTRACT + "/datagram",
 	SOURCE_FOLDER_CONTRACT + "/byte_order",
+	SOURCE_FOLDER_CONTRACT + "/timed_stream",
+	SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
@@ -1267,7 +1270,7 @@ MACHINE_MEMORY_MIB :: 1024
 // machine, which the tool reads and writes (operation_sequences.odin); such
 // a machine has one processor, so that a sequence gives the same answers at
 // each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "") -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1466,6 +1469,14 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// device service its entry 0, and starts none for a device with no
 		// table.
 		append(&list, "-device", fmt.tprintf("virtio-rng-pci,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
+	}
+	if sound_output != "" {
+		// The sound device writes each frame that its stream gives to a wave
+		// file, in the one format of the timed stream: QEMU then converts no
+		// rate, and the file holds the frames of the sound service in order
+		// (src/md/features/timed_stream.md, "The proof").
+		append(&list, "-audiodev", fmt.tprintf("wav,id=sound,path=%s,out.frequency=%d,out.channels=%d,out.format=s16", sound_output, timed_stream.FRAME_RATE, timed_stream.CHANNELS))
+		append(&list, "-device", fmt.tprintf("virtio-sound-pci,audiodev=sound,disable-legacy=on,addr=0x%x%s", pci.SOUND_DEVICE, virtio_iommu))
 	}
 	if firmware != .Usual || tpm_device {
 		if test_output == "" {

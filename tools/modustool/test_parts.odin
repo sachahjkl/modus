@@ -113,6 +113,7 @@ test_parts := [?]Test_Part {
 		volumes = {BOOT_VOLUME},
 	},
 	{name = "fault_ring", does = "The machine of the fault ring", run = fault_ring_tests_run, procedures = {"fault_ring_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "sound", does = "The machine of sound, with a virtio sound device (`virtio-sound-pci`) whose output goes to a wave file: `tone` plays a tone of 440 Hz at 500 ms after the frame 0 of its stream and checks eight refusals of the sound service, a second `tone` is refused, and the tool finds the tone in the file by its start, with the crossings of zero of 440 Hz and its 24 000 frames, and checks its place against the frame that `tone` names (`SOUND.md`, \"4. The test\")", run = sound_tests_run, procedures = {"sound_tests_run"}, volumes = {BOOT_VOLUME}},
 	{name = "crypto", does = "The machine of the module `cryptography`", run = cryptography_tests_run, procedures = {"cryptography_tests_run"}, volumes = {BOOT_VOLUME}},
 	{
 		name = "guest",

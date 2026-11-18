@@ -214,6 +214,7 @@ a_role_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		{{.Clock, .Store}, GRANT_STORAGE_RING},
 		{{.Clock, .Data_Disk}, GRANT_DEVICE_RING},
 		{{.Terminal, .Network_Device}, GRANT_TERMINAL_RING},
+		{{.Terminal, .Sound_Device}, GRANT_TERMINAL_RING},
 		{{.Network, .Tpm}, GRANT_DATAGRAM_RING},
 		{{.Settings, .Remote_Clients}, GRANT_SETTINGS_PAGE},
 		{{.Terminal, .Log_Records}, GRANT_LOG_RECORDS},

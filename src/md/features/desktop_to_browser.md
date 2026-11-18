@@ -176,7 +176,7 @@ The hot paths of these phases have a vector form after the rules of [`docs/SIMD.
 - **A resolution that the principal chooses.** The compositor sets a mode of the display, then a scale factor for the interface, from 1.25 to 2 on the reference screen.
 - **A window manager.** Windows float, with snap to the edges and to the halves of the screen, maximize and minimize, and global shortcuts that the compositor keeps. Workspaces come next. Tiling may come later as an option, never as the form of the desktop. One key combination always goes to the system (property 20, line 8).
 - **The clipboard.** A copy gives the compositor a read-only handle to a memory object of the program that copies. A paste of the principal gives the program that pastes a read-only handle to that object, at that paste only (property 20, line 5). No program reads the clipboard when the principal does not paste: [clipboard.md](clipboard.md).
-- **Sound** through virtio-snd: a device service, and the class protocol of a timed stream, whose records carry the time at which their samples must play.
+- **Sound** through virtio-snd: a device service, and the class protocol of a timed stream, whose records carry the time at which their samples must play: [timed_stream.md](timed_stream.md).
 
 ### The look
 
@@ -314,8 +314,8 @@ Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
 ## State
 
-Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form.
+Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form. Sound through virtio-snd, the first timed stream ([timed_stream.md](timed_stream.md)).
 
 Built: the three measures of the standard of quality on the path of the system (the time of a frame, of a key to the screen through the console, of the start of a window), the line of the quality profile at the start of the compositor, and the check of the form of their lines in the measure run.
 
-Left: the measures of the GPU profile, which wait for the GPU path; a key to the screen in a window other than the console, which must name its serial; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size, the clipboard and sound come next.
+Left: the measures of the GPU profile, which wait for the GPU path; a key to the screen in a window other than the console, which must name its serial; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size and the clipboard are built.

@@ -176,6 +176,8 @@ module_builds := [?]Module_Build {
 	{name = "iommu_device", source = TEST_MODULE_SOURCES + "iommu_device", program = true, image = true},
 	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", program = true, image = true},
 	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", program = true, image = true},
+	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", program = true, image = true},
+	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", program = true, image = true},
 	{name = "iommu", source = TEST_MODULE_SOURCES + "iommu", program = true, image = true},
 	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", program = true, image = true},
 	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

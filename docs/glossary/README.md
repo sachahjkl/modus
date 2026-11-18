@@ -12,6 +12,7 @@ An entry starts with one sentence that says what the term is. The paragraphs aft
 - [Communication](communication.md): the rings, the calls between programs and the source library.
 - [Devices](devices.md): the device memory, the interrupts and the IOMMU.
 - [Network](network.md): the network service, its endpoints and its protocols.
+- [Sound](sound.md): the sound service, the frames and the time of a timed stream.
 - [Storage](storage.md): the objects, the stores and the tree on the disk.
 - [Desktop](desktop.md): the surfaces, the compositor and the elements of the interface.
 - [Text](text.md): the text encoding, the fonts and the glyphs.
