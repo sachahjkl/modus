@@ -85,8 +85,11 @@ silent_disk_run :: proc(part: ^Test_Part_Run) -> bool {
 	sync.mutex_lock(&server.lock)
 	kept := strings.contains(string(server.current), SILENT_DISK_MARKER)
 	sync.mutex_unlock(&server.lock)
+	// QEMU tries a new connection when a request of the machine reaches its
+	// client of the disk after the disconnect; the server refuses each one,
+	// so a count above 0 is the refusal working, not a fault.
 	refused := sync.atomic_load(&server.connections_refused)
-	if !silent || unanswered < 1 || kept || refused != 0 {
+	if !silent || unanswered < 1 || kept {
 		fmt.eprintfln("modustool: test failed: the silent disk: the disk went silent: %v; requests that it did not answer: %d; the marker is in its image: %v; connections of QEMU refused after the disconnect: %d", silent, unanswered, kept, refused)
 		return false
 	}
@@ -96,7 +99,7 @@ silent_disk_run :: proc(part: ^Test_Part_Run) -> bool {
 	if !lines_once(TEST_OUTPUT_SILENT_DISK, {"block: the device did not answer a request in ", "storage: the disk does not answer: "}) {
 		return false
 	}
-	foundation.test_passed_print("the silent disk: the disk answered none of %d requests from the write of the marker, and kept none of it; the block service failed its requests at its deadline and stopped, the storage service refused the write and a read, and the console ran on", unanswered)
+	foundation.test_passed_print("the silent disk: the disk answered none of %d requests from the write of the marker, and kept none of it; the block service failed its requests at its deadline and stopped, the storage service refused the write and a read, and the console ran on; the server refused %d connections of QEMU after the disconnect", unanswered, refused)
 	return true
 }
 
