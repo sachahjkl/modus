@@ -670,3 +670,22 @@ test_modules :: proc() -> bool {
 	)
 	return true
 }
+
+// build_system builds the modules, the boot images, and then the boot
+// volumes that the caller boots: needed_volumes names them by their paths,
+// and nil is every volume. A volume that the caller does not name is not
+// built and not checked: no machine of this process starts from it
+// (machine_command).
+build_system :: proc(needed_volumes: []string) -> int {
+	build_measure_start()
+	if !build_modules() {
+		return foundation.EXIT_FAILURE
+	}
+	volumes_started := time.tick_now()
+	if !boot_volumes_build(needed_volumes) {
+		return foundation.EXIT_FAILURE
+	}
+	build_measure_step("the boot volumes, in all", volumes_started)
+	build_measure_print()
+	return 0
+}

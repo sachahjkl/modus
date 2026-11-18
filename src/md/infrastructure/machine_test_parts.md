@@ -17,7 +17,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 ## The chosen form
 
-**One table, `test_parts` in `tools/modustool/test_parts.odin`.** A row is a `Test_Part`: its name, the sentence of the guide, its procedure, the procedures whose volumes a host test checks, and its boot volumes. Everything else derives from the rows:
+**One table, `test_parts` in `tools/modustool/machine/test_parts.odin`.** A row is a `Test_Part`: its name, the sentence of the guide, its procedure, the procedures whose volumes a host test checks, and its boot volumes. Everything else derives from the rows:
 
 - The refusal of `test <word>` lists the names of the rows.
 - `boot_volumes_of_test` gives the volumes of a row; the whole test builds every volume.

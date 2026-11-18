@@ -114,7 +114,7 @@ CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
 	{foundation.SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},
 	{foundation.TOOL_SOURCE_FOLDER + "/build", "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
 	{foundation.TOOL_SOURCE_FOLDER + "/build", "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},
-	{foundation.TOOL_SOURCE_FOLDER, "NBD", .First, "the options, the replies and the commands of the network block device protocol (NBD, the protocol document): a client sends options that the server of the tests answers as unsupported"},
+	{foundation.TOOL_SOURCE_FOLDER + "/machine", "NBD", .First, "the options, the replies and the commands of the network block device protocol (NBD, the protocol document): a client sends options that the server of the tests answers as unsupported"},
 	{foundation.SOURCE_FOLDER_CONTRACT + "/remote", "FIELD", .First, "the places of the fields of a Request, from 1, which the argument of an error record names (REQUEST_FIELD_NAMES): a place in a record, not a choice; the test of the peer selects the field to break by its place"},
 	{foundation.SOURCE_FOLDER_KERNEL, "EVENT", .First, "the event types of the event injection of AMD SVM (AMD64 volume 2, section 15.20): the numbers of the processor"},
 }
@@ -752,7 +752,7 @@ Enum_Cast_Exception :: struct {
 ENUM_CAST_EXCEPTIONS := [?]Enum_Cast_Exception {
 	{foundation.SOURCE_FOLDER_KERNEL + "/enter.odin", "op.Operation", 1, "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
 	{foundation.DEMONSTRATION_MODULE_SOURCES + "errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
-	{foundation.TOOL_SOURCE_FOLDER + "/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
+	{foundation.TOOL_SOURCE_FOLDER + "/machine/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
 }
 
 // An exception whose count of casts is not the count that it holds: none

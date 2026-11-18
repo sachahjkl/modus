@@ -138,7 +138,7 @@ FRAME_INTERVAL :: 16 // Milliseconds.
 BAR_HEIGHT :: bar.HEIGHT
 // The frame of a window: a title bar over the surface, and a border of
 // BORDER pixels at the left, the right and the bottom. The machine test
-// reads these numbers (tools/modustool/machine.odin, WINDOW_*).
+// reads these numbers (tools/modustool/machine/machine.odin, WINDOW_*).
 TITLE_HEIGHT :: 24
 BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.

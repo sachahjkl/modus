@@ -31,7 +31,7 @@
 // them.
 //
 // The lines of `add_step`, and of the call of `add_step` in `count_rounds`, are named in the scenario of the test
-// (tools/modustool/debugger_scenario.odin, DEBUG_TARGET_LINE_OF_THE_LOAD
+// (tools/modustool/machine/debugger_scenario.odin, DEBUG_TARGET_LINE_OF_THE_LOAD
 // and DEBUG_TARGET_LINE_OF_THE_STORE): a change of this file above that
 // procedure changes those two numbers.
 package debug_target
