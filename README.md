@@ -221,6 +221,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 | `docs/REPRODUCIBLE_BUILD.md` | One source gives one module: the build, and the threads of the compiler |
 | `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
 | `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how to measure each one |
+| `docs/SOUND.md` | Sound: how a program plays samples at the time that it names, what the sound service refuses, and how the test hears the tone |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
 | `ROADMAP.md` | The planned work, in the sections Now, Next and Later, then Maybe for what is not decided: what each work gives the user |
 | `docs/research/` | Research notes with sources, and video transcripts |
