@@ -316,7 +316,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	start_policy_hash = hash
 	start_policy_stage = .Running
 	start_policy_deadline = system.time() + START_POLICY_HANG_BOUND_MILLISECONDS
-	system.log_in("processes", .Info, "root: started the chosen start policy \"", name, "\" from the disk, hash ", system.Hash{hash[:]}, ", with the grant Start_Policy only")
+	system.log_in("processes", .Info, "root: started the chosen start policy \"", name, "\" from the disk, hash ", system.Hash{start_policy_hash[:]}, ", with the grant Start_Policy only")
 	return .Ok
 }
 

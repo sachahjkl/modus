@@ -139,7 +139,7 @@ test_parts := [?]Test_Part {
 		name = "start_policy",
 		does = "The eight machines of the start policy (`ARCHITECTURE.md`, \"The start policy\"): the key R on the serial line, the console input of the firmware with no screen; a start list whose row of the console names a module that does not exist, so the rescue takes over; three machines with one variable store: the boot program writes the boot entry `modus (rescue)`, `BootNext` to that entry starts the rescue, and the entry with a word that names no start request stops the boot program; then three machines with a software TPM and Secure Boot on: principal 0 chooses a start policy from the disk, the next start runs it and PCR 12 holds its hash, and a chosen start policy that fails gives way to the rescue, with PCR 12 after two extends",
 		run = start_policy_tests_run,
-		procedures = {"start_policy_tests_run", "start_policy_boot_entry_tests_run", "start_policy_from_disk_tests_run"},
+		procedures = {"start_policy_tests_run", "start_policy_boot_entry_tests_run", "start_policy_from_disk_tests_run", "start_policy_machine_run"},
 		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_MISSING_CONSOLE, build.BOOT_VOLUME_SECURE_BOOT},
 	},
 	{name = "shortage", does = "The machine of the shortage of frames", run = shortage_tests_run, procedures = {"shortage_tests_run"}, volumes = {build.BOOT_VOLUME_SHORTAGE}},
