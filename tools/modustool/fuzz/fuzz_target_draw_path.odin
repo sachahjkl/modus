@@ -60,7 +60,10 @@ fuzz_draw_path_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		words: [3]u32
 		mem.copy(&words, &input[DRAW_PATH_HEADER + index * draw_record.PATH_POINT_SIZE], size_of(words))
 		near := words[0] & 1 == 1
-		point = {command = draw_record.Path_Command(words[0] % 5), x = fuzz_draw_path_place(words[1], near), y = fuzz_draw_path_place(words[2], near)}
+		// The word 0 names no command: the border gives the zero value,
+		// which the writer of the path must refuse.
+		command, _ := draw_record.path_command_of_word(words[0] % 5)
+		point = {command = command, x = fuzz_draw_path_place(words[1], near), y = fuzz_draw_path_place(words[2], near)}
 	}
 	memory := new(Draw_Path_Tables, context.temp_allocator)
 	table := interface.Draw_Table{records = memory.records[:], text = memory.text[:]}
