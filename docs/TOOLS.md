@@ -1000,6 +1000,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `vector_font` | raw | A font that `font_open` accepts gives each glyph, outline, pair and substitution, and draws a glyph |
 | `glyph_cache`, `font_outlines` | raw | A glyph cache that `validate` accepts gives each glyph in its line and its words; font outlines write again to the same fonts |
 | `pointer_pictures` | raw | A theme that `validate` accepts gives a picture of each shape, size and time, with its pixels in the file |
+| `draw_record` | raw | The border of a draw record gives a problem of its enumeration and changes nothing; a record that it reads has a box in its bounds, and writes back to its own bytes |
 | `firmware_tables` | raw | The tables DMAR, IVRS and MCFG that the readers accept keep their counts, ranges and units in their bounds |
 | `acpi_processors` | raw | The processors that the table APIC names stay in the table of the caller, and those of the identifiers of 8 bits are processors of the other mode too |
 | `sentences` | raw | The sentence of any error record is a valid text; in a small buffer it is the start of the whole sentence, then the cut mark with the count of the bytes that it lacks |

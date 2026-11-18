@@ -23,8 +23,9 @@ bar_frame_begin :: proc(memory: ^Bar_Frame) -> Frame {
 @(private = "file")
 records_inside :: proc(t: ^testing.T, table: ^Draw_Table, area: Area, name: string) {
 	for record in table.records[:table.record_count] {
-		inside := int(record.x) >= area.x && int(record.y) >= area.y && int(record.x) + int(record.width) <= area.x + area.width && int(record.y) + int(record.height) <= area.y + area.height
-		testing.expectf(t, inside, "%s: a record at %d,%d of %d x %d passes the area", name, record.x, record.y, record.width, record.height)
+		view := record_view(record)
+		inside := view.x >= area.x && view.y >= area.y && view.x + view.width <= area.x + area.width && view.y + view.height <= area.y + area.height
+		testing.expectf(t, inside, "%s: a record at %d,%d of %d x %d passes the area", name, view.x, view.y, view.width, view.height)
 	}
 }
 
@@ -62,9 +63,10 @@ bar_with_value_stays_inside_its_area_at_each_edge :: proc(t: ^testing.T) {
 		full := -1
 		texts := 0
 		for record in memory.table.records[:memory.table.record_count] {
-			if record.kind == .Vertical_Gradient {
-				full = int(record.width)
-			} else if record.kind == .Text {
+			view := record_view(record)
+			if view.kind == .Vertical_Gradient {
+				full = view.width
+			} else if view.kind == .Text {
 				texts += 1
 			}
 		}
@@ -82,17 +84,17 @@ bar_with_value_places_the_bar_and_the_value :: proc(t: ^testing.T) {
 	area := Area{284, 40, 300, TABLE_LINE}
 	bar_with_value(&frame, area, 200, 50, 100, graphics.colors.program)
 	testing.expect_value(t, memory.table.record_count, 3)
-	track := memory.table.records[0]
+	track := record_view(memory.table.records[0])
 	testing.expect_value(t, track.kind, Draw_Kind.Rectangle)
-	testing.expect_value(t, int(track.x), area.x)
-	testing.expect_value(t, int(track.y), area.y + (TABLE_LINE - BAR_WITH_VALUE_THICKNESS) / 2)
-	testing.expect_value(t, int(track.width), 200)
-	testing.expect_value(t, int(track.height), BAR_WITH_VALUE_THICKNESS)
-	full := memory.table.records[1]
-	testing.expect_value(t, int(full.width), 100)
-	value := memory.table.records[2]
+	testing.expect_value(t, track.x, area.x)
+	testing.expect_value(t, track.y, area.y + (TABLE_LINE - BAR_WITH_VALUE_THICKNESS) / 2)
+	testing.expect_value(t, track.width, 200)
+	testing.expect_value(t, track.height, BAR_WITH_VALUE_THICKNESS)
+	full := record_view(memory.table.records[1])
+	testing.expect_value(t, full.width, 100)
+	value := record_view(memory.table.records[2])
 	testing.expect_value(t, value.kind, Draw_Kind.Text)
-	testing.expect_value(t, int(value.x), area.x + 200 + BAR_WITH_VALUE_GAP)
-	testing.expect_value(t, int(value.y), area.y + (TABLE_LINE - line_height({})) / 2)
-	testing.expect_value(t, string(memory.text[value.text_start:][:value.text_count]), "50")
+	testing.expect_value(t, value.x, area.x + 200 + BAR_WITH_VALUE_GAP)
+	testing.expect_value(t, value.y, area.y + (TABLE_LINE - line_height({})) / 2)
+	testing.expect_value(t, string(memory.text[value.first:][:value.count]), "50")
 }

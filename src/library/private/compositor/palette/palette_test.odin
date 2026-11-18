@@ -3,6 +3,7 @@ package palette
 
 import "core:strings"
 import "core:testing"
+import "modus:contract/draw_record"
 import "modus:contract/palette_table"
 import "modus:contract/value_kinds"
 import "modus:support/display"
@@ -644,11 +645,12 @@ the_caret_follows_the_typed_part :: proc(t: ^testing.T) {
 		for record in screen.table.records[:screen.table.record_count] {
 			// In the input band only: under it, a part of the icon of a
 			// window can have the same color and the same width.
-			if record.kind == .Rectangle && record.first_color == graphics.colors.title && int(record.width) == 2 * INPUT_SCALE && int(record.y) < y + INPUT_BAND_HEIGHT - 2 {
+			place, color, is_rectangle := rectangle_of_record(record)
+			if is_rectangle && color == graphics.colors.title && place.right - place.left == 2 * INPUT_SCALE && place.top < y + INPUT_BAND_HEIGHT - 2 {
 				found = true
-				testing.expect_value(t, int(record.x), caret_x)
-				testing.expect_value(t, int(record.y), y + (INPUT_BAND_HEIGHT - graphics.CELL_HEIGHT * INPUT_SCALE) / 2)
-				testing.expect_value(t, int(record.height), graphics.CELL_HEIGHT * INPUT_SCALE)
+				testing.expect_value(t, place.left, caret_x)
+				testing.expect_value(t, place.top, y + (INPUT_BAND_HEIGHT - graphics.CELL_HEIGHT * INPUT_SCALE) / 2)
+				testing.expect_value(t, place.bottom - place.top, graphics.CELL_HEIGHT * INPUT_SCALE)
 			}
 		}
 		testing.expectf(t, found, "typed %q: the panel has a caret", typed)
@@ -775,11 +777,12 @@ each_row_shows_the_icon_of_its_entry :: proc(t: ^testing.T) {
 			}
 			pixels, others := 0, 0
 			for record in screen.table.records[:screen.table.record_count] {
-				if record.kind != .Rectangle || int(record.x) < box_left || int(record.y) < box_top || int(record.x + record.width) > box_left + interface.LIST_ROW_ICON_SIZE || int(record.y + record.height) > box_top + interface.LIST_ROW_ICON_SIZE {
+				place, record_color, is_rectangle := rectangle_of_record(record)
+				if !is_rectangle || place.left < box_left || place.top < box_top || place.right > box_left + interface.LIST_ROW_ICON_SIZE || place.bottom > box_top + interface.LIST_ROW_ICON_SIZE {
 					continue
 				}
-				if icon != nil && record.first_color == u32(color) {
-					pixels += int(record.width) * int(record.height)
+				if icon != nil && record_color == color {
+					pixels += (place.right - place.left) * (place.bottom - place.top)
 				} else {
 					others += 1
 				}
@@ -817,7 +820,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	x, y := panel_place(SCREEN_WIDTH)
 	has_text :: proc(table: ^interface.Draw_Table, text: string) -> bool {
 		for record in table.records[:table.record_count] {
-			if interface.is_text_kind(record.kind) && strings.contains(string(table.text[record.text_start:][:record.text_count]), text) {
+			if found, _, is_text := interface.text_of_record(table, record); is_text && strings.contains(found, text) {
 				return true
 			}
 		}
@@ -825,8 +828,9 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	}
 	row_fill :: proc(table: ^interface.Draw_Table, panel_x, panel_y: int) -> (color: graphics.Color, found: bool) {
 		for record in table.records[:table.record_count] {
-			if record.kind == .Rectangle && int(record.x) == panel_x + BORDER && int(record.y) == panel_y + LIST_TOP && int(record.height) == ROW_HEIGHT {
-				return graphics.Color(record.first_color), true
+			place, fill, is_rectangle := rectangle_of_record(record)
+			if is_rectangle && place.left == panel_x + BORDER && place.top == panel_y + LIST_TOP && place.bottom - place.top == ROW_HEIGHT {
+				return fill, true
 			}
 		}
 		return 0, false
@@ -1018,7 +1022,7 @@ the_entries_of_a_provider :: proc(t: ^testing.T) {
 	defer screen_free(screen)
 	has :: proc(table: ^interface.Draw_Table, text: string) -> bool {
 		for record in table.records[:table.record_count] {
-			if interface.is_text_kind(record.kind) && strings.contains(string(table.text[record.text_start:][:record.text_count]), text) {
+			if found, _, is_text := interface.text_of_record(table, record); is_text && strings.contains(found, text) {
 				return true
 			}
 		}
@@ -1093,7 +1097,7 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	found := false
 	for record in screen.table.records[:screen.table.record_count] {
-		if interface.is_text_kind(record.kind) && string(screen.table.text[record.text_start:][:record.text_count]) == NOTE_REFUSED_PROVIDER {
+		if shown, _, is_text := interface.text_of_record(&screen.table, record); is_text && shown == NOTE_REFUSED_PROVIDER {
 			found = true
 		}
 	}
@@ -1145,7 +1149,7 @@ running_and_result :: proc(t: ^testing.T) {
 	for text in texts {
 		found := false
 		for record in screen.table.records[:screen.table.record_count] {
-			if interface.is_text_kind(record.kind) && string(screen.table.text[record.text_start:][:record.text_count]) == text {
+			if shown, _, is_text := interface.text_of_record(&screen.table, record); is_text && shown == text {
 				found = true
 			}
 		}
@@ -1158,7 +1162,7 @@ running_and_result :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	large := false
 	for record in screen.table.records[:screen.table.record_count] {
-		if interface.is_text_kind(record.kind) && record.text_scale == 3 && string(screen.table.text[record.text_start:][:record.text_count]) == "42" {
+		if shown, scale, is_text := interface.text_of_record(&screen.table, record); is_text && scale == 3 && shown == "42" {
 			large = true
 		}
 	}
@@ -1343,7 +1347,7 @@ the_form_of_an_entry :: proc(t: ^testing.T) {
 	for text in texts {
 		found := false
 		for record in screen.table.records[:screen.table.record_count] {
-			if interface.is_text_kind(record.kind) && record.text_scale == INPUT_SCALE && strings.contains(string(screen.table.text[record.text_start:][:record.text_count]), text) {
+			if shown, scale, is_text := interface.text_of_record(&screen.table, record); is_text && scale == INPUT_SCALE && strings.contains(shown, text) {
 				found = true
 			}
 		}
@@ -2021,7 +2025,7 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 	defer screen_free(screen)
 	has :: proc(table: ^interface.Draw_Table, text: string) -> bool {
 		for record in table.records[:table.record_count] {
-			if interface.is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == text {
+			if found, _, is_text := interface.text_of_record(table, record); is_text && found == text {
 				return true
 			}
 		}
@@ -2181,10 +2185,10 @@ a_number_with_its_unit :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	unit_found, prompt_found := false, false
 	for record in screen.table.records[:screen.table.record_count] {
-		if !interface.is_text_kind(record.kind) {
+		text, _, is_text := interface.text_of_record(&screen.table, record)
+		if !is_text {
 			continue
 		}
-		text := string(screen.table.text[record.text_start:][:record.text_count])
 		unit_found ||= text == " pages"
 		prompt_found ||= strings.contains(text, "an Integer, in pages")
 	}
@@ -2303,9 +2307,21 @@ the_match_of_an_act_name :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	found := false
 	for record in screen.table.records[:screen.table.record_count] {
-		if interface.is_text_kind(record.kind) && strings.contains(string(screen.table.text[record.text_start:][:record.text_count]), MODE_GO_TO) {
+		if shown, _, is_text := interface.text_of_record(&screen.table, record); is_text && strings.contains(shown, MODE_GO_TO) {
 			found = true
 		}
 	}
 	testing.expect(t, found)
+}
+
+// The rectangle and the color of a record of the kind Rectangle, read
+// through the border of the draw record; false for another record.
+@(private = "file")
+rectangle_of_record :: proc(record: interface.Draw_Record) -> (place: interface.Rectangle, color: graphics.Color, is_rectangle: bool) {
+	primitive, problem := draw_record.read(record)
+	fields, is_kind := primitive.(draw_record.Draw_Rectangle)
+	if problem != .None || !is_kind {
+		return {}, 0, false
+	}
+	return interface.record_rectangle(record), fields.color, true
 }

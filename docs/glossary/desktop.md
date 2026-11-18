@@ -264,7 +264,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_10` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_10` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 10 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
+It is the first library module. A window calls `damage_of_draw_table_11` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_11` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 11 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 
@@ -272,13 +272,23 @@ Do not use: renderer module, graphics library, render service.
 
 ### Draw record
 
-A draw record is one thing to draw, in 40 bytes: a rectangle, a gradient, a run of text, a clip, a picture, a text grid or a line, with its place and its colors.
+A draw record is one thing to draw, in 48 bytes: a rectangle, a gradient, a run of text, a clip, a picture, a text grid or a line, with its box and the fields of its kind.
 
-Records of one fixed size make the output of a frame plain data: a table that can be compared, measured, drawn again in a part, or tested. A record holds its kind, its rectangle, two colors, a range of bytes in the text table, and a part of the element identity that wrote it. The format has a version, `DRAW_RECORD_VERSION`, and the execution checks each record. A draw record is not a command to a graphics processor: it is drawn on the processor, in the memory of the program.
+Records of one fixed size make a frame plain data: a table that can be compared, drawn again in a part, or tested. A record is a header (its kind, its element identity, its box in 1/64 pixel) and 24 bytes of the fields of its kind only. The contract package `draw_record` holds the form, its version and its one border, `draw_record.read`, which refuses a byte past its bound. A draw record is not a command to a graphics processor: it is drawn on the processor, in the memory of the program.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)".
+The design: `docs/INTERFACE.md`, "2.1 Draw record".
 
-Do not use: draw command, display list item, primitive.
+Do not use: draw command, display list item.
+
+### Draw primitive
+
+A draw primitive is what one draw record draws, as a reader sees it past the border: one record type for each kind, with the fields of that kind only.
+
+`draw_record.read` gives it as `Draw_Primitive`, a union of Odin, from the bytes of a record, and `draw_record.record_of` writes the bytes of a record from it. The bytes are the contract; the union is the view of one reader, so no contract depends on a feature of the language. Example: a `Draw_Rectangle` holds a color, and its box stays in the record. A draw primitive is not a command to a graphics processor.
+
+The design: `src/md/api/draw_table.md`, "The record: a header and the fields of one kind".
+
+Do not use: draw command, shape.
 
 ### Draw table
 
@@ -286,7 +296,7 @@ A draw table is the draw records of one frame of a window, the bytes of their te
 
 It is the one 2D interface of the system: each window and the compositor draw through it, and a GPU later draws the same table through WebGPU. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, to find the damage by difference. A full table sets `full`; a record that names memory outside the table sets `refused`. A draw table is not a tree: two tables compare record by record at the same index.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)"; its rationalised form: `src/md/api/draw_table.md`.
+The design: `docs/INTERFACE.md`, "2.1 Draw record"; its rationalised form: `src/md/api/draw_table.md`.
 
 Do not use: display list, command buffer, render tree.
 

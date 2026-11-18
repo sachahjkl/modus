@@ -271,6 +271,16 @@ fuzz_target_table := [?]Fuzz_Target {
 		regions = fuzz_pointer_pictures_regions,
 	},
 	{
+		name = "draw_record",
+		kind = .Raw,
+		about = "contract/draw_record: the border of a draw record gives a problem of its enumeration, and a record that it reads writes back to its own bytes",
+		packages = {SOURCE_FOLDER_CONTRACT + "/draw_record"},
+		input_limit = 4 << 10,
+		execute = fuzz_draw_record_execute,
+		seeds = fuzz_draw_record_seeds,
+		regions = fuzz_draw_record_regions,
+	},
+	{
 		name = "firmware_tables",
 		kind = .Raw,
 		about = "kernel:iommu: the tables DMAR, IVRS and MCFG that the readers accept keep their counts, ranges and units in their bounds",

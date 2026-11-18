@@ -2,7 +2,7 @@
 
 The draw table is the one 2D interface of the system: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". A program describes each frame of its window as a table of draw records in its own memory. The drawing module finds the damage by difference and draws the records into the surface. The compositor draws its screen with the same records. When a GPU exists, the GPU draws the same table through WebGPU.
 
-This file records the rationalised form of the record: a closed set of primitives, each record with the fields of its kind only. The guide of today's form is [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "2.1 Draw record (format version 10)". The border of the drawing module is in [library_modules.md](library_modules.md). The picture memories are in [picture.md](picture.md), and the cells of a grid in [text_grid.md](text_grid.md).
+This file records the rationalised form of the record: a closed set of primitives, each record with the fields of its kind only. The guide of today's form is [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "2.1 Draw record". The border of the drawing module is in [library_modules.md](library_modules.md). The picture memories are in [picture.md](picture.md), and the cells of a grid in [text_grid.md](text_grid.md).
 
 ## What changed
 
@@ -40,7 +40,8 @@ A draw record is 48 bytes, little-endian: a header of 24 bytes, then 24 bytes th
 | 24 | the fields of the kind | 24 bytes | Each kind below gives its own fields; each byte that the kind does not name is 0 |
 
 - **The box is the one rectangle of the record.** For a rectangle and a gradient it is the shape. For a path, a text, a picture and a grid it holds every pixel that the record draws. The execution cuts each record to its box. A box that is too small therefore cuts only the drawing of its own record, and the damage of a record is its box rounded out to whole pixels: never too small.
-- **One border.** The procedure `draw_record_read` takes one copy of a record (a volatile read, as today) and gives a `Draw_Primitive`: a union of Odin with one record type for each kind. It refuses a kind word that names no member, a reserved byte that is not 0, and a field out of its bounds. Past it, the execution and the difference switch on the primitive, whole, with no `#partial` and no default case. The bytes are the contract; the union is the view of one reader.
+- **One border.** The procedure `draw_record.read` of the contract package `draw_record` takes the one copy of a record that its reader made (a volatile read) and gives a `Draw_Primitive`: a union of Odin with one record type for each kind. It refuses a kind word that names no member, a reserved byte that is not 0, a box that is inverted or past the limit, and a field out of its bounds, each with its `Problem`. Past it, the execution and the difference switch on the primitive, whole, with no `#partial` and no default case. `draw_record.record_of` writes the record of a primitive, so the kind of a record always matches its fields. The bytes are the contract; the union is the view of one reader.
+- **The record is a contract package.** The writer (the interface package) and the readers (the drawing module, the compositor, the tool that draws the byte layouts of the site, a fuzz target) compile in one form. The described exports name `draw_record.Draw_Record` by its package: the check of the declarations of an import reads the layout of a struct by its name, not through an alias. The box is four fields, not a nested record, because a description holds no record in a record.
 - **Unused bytes are 0, and the border checks it.** So two records that draw the same thing have the same bytes, and the comparison of the bytes stays the comparison of the drawing.
 
 ### The unit: 1/64 pixel
@@ -49,7 +50,7 @@ Each place and each size of a record is a signed number of 1/64 pixel.
 
 - The measure of a text is in 1/64 pixel already: the advances of the interface font, and the right-aligned text of `draw_text_right`. A text needs no conversion, and its origin goes to the nearest third of a pixel as today.
 - The rasterizer of the vector font works in 1/256 pixel. A place of a record goes to it with a shift of 2 bits, with no rounding.
-- An i32 of 1/64 pixel reaches ±2^25 pixels. Each place of a record stays inside ±2^30 units (`COORDINATE_LIMIT`, 2^24 pixels), so the difference of two places fits an i32 and no sum of the execution wraps.
+- An i32 of 1/64 pixel reaches ±2^25 pixels. Each place of a record stays inside ±2^29 units (`COORDINATE_LIMIT`, 2^23 pixels), so the difference of two places, at most 2^30, fits an i32 and no sum of the execution wraps. A limit of 2^24 pixels was refused: from -2^30 to +2^30 units the width is 2^31, one past the largest i32.
 - A shape whose edges are on whole pixels (multiples of 64) has a coverage of 0 or 1 at each pixel: it draws the bytes of version 10.
 
 ### The color and the blending rule
@@ -196,7 +197,7 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 - **A box that lies.** A box that is smaller than the drawing cuts the drawing; a box that is larger damages more. Neither harms another record or another program.
 - **A transparent record still damages its box.** A change of a color from opaque to transparent changes pixels.
-- **A record that the border refuses** draws nothing and damages its box, as a refused record of version 10 does. Its fields are not trusted, so its box is the box of its bytes, cut to `COORDINATE_LIMIT`.
+- **A record that the border refuses** draws nothing, and a refused `Clip` keeps the cut. It is equal to no record whose bytes differ, so a change to or from it damages both boxes; the same refused bytes in two frames draw nothing in both and damage nothing. Its fields are not trusted, so its box is the box of its bytes, cut to `COORDINATE_LIMIT`.
 - **The cost of a hostile record is bounded.** A rectangle reaches each pixel of its box at most once. A path has at most 1 024 points, so at most 16 384 segments, and its work is bounded by the rows of its box times its segments. A stroke is at most 64 pixels wide. A text is at most 256 bytes. The clip stack is at most 16 deep.
 - **The record of zeros is valid.** It is a `None` with an empty box. A zero color is transparent, a zero step is no repetition, a zero stroke width is no stroke, a zero font is the font of the cells, a zero format is an opaque picture.
 - **The pointer is not a draw record.** The compositor draws the pointer after the last call of a frame, with the blend of its premultiplied pictures in encoded values ([`docs/POINTERS.md`](../../../docs/POINTERS.md)). That second blend stays outside the draw table until the pointer becomes a record.
@@ -205,4 +206,6 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 ## What is built and what is left
 
-Built: version 10 of the record, its difference, its execution in the drawing module and in the compositor, and the refusals of each kind of today. Left: each step of `ROADMAP.md` whose design link is this file, in order. The steps change the format in place. Each one ends with every window on the new version.
+Built: version 11 of the record, the tagged form: the header with the box in 1/64 pixel and the fields of each kind, in the contract package `src/library/contract/draw_record`, with its border, the writer of each kind, its byte layouts on the site and its fuzz target. The kinds are still those of version 10, each with its own fields, and every window draws the pixels of version 10: no kind draws inside a pixel yet, so the border refuses a box off the whole pixels. Two fields of version 10 became places: the ink margin of a text in the interface font is the distance from the left edge of its box to its origin, which is a place in 1/64 pixel on a third of a pixel; a line holds its two ends, and its box holds each square of its path. A record that the border refuses damages its box when its bytes change: in version 10 a refused line damaged nothing. The border refuses a color whose high byte is not 0, so a record that it reads is canonical, and the difference compares the 48 bytes of two records first and reads through the border only the records that differ. `COORDINATE_LIMIT` is 2^23 pixels, so the width of the widest box in units fits an i32. The text table keeps its name `text`; the name `bytes` comes with the paths, which put points in it.
+
+Left: each other step of `ROADMAP.md` whose design link is this file, in order. The steps change the format in place. Each one ends with every window on the new version.

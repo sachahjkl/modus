@@ -72,14 +72,15 @@ import "modus:support/system"
 // The tool counts its module, a stack and a thread area for each of its 7
 // threads, and its window. The working memory: its rings, 4 processors x
 // (128 + 8192 x 64 bytes), 513; one shared page for each child, 2; the
-// load child, 256; the child that faults, at the same time, 256; its page
+// load child, 256; the child that faults, at the same time, 320, because it
+// loads this whole module, whose image grows with the drawing code; its page
 // tables; and the rest of the 3072 pages that it had before the tool
 // counted. Programs: itself and two children at one time. Threads: its
 // main thread, 1; the load child, its main thread and 4 loaders, 5 (taken
 // from this budget when it starts, for its life); then either the child
 // that faults or the thread that empties the rings, 1, never both at one
 // time: 7.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1705, programs = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1769, programs = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 960
@@ -138,7 +139,7 @@ STOP_BY_PARENT :: 9
 // would count the stops. The child that faults waits: 100 000.
 // log_records 0: a child has no log handle and writes no record.
 LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256 + LOADERS_MOST * (16 + 3), programs = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
-WAITER_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 0}
+WAITER_AMOUNTS :: system.Budget_Amounts{pages = 320, programs = 1, threads = 1, processor = 100_000, log_records = 0}
 
 // The rounds of the load child: modus:private/kernel_events/kernel_events_rounds.
 Round :: rounds.Round

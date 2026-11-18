@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/draw_record"
 import "modus:contract/text_encoding"
 import "modus:support/graphics"
 import "modus:support/text_shaping"
@@ -42,68 +43,76 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		return
 	}
 	cut := limit
-	for record in table.records[:table.record_count] {
-		if record.kind == .Clip {
-			cut = record.width == 0 ? limit : intersection(limit, record_rectangle(record))
+	for index in 0 ..< table.record_count {
+		// One copy of each record, read through the border: a table can be
+		// in memory that another program writes during the call, and each
+		// check and each draw reads this copy.
+		record := draw_record.copy_once(&table.records[index])
+		primitive, problem := draw_record.read(record)
+		if problem != .None {
 			continue
 		}
-		area := intersection(cut, record_rectangle(record))
+		place := record_rectangle(record)
+		if _, is_clip := primitive.(draw_record.Draw_Clip); is_clip {
+			cut = place.right == place.left ? limit : intersection(limit, place)
+			continue
+		}
+		area := intersection(cut, place)
 		if empty(area) {
 			continue
 		}
 		// The part of the canvas where this record can draw: the record draws
 		// in its own coordinates, and the view cuts it.
 		view := graphics.view(canvas, area.left + origin_x, area.top + origin_y, area.right - area.left, area.bottom - area.top)
-		x, y := int(record.x) - area.left, int(record.y) - area.top
-		width, height := int(record.width), int(record.height)
-		switch record.kind {
-		case .None, .Clip:
-		case .Rectangle:
-			graphics.fill(view, x, y, width, height, record.first_color)
-		case .Vertical_Gradient:
+		x, y := place.left - area.left, place.top - area.top
+		width, height := place.right - place.left, place.bottom - place.top
+		switch fields in primitive {
+		case draw_record.Draw_Nothing, draw_record.Draw_Clip:
+		case draw_record.Draw_Rectangle:
+			graphics.fill(view, x, y, width, height, fields.color)
+		case draw_record.Draw_Vertical_Gradient:
 			// One mix for each line: only the lines in the view.
 			first := max(0, -y)
 			last := min(height, view.height - y)
 			for row in first ..< last {
-				graphics.fill(view, x, y + row, width, 1, graphics.mix(record.first_color, record.second_color, u32(row * 255 / max(height - 1, 1))))
+				graphics.fill(view, x, y + row, width, 1, graphics.mix(fields.top_color, fields.bottom_color, u32(row * 255 / max(height - 1, 1))))
 			}
-		case .Horizontal_Gradient:
+		case draw_record.Draw_Horizontal_Gradient:
 			// One row of colors for the columns in the view, in parts of
 			// 512 pixels, then a copy of the row to each line.
 			row: [512]graphics.Color
 			last := min(width, view.width - x)
 			for part := max(0, -x); part < last; part += len(row) {
 				count := min(len(row), last - part)
-				graphics.gradient(row[:count], record.first_color, record.second_color, width, part)
+				graphics.gradient(row[:count], fields.left_color, fields.right_color, width, part)
 				graphics.copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
 			}
-		case .Text:
-			start := int(record.text_start)
-			count := int(record.text_count)
-			if start + count <= table.text_count {
-				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale), record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular)
+		case draw_record.Draw_Text:
+			start, count := u64(fields.first), u64(fields.count)
+			if start + count <= u64(table.text_count) {
+				text_draw(view, x, y, string(table.text[start:][:count]), fields.color, int(fields.scale), fields.weight)
 			}
-		case .Interface_Text:
-			interface_text_draw(table, record, view, x, y)
-		case .Folded_Gap:
-			graphics.fill(view, x, y, width, height, record.second_color)
+		case draw_record.Draw_Interface_Text:
+			interface_text_draw(table, fields, view, area.left, y)
+		case draw_record.Draw_Folded_Gap:
+			graphics.fill(view, x, y, width, height, fields.track_color)
 			// Two lines at an angle, from the bottom left up to the right.
-			graphics.line(view, x + 2, y + height - 4, x + width - 4, y + 4, 1, record.first_color)
-			graphics.line(view, x + 6, y + height - 4, x + width, y + 8, 1, record.first_color)
-		case .Picture:
-			if picture, ok := picture_of(table, record); ok {
+			graphics.line(view, x + 2, y + height - 4, x + width - 4, y + 4, 1, fields.line_color)
+			graphics.line(view, x + 6, y + height - 4, x + width, y + 8, 1, fields.line_color)
+		case draw_record.Draw_Picture:
+			if picture, ok := picture_pixels(table, place, fields); ok {
 				graphics.copy(view, x, y, picture)
 			}
-		case .Text_Grid:
-			if grid, ok := grid_of(table, record); ok {
+		case draw_record.Draw_Text_Grid:
+			if grid, ok := grid_cells(table, fields); ok {
 				text_grid_draw(view, x, y, grid)
 			}
-		case .Line:
-			// (x, y) is the first end in the view; the path is the one of
-			// graphics.line from the end that line_ends_in_order puts first.
-			start_x, start_y, end_x, end_y := line_ends_in_order(x, y, x + width, y + height)
-			graphics.line(view, start_x, start_y, end_x, end_y, int(record.kind_detail), record.first_color)
-		case .Point_Grid:
+		case draw_record.Draw_Line:
+			// The ends in the view; the path is the one of graphics.line from
+			// the end that line_ends_in_order puts first.
+			start_x, start_y, end_x, end_y := line_ends_in_order(draw_record.pixels_floor(fields.start_x) - area.left, draw_record.pixels_floor(fields.start_y) - area.top, draw_record.pixels_floor(fields.end_x) - area.left, draw_record.pixels_floor(fields.end_y) - area.top)
+			graphics.line(view, start_x, start_y, end_x, end_y, int(fields.thickness), fields.color)
+		case draw_record.Draw_Point_Grid:
 			// The points are at 12 + 24 n of the surface, so that two areas
 			// of one surface show one grid. A point that starts before the
 			// area can reach into it: the loop starts one step before.
@@ -112,7 +121,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			first_y := half + max(0, (area.top - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
 			for point_y := first_y; point_y < area.bottom; point_y += graphics.POINT_STEP {
 				for point_x := first_x; point_x < area.right; point_x += graphics.POINT_STEP {
-					graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, record.first_color)
+					graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, fields.color)
 				}
 			}
 		}
@@ -199,26 +208,27 @@ cell_character_put :: proc "contextless" (run: []u8, place: int, character: rune
 	return place + length
 }
 
-// interface_text_draw draws an Interface_Text record whose x and y are in
-// the view. The record is a copy, and each field is checked before its use:
-// a record that a caller wrote by hand can have any bytes. A record with a
-// range outside the text table, a third of 3 or more, an ink margin past
-// INK_MARGIN_LIMIT, a scale out of 1 to 3, or more than INTERFACE_TEXT_LIMIT
-// bytes draws nothing. With no interface font, the text is drawn in the
-// font of the cells at its origin, cut to its rectangle as each record.
+// interface_text_draw draws an Interface_Text record that the border read:
+// its origin, its count, its scale and its weight are in their bounds. view
+// starts at the column view_left of the surface, and y is the top of the
+// record in the view. A record with a range outside the text table draws
+// nothing. With no interface font, the text is drawn in the font of the
+// cells at the pixel of its origin, cut to its box as each record.
 @(private)
-interface_text_draw :: proc "contextless" (table: ^Draw_Table, record: Draw_Record, view: graphics.Canvas, x, y: int) {
-	start := u64(record.text_start)
-	count := u64(record.text_count)
-	margin := u64(record.second_color)
-	scale := int(record.text_scale)
-	if start + count > u64(table.text_count) || count > INTERFACE_TEXT_LIMIT || record.text_origin_thirds > 2 || margin > INK_MARGIN_LIMIT || scale < 1 || scale > 3 {
+interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_Interface_Text, view: graphics.Canvas, view_left, y: int) {
+	start := u64(fields.first)
+	count := u64(fields.count)
+	scale := int(fields.scale)
+	if start + count > u64(table.text_count) {
 		return
 	}
 	text := table.text[start:][:count]
-	font := Font{kind = .Interface, scale = u8(scale), weight = record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular}
+	font := Font{kind = .Interface, scale = u8(scale), weight = fields.weight}
+	// The origin in 1/64 pixel from the left of the view; the border keeps
+	// it on a third of a pixel and inside the box.
+	origin := i64(fields.origin_x) - i64(view_left) * draw_record.UNITS_PER_PIXEL
 	if table.interface_font == nil {
-		text_draw(view, x + int(margin), y, string(text), record.first_color, scale, font.weight)
+		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), fields.color, scale, font.weight)
 		return
 	}
 	cache := interface_cache_of(table.interface_font, font)
@@ -228,8 +238,7 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, record: Draw_Reco
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_shaping.Placed_Glyph
 	placed_count, _, _ := text_shaping.shape(&spacing, text, placed[:])
-	origin := (i64(x) + i64(margin)) * 64 + i64(record.text_origin_thirds) * 64 / 3
-	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, record.first_color)
+	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, fields.color)
 }
 
 // text_draw draws characters of the font of the system, each pixel of the

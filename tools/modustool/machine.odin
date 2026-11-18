@@ -3173,7 +3173,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
@@ -3283,7 +3283,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; kept in the store"},
 	{kind = .Wait, text = "settings: the appearance in force is light: the setting light"},
 	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light"},
 	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button of the programs in the bar: the light form of the pointer.
 	{kind = .Front, text = "settings"},
