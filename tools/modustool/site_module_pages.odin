@@ -1,7 +1,7 @@
 // The pages of the modules (docs/SITE.md, "The reference tables"): an index,
 // and one page for each module of module_builds. A page gives the
 // documentation of the module, its exports as the console prints them, its
-// imports, and for a process what the root service gives it. Each fact is
+// imports, and for a module with an entry what the root service gives it. Each fact is
 // read from the source that the build reads: the list of the builds, the
 // source of the module (describe.odin), and the root service.
 package modustool

@@ -768,7 +768,7 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 		fmt.eprintfln("modustool: the font %s: %s", font_name, vector_font.font_problem_names[problem])
 		return nil, false
 	}
-	// The reader of the processes checks the cache here too: a cache that it
+	// The reader of the modules checks the cache here too: a cache that it
 	// refuses is found at the build, not at the boot.
 	if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
 		fmt.eprintfln("modustool: the glyph cache of %s is refused: %s, value %d, limit %d", font_name, glyph_cache.problem_sentences[refused.kind], refused.value, refused.limit)
@@ -815,7 +815,7 @@ FONT_OUTLINES_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/font_outlines.bin"
 FONT_OUTLINES_FONTS :: [?]string{INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT, DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT}
 
 // font_outlines_write writes the resource of the font outlines from the
-// subsets in resources/fonts, checks it with the reader of the processes,
+// subsets in resources/fonts, checks it with the reader of the modules,
 // and gives it as a resource of the boot image.
 font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
 	names := FONT_OUTLINES_FONTS
@@ -853,7 +853,7 @@ INTERFACE_POSITIONS := [3]int{3, 1, 1}
 INTERFACE_BOLD_POSITIONS := [1]int{3}
 
 // interface_glyph_caches_write draws the two glyph caches of the interface
-// font from its subsets, checks them with the reader of the processes (so a
+// font from its subsets, checks them with the reader of the modules (so a
 // resource is never shorter than its header, and states its own size), and
 // writes them with their sizes: the two resources of the boot image of the
 // interface font.

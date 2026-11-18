@@ -246,7 +246,7 @@ peer_remote_client_key_set :: proc(state: ^Peer_Remote, private_key: [32]u8) {
 // a key that anyone who reads the source holds.
 peer_remote_client_key_draw :: proc(state: ^Peer_Remote) -> string {
 	// The tool holds the system's copy of core:crypto, whose rand_bytes stops
-	// the process: on the host the bytes come from getrandom.
+	// the host process: on the host the bytes come from getrandom.
 	private_key: [32]u8
 	drawn := 0
 	for drawn < len(private_key) {

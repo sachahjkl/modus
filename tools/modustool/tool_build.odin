@@ -11,7 +11,7 @@ import "core:time"
 // build key of its own sources with the key of its build record, as the
 // incremental build does for a module (incremental_build.odin): the list
 // of the files that its compiler read, every other file of the folder of
-// each of them, the command of the compiler and the process `odin`. When
+// each of them, the command of the compiler and the program `odin`. When
 // the key differs, it compiles the tool again, then runs the new binary
 // with the same arguments and ends with its status. A time of a file is
 // not the identity of a source, so the key, and not a time, decides.

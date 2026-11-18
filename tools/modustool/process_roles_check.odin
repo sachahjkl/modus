@@ -5,8 +5,8 @@ import "core:slice"
 import "modus:contract/start_grant"
 
 // The check of the table of the roles of the root service
-// (docs/TOOLS.md, "The table of the roles of the root service"): each process of the
-// boot image has one row, and each row names a module of the boot image
+// (docs/TOOLS.md, "The table of the roles of the root service"): each module with an
+// entry in the boot image has one row, and each row names a module of the boot image
 // with start grants that the contract has. The root service gives a name
 // with no row the zero role; the table is whole only when the tool keeps
 // it whole, so the check runs before each build, and the site reads the
@@ -25,8 +25,9 @@ SYSTEM_PART_NAMES_LIST :: "system_part_names"
 SYSTEM_PART_THAT_SERVES :: "compositor"
 
 // process_roles_problems gives each fault of the rows against the modules
-// of a build and the parts of the system: a process of the boot image with
-// no row, a row of no module of the boot image, a process with two rows, a
+// of a build and the parts of the system: a module with an entry in the
+// boot image and no row, a row of no module of the boot image, a module
+// with two rows, a
 // grant that the contract does not have, the grant System_Part on a row
 // that is no part of the system, and a part of the system whose row is not
 // System_Part alone (with Serve for the compositor) with no term. The debug

@@ -330,7 +330,7 @@ sorted_copy :: proc(list: []string) -> []string {
 Build_Key_Inputs :: struct {
 	subject:       string, // What is built: "module console".
 	tool_identity: blake3.Hash, // The sources of the tool (tool_identity_of).
-	// The processes that build, the commands with each flag, the values of
+	// The host programs that build, the commands with each flag, the values of
 	// the environment that the build reads: in the order of the list.
 	settings:      []string,
 	// Files of the repository that the build reads and that the compiler
@@ -838,7 +838,7 @@ tool_identity_of :: proc(table: ^Input_File_Table, tool_folder: string) -> (iden
 	return blake3.hash(text[:]), complete
 }
 
-// process_identity names the file of a process of the path: where it is
+// process_identity names the file of a host program of the path: where it is
 // after each link, its size and its time. In the store of Nix, the path
 // holds the hash of the package: another version is another path.
 process_identity :: proc(name: string) -> string {

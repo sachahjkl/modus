@@ -1,6 +1,6 @@
-// The portraits of the process hall_of_fame (src/md/features/hall_of_fame.md).
+// The portraits of the module hall_of_fame (src/md/features/hall_of_fame.md).
 // The pictures and their credits are resources of the repository; the
-// command "portraits" converts each picture to the pixels that the process
+// command "portraits" converts each picture to the pixels that the module
 // holds, so that a build decodes no PNG file. The credits file is the one
 // list of the portraits: the command, the page of the licenses of the site
 // and a host test read it.
@@ -94,7 +94,7 @@ hall_of_fame_credits_parse :: proc(content: string) -> (credits: []Hall_Of_Fame_
 }
 
 // hall_of_fame_name_valid says if a name has only lower case letters,
-// digits and "_": the name of a file of the process folder.
+// digits and "_": the name of a file of the module folder.
 hall_of_fame_name_valid :: proc(name: string) -> bool {
 	for character in transmute([]u8)name {
 		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_') {
@@ -114,7 +114,7 @@ hall_of_fame_credits_read :: proc() -> (credits: []Hall_Of_Fame_Credit, problem:
 }
 
 // hall_of_fame_pixels_path gives the file of the pixels of a picture of the
-// resources, in the folder of the process.
+// resources, in the folder of the module.
 hall_of_fame_pixels_path :: proc(picture_file: string) -> string {
 	return strings.concatenate({HALL_OF_FAME_PORTRAIT_FOLDER, "/", strings.trim_suffix(picture_file, ".png"), ".pixels"}, context.temp_allocator)
 }

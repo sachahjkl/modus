@@ -149,7 +149,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	section_names := sections[head.section_name_section_index]
 
 	// Segments. A module segment is one loadable segment of the input, on its
-	// own pages. Its data starts as zero; only process data is copied, so that
+	// own pages. Its data starts as zero; only program data is copied, so that
 	// no ELF structure reaches the module.
 	images := make([dynamic]Segment_Image, context.temp_allocator)
 	relro_start, relro_end: u64

@@ -62,7 +62,7 @@ host_test_command :: proc(folder, temporary_folder: string) -> []string {
 
 // host_test_names_first_repeat gives the first two folders of a list whose
 // files have one name, or "": two such folders at once would write one
-// log, one test process and one temporary folder.
+// log, one test program and one temporary folder.
 host_test_names_first_repeat :: proc(folders: []string) -> string {
 	for folder, place in folders {
 		for other in folders[place + 1:] {

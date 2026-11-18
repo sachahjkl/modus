@@ -593,7 +593,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			if !address || result_text != "" && result_text != "i64" {
 				return describe_fail(path, declaration, "the entry has one parameter, an address, and no result or an i64 result")
 			}
-			// The entry has a comment as each export has: what this process
+			// The entry has a comment as each export has: what this module
 			// does when the loader starts it. With no comment its text is empty.
 			entry_description := Export_Description{name = name, file = path, line = declaration.pos.line}
 			entry_description.markdown = markdown_of(declaration.docs)

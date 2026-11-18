@@ -10,7 +10,7 @@ import "core:strings"
 // UEFI verifies Authenticode signatures with RSA keys and X.509
 // certificates, not Ed25519. So the publisher of the system has a second
 // key: the firmware signing key, an RSA-2048 key and its certificate, in the
-// folder of the signing key. Three processes of Nixpkgs do the work that the
+// folder of the signing key. Three programs of Nixpkgs do the work that the
 // tool does not write itself:
 //   openssl         makes the key and the certificate;
 //   sbsign          (sbsigntool) signs the boot program;
