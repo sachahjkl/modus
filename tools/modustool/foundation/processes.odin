@@ -30,6 +30,15 @@ EXIT_FAILURE :: 1
 
 EXIT_USAGE :: 2
 
+// A command of the tool: its name is the first argument, and about is the
+// line of `modustool help`. The table of the commands is in the command
+// package; the site reads it as an argument, because no package of the
+// tool imports the command package.
+Command :: struct {
+	name, about: string,
+	run:         proc(args: []string) -> int,
+}
+
 // The count of the checks that passed in this process: the measure record
 // states it. Each check that passes prints its line through
 // test_passed_print. A peer thread can print one, so the count is atomic.

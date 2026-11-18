@@ -689,3 +689,22 @@ build_system :: proc(needed_volumes: []string) -> int {
 	build_measure_print()
 	return 0
 }
+
+// run_build is the command `build`: the modules, the boot images, and
+// every boot volume. A module whose inputs are the same is kept, and so is
+// each boot volume (incremental_build.odin, boot_volumes.odin); `build
+// whole` keeps nothing.
+run_build :: proc(args: []string) -> int {
+	// `build [whole] [host_processes]`: a whole build, and the count of module
+	// processes at once.
+	rest := args
+	if len(rest) >= 1 && rest[0] == "whole" {
+		build_whole = true
+		rest = rest[1:]
+	}
+	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_host_processes(rest[0])) {
+		fmt.eprintln("modustool: build [whole] [host_processes]")
+		return foundation.EXIT_USAGE
+	}
+	return build_system(nil)
+}
