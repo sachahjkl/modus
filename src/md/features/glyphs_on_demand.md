@@ -157,3 +157,5 @@ Each step leaves a working system.
 Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs` with the private glyph cache, the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the demand cache with its four faces, drawn whole by the font service, which then ends; the root service, which maps the outlines and the demand cache with the glyph caches; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure.
 
 Left (`ROADMAP.md`): a font for the missing Greek letters, Cyrillic and Latin Extended-A; a CJK font; the shaping of complex scripts.
+
+Designed, not built: the text rendering module draws each glyph at any size into the private glyph cache, which then holds every glyph; the glyph caches of the boot image, layer 1 and the font service leave ([text_rendering.md](text_rendering.md), "The glyph caches of the boot image and the demand cache: removed").

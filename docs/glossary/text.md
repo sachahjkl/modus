@@ -519,3 +519,53 @@ A text that is wider than its text box goes on more lines: a line ends at the la
 The design: `docs/INTERFACE.md`, "The text in a box".
 
 Do not use: label box, text area, text field (a text input is the element that takes typed text).
+
+### Text size
+
+A text size is the height of the line of a face, in 1/64 pixel, which a process gives to measure and draw a text.
+
+It is the design of the coming steps: today a text has one of three scales. A line of 16 pixels is the size 1 024, so the scales of today are 1 024, 2 048 and 3 072. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
+
+The design: `src/md/features/text_rendering.md`, "The text size".
+
+Do not use: font size (alone), point size, scale (for this).
+
+### Frame of a face
+
+The frame of a face is the rule that turns a text size into the units of the first font of a face.
+
+It is the design of the coming steps. In a face of cells the advance of the font is half the line; in a face of the interface the cap height is 10/16 of the line. At a line of 16 pixels each frame gives the scale of today. A glyph of a fallback font is drawn in the frame of the first font of its face, on its baseline. It is not the line box of a text.
+
+The design: `src/md/features/text_rendering.md`, "The text size".
+
+Do not use: font metrics (for this), em box.
+
+### Face
+
+A face is a first font with its frame, its weight and its grid fit, from which each glyph of a text comes.
+
+It is the design of the coming steps, and replaces the fallback face and the demand face when the glyph caches of the boot image leave. The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold`, each with its fallback chain. A text record names a font kind and a weight; the drawing module adds the grid fit of the settings page. A face is not a font file: two faces can share one.
+
+The design: `src/md/features/text_rendering.md`, "The faces".
+
+Do not use: font face (for this), font slot, typeface.
+
+### Text rendering module
+
+The text rendering module is the support package `text_rendering` and its library module, which shape, measure, break, keep and draw a text at any text size.
+
+It is the design of the coming steps: today `fallback_glyphs` and `text_shaping` hold these parts. Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. A caller that compiles nothing calls the library module, with the font outlines as bytes. It is not a service: no process asks another for a glyph.
+
+The design: `src/md/features/text_rendering.md`.
+
+Do not use: font engine, text service, font server.
+
+### Text size token
+
+A text size token is a named text size of the design rules, in logical pixels: `text_caption` 14, `text_body` 16, `text_heading` 24, `text_large` 32 and `text_largest` 48.
+
+It is the design of the coming steps. The desktop and the elements of the interface package draw their texts at these sizes only, so the texts of two windows line up; a process can draw any text size. 14 is the smallest size at which both fonts keep an x-height of 6 whole rows. Example: the caption of a card is `text_caption`, its one number `text_large`.
+
+The design: `src/md/features/text_rendering.md`, "The text size tokens".
+
+Do not use: type scale, font size token.
