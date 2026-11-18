@@ -147,7 +147,7 @@ read_refuses_a_font_that_names_no_member :: proc(t: ^testing.T) {
 @(test)
 read_takes_the_bounds_of_each_font :: proc(t: ^testing.T) {
 	left := units_of_pixels(10)
-	third := UNITS_PER_PIXEL / 3
+	third := i32(UNITS_PER_PIXEL / 3)
 	_, problem := read(sample_record(Draw_Text{count = 1, color = 1, origin_x = left + third, font = .Cells_8x16, scale = 1}))
 	testing.expectf(t, problem == .Field_Past_Bound, "a text in the font of the cells on a third: %v", problem)
 	_, problem = read(sample_record(Draw_Text{count = 1, color = 1, origin_x = left + third, font = .Interface, scale = 1}))

@@ -324,7 +324,7 @@ Do not use: fixed-width font (for this), terminal font.
 
 The interface font is the proportional font of the titles, the labels, the buttons, the menus and the bar: B612.
 
-B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A program uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places with a proportional cache. The bar and the menus use it too. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
+B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A program uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places with a proportional cache. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 

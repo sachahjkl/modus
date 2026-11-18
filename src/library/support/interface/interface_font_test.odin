@@ -407,11 +407,13 @@ interface_text_reference :: proc(canvas: graphics.Canvas, caches: ^display.Inter
 }
 
 // The old path of a text in the font of the cells: the cells from the top
-// left corner of the box of its record, cut to it, as the kind Text drew it.
+// left corner of the box of its record, cut to it and to the canvas, as the
+// kind Text drew it. A view wider than the rest of its canvas would wrap the
+// ink past the right edge onto the next line.
 @(private = "file")
 cells_text_reference :: proc(canvas: graphics.Canvas, x, y: int, text: string, font: Font, color: graphics.Color) {
 	scale := font_scale(font)
-	view := graphics.view(canvas, x, y, text_width(font, text), graphics.CELL_HEIGHT * scale)
+	view := graphics.view(canvas, x, y, min(text_width(font, text), canvas.width - x), min(graphics.CELL_HEIGHT * scale, canvas.height - y))
 	text_draw(view, 0, 0, text, color, scale, font.weight)
 }
 
