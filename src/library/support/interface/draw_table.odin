@@ -115,6 +115,13 @@ Draw_Table :: struct {
 	// the process has none, and a text in the interface font is a text in
 	// the font of the cells.
 	interface_font: ^display.Interface_Font,
+	// The clips of the frame that are pushed and not popped yet: each
+	// record that the table takes keeps room for their pops.
+	clip_depth:              int,
+	// The pushes that the table did not take (past CLIP_DEPTH_LIMIT, or
+	// with no room) and that are not popped yet: their pops are not
+	// written either, so no pop ends a clip that the table holds.
+	clip_pushes_not_written: int,
 }
 
 // A rectangle of the surface. right and bottom are not in it.
@@ -129,6 +136,8 @@ draw_table_clear :: proc "contextless" (table: ^Draw_Table) {
 	table.text_count = 0
 	table.full = false
 	table.refused = false
+	table.clip_depth = 0
+	table.clip_pushes_not_written = 0
 }
 
 // draw_table_copy makes target a copy of source: the table of the frame
@@ -147,6 +156,8 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.refused = source.refused
 	target.picture_memories = source.picture_memories
 	target.interface_font = source.interface_font
+	target.clip_depth = source.clip_depth
+	target.clip_pushes_not_written = source.clip_pushes_not_written
 	return true
 }
 
@@ -177,9 +188,10 @@ grid_size :: proc "contextless" (grid: Text_Grid) -> int {
 }
 
 // record_append appends one record and gives its address, or nil when the
-// table is full.
+// table is full. The room of the pops of the clips open is not taken: a
+// table always ends with each push popped.
 record_append :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> ^Draw_Record {
-	if table.record_count >= len(table.records) {
+	if table.record_count >= len(table.records) - table.clip_depth {
 		table.full = true
 		return nil
 	}
@@ -556,7 +568,7 @@ text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -
 	switch fields in primitive {
 	case draw_record.Draw_Text:
 		first, count, scale = fields.first, fields.count, int(fields.scale)
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Rectangle, draw_record.Draw_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
 		return "", 0, false
 	}
 	if u64(first) + u64(count) > u64(table.text_count) || u64(first) + u64(count) > u64(len(table.text)) {
@@ -756,10 +768,69 @@ line_ends_in_order :: proc "contextless" (from_x, from_y, to_x, to_y: int) -> (s
 	return from_x, from_y, to_x, to_y
 }
 
-// draw_clip appends a clip: the next records are cut to the rectangle. A
-// width of 0 ends the cut.
-draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, placed_record(draw_record.Draw_Clip{}, 0, x, y, width, height))
+// draw_clip_push appends a push of a clip: the records after it, until its
+// draw_clip_pop, are cut to the rectangle and to each clip open before it.
+// A width or a height below 1 is an empty clip: the records under it draw
+// nothing. The table writes no order of clips that the border of the order
+// refuses (src/md/api/draw_table.md, "The kinds"): a push past
+// CLIP_DEPTH_LIMIT is not written and sets refused, a push with no room for
+// itself and its pop sets full, and the pop of a push that is not written
+// is not written. The records under a push that is not written are cut by
+// the clips that the table holds.
+draw_clip_push :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
+	if table.clip_depth >= draw_record.CLIP_DEPTH_LIMIT {
+		table.refused = true
+	}
+	if table.clip_pushes_not_written > 0 || table.clip_depth >= draw_record.CLIP_DEPTH_LIMIT {
+		table.clip_pushes_not_written += 1
+		return
+	}
+	// Room for the push, its pop and the pops of the clips open.
+	if table.record_count + table.clip_depth + 2 > len(table.records) {
+		table.full = true
+		table.clip_pushes_not_written += 1
+		return
+	}
+	table.records[table.record_count] = placed_record(draw_record.Draw_Clip_Push{}, 0, x, y, max(width, 0), max(height, 0))
+	table.record_count += 1
+	table.clip_depth += 1
+}
+
+// draw_clip_pop appends the pop of the last clip open: the records after it
+// are cut as before its push. A pop with no push open is not written and
+// sets refused. Its room was kept when its push was written.
+draw_clip_pop :: proc "contextless" (table: ^Draw_Table) {
+	if table.clip_pushes_not_written > 0 {
+		table.clip_pushes_not_written -= 1
+		return
+	}
+	if table.clip_depth == 0 {
+		table.refused = true
+		return
+	}
+	// The room is kept, unless a caller gave the table other records
+	// while a clip was open.
+	if table.record_count >= len(table.records) {
+		table.full = true
+		table.clip_depth -= 1
+		return
+	}
+	table.records[table.record_count] = draw_record.record_of(draw_record.Draw_Clip_Pop{}, 0, 0, 0, 0, 0)
+	table.record_count += 1
+	table.clip_depth -= 1
+}
+
+// draw_clips_close pops each clip that the frame left open, and sets
+// refused when one was: a push with no pop is a fault of the writer, and a
+// table with one is refused by the border of the order.
+draw_clips_close :: proc "contextless" (table: ^Draw_Table) {
+	if table.clip_depth == 0 && table.clip_pushes_not_written == 0 {
+		return
+	}
+	table.refused = true
+	for table.clip_depth > 0 || table.clip_pushes_not_written > 0 {
+		draw_clip_pop(table)
+	}
 }
 
 // draw_text appends a run of text at (x, y), the top left corner of its
