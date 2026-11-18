@@ -28,23 +28,25 @@ scenario_boot_film := [?]Step {
 	{kind = .Wait, text = "boot program: the firmware has no TPM protocol"},
 	{kind = .Monitor, text = "stop"},
 	{kind = .Film_Start, text = "boot"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ + FILM_HOLD_GLANCE},
+	// Each hold names a cue: the tutorial places a caption at its time
+	// (docs/TOOLS.md, "The film cues").
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ + FILM_HOLD_GLANCE, text = "boot.check"},
 	{kind = .Monitor, text = "cont"},
 	// The boot program drew the boot display and has not jumped to the
 	// kernel yet: the still is the display of the stages of the start.
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Monitor, text = "stop"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ + FILM_HOLD_LOOK},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ + FILM_HOLD_LOOK, text = "boot.display"},
 	{kind = .Monitor, text = "cont"},
 	// The root service draws the display again, then the compositor has
 	// the screen: the desktop replaced the boot display.
 	{kind = .Wait, text = "compositor: surface console"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK, text = "boot.desktop"},
 	// The window of the boot display: the same record, one sample each
 	// 500 ms.
 	{kind = .Launch, text = "boot"},
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
-	{kind = .Film_Hold, milliseconds = 2 * FILM_HOLD_READ},
+	{kind = .Film_Hold, milliseconds = 2 * FILM_HOLD_READ, text = "boot.window"},
 	{kind = .Film_Stop},
 	{kind = .Quit},
 }

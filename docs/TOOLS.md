@@ -966,7 +966,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `library-imports` | Checks that each import of each source file of `src/` follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of `core:` starts with `#+build !freestanding` ("The imports of the sources of the system") |
 | `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, and that no cast of a word to an enum skips its border ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
-| `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
+| `film [terminal \| palette \| heron \| boot \| desktop \| console \| program]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4`, `build/films/<name>.webm` and the cue file `build/films/<name>.cues` ("The film", "The film cues"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
 ### The packages of the tool
 
@@ -1575,8 +1575,13 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 | `palette` | The palette: a process, a window, a command and its record, the form of a command with its candidates, a question before an entry that destroys, a setting that changes the font of the desktop | `scenario_palette_film` (`palette_film_scenario.odin`) |
 | `heron` | The process `heron`: the heron plays in its own order; the dash at full speed, then four times slower; the lines of the cells with the hop, the stretch and the flap; the dash frame by frame, with the changed cells outlined; one held frame in the free way and on the grid; the three cell sizes | `scenario_heron_film` (`heron_film_scenario.odin`) |
 | `boot` | The check of the boot program, then the boot display held at the stage of the boot program, then drawn again by the root service at each stage, the desktop, then the window of the boot display with the records of the kernel | `scenario_boot_film` (`boot_film_scenario.odin`) |
+| `desktop` | The bar and the console; the start menu; two processes started from it; a window moved, a window resized by its corner; the menu of the windows; a window closed; the palette that starts a module and brings a window to the front | `scenario_desktop_film` (`desktop_film_scenario.odin`) |
+| `console` | An expression and its value; a variable and a command; an argument of the wrong kind and its error; the completion list; a record; a table; the history search | `scenario_console_film` (`console_film_scenario.odin`) |
+| `program` | `start("plasma")` in the console: the module opens its window; the window moved; its row in the table of the processes; `stop("plasma")` | `scenario_program_film` (`program_film_scenario.odin`) |
 
 The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
+
+The films `boot`, `desktop`, `console` and `program` are the chapters of the tutorial of the system, which a separate project edits from their MP4 files and their cue files. The tutorial shows the code of `plasma` before the film `program`: it is the smallest module that draws a window.
 
 **The display.** A test machine has no display (`-display none`): the firmware and the boot program write their console to the serial port, and QEMU draws nothing before the first picture of the system. The machine of a film has a display with no window instead (`-display vnc=unix:build/test_output*.vnc.sock`), so QEMU draws that console, and the film of the start shows the check of the boot program before the boot display. A window never opens: a film runs headless, as a test.
 
@@ -1614,6 +1619,22 @@ ffmpeg -f concat -safe 0 -i build/films/<name>/pictures.ffconcat
 Measured on the film of the palette (36.8 s): the MP4 file has 3 169 392 bytes and the WebM file 1 572 784 bytes, about half, with the text of the screen sharp.
 
 Each file is at a constant 30 pictures in one second. Each pixel of the screen is a square of 2 by 2 pixels of the film, with no filter: the reference screen of 1920 by 1080 is a film of 3840 by 2160. The color planes of the pixel format `yuv420p` have half the size of the picture, so with this scale each pixel of the screen keeps its own color, and the squares of the design stay sharp. The colors are converted and named as those of a film in high definition, so that a player shows the colors of the screen. The tool makes no GIF and no WebP file: at this size and length, with a window that draws at each frame, such a file is many times larger than the MP4 file.
+
+### The film cues
+
+A film cue (`glossary/project.md`, "Film cue") is a named moment of a film: the time when its scene reached a state. A step `Film_Hold` with a text starts the cue of that name; a hold with no text starts none. The tool keeps the time since the start of the film when the hold starts, after the wait of the scene, and writes the cue file `build/films/<name>.cues` at the step `Film_Stop`.
+
+```
+0.000 desktop.start
+3.412 desktop.start_menu
+```
+
+- One line for each cue, in the order of the film: the time in seconds with three digits for the milliseconds, one space, the name. A part of a millisecond is cut, so a cue never comes before its state.
+- A name has 1 to 48 bytes (`FILM_CUE_NAME_LIMIT`) of the lowercase letters, the digits, `_` and `.`, and starts with a letter. A name comes one time in a film. The tool refuses another name, or a name that comes again, and the film fails at that step. A host test checks the names of each film of the tool.
+- A film with no cue writes an empty cue file, so the file of an earlier run never stays beside a new film.
+- Why: a film has the speed of the machine, so a time that an editor guesses drifts from the film on another host. An editor places a caption at the time of its cue. The time of a cue is the time of the film: the first picture of a film is at its start.
+
+The code is `film_cue_note`, `film_cue_text` and `film_cue_name_problem` in `tools/modustool/machine/film.odin`. The design: `src/md/infrastructure/film_cues.md`.
 
 ### The film of a document
 

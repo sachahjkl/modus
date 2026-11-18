@@ -60,6 +60,84 @@ FILM_HOLD_GLANCE :: 700 // A list that changed, a candidate that was taken.
 FILM_HOLD_LOOK :: 1200 // A new state of the desktop: a window, the open panel.
 FILM_HOLD_READ :: 2000 // A result or a question that a viewer reads.
 
+// The film cues (docs/TOOLS.md, "The film cues"). A step Film_Hold with a
+// text names a cue: the tool keeps the time since the start of the film
+// when the hold starts, which is the moment the scene reached its state.
+// An editor of the film places its captions by these times, not by times
+// that it guesses: a film has the speed of the machine.
+FILM_CUES_SUFFIX :: ".cues"
+// The longest name of a cue, in bytes: a name is a key of the table of
+// captions of an editor, not a sentence.
+FILM_CUE_NAME_LIMIT :: 48
+
+// One cue of a film: its name, and the time since the start of the film
+// when the hold that names it started.
+Film_Cue :: struct {
+	since_start: time.Duration,
+	name:        string,
+}
+
+// film_cue_name_problem gives "" for a valid name of a cue, else why it is
+// refused. A name has 1 to FILM_CUE_NAME_LIMIT bytes of the lowercase
+// letters, the digits, '_' and '.', and starts with a letter: the editor
+// reads one name for each line, after one space.
+film_cue_name_problem :: proc(name: string) -> string {
+	if len(name) == 0 {
+		return "the name of a cue is empty"
+	}
+	if len(name) > FILM_CUE_NAME_LIMIT {
+		return "the name of a cue is longer than its limit"
+	}
+	if name[0] < 'a' || name[0] > 'z' {
+		return "the name of a cue starts with a character that is not a lowercase letter"
+	}
+	for index in 0 ..< len(name) {
+		character := name[index]
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' && character != '.' {
+			return "the name of a cue has a character that is not a lowercase letter, a digit, '_' or '.'"
+		}
+	}
+	return ""
+}
+
+// film_cue_text gives the cue file of a film: one line for each cue, in
+// the order of the film, with its time in seconds to the millisecond, one
+// space and its name. A film with no cue gives an empty file, so a file of
+// an earlier run never stays beside the new film.
+film_cue_text :: proc(cues: []Film_Cue) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	for cue in cues {
+		milliseconds := i64(cue.since_start) / i64(time.Millisecond)
+		fmt.sbprintf(&builder, "%d.%03d %s\n", milliseconds / 1000, milliseconds % 1000, cue.name)
+	}
+	return strings.to_string(builder)
+}
+
+// film_cue_note keeps the time of a cue of the film that runs. It refuses
+// a cue with no film, a name that film_cue_name_problem refuses, and a
+// name that the film already has: the editor finds each caption by its
+// name, once.
+film_cue_note :: proc(machine: ^Machine, name: string) -> bool {
+	worker := machine.film
+	if worker == nil {
+		fmt.eprintfln("modustool: the film: the cue %s comes with no film that runs", name)
+		return false
+	}
+	if problem := film_cue_name_problem(name); problem != "" {
+		fmt.eprintfln("modustool: the film: the cue \"%s\": %s", name, problem)
+		return false
+	}
+	for cue in worker.cues {
+		if cue.name == name {
+			fmt.eprintfln("modustool: the film: the cue %s comes two times", name)
+			return false
+		}
+	}
+	// The name is a text of a scenario, which lives as long as the tool.
+	append(&worker.cues, Film_Cue{since_start = time.tick_since(worker.started), name = name})
+	return true
+}
+
 // film_qmp_socket_of gives the path of the socket of the film worker of
 // the machine with this log.
 film_qmp_socket_of :: proc(output: string) -> string {
@@ -261,6 +339,7 @@ Film_Worker :: struct {
 	longest_gap:           time.Duration, // The longest time between two pictures.
 	dump_times:            [dynamic]time.Duration, // From each command to its reply: QEMU wrote the whole file.
 	failure:               string, // Why the worker ended before its stop, or "".
+	cues:                  [dynamic]Film_Cue, // The scenario thread writes them; the worker thread never reads them.
 }
 
 @(private = "file")
@@ -358,6 +437,16 @@ film_stop :: proc(machine: ^Machine) -> bool {
 		time.duration_milliseconds(middle),
 		time.duration_milliseconds(longest),
 	)
+	// The cue file is beside the two files of the film, with the same name:
+	// build/films/<name>.cues.
+	cue_path := strings.concatenate({worker.folder, FILM_CUES_SUFFIX}, context.temp_allocator)
+	if write_error := os.write_entire_file(cue_path, film_cue_text(worker.cues[:])); write_error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", cue_path, write_error)
+		passed = false
+	} else {
+		fmt.printfln("modustool: the film has %d cues in %s", len(worker.cues), cue_path)
+	}
+	delete(worker.cues)
 	delete(worker.dump_times)
 	delete(worker.folder)
 	free(worker)
@@ -398,11 +487,14 @@ Film :: struct {
 	output: string, // The log of its machine.
 }
 
-FILM_NAMES :: "terminal | palette | heron | boot"
+FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program"
 TEST_OUTPUT_FILM_TERMINAL :: foundation.BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: foundation.BUILD_FOLDER + "/test_output_film_palette.txt"
 TEST_OUTPUT_FILM_HERON :: foundation.BUILD_FOLDER + "/test_output_film_heron.txt"
 TEST_OUTPUT_FILM_BOOT :: foundation.BUILD_FOLDER + "/test_output_film_boot.txt"
+TEST_OUTPUT_FILM_DESKTOP :: foundation.BUILD_FOLDER + "/test_output_film_desktop.txt"
+TEST_OUTPUT_FILM_CONSOLE :: foundation.BUILD_FOLDER + "/test_output_film_console.txt"
+TEST_OUTPUT_FILM_PROGRAM :: foundation.BUILD_FOLDER + "/test_output_film_program.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -416,13 +508,21 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 		return Film{name = "heron", steps = scenario_heron_film[:], output = TEST_OUTPUT_FILM_HERON}, true
 	case "boot":
 		return Film{name = "boot", steps = scenario_boot_film[:], output = TEST_OUTPUT_FILM_BOOT}, true
+	case "desktop":
+		return Film{name = "desktop", steps = scenario_desktop_film[:], output = TEST_OUTPUT_FILM_DESKTOP}, true
+	case "console":
+		return Film{name = "console", steps = scenario_console_film[:], output = TEST_OUTPUT_FILM_CONSOLE}, true
+	case "program":
+		return Film{name = "program", steps = scenario_program_film[:], output = TEST_OUTPUT_FILM_PROGRAM}, true
 	}
 	return {}, false
 }
 
 // run_film makes one film: `film` and `film terminal` the film of the
 // terminal, `film palette` the film of the palette, `film heron` the film
-// of the process heron, `film boot` the film of the boot of the machine.
+// of the process heron, `film boot` the film of the boot of the machine,
+// and `film desktop`, `film console` and `film program` the films of the
+// chapters of the tutorial (docs/TOOLS.md, "The film").
 // The films differ by their scenario only: the worker, the list of the
 // encoder and the encoder are the same. A film is for the development log, and for the
 // news entry that names it: it is not a test, and no check runs it.

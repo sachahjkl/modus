@@ -171,10 +171,23 @@ only_the_scenario_of_a_film_has_fixed_times :: proc(t: ^testing.T) {
 			testing.expectf(t, !step_is_of_a_film(step.kind), "the step %d of a scenario of a test is %v, a step of a film", index + 1, step.kind)
 		}
 	}
-	for name in ([]string{"terminal", "palette", "heron", "boot"}) {
+	for name in ([]string{"terminal", "palette", "heron", "boot", "desktop", "console", "program"}) {
 		film, found := film_of_name(name)
 		testing.expectf(t, found, "the film %s is a film of the tool", name)
+		testing.expectf(t, strings.contains(FILM_NAMES, name), "the usage of the command names the film %s", name)
 		started, stopped := false, false
+		// Each cue of a film has a valid name, once: the editor of the
+		// tutorial finds each caption by its name.
+		cue_names := make([dynamic]string, context.temp_allocator)
+		for step in film.steps {
+			if step.kind == .Film_Hold && step.text != "" {
+				testing.expectf(t, film_cue_name_problem(step.text) == "", "the cue \"%s\" of the film %s has a valid name: %s", step.text, name, film_cue_name_problem(step.text))
+				for earlier in cue_names {
+					testing.expectf(t, earlier != step.text, "the cue %s of the film %s comes one time", step.text, name)
+				}
+				append(&cue_names, step.text)
+			}
+		}
 		for step in film.steps {
 			#partial switch step.kind {
 			case .Film_Start:
@@ -196,4 +209,50 @@ only_the_scenario_of_a_film_has_fixed_times :: proc(t: ^testing.T) {
 	}
 	_, found := film_of_name("a film that the tool does not make")
 	testing.expect(t, !found, "a name with no film is refused")
+	free_all(context.temp_allocator)
+}
+
+// The name of a cue is a key of the table of captions of the tutorial: the
+// tool refuses each name that the editor cannot read on its line.
+@(test)
+the_name_of_a_film_cue_is_a_key :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	refused := []string{
+		"", // No name.
+		"Desktop.start", // A capital letter.
+		"desktop start", // A space ends the name on the line.
+		"desktop.start\n", // A line end.
+		".desktop", // Not a letter first.
+		"0desktop", // A digit first.
+		"_desktop",
+		"desktop-start", // A '-' is not in the set.
+		"désktop", // A byte past ASCII.
+	}
+	for name in refused {
+		testing.expectf(t, film_cue_name_problem(name) != "", "the name \"%s\" of a cue is refused", name)
+	}
+	// The bound, and one past it.
+	at_the_bound := strings.repeat("a", FILM_CUE_NAME_LIMIT, context.temp_allocator)
+	past_the_bound := strings.repeat("a", FILM_CUE_NAME_LIMIT + 1, context.temp_allocator)
+	testing.expect_value(t, film_cue_name_problem(past_the_bound), "the name of a cue is longer than its limit")
+	testing.expect_value(t, film_cue_name_problem(at_the_bound), "")
+	// One character, and the whole set.
+	testing.expect_value(t, film_cue_name_problem("a"), "")
+	testing.expect_value(t, film_cue_name_problem("desktop.palette_start2"), "")
+}
+
+// The cue file gives each cue its time in seconds to the millisecond, in
+// the order of the film; a film with no cue gives an empty file.
+@(test)
+the_cue_file_of_a_film_gives_the_time_of_each_cue :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	testing.expect_value(t, film_cue_text(nil), "")
+	cues := []Film_Cue {
+		{since_start = 0, name = "a"},
+		// A part of a millisecond is cut, never rounded up: a caption never
+		// comes before its state.
+		{since_start = 999_999 * time.Microsecond + 999 * time.Nanosecond, name = "desktop.start"},
+		{since_start = 61 * time.Second + 7 * time.Millisecond, name = "desktop.move"},
+	}
+	testing.expect_value(t, film_cue_text(cues), "0.000 a\n0.999 desktop.start\n61.007 desktop.move\n")
 }

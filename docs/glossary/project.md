@@ -252,6 +252,16 @@ The design: `docs/TOOLS.md`, "The film".
 
 Do not use: video (for the file), clip, movie, recording, screencast.
 
+### Film cue
+
+A film cue is a named moment of a film: the time since its start when its scene reached a state.
+
+A step `Film_Hold` with a text starts the cue of that name, after the wait of its scene. `modustool film <name>` writes the cues in `build/films/<name>.cues`, one line each: the time in seconds to the millisecond, then the name. An editor of the tutorial places each caption at the time of its cue, because a film has the speed of the machine and a guessed time drifts. A cue is not a caption: the text of a caption is in the editor, and the cue only names the moment. Example: `3.412 desktop.start_menu`.
+
+The design: `docs/TOOLS.md`, "The film cues".
+
+Do not use: marker, timestamp, chapter mark, subtitle.
+
 ### Feed
 
 A feed is a file of the site in the Atom format (RFC 4287), for a program that follows a site: `news.xml` has the news entries and `releases.xml` the releases, newest first.
