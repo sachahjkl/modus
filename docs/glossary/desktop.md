@@ -686,7 +686,7 @@ Do not use: file dialog, powerbox.
 
 A quality profile is one of the two sets of thresholds of the standard of quality of the desktop: the GPU profile and the processor profile.
 
-The GPU profile is 120 Hz at 1920 × 1080: a frame in less than 8.3 ms, a key to the screen in less than 20 ms, a window shown less than 100 ms after its start. The processor profile, for a machine with no GPU, has a lower resolution or 60 Hz and fewer effects, with thresholds from a measure. The system chooses its profile at its start and writes it on the log. A threshold is a measure that the tool follows, never a test.
+The GPU profile is 120 Hz at 1920 × 1080: a frame in less than 8.3 ms, a key to the screen in less than 20 ms, a window shown less than 100 ms after its start. The processor profile, for a machine with no GPU, can lower the resolution, the rate or the effects, with thresholds from a measure: today 1920 × 1080 at 120 Hz with no blur. The system chooses its profile at its start and writes it on the log. A threshold is a measure that the tool follows, never a test.
 
 The design: `src/md/features/desktop_to_browser.md`.
 

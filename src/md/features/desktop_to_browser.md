@@ -18,7 +18,7 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 | Profile | When | The screen | The three measures |
 |---|---|---|---|
 | GPU profile | A GPU that the system drives | 1920 × 1080 at 120 Hz | A frame in less than 8.3 ms; a key to the screen in less than 20 ms; a window shown less than 100 ms after its start |
-| Processor profile | No GPU | A lower resolution or 60 Hz, and fewer effects | The same three measures, with thresholds that a measure gives |
+| Processor profile | No GPU | 1920 × 1080 at 120 Hz, with no blur (the thresholds below) | The same three measures, with the thresholds below |
 
 - **The measures are measures, never tests.** The tool records them in the measure record of each release and follows them over the releases ([measure_history.md](measure_history.md)). A test never fails on a time (`AGENTS.md`, "Work"). A change that makes a measure worse is a regression that a developer reads to its cause.
 - **The processor profile is accepted with no shame.** The test machine has no GPU, and a machine with no GPU still gets a desktop that answers at once.
@@ -29,12 +29,12 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 
 | Threshold | Value |
 |---|---|
-| The resolution | Set from the first measure |
-| The rate | Set from the first measure |
-| The time of a frame | Set from the first measure |
-| The effects that the profile keeps | Set from the first measure |
+| The resolution | 1920 × 1080, the reference screen: the profile lowers nothing |
+| The rate | 120 Hz, as the GPU profile |
+| The time of a frame | Less than 8.3 ms, as the GPU profile; the first measure gives 2.0 ms for the heaviest part |
+| The effects that the profile keeps | Alpha and sharp shadows; a blur waits for its own measure |
 
-No value of this table is written before the numbers of the first measure below exist. A value names the line of the measure record that gave it.
+Each value comes from the first measure below, on the test machine (one processor of the host under KVM, a host load of about 19): a clear and a present, median 268.8 us; a full frame of the compositor with 4 windows, median 953.9 us; a frame in its damage, median 86.2 us; a draw table of 339 records that fills the screen, with alpha, median 2043.0 us (`processor_frame: measure:` lines of the measure record). The heaviest part takes a quarter of the 8.3 ms of a frame at 120 Hz, so the processor profile keeps the resolution and the rate of the GPU profile. The two profiles then differ in the effects only: a blur costs a pass over each pixel under it, which no measure gives yet, so it stays out of the processor profile until a measure says it fits. A change that brings a part past 8.3 ms is a regression to read to its cause, and the table changes only from a new measure.
 
 ### The first measure: a frame at 1920 × 1080 on the processor
 
@@ -268,4 +268,4 @@ Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
 Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form.
 
-Left: the values of the thresholds of the processor profile, set from the first measure; the measure of a key to the screen and of the start of a window; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size, the clipboard and sound come next.
+Left: the measure of a key to the screen and of the start of a window; a host measure as a second number. The draw table, phase C, is the next work of `ROADMAP.md`; arenas, windows that change size, the clipboard and sound come next.
