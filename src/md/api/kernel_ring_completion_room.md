@@ -57,7 +57,7 @@ The two parts of the call are pure procedures on a ring (`kernel_commands_push`,
 ## The subtle points
 
 - **The check and the push in the kernel.** The kernel checks the room, runs the command, then pushes. The push fails only after a write of the ring by another thread of the program, and the answer is then lost by the program itself. The kernel does not trust the counters for anything else: `ring.full` reads a count that is past the capacity as full, as `push` does.
-- **The test of a full queue uses the operation `None`.** It changes nothing, so the answers differ only by their tags, and the test reads that each tag arrives once, in order. It leaves one place, which a `Word_Wait` on a word that keeps its value takes in the next entry, with a held command behind it: the entry must not wait on that word.
+- **The test of a full queue uses the kind `None`.** It names no operation, so the kernel refuses each one with `Bad_Operation` and changes nothing: the answers differ only by their tags, and the test reads that each tag arrives once, in order. It leaves one place, which a `Word_Wait` on a word that keeps its value takes in the next entry, with a held command behind it: the entry must not wait on that word.
 - **A held command and `system.log`.** `system.log` calls `command_call`. Code that leaves a record in its kernel ring cannot write a line of the log until it reads its completions: the machine test computes its results first, empties the ring, then writes its lines.
 
 ## The stop of a program

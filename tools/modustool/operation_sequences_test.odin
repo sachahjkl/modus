@@ -24,6 +24,12 @@ the_statuses_of_a_comment_are_read_or_refused :: proc(t: ^testing.T) {
 	statuses, problem := operation_statuses_of_comment("**Statuses**\n\n- `Bad_Handle`, `No_Right`: `memory` is not a memory handle.\n  It goes on with `Bad_State` after the colon.\n- `No_Budget`: the budget cannot pay.\n**Example**\n- `No_Slot`: after the list.\n")
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, statuses, bit_set[operation.Status]{.Bad_Handle, .No_Right, .No_Budget})
+	// A line of an item that goes on with a bold word at its start is no
+	// heading: the items after it are in the list. Thread_Control has such
+	// a line ("**Counters** gives"), and its Bad_State was lost.
+	statuses, problem = operation_statuses_of_comment("**Statuses**\n\n- `Bad_Handle`, `No_Right`: the handle with no\n  **Counters** gives `No_Right`.\n- `Bad_State`: no live thread.\n**Example**\n- `No_Slot`: after the list.\n")
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, statuses, bit_set[operation.Status]{.Bad_Handle, .No_Right, .Bad_State})
 }
 
 // The reference of the contract lists statuses for each operation, and
@@ -40,19 +46,77 @@ the_reference_lists_the_statuses_of_each_operation :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, statuses[.Memory_Create], bit_set[operation.Status]{.Bad_Handle, .No_Right, .Bad_Operation, .No_Budget, .No_Slot, .No_Memory})
+	// The statuses after the line "**Counters** gives" of its comment.
+	testing.expect_value(t, statuses[.Thread_Control], bit_set[operation.Status]{.Bad_Operation, .Bad_Handle, .No_Right, .Bad_State, .Bad_Address})
 }
 
 // Each seed is a sequence that check accepts: one for each operation, and
-// the four cases of the seeds.
+// the six cases of the seeds. Each expectation names a seed and one of its
+// steps, and its step is a refusal.
 @(test)
 each_seed_is_a_sequence :: proc(t: ^testing.T) {
-	seeds := operation_seed_sequences(context.temp_allocator)
-	testing.expect_value(t, len(seeds), len(operation.Operation) - 1 + 4)
+	expectations := make([dynamic]Operation_Seed_Expectation, context.temp_allocator)
+	seeds := operation_seed_sequences(context.temp_allocator, &expectations)
+	testing.expect_value(t, len(seeds), len(operation.Operation) - 1 + 6)
+	sequences := make([]operation_sequence.Sequence, len(seeds), context.temp_allocator)
 	for seed, index in seeds {
-		sequence: operation_sequence.Sequence
-		refusal := operation_sequence.check(seed, &sequence)
+		refusal := operation_sequence.check(seed, &sequences[index])
 		testing.expectf(t, refusal.problem == .None, "the seed %d is refused: %v", index, refusal)
 	}
+	// The regressions of the first long run: the word 0 and the word past
+	// the operations (four steps), the commit and the decommit, and
+	// Thread_Control.
+	testing.expect_value(t, len(expectations), 7)
+	for expected in expectations {
+		testing.expectf(t, expected.sequence >= 0 && expected.sequence < len(seeds), "an expectation names the seed %d", expected.sequence)
+		if expected.sequence < 0 || expected.sequence >= len(seeds) {
+			continue
+		}
+		testing.expectf(t, expected.step >= 0 && expected.step < sequences[expected.sequence].step_count, "an expectation names the step %d of the seed %d", expected.step, expected.sequence)
+		testing.expectf(t, expected.status != .Ok && expected.record_kind != .None, "the expectation of the step %d of the seed %d is no refusal", expected.step, expected.sequence)
+	}
+}
+
+// The check of an expectation refuses a step that did not run, another
+// status, another kind or argument of the record, and a table with no
+// detail of the expected kind and argument; then it takes the answer.
+@(test)
+the_expectation_of_a_seed_step_is_checked :: proc(t: ^testing.T) {
+	expected := Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Handle_Absent, detail_argument = 2}
+	results: operation_sequence.Runner_Results
+	results.steps_run = 1
+	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a step that did not run is taken")
+	negative := expected
+	negative.step = -1
+	testing.expect(t, operation_seed_expectation_problem(negative, &results) != "", "a negative step is taken")
+	results.steps_run = 2
+	record := errors.Error_Record{kind = i64(errors.Kind.Handle_Absent), operation = i64(operation.Operation.Memory_Commit), argument = 1}
+	result := &results.results[1]
+	result.status = u64(operation.Status.Bad_Operation)
+	result.values = transmute([operation_sequence.ARGUMENTS]u64)record
+	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "another status is taken")
+	result.status = u64(operation.Status.Bad_Handle)
+	wrong := record
+	wrong.argument = 2
+	result.values = transmute([operation_sequence.ARGUMENTS]u64)wrong
+	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a record of another argument is taken")
+	wrong = record
+	wrong.kind = i64(errors.Kind.Refused)
+	result.values = transmute([operation_sequence.ARGUMENTS]u64)wrong
+	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a record of another kind is taken")
+	result.values = transmute([operation_sequence.ARGUMENTS]u64)record
+	result.details[0] = record
+	result.details_count = 1
+	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a table with no detail of the budget is taken")
+	// A detail past the count is no detail, and a count past the most
+	// reads only the records of the table.
+	result.details[1] = {kind = i64(errors.Kind.Handle_Absent), argument = 2}
+	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a detail past the count is taken")
+	result.details_count = max(u64)
+	testing.expect_value(t, operation_seed_expectation_problem(expected, &results), "")
+	// The last case: the record, then the detail of the budget.
+	result.details_count = 2
+	testing.expect_value(t, operation_seed_expectation_problem(expected, &results), "")
 }
 
 // A sequence of one step of an operation, for the oracles.
@@ -167,6 +231,44 @@ the_oracles_of_a_status :: proc(t: ^testing.T) {
 	none := oracle_sequence(operation_sequence.Sequence_Step{operation = u32(operation.Operation.None)})
 	results.results[0] = {status = u64(operation.Status.Bad_Handle)}
 	testing.expect(t, oracle_has(operation_findings(&none, &header, &results, &grammar), .Unknown_Operation), "the operation None refused with Bad_Handle is taken")
+	// The word 0 with a table: Bad_Operation with another record, with a
+	// record of another value or limit, and with a table that the kernel
+	// wrote, are each taken.
+	none_kind := u64(operation.COMMAND_NAMES_ERROR_DETAILS)
+	unknown_record := errors.Error_Record{kind = i64(errors.Kind.Unknown_Operation), operation = i64(none_kind), value = i64(none_kind), limit = i64(max(operation.Operation))}
+	unknown_result :: proc(results: ^operation_sequence.Runner_Results, kind: u64, record: errors.Error_Record) -> ^operation_sequence.Step_Result {
+		result := &results.results[0]
+		result^ = {kind = kind, status = u64(operation.Status.Bad_Operation), values = transmute([operation_sequence.ARGUMENTS]u64)record}
+		for &detail in result.details {
+			detail = operation_sequence.details_pattern()
+		}
+		return result
+	}
+	wrong_record := unknown_record
+	wrong_record.kind = i64(errors.Kind.Refused)
+	unknown_result(&results, none_kind, wrong_record)
+	testing.expect(t, oracle_has(operation_findings(&none, &header, &results, &grammar), .Unknown_Operation), "the word 0 with the record Refused is taken")
+	wrong_record = unknown_record
+	wrong_record.value = 0 // The word without the bit of the table that the runner sent.
+	unknown_result(&results, none_kind, wrong_record)
+	testing.expect(t, oracle_has(operation_findings(&none, &header, &results, &grammar), .Unknown_Operation), "a record of another kind than the one sent is taken")
+	wrong_record = unknown_record
+	wrong_record.limit += 1
+	unknown_result(&results, none_kind, wrong_record)
+	testing.expect(t, oracle_has(operation_findings(&none, &header, &results, &grammar), .Unknown_Operation), "a record with another limit is taken")
+	written := unknown_result(&results, none_kind, unknown_record)
+	written.details_count = 1
+	testing.expect(t, oracle_has(operation_findings(&none, &header, &results, &grammar), .Unknown_Operation), "a table that the kernel counted is taken")
+	written = unknown_result(&results, none_kind, unknown_record)
+	written.details[0] = unknown_record
+	testing.expect(t, oracle_has(operation_findings(&none, &header, &results, &grammar), .Unknown_Operation), "a table that the kernel wrote is taken")
+	// The right answers, with a table and with none.
+	unknown_result(&results, none_kind, unknown_record)
+	testing.expect_value(t, len(operation_findings(&none, &header, &results, &grammar)), 0)
+	plain_record := unknown_record
+	plain_record.operation, plain_record.value = 0, 0
+	unknown_result(&results, 0, plain_record)
+	testing.expect_value(t, len(operation_findings(&none, &header, &results, &grammar)), 0)
 
 	result = memory_create_result(&results, 0, 1, 0, .Bad_State)
 	result.kind = u64(operation.Operation.Memory_Create)
