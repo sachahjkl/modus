@@ -56,6 +56,12 @@ An entropy service that stops after the reads of the start writes one line too:
 
 `root: the entropy service stopped: no more fresh bytes for the running processes`
 
+A read that the device takes and never ends would hold every later read, as the entropy service serves one at a time. Each read has a deadline of the hang bound from its ask; past it, the reads in flight count as refused, the root service stops the entropy service, and one line says both ([missing_hardware.md](missing_hardware.md)):
+
+`root: the entropy device did not answer a read in <seconds> seconds: <count> reads count as refused, and the entropy service stops: no more bytes of the device`
+
+The deadline and its number: [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed of the system, and what is claimed".
+
 **The process `randomness`** shows the mixes of its generator in its window, and writes one line at its first mix:
 
 `randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change <C> of its page`
@@ -86,6 +92,6 @@ An entropy service that stops after the reads of the start writes one line too:
 
 ## State
 
-Built: the read of the device every 30 seconds, the mix in the root service, the pages of 32 bytes for each process, the mix at each refill and each key, the line of the first refresh, the stop after 3 refused reads, the line of `randomness` and the row of its window, the host tests of the contract and of the generator, and the machine test of `modustool test random`.
+Built: the read of the device every 30 seconds, the mix in the root service, the pages of 32 bytes for each process, the mix at each refill and each key, the line of the first refresh, the stop after 3 refused reads, the deadline of a read and the stop of the entropy service past it, the line of `randomness` and the row of its window, the host tests of the contract and of the generator, and the machine test of `modustool test random`.
 
 Left: the processes that the root service starts with no mappings (the device services, the TPM service, `input`) and the processes that another process starts get no page. A starter that gives its child a page of its own is not built (ROADMAP.md, "Fresh bytes for the services and the children of a process").

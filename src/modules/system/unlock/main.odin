@@ -614,6 +614,20 @@ principal_ask :: proc "contextless" () {
 	system.log("unlock: principal ", number, " \"", the_name(), "\" is locked: its passphrase opens its session")
 }
 
+// no_screen_stop ends a run that needs typing on a machine with no screen,
+// with one line that names what cannot be typed and what stays absent. The
+// root service starts no `unlock` again on such a machine.
+no_screen_stop :: proc "contextless" () -> ! {
+	if mode == .Machine_Unlock || mode == .Machine_Recovery {
+		system.log("unlock: no screen: the machine passphrase and the recovery key of the machine key cannot be typed: the disk grants of principal 0 and its client keys of remote stay absent")
+	} else if mode == .Unlock || mode == .Principal_Recovery {
+		system.log("unlock: no screen: the passphrase of principal ", number, " \"", the_name(), "\" cannot be typed: its session stays locked")
+	} else {
+		system.log("unlock: no screen: the window of unlock cannot be shown: nothing is typed, and nothing changes")
+	}
+	system.stop(0)
+}
+
 // principal_recovery_ask asks for the recovery key of the named principal.
 principal_recovery_ask :: proc "contextless" (sentence: string) {
 	mode = .Principal_Recovery
@@ -2687,6 +2701,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log("unlock: no named principal: the machine runs as principal 0, with no unlock")
 			system.stop(0)
 		}
+	}
+	// From here a key must be typed. On a machine with no screen the root
+	// service gives no window: one line names what cannot be typed, and the
+	// process stops before it pays the blocks of Argon2id.
+	if ctx.handles[system.GRANT_DISPLAY] == 0 {
+		no_screen_stop()
 	}
 	// The blocks of Argon2id.
 	memory, memory_status := system.memory_create(principals.DERIVATION_MEMORY_PAGES)
