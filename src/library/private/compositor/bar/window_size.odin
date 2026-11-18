@@ -158,7 +158,7 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 
 // resize_drag gives the place of the frame and the size of the surface
 // while the pointer drags the edges of start. Each edge moves with the
-// pointer by steps of GRID; the size stays inside sizes; an edge never
+// pointer, to the pixel; the size stays inside sizes; an edge never
 // goes past the screen: not left of 0, not right of screen_width, not over
 // the bar, not below screen_height. A window that is already partly off
 // the screen is not made larger in that direction, and the screen alone
@@ -170,8 +170,8 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 // they do not, the size is cut to them.
 resize_drag :: proc "contextless" (start: Resize_Start, pointer_x, pointer_y: int, sizes: Size_Range, frame_width, frame_height, screen_width, screen_height: int) -> (x, y, width, height: int) {
 	x, y, width, height = start.x, start.y, start.width, start.height
-	step_x := grid_floor(pointer_x - start.pointer_x + GRID / 2)
-	step_y := grid_floor(pointer_y - start.pointer_y + GRID / 2)
+	step_x := pointer_x - start.pointer_x
+	step_y := pointer_y - start.pointer_y
 	right := start.x + frame_width + start.width
 	bottom := start.y + frame_height + start.height
 	if .Right in start.edges {

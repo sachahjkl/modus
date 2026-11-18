@@ -91,7 +91,7 @@ Data :: struct {
 }
 
 LINE :: graphics.LINE_HEIGHT // One line of text.
-MARGIN :: graphics.CARD_GAP // The gap around the cards.
+MARGIN :: graphics.GAP // The gap around the cards.
 CELL :: graphics.CELL_WIDTH // The logical width of one character of the text.
 LARGE_CELL :: 2 * CELL // The logical width of one large digit.
 
@@ -368,8 +368,8 @@ write_large :: proc "contextless" (area: Area, x, y: int, characters: string, co
 	return write_in_cells(area, x, y, characters, color, LARGE_CELL)
 }
 
-CARD_MARGIN :: graphics.CARD_MARGIN // The margin inside a card.
-CARD_TITLE :: graphics.CARD_TITLE // The height of the title of a card.
+CARD_MARGIN :: graphics.MARGIN // The margin inside a card.
+CARD_TITLE :: graphics.TITLE // The height of the title of a card.
 
 // write_name draws a name cut to room, in the cells of Spleen as each text
 // of the display, and gives the logical x after it. The whole name is on

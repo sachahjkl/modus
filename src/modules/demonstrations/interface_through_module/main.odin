@@ -114,7 +114,7 @@ number_text :: proc "contextless" (buffer: []u8, value: u64) -> string {
 }
 
 // The layout: the same places in the two ways.
-CONTENT :: interface.Area{8 + graphics.CARD_MARGIN, 8 + graphics.CARD_TITLE, WIDTH - 16 - 2 * graphics.CARD_MARGIN, HEIGHT - 16 - graphics.CARD_TITLE - 8}
+CONTENT :: interface.Area{8 + graphics.MARGIN, 8 + graphics.TITLE, WIDTH - 16 - 2 * graphics.MARGIN, HEIGHT - 16 - graphics.TITLE - 8}
 line_area :: proc "contextless" (number: int) -> interface.Area {
 	return {CONTENT.x, CONTENT.y + number * LINE, CONTENT.width, LINE}
 }

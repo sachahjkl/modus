@@ -94,7 +94,7 @@ Do not use: TTY, shell.
 
 The desktop shell is the process that starts processes and shows their windows to the principal.
 
-In the first version, the compositor is the desktop shell: its bar has the start menu and the menu of the windows, the palette starts a process and reaches a window, and the close button of a window stops its process. It starts a process by the command `Start` to the root service, which decides the grants of the process. The desktop shell is not a window manager with rules of placement: the compositor places new windows at fixed steps on the grid.
+In the first version, the compositor is the desktop shell: its bar has the start menu and the menu of the windows, the palette starts a process and reaches a window, and the close button of a window stops its process. It starts a process by the command `Start` to the root service, which decides the grants of the process. The desktop shell is not a window manager with rules of placement: the compositor places new windows at fixed steps, sums of spacing tokens.
 
 The design: `docs/ARCHITECTURE.md`, "U10. Desktop shell".
 
@@ -262,7 +262,7 @@ Do not use: command table of the palette, entry file, palette registry.
 
 ### Interface package
 
-The interface package is `src/library/support/interface`: the code that builds the window of a process as a draw table at each frame, lays it out on the grid, takes the pointer and the keys, finds the damage, and draws.
+The interface package is `src/library/support/interface`: the code that builds the window of a process as a draw table at each frame, lays it out with the spacing tokens, takes the pointer and the keys, finds the damage, and draws.
 
 The package gives each process one way to draw its window by the design rules. It works in immediate mode: at each frame, the process calls an element procedure for each part of its window, such as `button`. Each call appends draw records and gives back what the input did to that element. The package allocates nothing, and an error is a value. Example: `disk`, `monitor` and the palette are drawn with it. The interface package is not a toolkit with objects, callbacks and a tree.
 
@@ -786,7 +786,7 @@ Do not use: default resolution, target screen.
 
 A logical pixel is the unit in which a process places and sizes what it draws; the scale factor turns it into pixels of the screen.
 
-The grid of 8 is 8 logical pixels, and a window states its size in logical pixels. At scale 1 a logical pixel is one pixel of the screen. At a scale of 1.25 the grid is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a picture, which keeps its own pixels.
+The spacing token `gap` is 8 logical pixels, and a window states its size in logical pixels. At scale 1 a logical pixel is one pixel of the screen. At a scale of 1.25 the gap is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a picture, which keeps its own pixels.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
@@ -806,11 +806,11 @@ Do not use: interface zoom, DPI setting, scaling percentage.
 
 A spacing token is a named length of the design rules, in logical pixels, that the elements of the desktop use for the spaces between them: `gap` 8, `margin` 16 and `title` 40.
 
-It is the design of the coming steps, in place of the grid of 8: today each place and size of the desktop is a multiple of 8. A space between two elements is a token or a sum of tokens; a size that a content gives stays that size, with no round up. At a scale factor in eighths each token is a whole count of pixels of the screen. It is not a grid, and not the fixed height of an element.
+A space between two elements is a token or a sum of tokens, so the elements of two windows line up; a size that a content gives stays that size, with no round up, and a window goes where the principal drops it, to the pixel. The tokens are the constants `graphics.GAP`, `graphics.MARGIN` and `graphics.TITLE`. At a scale factor in eighths each token is a whole count of pixels of the screen. It is not a grid that binds a place, and not the fixed height of an element, as the bar of 32 pixels.
 
 The design: `src/md/features/spacing_tokens.md`.
 
-Do not use: grid unit, spacing unit.
+Do not use: grid unit, spacing unit, grid of 8.
 
 ### Window bound
 

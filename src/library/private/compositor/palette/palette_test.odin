@@ -450,6 +450,15 @@ the_parts_under_the_pointer :: proc(t: ^testing.T) {
 	testing.expect_value(t, y, 96)
 	narrow_x, _ := panel_place(320)
 	testing.expect_value(t, narrow_x, 0)
+	// The middle, to the pixel: no screen moves the panel to a step of 8.
+	for width in ([]int{0, PANEL_WIDTH - 1, PANEL_WIDTH, PANEL_WIDTH + 1}) {
+		edge_x, _ := panel_place(width)
+		testing.expectf(t, edge_x == 0, "a screen of %d puts the panel at %d", width, edge_x)
+	}
+	odd_x, _ := panel_place(PANEL_WIDTH + 2)
+	testing.expect_value(t, odd_x, 1)
+	middle_x, _ := panel_place(1036)
+	testing.expect_value(t, middle_x, (1036 - PANEL_WIDTH) / 2)
 	testing.expect_value(t, part_at(x, y, x - 1, y), Part.Outside)
 	testing.expect_value(t, part_at(x, y, x, y - 1), Part.Outside)
 	testing.expect_value(t, part_at(x, y, x + PANEL_WIDTH, y), Part.Outside)

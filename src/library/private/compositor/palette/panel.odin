@@ -7,9 +7,8 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/kind_icons"
 
-// The geometry of the panel (docs/DESIGN.md, "Palette"), on the grid of 8
-// pixels. From the top: the input band, the list, a gap, the detail line,
-// the footer, a margin.
+// The geometry of the panel (docs/DESIGN.md, "Palette"). From the top: the
+// input band, the list, a gap, the detail line, the footer, a margin.
 PANEL_WIDTH :: 640
 PANEL_TOP :: 96 // The top of the panel on the screen: fixed, so the input band never moves when the list changes.
 INPUT_BAND_HEIGHT :: 48 // The input band, with the line of 2 pixels that is its last 2 pixels.
@@ -17,23 +16,23 @@ INPUT_SCALE :: 2 // The typed part: cells of 16 x 32 pixels.
 ROW_HEIGHT :: interface.TABLE_LINE // One row of the list.
 LIST_TOP :: INPUT_BAND_HEIGHT // From the top of the panel to the list.
 LIST_HEIGHT :: LIST_ROWS * ROW_HEIGHT
-LIST_GAP :: 8 // Between the list and the detail line.
+LIST_GAP :: graphics.GAP // Between the list and the detail line.
 DETAIL_TOP :: LIST_TOP + LIST_HEIGHT + LIST_GAP // The detail line: what the chosen entry does.
 DETAIL_HEIGHT :: 24
 FOOTER_TOP :: DETAIL_TOP + DETAIL_HEIGHT // The footer: the source of the chosen entry, the count, the keys.
 FOOTER_HEIGHT :: 24
-BOTTOM_MARGIN :: 8
+BOTTOM_MARGIN :: graphics.GAP
 PANEL_HEIGHT :: FOOTER_TOP + FOOTER_HEIGHT + BOTTOM_MARGIN
 BORDER :: 1 // The border of the panel under the input band: at the left, the right and the bottom.
-TEXT_MARGIN :: 16 // From a side of the panel to a text.
+TEXT_MARGIN :: graphics.MARGIN // From a side of the panel to a text.
 
 #assert(PANEL_HEIGHT == 400)
-#assert(PANEL_WIDTH % graphics.GRID == 0 && PANEL_TOP % graphics.GRID == 0 && INPUT_BAND_HEIGHT % graphics.GRID == 0)
 
 // panel_place gives the top left corner of the panel on a screen: in the
-// middle of its width, on the grid, at a fixed height in its upper third.
+// middle of its width, at a fixed height in its upper third. On a screen of
+// an odd free width, the panel is half a pixel to the left of the middle.
 panel_place :: proc "contextless" (screen_width: int) -> (x, y: int) {
-	return max(screen_width - PANEL_WIDTH, 0) / 2 / graphics.GRID * graphics.GRID, PANEL_TOP
+	return max(screen_width - PANEL_WIDTH, 0) / 2, PANEL_TOP
 }
 
 // A part of the panel, for the pointer.
@@ -884,8 +883,7 @@ form_buttons_layout :: proc "contextless" (table: ^interface.Draw_Table, form: ^
 	right := x + PANEL_WIDTH - TEXT_MARGIN
 	band: Band_Layout
 	form_band_layout(form, &band)
-	start := x + interface.TEXT_INPUT_LINE_MARGIN + (band.last - band.first) * BAND_CELL_WIDTH + BAND_CARET_WIDTH + 16
-	start = (start + graphics.GRID - 1) / graphics.GRID * graphics.GRID
+	start := x + interface.TEXT_INPUT_LINE_MARGIN + (band.last - band.first) * BAND_CELL_WIDTH + BAND_CARET_WIDTH + graphics.MARGIN
 	top := y + (INPUT_BAND_HEIGHT - 2 - VALUE_BUTTON_HEIGHT) / 2
 	buttons.in_band = start + total <= right
 	if !buttons.in_band {

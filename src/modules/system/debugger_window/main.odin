@@ -83,7 +83,7 @@ VARIABLES_WIDTH :: WIDTH - VARIABLES_X - MARGIN
 PLACE_FIELD_Y :: LINE + 8
 BUTTONS_Y :: PLACE_FIELD_Y + ROW_HEIGHT + 8
 BUTTON_GAP :: 8
-BUTTON_WIDTH :: (LEFT_WIDTH - 2 * graphics.CARD_MARGIN - 2 * BUTTON_GAP) / 3
+BUTTON_WIDTH :: (LEFT_WIDTH - 2 * graphics.MARGIN - 2 * BUTTON_GAP) / 3
 
 REFRESH_MILLISECONDS :: 500 // The threads are read again: a stop of a thread that ran shows then.
 NAME_LIMIT :: 31 // The bytes of the name of a process, as the service takes it.
@@ -111,8 +111,8 @@ MEMORY_GAP :: 8
 MEMORY_BYTES_X :: MEMORY_ADDRESS_DIGITS * graphics.CELL_WIDTH + MEMORY_GAP
 MEMORY_TEXT_X :: MEMORY_BYTES_X + (3 * MEMORY_ROW_BYTES - 1) * graphics.CELL_WIDTH + MEMORY_GAP
 MEMORY_ROW_WIDTH :: MEMORY_TEXT_X + MEMORY_ROW_BYTES * graphics.CELL_WIDTH
-#assert(MEMORY_ROW_WIDTH <= RIGHT_WIDTH - 2 * graphics.CARD_MARGIN)
-#assert(MEMORY_ROWS * LINE <= MEMORY_HEIGHT - graphics.CARD_TITLE - 8)
+#assert(MEMORY_ROW_WIDTH <= RIGHT_WIDTH - 2 * graphics.MARGIN)
+#assert(MEMORY_ROWS * LINE <= MEMORY_HEIGHT - graphics.TITLE - 8)
 
 // The records of the exports of the service, as its description has them
 // (src/modules/system/debugger/exports.odin). The process checks at its start

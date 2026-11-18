@@ -6,7 +6,7 @@ The design rules put each place and each size on a grid of 8 pixels, and the com
 
 This design keeps what the grid gave, a few lengths that every window shares, and drops what it bound.
 
-The rules are in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "6. Spacing". This design is not built.
+The rules are in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "6. Spacing".
 
 ## Constraints
 
@@ -50,4 +50,9 @@ The rules are in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "6. Spacing". This
 
 ## State
 
-Designed, not built. It is a step of [text_rendering.md](text_rendering.md), "State", that depends on no other: it is written in parallel with the first step, the text at any size.
+Built. The spacing tokens are `GAP`, `MARGIN` and `TITLE` in `src/library/support/graphics/rules.odin`, which replaced the constant `GRID` and the card constants of the same lengths. The text size tokens are constants of the same file (`TEXT_CAPTION` to `TEXT_LARGEST`), which the elements read from the step of the draw record with sizes ([text_rendering.md](text_rendering.md), "State").
+
+- A dropped window, a new window and each edge of a resize go to the pixel; the part of the title kept on the screen is `bar.TITLE_KEPT`, one `gap`.
+- No measured width is rounded up: `interface.measured_size`, the columns of the start menu, the value buttons of a setting row and of a form of the palette.
+- The palette is in the middle of the screen to the pixel. The scroll bar of `terminal` has a `gap` before it, and the one of `manual` a `gap` after the band of an example.
+- The scenarios of the machine test move the windows to places that are multiples of 8, so the places that they read did not change.

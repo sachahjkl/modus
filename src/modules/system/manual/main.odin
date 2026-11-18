@@ -79,10 +79,10 @@ MARGIN :: 12
 COLUMNS :: 84 // The width of the text.
 ROWS :: 33
 SCROLL_WIDTH :: interface.SCROLL_BAR_THICKNESS
-SCROLL_GAP :: 11 // From the text to the scroll bar: the band of an example passes the text by 4 pixels.
+EXAMPLE_BAND_OVERHANG :: 4 // The band of an example passes the text by 4 pixels.
+SCROLL_GAP :: EXAMPLE_BAND_OVERHANG + graphics.GAP // From the text to the scroll bar: a gap after the band of an example.
 WIDTH :: LIST_WIDTH + MARGIN + COLUMNS * CELL_WIDTH + SCROLL_GAP + SCROLL_WIDTH
 HEIGHT :: ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8
-#assert(WIDTH % 8 == 0)
 
 // scroll_area gives the place of the scroll bar of the text: at the right
 // edge of the window, from its top to the line over the keys.

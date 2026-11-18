@@ -251,4 +251,4 @@ Designed, not built. The boot display in Spleen only, which this module needs fi
 1. The module and its cache at any size, with the look of the desktop unchanged: the package `text_rendering`, the work row at the width of the glyph, the cache that holds every glyph, the removal of the glyph caches of the boot image, of the demand cache and of the font service. The callers still give the sizes 1 024, 2 048 and 3 072.
 2. The draw record with sizes: version 17, `size` in place of `scale` in the text record and in the text grid, and the elements that take their sizes from the text size tokens, with `text_caption` and `text_heading` in the elements of "The text size tokens".
 3. The scale factor of the desktop ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen").
-4. The grid as spacing tokens ([spacing_tokens.md](spacing_tokens.md)). It depends on no other step, and is written in parallel with the first.
+4. The grid as spacing tokens ([spacing_tokens.md](spacing_tokens.md)). Built: it depended on no other step.

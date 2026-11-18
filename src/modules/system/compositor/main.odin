@@ -3,7 +3,7 @@
 // sends input to the process that has focus. It is also the desktop shell of
 // this first version: a bar with the start menu and the menu of
 // the windows, and windows that the input moves. It follows the design
-// rules (docs/DESIGN.md): rectangles only, the grid of 8 pixels, the colors
+// rules (docs/DESIGN.md): rectangles only, the spacing tokens, the colors
 // of src/library/support/graphics.
 //
 // **What it is for.** No process writes to the screen. A process asks the
@@ -154,9 +154,9 @@ TITLE_HEIGHT :: 24
 BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
 // A new window: the first one at (PLACE_X, PLACE_Y), each next one lower
-// and to the right, by PLACE_STEP_X and PLACE_STEP_Y.
-// The places of new windows. Each corner of a window is on the grid of 8
-// pixels (docs/DESIGN.md, section 6).
+// and to the right, by PLACE_STEP_X and PLACE_STEP_Y. Each is a sum of
+// spacing tokens, so the new windows line up with each other
+// (docs/DESIGN.md, "6. Spacing").
 PLACE_X :: 64
 PLACE_Y :: 56
 PLACE_STEP_X :: 40
@@ -1130,7 +1130,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
 			damage_window(&clients[dragging])
-			// The window follows the pointer on the grid of 8, and a part
+			// The window follows the pointer to the pixel, and a part
 			// of its title stays on the screen at each edge.
 			clients[dragging].x, clients[dragging].y = bar.dragged_window_place(pointer_x, pointer_y, drag_x, drag_y, window_frame_of(&clients[dragging]), screen.width, screen.height)
 			damage_window(&clients[dragging])

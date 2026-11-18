@@ -32,20 +32,20 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 	table := frame.table
 	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14))
 	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.colors.card_top, graphics.colors.card_bottom)
-	draw_vertical_gradient(table, area.x + graphics.CARD_MARGIN, area.y + 12, 4, 16, graphics.shade(accent, 130), accent)
+	draw_vertical_gradient(table, area.x + graphics.MARGIN, area.y + 12, 4, 16, graphics.shade(accent, 130), accent)
 	// The title, then the caption, take the room before the count: a
 	// narrow card cuts them, so they never run past the border.
-	title_left := area.x + graphics.CARD_MARGIN + 12
-	right := area.x + area.width - graphics.CARD_MARGIN
+	title_left := area.x + graphics.MARGIN + 12
+	right := area.x + area.width - graphics.MARGIN
 	if count != "" {
 		right -= text_measured_width(table, {}, count) + 16
 	}
 	after := draw_text(table, title_left, area.y + 12, text_fit(table, FONT_INTERFACE_BOLD, title, right - title_left), accent, FONT_INTERFACE_BOLD)
 	if count != "" {
-		draw_text_right(table, area.x + area.width - graphics.CARD_MARGIN, area.y + 12, count, graphics.colors.text)
+		draw_text_right(table, area.x + area.width - graphics.MARGIN, area.y + 12, count, graphics.colors.text)
 	}
 	draw_text(table, after + 16, area.y + 12, text_fit(table, FONT_INTERFACE, caption, right - (after + 16)), graphics.colors.dim, FONT_INTERFACE)
-	return {area.x + graphics.CARD_MARGIN, area.y + graphics.CARD_TITLE, area.width - 2 * graphics.CARD_MARGIN, area.height - graphics.CARD_TITLE - 8}
+	return {area.x + graphics.MARGIN, area.y + graphics.TITLE, area.width - 2 * graphics.MARGIN, area.height - graphics.TITLE - 8}
 }
 
 // label_value_line draws a name in the dim color and its value: at

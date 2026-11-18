@@ -113,7 +113,8 @@ resize_drag_stops_at_the_least_size :: proc(t: ^testing.T) {
 		{press_x - 816, press_y - 336}, // A size of 0.
 		{press_x - 2000, press_y - 2000}, // A negative size.
 		{min(int) / 2, min(int) / 2},
-		{press_x - 8, press_y - 8}, // One step below the least size.
+		{press_x - 8, press_y - 8}, // A gap below the least size.
+		{press_x - 1, press_y - 1}, // One pixel below the least size.
 	}
 	for target in targets {
 		_, _, width, height := drag(start_of({.Right, .Bottom}, press_x, press_y), target[0], target[1])
@@ -144,6 +145,13 @@ resize_drag_stops_at_the_largest_size_and_at_the_screen :: proc(t: ^testing.T) {
 	_, _, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + 400, press_y + 300, small)
 	testing.expect_value(t, width, 900)
 	testing.expect_value(t, height, 400)
+	// One pixel past the largest size, and the largest size itself.
+	_, _, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + (900 - 816) + 1, press_y + (400 - 336) + 1, small)
+	testing.expect_value(t, width, 900)
+	testing.expect_value(t, height, 400)
+	_, _, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + (900 - 816), press_y + (400 - 336), small)
+	testing.expect_value(t, width, 900)
+	testing.expect_value(t, height, 400)
 	// The left edge stops at 0 and the top edge under the bar, with the
 	// pointer far outside the screen.
 	x, y, width, height = drag(start_of({.Left, .Top}, OUTER_OF_TEST.x, OUTER_OF_TEST.y - 1), min(int) / 2, min(int) / 2)
@@ -166,31 +174,38 @@ resize_drag_of_a_window_past_the_screen :: proc(t: ^testing.T) {
 	testing.expect_value(t, width, 776)
 }
 
-// The edges move by steps of the grid, to the nearest step: a move of 3
-// pixels is no step, a move of 4 is one, toward the start a move of 4 is
-// none and a move of 5 is one. Then the drag of a corner to a size inside
-// the limits and inside the screen, last.
+// The edges move with the pointer, to the pixel: a drag of no pixel changes
+// nothing, a drag of one pixel changes the size by one pixel in each
+// direction, and the left and the top edge move by one pixel too. Then the
+// drag of a corner to a size inside the limits and inside the screen, last.
 @(test)
-resize_drag_moves_by_steps_of_the_grid :: proc(t: ^testing.T) {
+resize_drag_moves_to_the_pixel :: proc(t: ^testing.T) {
 	sizes := Size_Range{least_width = 400, least_height = 200, largest_width = 1200, largest_height = 600}
 	press_x, press_y := OUTER_OF_TEST.x + OUTER_OF_TEST.width - 1, OUTER_OF_TEST.y + OUTER_OF_TEST.height - 1
-	_, _, width, height := drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + 3, press_y - 4, sizes)
+	_, _, width, height := drag(start_of({.Right, .Bottom}, press_x, press_y), press_x, press_y, sizes)
 	testing.expect_value(t, width, 816)
 	testing.expect_value(t, height, 336)
-	_, _, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + 4, press_y - 5, sizes)
-	testing.expect_value(t, width, 816 + GRID)
-	testing.expect_value(t, height, 336 - GRID)
+	_, _, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + 1, press_y - 1, sizes)
+	testing.expect_value(t, width, 816 + 1)
+	testing.expect_value(t, height, 336 - 1)
+	_, _, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x - 1, press_y + 1, sizes)
+	testing.expect_value(t, width, 816 - 1)
+	testing.expect_value(t, height, 336 + 1)
 	x, y: int
-	x, y, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + 160, press_y + 64, sizes)
+	x, y, width, height = drag(start_of({.Left, .Top}, OUTER_OF_TEST.x, OUTER_OF_TEST.y - 1), OUTER_OF_TEST.x + 1, OUTER_OF_TEST.y, sizes)
+	testing.expect_value(t, x, OUTER_OF_TEST.x + 1)
+	testing.expect_value(t, y, OUTER_OF_TEST.y + 1)
+	testing.expect_value(t, width, 816 - 1)
+	testing.expect_value(t, height, 336 - 1)
+	x, y, width, height = drag(start_of({.Right, .Bottom}, press_x, press_y), press_x + 163, press_y + 61, sizes)
 	testing.expect_value(t, x, OUTER_OF_TEST.x)
 	testing.expect_value(t, y, OUTER_OF_TEST.y)
-	testing.expect_value(t, width, 976)
-	testing.expect_value(t, height, 400)
-	// The left edge: the window keeps its right edge, on the grid.
-	x, _, width, _ = drag(start_of({.Left}, OUTER_OF_TEST.x, 200), OUTER_OF_TEST.x - 40, 200, sizes)
-	testing.expect_value(t, width, 856)
-	testing.expect_value(t, x, OUTER_OF_TEST.x - 40)
-	testing.expect(t, x %% GRID == 0, "the left edge stays on the grid")
+	testing.expect_value(t, width, 816 + 163)
+	testing.expect_value(t, height, 336 + 61)
+	// The left edge: the window keeps its right edge.
+	x, _, width, _ = drag(start_of({.Left}, OUTER_OF_TEST.x, 200), OUTER_OF_TEST.x - 43, 200, sizes)
+	testing.expect_value(t, width, 816 + 43)
+	testing.expect_value(t, x, OUTER_OF_TEST.x - 43)
 }
 
 // A window behind the front one: its frame is under the band of the right
