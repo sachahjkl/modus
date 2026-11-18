@@ -8,6 +8,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 SITE_PROPERTIES_FILE :: "docs/PROPERTIES.md"
 SITE_README_FILE :: "README.md"
@@ -45,15 +46,6 @@ Site_Readme :: struct {
 	licence_paragraphs: []string, // The paragraphs of the section "Licences".
 }
 
-// site_lines splits a file into lines with no carriage return.
-site_lines :: proc(content: string) -> []string {
-	lines := strings.split(content, "\n", context.temp_allocator)
-	for &line in lines {
-		line = strings.trim_right(line, "\r")
-	}
-	return lines
-}
-
 // site_first_sentence gives the text up to the first period that a space
 // follows, or the whole text when it has no such period.
 site_first_sentence :: proc(text: string) -> string {
@@ -64,21 +56,6 @@ site_first_sentence :: proc(text: string) -> string {
 		}
 	}
 	return trimmed
-}
-
-// site_digits_value gives the value of a text of decimal digits, or -1.
-site_digits_value :: proc(text: string) -> int {
-	if len(text) == 0 || len(text) > 12 {
-		return -1
-	}
-	value := 0
-	for character in transmute([]u8)text {
-		if character < '0' || character > '9' {
-			return -1
-		}
-		value = value * 10 + int(character - '0')
-	}
-	return value
 }
 
 // site_table_cells gives the cells of a line "| a | b | c |", trimmed.
@@ -206,7 +183,7 @@ site_part_sentence :: proc(lines: []string) -> (sentence: string, found: bool) {
 //   part of it (see site_part_sentence for the sentence of each);
 //   the properties end at the first "## " heading that is not "## <n>. ".
 site_properties_parse :: proc(content: string) -> (principles: Site_Principles, problem: string) {
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	file :: SITE_PROPERTIES_FILE
 
 	objective_lines, has_objective := site_section_lines(lines, "## Objective")
@@ -221,7 +198,7 @@ site_properties_parse :: proc(content: string) -> (principles: Site_Principles, 
 	rules := make([dynamic]string, context.temp_allocator)
 	for line in objective_lines {
 		dot := strings.index(line, ". ")
-		if dot > 0 && site_digits_value(line[:dot]) == len(rules) + 1 {
+		if dot > 0 && foundation.site_digits_value(line[:dot]) == len(rules) + 1 {
 			append(&rules, strings.trim_space(line[dot + 2:]))
 		}
 	}
@@ -251,7 +228,7 @@ site_properties_parse :: proc(content: string) -> (principles: Site_Principles, 
 		if table_row == 2 {
 			continue // The line of dashes.
 		}
-		if len(cells) != 3 || site_digits_value(cells[0]) != len(statuses) + 1 || cells[2] == "" {
+		if len(cells) != 3 || foundation.site_digits_value(cells[0]) != len(statuses) + 1 || cells[2] == "" {
 			return {}, fmt.tprintf("%s: the row %d of the summary table must be \"| %d | <title> | <status> |\"", file, len(statuses) + 1, len(statuses) + 1)
 		}
 		append(&statuses, cells[2])
@@ -270,7 +247,7 @@ site_properties_parse :: proc(content: string) -> (principles: Site_Principles, 
 		}
 		heading := line[len("## "):]
 		dot := strings.index(heading, ". ")
-		number := dot > 0 ? site_digits_value(heading[:dot]) : -1
+		number := dot > 0 ? foundation.site_digits_value(heading[:dot]) : -1
 		if number < 0 {
 			if len(properties) > 0 {
 				break // The first section after the properties.
@@ -340,7 +317,7 @@ site_properties_parse :: proc(content: string) -> (principles: Site_Principles, 
 //   a section "## Use" whose first paragraph says what supplies the tools;
 //   a section "## Licences" of paragraphs.
 site_readme_parse :: proc(content: string) -> (readme: Site_Readme, problem: string) {
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	file :: SITE_README_FILE
 	title_line := -1
 	for line, index in lines {
@@ -441,7 +418,7 @@ site_readme_parse :: proc(content: string) -> (readme: Site_Readme, problem: str
 // that has a row of its own. It gives "what it shows" by path.
 site_mark_captions :: proc(content: string) -> map[string]string {
 	captions := make(map[string]string, context.temp_allocator)
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		if !strings.has_prefix(line, "| `resources/logo/") {
 			continue
 		}
@@ -458,7 +435,7 @@ site_mark_captions :: proc(content: string) -> map[string]string {
 // file of the repository: a picture that a step renamed or removed would
 // leave a broken picture in the README and on the site.
 readme_pictures_check :: proc() -> bool {
-	text := site_read(SITE_README_FILE) or_return
+	text := foundation.site_read(SITE_README_FILE) or_return
 	readme, problem := site_readme_parse(text)
 	if problem != "" {
 		fmt.eprintfln("modustool: test failed: %s", problem)
@@ -470,6 +447,6 @@ readme_pictures_check :: proc() -> bool {
 			return false
 		}
 	}
-	test_passed_print("the %d pictures that %s names are files of the repository", len(readme.captions), SITE_README_FILE)
+	foundation.test_passed_print("the %d pictures that %s names are files of the repository", len(readme.captions), SITE_README_FILE)
 	return true
 }

@@ -1,13 +1,15 @@
 package modustool
 
+import "modustool:foundation"
+
 // The trees of a store (docs/STORAGE.md): the process `hierarchy` makes
 // 100000 objects in trees inside trees, lists them in pages, renames,
 // removes a tree, and checks that a share reaches nothing outside its tree.
 // A second machine starts on the same disk: the open of the disk walks
 // every tree again, and `hierarchy` checks the counts and the contents.
 
-TEST_HIERARCHY_DISK :: BUILD_FOLDER + "/test_hierarchy_disk.img"
-TEST_OUTPUT_HIERARCHY :: BUILD_FOLDER + "/test_output_hierarchy_%d.txt"
+TEST_HIERARCHY_DISK :: foundation.BUILD_FOLDER + "/test_hierarchy_disk.img"
+TEST_OUTPUT_HIERARCHY :: foundation.BUILD_FOLDER + "/test_output_hierarchy_%d.txt"
 
 scenario_hierarchy_first := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},

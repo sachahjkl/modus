@@ -3,6 +3,7 @@ package modustool
 import debug_object "modus:contract/debug_object"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // The writers of the hand-made sections of DWARF of these tests.
 @(private = "file")
@@ -524,7 +525,7 @@ a_changed_byte_of_a_section_never_breaks_the_reader :: proc(t: ^testing.T) {
 	procedures := []Debug_Procedure{{start = 0x1000, size = 0x40, name = "fault::three"}}
 	rows := []Debug_Row{{address = 0x1000, path = "processes/fault/main.odin", line = 14}, {address = 0x1040}}
 	outcomes: [3]int
-	run :: proc(changed: Sample_Sections, procedures_of_run: []Debug_Procedure, rows_of_run: []Debug_Row, counts: ^[3]int) {
+	foundation.run :: proc(changed: Sample_Sections, procedures_of_run: []Debug_Procedure, rows_of_run: []Debug_Row, counts: ^[3]int) {
 		information, error := debug_information_from_dwarf(changed.units, changed.abbreviations, changed.debug_strings, changed.locations, changed.ranges, changed.sections)
 		if error != "" {
 			counts[0] += 1
@@ -544,7 +545,7 @@ a_changed_byte_of_a_section_never_breaks_the_reader :: proc(t: ^testing.T) {
 			kept := section[index]
 			for value in other_values {
 				section[index] = value
-				run(sample, procedures, rows, &outcomes)
+				foundation.run(sample, procedures, rows, &outcomes)
 			}
 			section[index] = kept
 		}

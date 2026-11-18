@@ -430,7 +430,7 @@ A comment must stay true for a reader who has only the source file. A number of 
 
 `modustool check` reads each comment of the sources and refuses a comment that names a property, a choice, a step, a review or a decision by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
 
-The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/library/private`, `src/modules` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
+The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/library/private`, `src/modules` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/foundation/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
 
 | Form | Example | Message |
 |---|---|---|
@@ -537,7 +537,7 @@ A code span of a document that names a file of the repository is a link on the s
 
 **What it reads.** Each document of `docs/` but the records of their time, `README.md`, `AGENTS.md`, and each intent file of `src/md`. In them, each code span outside a fence of code, also a span of a heading.
 
-**Which span is a source path.** A span that starts with the path of a folder of the sources, or with the last part of that path, then a `/`. The folders of the sources are the constants of `tools/modustool/source_folders.odin`. The last part is the name that a folder had before a move: a span that still starts with it is read, and is refused, so an old path cannot stay in a document. The first part of a path that has more parts is not a start: under it, an intent file names a folder of a later state or of a refused form, and such a span names nothing on purpose.
+**Which span is a source path.** A span that starts with the path of a folder of the sources, or with the last part of that path, then a `/`. The folders of the sources are the constants of `tools/modustool/foundation/source_folders.odin`. The last part is the name that a folder had before a move: a span that still starts with it is read, and is refused, so an old path cannot stay in a document. The first part of a path that has more parts is not a start: under it, an intent file names a folder of a later state or of a refused form, and such a span names nothing on purpose.
 
 A span that starts with `tools/` is read too: the tool is no source of the system, but a guide names its files, and a file of the tool that moves into a package must change each document that names it. A future folder of the tool is then named in words, not in a span.
 
@@ -972,8 +972,8 @@ The tool is compiled once for each change of its sources, not at each command. T
 - **At once.** At most one host process for each processor: the processors of the host, or `NIX_BUILD_CORES` when it is fewer. The tool comes first in the list, because it takes the longest. After a failure no new folder starts; the folders that run end.
 - **The files of a folder.** Its log is `build/host_tests/<name>.txt`, where the name is the path of the folder with `_` for each `/`. Its compiler has its own temporary folder, `build/host_tests/<name>`, so that two compilers never write one object of an assembly file.
 - **What the check prints.** One line for each folder that passed, with its time: `modustool: measure: the host tests of src/library/support/quic: <seconds> s`, then the time of all on the clock. For a folder that failed, the path of its log and its last 40 lines. Each time is a measure, never a condition.
-- **The flag of the kernel parts** goes to the host tests of the folders under `src/kernel` and of the tool only.
-- **One folder alone**: `nix develop -c odin test <folder> -vet -collection:modus=src/library`, with `-collection:kernel=src/kernel` for a kernel part or the tool.
+- **The flag of the kernel parts** goes to the host tests of the folders under `src/kernel` and of each folder of the tool only. **The flag of the source library of the tool**, `-collection:modustool=tools/modustool`, goes to each folder of the tool: the command and each of its packages.
+- **One folder alone**: `nix develop -c odin test <folder> -vet -collection:modus=src/library`, with `-collection:kernel=src/kernel` for a kernel part, and with both `-collection:kernel=src/kernel` and `-collection:modustool=tools/modustool` for a folder of the tool.
 
 ### The fuzzing
 
@@ -1796,7 +1796,7 @@ The code is `tools/modustool/roadmap.odin`; the host tests are `roadmap_test.odi
 A test checks a condition: a value, a state, a line of the log. A test that depends on the speed of the computer that runs it fails on a loaded host with no fault of the system, so no test asserts a speed.
 
 - **A time in a test has one role: to end a hang.** The bound is generous, and the same for each wait that has no reason of its own. It is never tuned to how fast the work is on some host.
-  - A step of a machine test, and each wait of the tool after an input (the keys, the pointer, a reply of QEMU): `HANG_BOUND`, 120 s (`tools/modustool/machine.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
+  - A step of a machine test, and each wait of the tool after an input (the keys, the pointer, a reply of QEMU): `HANG_BOUND`, 120 s (`tools/modustool/foundation/processes.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
   - The first Wait of a machine, its boot: `BOOT_HANG_BOUND`, 180 s.
   - The checks of a process that a machine test runs: `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s (`src/library/support/system/test_bounds.odin`). It is under the bound of a step, so that the process writes its own report of the hang before the tool ends the machine.
 - **A case that can count its progress has a bound on a stall.** It ends when its count does not grow for `system.TEST_HANG_BOUND_MILLISECONDS`, or after `system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS` (600 s) in all. The report names the step where the count stopped: a step that stays still tells a lost wake from a slow host. The Wait for the line of such a case has `PROGRESS_CASE_HANG_BOUND_SECONDS` (660 s), more than the overall bound of the process.

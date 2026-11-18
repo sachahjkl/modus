@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The download section of the home and of the page of the releases: the
 // files of the newest release, the release signing key, and the steps that
@@ -79,32 +80,32 @@ site_download_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string)
 	}
 	for file in download_files {
 		strings.write_string(b, "<li><a href=\"")
-		site_escape(b, address)
-		site_escape(b, file.name)
+		foundation.site_escape(b, address)
+		foundation.site_escape(b, file.name)
 		strings.write_string(b, "\"><code>")
-		site_escape(b, file.name)
+		foundation.site_escape(b, file.name)
 		strings.write_string(b, "</code></a>: ")
-		site_escape(b, file.what)
+		foundation.site_escape(b, file.what)
 		strings.write_string(b, "</li>\n")
 	}
 	strings.write_string(b, "</ul>\n<p>The release signing key: <code class=\"download-key\">")
-	site_escape(b, site.release_public_key)
+	foundation.site_escape(b, site.release_public_key)
 	strings.write_string(b, "</code> (<a href=\"")
-	site_escape(b, site_page_link(site, from_page, SITE_RELEASE_KEY_FILE))
+	foundation.site_escape(b, site_page_link(site, from_page, SITE_RELEASE_KEY_FILE))
 	strings.write_string(b, "\">text</a>, <a href=\"")
-	site_escape(b, site_page_link(site, from_page, SITE_RELEASE_KEY_PEM_FILE))
+	foundation.site_escape(b, site_page_link(site, from_page, SITE_RELEASE_KEY_PEM_FILE))
 	strings.write_string(b, "\">PEM</a>).</p>\n")
 	if site.firmware_certificate_present {
 		strings.write_string(b, "<p>The certificate of the firmware signing key, which the firmware needs for Secure Boot: <a href=\"")
-		site_escape(b, site_page_link(site, from_page, SITE_FIRMWARE_CERTIFICATE_DER_FILE))
+		foundation.site_escape(b, site_page_link(site, from_page, SITE_FIRMWARE_CERTIFICATE_DER_FILE))
 		strings.write_string(b, "\">DER</a>, <a href=\"")
-		site_escape(b, site_page_link(site, from_page, SITE_FIRMWARE_CERTIFICATE_PEM_FILE))
+		foundation.site_escape(b, site_page_link(site, from_page, SITE_FIRMWARE_CERTIFICATE_PEM_FILE))
 		strings.write_string(b, "\">PEM</a>.</p>\n")
 	}
 	strings.write_string(b, "<p>Verify the files before you write the USB key:</p>\n<pre><code>nix develop -c modustool verify ")
-	site_escape(b, image_name)
+	foundation.site_escape(b, image_name)
 	strings.write_string(b, " ")
-	site_escape(b, RELEASE_CHECKSUM_FILE_NAME)
+	foundation.site_escape(b, RELEASE_CHECKSUM_FILE_NAME)
 	strings.write_string(b, "</code></pre>\n")
 	site_download_guide_line(site, b, from_page)
 	strings.write_string(b, "</section>\n")
@@ -116,7 +117,7 @@ site_download_guide_line :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 	strings.write_string(b, "<p>The steps with no tool, the USB key and the setting of the firmware: ")
 	if !site_home_guide_link(site, b, from_page, SITE_INSTALL_GUIDE, SITE_INSTALL_VERIFY_HEADING) {
 		strings.write_string(b, "<code>")
-		site_escape(b, SITE_INSTALL_GUIDE)
+		foundation.site_escape(b, SITE_INSTALL_GUIDE)
 		strings.write_string(b, "</code>")
 	}
 	strings.write_string(b, ".</p>\n")

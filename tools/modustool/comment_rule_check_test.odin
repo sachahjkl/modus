@@ -2,6 +2,7 @@ package modustool
 
 import "core:fmt"
 import "core:testing"
+import "modustool:foundation"
 
 @(private = "file")
 comment_rule_forms_of :: proc(file, content: string) -> []Comment_Rule_Form {
@@ -146,10 +147,10 @@ comment_rule_does_not_read_an_exempt_file :: proc(t: ^testing.T) {
 comment_rule_exemptions_are_the_copied_cryptography :: proc(t: ^testing.T) {
 	exempt_files, ok := comment_rule_exempt_files()
 	testing.expect(t, ok)
-	testing.expect(t, (CRYPTOGRAPHY_FOLDER + "/_chacha20/chacha20.odin") in exempt_files)
-	testing.expect(t, (CRYPTOGRAPHY_FOLDER + "/x25519/x25519.odin") in exempt_files)
-	testing.expect(t, !((CRYPTOGRAPHY_FOLDER + "/vectors/vectors.odin") in exempt_files))
-	testing.expect(t, !((SOURCE_FOLDER_KERNEL + "/schedule.odin") in exempt_files))
+	testing.expect(t, (foundation.CRYPTOGRAPHY_FOLDER + "/_chacha20/chacha20.odin") in exempt_files)
+	testing.expect(t, (foundation.CRYPTOGRAPHY_FOLDER + "/x25519/x25519.odin") in exempt_files)
+	testing.expect(t, !((foundation.CRYPTOGRAPHY_FOLDER + "/vectors/vectors.odin") in exempt_files))
+	testing.expect(t, !((foundation.SOURCE_FOLDER_KERNEL + "/schedule.odin") in exempt_files))
 }
 
 // The repository has no breach: the comments of each source give their

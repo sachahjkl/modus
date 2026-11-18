@@ -8,6 +8,7 @@ import "core:testing"
 import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 @(private = "file")
 TEST_SIGNATURE :: "oracle Unknown_Operation: a word that names no operation"
@@ -265,11 +266,11 @@ the_answers_kept_from_a_machine_are_read_through_their_borders :: proc(t: ^testi
 // not exist holds no input.
 @(test)
 each_file_of_a_folder_of_regression_inputs_is_read_or_refused :: proc(t: ^testing.T) {
-	root :: BUILD_FOLDER + "/operation_regression_inputs_test"
+	root :: foundation.BUILD_FOLDER + "/operation_regression_inputs_test"
 	defer {
 		_ = os.remove_all(root)
 	}
-	testing.expect(t, reset_folder(root))
+	testing.expect(t, foundation.reset_folder(root))
 	missing, missing_problems := operation_regression_inputs_read(root + "/none", context.temp_allocator)
 	testing.expect(t, len(missing) == 0 && len(missing_problems) == 0)
 	sequence := test_sequence_bytes()
@@ -279,7 +280,7 @@ each_file_of_a_folder_of_regression_inputs_is_read_or_refused :: proc(t: ^testin
 	_, good := fuzz_input_write(root, bytes)
 	_, bad := fuzz_input_write(root, bytes[:len(bytes) - 1])
 	testing.expect(t, good && bad)
-	testing.expect(t, make_folder(root + "/inner"))
+	testing.expect(t, foundation.make_folder(root + "/inner"))
 	inputs, problems := operation_regression_inputs_read(root, context.temp_allocator)
 	testing.expect_value(t, len(inputs), 1)
 	testing.expect_value(t, len(problems), 2)
@@ -316,11 +317,11 @@ each_regression_input_of_the_corpus_is_run :: proc(t: ^testing.T) {
 // regression or reach is one too.
 @(test)
 the_corpus_of_the_operations_has_its_form :: proc(t: ^testing.T) {
-	root :: BUILD_FOLDER + "/operation_corpus_form_test"
+	root :: foundation.BUILD_FOLDER + "/operation_corpus_form_test"
 	defer {
 		_ = os.remove_all(root)
 	}
-	testing.expect(t, reset_folder(root))
+	testing.expect(t, foundation.reset_folder(root))
 	sequence := test_sequence_bytes()
 	defer delete(sequence)
 	bytes := test_regression_bytes(sequence)
@@ -332,7 +333,7 @@ the_corpus_of_the_operations_has_its_form :: proc(t: ^testing.T) {
 	_, damaged := fuzz_input_write(regression_folder, with_word(bytes, int(offset_of(Operation_Regression_Header, magic)), 0))
 	testing.expect(t, damaged)
 	testing.expect_value(t, len(fuzz_corpus_problems(root, fuzz_targets())), 1)
-	testing.expect(t, make_folder(strings.concatenate({root, "/", OPERATION_CORPUS_NAME, "/other"}, context.temp_allocator)))
+	testing.expect(t, foundation.make_folder(strings.concatenate({root, "/", OPERATION_CORPUS_NAME, "/other"}, context.temp_allocator)))
 	testing.expect_value(t, len(fuzz_corpus_problems(root, fuzz_targets())), 2)
 }
 
@@ -342,11 +343,11 @@ the_corpus_of_the_operations_has_its_form :: proc(t: ^testing.T) {
 // of finding.txt are read last.
 @(test)
 the_life_of_a_finding_is_read_or_refused :: proc(t: ^testing.T) {
-	root :: BUILD_FOLDER + "/operation_finding_life_test"
+	root :: foundation.BUILD_FOLDER + "/operation_finding_life_test"
 	defer {
 		_ = os.remove_all(root)
 	}
-	testing.expect(t, reset_folder(root))
+	testing.expect(t, foundation.reset_folder(root))
 	_, _, no_text := operation_finding_life_read(root)
 	testing.expect(t, no_text != "", "a folder with no finding.txt is taken")
 	testing.expect(t, os.write_entire_file(root + "/finding.txt", transmute([]u8)string("\nthe text\n")) == nil)
@@ -355,7 +356,7 @@ the_life_of_a_finding_is_read_or_refused :: proc(t: ^testing.T) {
 	testing.expect(t, os.write_entire_file(root + "/finding.txt", transmute([]u8)fmt.tprintf("%s\nthe text\n", TEST_SIGNATURE)) == nil)
 	_, _, no_life := operation_finding_life_read(root)
 	testing.expect(t, no_life != "", "a folder with no minimized life is taken")
-	testing.expect(t, make_folder(root + "/minimized"))
+	testing.expect(t, foundation.make_folder(root + "/minimized"))
 	_, _, no_sequence := operation_finding_life_read(root)
 	testing.expect(t, no_sequence != "", "a minimized life of no sequence is taken")
 	sequence := test_sequence_bytes()

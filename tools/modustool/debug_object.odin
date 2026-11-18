@@ -9,6 +9,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:sync"
+import "modustool:foundation"
 
 // The debug object of each module (docs/MODULE_CONTRACT.md, "Debug
 // information"). The tool reads the linked ELF file of the module: the
@@ -22,11 +23,11 @@ import "core:sync"
 // The debug image: the debug object of each module of the build, in the
 // form of a boot image. The tool puts it on each boot volume, beside the
 // boot program; the boot program reads it if it is there.
-DEBUG_IMAGE :: BUILD_FOLDER + "/debug.image"
+DEBUG_IMAGE :: foundation.BUILD_FOLDER + "/debug.image"
 DEBUG_IMAGE_VOLUME_PATH :: "DEBUG/OBJECTS.IMG"
 
 debug_object_path :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, ".debug")
+	return foundation.join(foundation.module_build_folder, "/", name, ".debug")
 }
 
 // One procedure before the encoding: a function symbol of the ELF file.
@@ -146,7 +147,7 @@ debug_source_file_hashes :: proc(line_rows: []Debug_Row, host_paths: map[string]
 // file to hash it. It never reaches the debug object.
 debug_host_path :: proc(directory, name: string) -> string {
 	if !strings.has_prefix(name, "/") && directory != "" {
-		return join(directory, "/", name)
+		return foundation.join(directory, "/", name)
 	}
 	return name
 }
@@ -751,7 +752,7 @@ directory_join :: proc(directory, compilation_directory: string) -> string {
 	if strings.has_prefix(directory, "/") || compilation_directory == "" {
 		return directory
 	}
-	return join(compilation_directory, "/", directory)
+	return foundation.join(compilation_directory, "/", directory)
 }
 
 // The folder of the Odin installation (`odin root`), read once in a process.
@@ -788,7 +789,7 @@ odin_root :: proc() -> string {
 debug_path :: proc(directory, name: string, root: string) -> string {
 	path := name
 	if !strings.has_prefix(name, "/") && directory != "" {
-		path = join(directory, "/", name)
+		path = foundation.join(directory, "/", name)
 	}
 	for strings.has_prefix(path, "./") {
 		path = path[2:]
@@ -801,22 +802,22 @@ debug_path :: proc(directory, name: string, root: string) -> string {
 	if recorded, is_outside := outside_source_path(path, outside_source_folder); is_outside {
 		return recorded
 	}
-	if root != "" && strings.has_prefix(path, join(root, "/")) {
+	if root != "" && strings.has_prefix(path, foundation.join(root, "/")) {
 		return path[len(root) + 1:]
 	}
-	if compiler := odin_root(); compiler != "" && strings.has_prefix(path, join(compiler, "/")) {
+	if compiler := odin_root(); compiler != "" && strings.has_prefix(path, foundation.join(compiler, "/")) {
 		rest := path[len(compiler) + 1:]
 		if slash := strings.index_byte(rest, '/'); slash > 0 {
-			return join(rest[:slash], ":", rest[slash + 1:])
+			return foundation.join(rest[:slash], ":", rest[slash + 1:])
 		}
-		return join("odin:", rest)
+		return foundation.join("odin:", rest)
 	}
 	// With no answer of `odin root`: the layout of the installation of the
 	// flake, <root>/share/base and <root>/share/core.
 	for library in ([]string{"base", "core"}) {
-		marker := join("/share/", library, "/")
+		marker := foundation.join("/share/", library, "/")
 		if index := strings.last_index(path, marker); index >= 0 {
-			return join(library, ":", path[index + len(marker):])
+			return foundation.join(library, ":", path[index + len(marker):])
 		}
 	}
 	return path
@@ -1271,8 +1272,8 @@ text_until_zero :: proc(bytes: []u8, offset: u64) -> string {
 debug_image_write :: proc() -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	procedures, rows, types, globals, variables, ranges := 0, 0, 0, 0, 0, 0
-	for build in module_builds {
-		object := read_file(debug_object_path(build.name)) or_return
+	for build in foundation.module_builds {
+		object := foundation.read_file(debug_object_path(build.name)) or_return
 		parts, fault := debug_object.tables(object)
 		if fault != .None {
 			fmt.eprintfln("modustool: the debug object of %s: %s", build.name, debug_object.fault_sentences[fault])

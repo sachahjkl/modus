@@ -4,6 +4,7 @@ import "core:log"
 import "core:strings"
 import "core:testing"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 // A text with each kind of token: a file tag, a comment of each form, a
 // string, a raw string, a rune, numbers, a directive, an attribute, a
@@ -105,10 +106,10 @@ site_code_odin_of_the_contract :: proc(t: ^testing.T) {
 			testing.expectf(t, plain_of(strings.to_string(b)) == declaration.declaration, "%s, line %d: the colored declaration of %s is not its text", declaration.file, declaration.line, declaration.name)
 			declarations += 1
 		}
-		paths, listed := files_with_suffix(folder, ".odin")
+		paths, listed := foundation.files_with_suffix(folder, ".odin")
 		testing.expect(t, listed)
 		for path in paths {
-			text, read := site_read_quiet(path)
+			text, read := foundation.site_read_quiet(path)
 			testing.expect(t, read)
 			b := strings.builder_make(context.temp_allocator)
 			testing.expectf(t, site_code_odin(&site, &b, text, package_name), "%s: the tokenizer refuses the file", path)

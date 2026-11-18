@@ -10,6 +10,7 @@ package modustool
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
+import "modustool:foundation"
 
 // One icon of the manifest: a file of the table of the uses of the mark,
 // for any use or for a phone that cuts the icon to a shape.
@@ -61,7 +62,7 @@ site_icon_problems :: proc(pages: []Site_Page, written: map[string]string, manif
 			return fmt.tprintf("%s is not an icon that the command wrote", path)
 		}
 		if strings.has_suffix(path, ".png") {
-			width, height, _ := site_png_size(data)
+			width, height, _ := foundation.site_png_size(data)
 			if sizes != "" && sizes != fmt.tprintf("%dx%d", width, height) {
 				return fmt.tprintf("%s is %d by %d, and its size is stated as %s", path, width, height, sizes)
 			}

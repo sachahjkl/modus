@@ -9,6 +9,7 @@ package modustool
 import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
+import "modustool:foundation"
 
 // One row of a card of the docs home. The two cards (the guides and the
 // reference) share one form: a lead (a number of a reading order or the
@@ -42,15 +43,15 @@ site_docs_row :: proc(b: ^strings.Builder, row: Site_Docs_Row) {
 	strings.write_string(b, "<span class=\"docs-row-main\"><span class=\"docs-row-name\">")
 	if row.address != "" {
 		fmt.sbprintf(b, "<a href=\"%s\">", row.address)
-		site_escape(b, row.name)
+		foundation.site_escape(b, row.name)
 		strings.write_string(b, "</a>")
 	} else {
-		site_escape(b, row.name)
+		foundation.site_escape(b, row.name)
 	}
 	strings.write_string(b, "</span>")
 	if row.about != "" {
 		strings.write_string(b, "<span class=\"docs-row-about\">")
-		site_escape(b, row.about)
+		foundation.site_escape(b, row.about)
 		strings.write_string(b, "</span>")
 	}
 	strings.write_string(b, "</span>")

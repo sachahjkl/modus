@@ -6,6 +6,7 @@ import "core:odin/ast"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // The source of a module with one export, for the tests of the check of
 // the declarations: a table to read, an integer, a text, a Text result and
@@ -478,13 +479,13 @@ each_slot_has_one_compared_declaration :: proc(t: ^testing.T) {
 // (import_declarations_check); this test needs no build.
 @(test)
 each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T) {
-	for build in module_builds {
+	for build in foundation.module_builds {
 		if len(build.imports) == 0 {
 			continue
 		}
 		exports := make([dynamic]Importable_Export, context.temp_allocator)
 		for name in build.imports {
-			for other in module_builds {
+			for other in foundation.module_builds {
 				if other.name != name {
 					continue
 				}
@@ -498,22 +499,22 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 			}
 		}
 		paths := make([dynamic]string, context.temp_allocator)
-		own_files, listed := files_with_suffix(build.source, ".odin")
+		own_files, listed := foundation.files_with_suffix(build.source, ".odin")
 		if !testing.expectf(t, listed, "the folder %s was not listed", build.source) {
 			return
 		}
 		append(&paths, ..own_files)
 		// The declarations of the drawing module are in the window layer of
 		// the interface package, for each module with the setting.
-		if slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
-			append(&paths, SOURCE_FOLDER_SUPPORT + "/interface/window_drawing.odin")
+		if slice.contains(build.defines, foundation.DRAWING_THROUGH_MODULE) {
+			append(&paths, foundation.SOURCE_FOLDER_SUPPORT + "/interface/window_drawing.odin")
 		}
 		compared := 0
 		for path in paths {
 			if strings.has_suffix(path, "_test.odin") {
 				continue
 			}
-			source, read := read_file(path)
+			source, read := foundation.read_file(path)
 			if !testing.expectf(t, read, "%s was not read", path) {
 				return
 			}
@@ -540,28 +541,28 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 modules_that_draw_through_the_drawing_module_follow_its_rules :: proc(t: ^testing.T) {
 	library_found := false
 	library_place := -1
-	for build, index in module_builds {
-		if build.name == DRAWING_MODULE {
+	for build, index in foundation.module_builds {
+		if build.name == foundation.DRAWING_MODULE {
 			library_found = build.library
 			library_place = index
 		}
 	}
 	testing.expect(t, library_found, "the drawing module is a library module of the table")
 	processes := 0
-	for build, index in module_builds {
-		if !slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
+	for build, index in foundation.module_builds {
+		if !slice.contains(build.defines, foundation.DRAWING_THROUGH_MODULE) {
 			continue
 		}
 		processes += 1
-		testing.expectf(t, slice.contains(build.imports, DRAWING_MODULE), "%s has the setting and does not import the drawing module", build.name)
+		testing.expectf(t, slice.contains(build.imports, foundation.DRAWING_MODULE), "%s has the setting and does not import the drawing module", build.name)
 		testing.expectf(t, library_place >= 0 && library_place < index, "%s draws through the module, and the module is not before it in the table", build.name)
-		paths, listed := files_with_suffix(build.source, ".odin")
+		paths, listed := foundation.files_with_suffix(build.source, ".odin")
 		if !testing.expectf(t, listed, "the folder %s was not listed", build.source) {
 			return
 		}
 		own_file := strings.concatenate({"image_find(image, \"", build.name, "\")"}, context.temp_allocator)
 		for path in paths {
-			source, read := read_file(path)
+			source, read := foundation.read_file(path)
 			if !testing.expectf(t, read, "%s was not read", path) {
 				return
 			}

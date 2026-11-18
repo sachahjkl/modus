@@ -8,13 +8,14 @@ import "core:fmt"
 import "core:os"
 import "modus:support/graphics"
 import "modus:support/mark"
+import "modustool:foundation"
 
 // The picture of every frame for a developer, written by `modustool logo`
 // and by `modustool mark developer` into the build folder: one row for
 // each animation, its frames from the still heron at cells of 8 pixels,
 // each with its duration. It is not a file of the site or of the
 // repository.
-MARK_ANIMATIONS_PICTURE :: BUILD_FOLDER + "/mark_animations.png"
+MARK_ANIMATIONS_PICTURE :: foundation.BUILD_FOLDER + "/mark_animations.png"
 MARK_ANIMATIONS_CELL_SIZE :: 8
 MARK_ANIMATIONS_MARGIN :: 32
 MARK_ANIMATIONS_GAP :: 16
@@ -83,7 +84,7 @@ mark_animations_picture_write :: proc() -> bool {
 		rgb[3 * index + 2] = u8(color)
 	}
 	data := mark_pixels_png_quick(MARK_ANIMATIONS_PICTURE, width, height, 3, rgb) or_return
-	if !make_folder(BUILD_FOLDER) {
+	if !foundation.make_folder(foundation.BUILD_FOLDER) {
 		return false
 	}
 	if err := os.write_entire_file(MARK_ANIMATIONS_PICTURE, data); err != nil {

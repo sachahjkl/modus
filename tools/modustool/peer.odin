@@ -7,6 +7,7 @@ import "core:sync"
 import "core:sys/linux"
 import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // The peer of the network of the test machine: the gateway 10.0.2.2 of the
 // network of the machine, and an echo server on its port 7. QEMU sends each
@@ -224,7 +225,7 @@ peer_check :: proc(peer: ^Peer) -> bool {
 		return false
 	}
 	if peer.frames != 0 {
-		test_passed_print("the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.firmware)
+		foundation.test_passed_print("the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.firmware)
 	}
 	return true
 }

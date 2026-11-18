@@ -7,12 +7,13 @@ import format "modus:contract/store"
 import "modus:support/disk_process"
 import "modus:support/principals"
 import "modus:private/storage/storage_mount"
+import "modustool:foundation"
 
 // The line that the scenario of the debugger names is the line of the
 // call of sleep_for_ever in the entry of visitor.
 @(test)
 visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
-	content, read := read_file(TEST_MODULE_SOURCES + DISK_MODULE_NAME + "/main.odin")
+	content, read := foundation.read_file(foundation.TEST_MODULE_SOURCES + foundation.DISK_MODULE_NAME + "/main.odin")
 	if !testing.expect(t, read) {
 		return
 	}
@@ -25,7 +26,7 @@ visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
 // write to the address 0 in fault_three of visitor.
 @(test)
 visitor_line_of_the_fault_is_the_write :: proc(t: ^testing.T) {
-	content, read := read_file(TEST_MODULE_SOURCES + DISK_MODULE_NAME + "/main.odin")
+	content, read := foundation.read_file(foundation.TEST_MODULE_SOURCES + foundation.DISK_MODULE_NAME + "/main.odin")
 	if !testing.expect(t, read) {
 		return
 	}

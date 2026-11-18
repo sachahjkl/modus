@@ -27,12 +27,13 @@ import "core:strings"
 import "core:time"
 import "core:time/datetime"
 import "core:time/timezone"
+import "modustool:foundation"
 
 CHANGELOG_FILE :: "CHANGELOG.md"
 FRAGMENT_FOLDER :: "changelog.d"
 // The one file of the fragment folder that is not a fragment.
 FRAGMENT_FOLDER_GUIDE :: "README.md"
-RELEASE_NUMBER_SOURCE :: SOURCE_FOLDER_CONTRACT + "/release/release.odin"
+RELEASE_NUMBER_SOURCE :: foundation.SOURCE_FOLDER_CONTRACT + "/release/release.odin"
 // The source of the release number in every place that it ever had: the
 // file moved once, and the record of an old release is in the old path. In
 // a git pathspec, `*` also matches `/`.
@@ -102,13 +103,13 @@ run_changelog :: proc(args: []string) -> int {
 	usage_text :: "modustool changelog new <type> <subject> \"<text>\" | check | assemble | release <release number> | notes <release number> | times"
 	if len(args) == 0 {
 		fmt.eprintln(usage_text)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	switch args[0] {
 	case "new":
 		if len(args) != 4 {
 			fmt.eprintln("modustool: changelog new <type> <subject> \"<text>\": three arguments are expected")
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
 		text := args[3]
 		// "-": the text comes from the standard input. `odin run` gives
@@ -117,37 +118,37 @@ run_changelog :: proc(args: []string) -> int {
 			input, err := os.read_entire_file(os.stdin, context.temp_allocator)
 			if err != nil {
 				fmt.eprintfln("modustool: cannot read the standard input: %v", err)
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 			text = string(input)
 		}
-		return changelog_new(args[1], args[2], text) ? 0 : EXIT_FAILURE
+		return changelog_new(args[1], args[2], text) ? 0 : foundation.EXIT_FAILURE
 	case "check":
-		return changelog_check() ? 0 : EXIT_FAILURE
+		return changelog_check() ? 0 : foundation.EXIT_FAILURE
 	case "assemble":
-		return changelog_assemble() ? 0 : EXIT_FAILURE
+		return changelog_assemble() ? 0 : foundation.EXIT_FAILURE
 	case "release":
 		if len(args) != 2 {
 			fmt.eprintln("modustool: changelog release <release number>: one argument is expected, such as 0.59.0")
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
-		return changelog_release(args[1]) ? 0 : EXIT_FAILURE
+		return changelog_release(args[1]) ? 0 : foundation.EXIT_FAILURE
 	case "notes":
 		if len(args) != 2 {
 			fmt.eprintln("modustool: changelog notes <release number>: one argument is expected, such as 0.58.0")
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
-		return changelog_notes(args[1]) ? 0 : EXIT_FAILURE
+		return changelog_notes(args[1]) ? 0 : foundation.EXIT_FAILURE
 	case "times":
 		if len(args) != 1 {
 			fmt.eprintln("modustool: changelog times takes no argument")
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
-		return changelog_times() ? 0 : EXIT_FAILURE
+		return changelog_times() ? 0 : foundation.EXIT_FAILURE
 	}
 	fmt.eprintfln("modustool: changelog has no command %s", args[0])
 	fmt.eprintln(usage_text)
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 run_release_number :: proc(args: []string) -> int {
@@ -973,7 +974,7 @@ changelog_check :: proc() -> bool {
 	for checked_release in changelog.releases {
 		entry_count += len(checked_release.entries)
 	}
-	test_passed_print("%s has %d releases and %d entries, %s has %d fragments, all well formed", CHANGELOG_FILE, len(changelog.releases), entry_count, FRAGMENT_FOLDER, len(fragments))
+	foundation.test_passed_print("%s has %d releases and %d entries, %s has %d fragments, all well formed", CHANGELOG_FILE, len(changelog.releases), entry_count, FRAGMENT_FOLDER, len(fragments))
 	return true
 }
 

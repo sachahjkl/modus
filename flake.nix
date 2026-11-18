@@ -197,8 +197,9 @@
     # compiles itself again when the build key of its sources changes
     # (src/md/infrastructure/repository_layout.md, "The tool built once").
     # With no binary, the command compiles the first one, with the source
-    # library of the project and the kernel parts (the tool reads two of
-    # them), into a file of its own that it then moves: a compile that
+    # library of the project, the kernel parts (the tool reads two of
+    # them) and the source library of the tool, whose packages import
+    # each other through it, into a file of its own that it then moves: a compile that
     # stops leaves no binary that cannot run.
     # With MODUS_SYSTEM set, the folder of the project is that folder and
     # the command runs where it is typed: the folder of another project,
@@ -209,7 +210,7 @@
       if [ ! -x "$system/build/tool/modustool" ]; then
         mkdir -p "$system/build/tool"
         # The compiler reads the paths of the tool from the folder of the system.
-        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
+        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -collection:modustool=tools/modustool -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
       fi
       exec "$system/build/tool/modustool" "$@"
     '';
@@ -242,7 +243,7 @@
       nativeBuildInputs = [odin pkgs.nasm];
       buildPhase = ''
         export HOME=$TMPDIR
-        odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
+        odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -collection:modustool=tools/modustool -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
       '';
       installPhase = ''
         install -D modustool $out/bin/modustool

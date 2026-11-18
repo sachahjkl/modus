@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:image/png"
 import "core:os"
 import "modus:support/mark"
+import "modustool:foundation"
 
 // The files of the mark of the system in the repository (docs/DESIGN.md,
 // section "The mark"). src/library/support/mark holds the mark as data. The command
@@ -19,36 +20,36 @@ import "modus:support/mark"
 
 // The package that holds the mark as data: its geometry, its letters and
 // its animations.
-MARK_SOURCE_FOLDER :: SOURCE_FOLDER_SUPPORT + "/mark"
+MARK_SOURCE_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/mark"
 
 run_logo :: proc(args: []string) -> int {
 	if len(args) != 0 {
 		fmt.eprintln("modustool: logo takes no argument")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
-	if !make_folder(LOGO_FOLDER) || !make_folder(".project") {
-		return EXIT_FAILURE
+	if !foundation.make_folder(LOGO_FOLDER) || !foundation.make_folder(".project") {
+		return foundation.EXIT_FAILURE
 	}
 	for picture in mark_uses_pictures(.Repository, .Picture) {
 		file, ok := mark_picture_png(picture)
 		if !ok {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		if err := os.write_entire_file(picture.file_name, file); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", picture.file_name, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		width, height := mark_picture_size(picture)
 		fmt.printfln("modustool: wrote %s (%s, %d pixels for a cell, %d by %d pixels, %d bytes)", picture.file_name, mark.variant_names[picture.variant], picture.heron_cell, width, height, len(file))
 	}
 	// The font of the name of the mark, from the same letters as the pictures.
 	if !mark_font_write() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// Every frame of the animations, for a developer to look at; in the build
 	// folder, not in the repository.
 	if !mark_animations_picture_write() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	return 0
 }
@@ -92,7 +93,7 @@ logo_check :: proc() -> bool {
 			fmt.eprintfln("modustool: test failed: %s is not the picture of the data of " + MARK_SOURCE_FOLDER + ": run modustool logo", picture.file_name)
 			return false
 		}
-		test_passed_print("%s is the picture of the data of " + MARK_SOURCE_FOLDER, picture.file_name)
+		foundation.test_passed_print("%s is the picture of the data of " + MARK_SOURCE_FOLDER, picture.file_name)
 	}
 	return mark_font_check()
 }

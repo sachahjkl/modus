@@ -2,6 +2,7 @@ package modustool
 
 import "base:intrinsics"
 import module "modus:contract/module"
+import "modustool:foundation"
 
 // The fuzz targets of the module file (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): a module comes from the network into
@@ -177,7 +178,7 @@ fuzz_module_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {
 	for index in 0 ..< entries {
 		entry: module.Table_Entry
 		intrinsics.mem_copy_non_overlapping(&entry, &input[directory + index * size_of(module.Table_Entry)], size_of(module.Table_Entry))
-		type, size := fuzz_module_record_type(enum_member_at(module.Table_Kind, index))
+		type, size := fuzz_module_record_type(foundation.enum_member_at(module.Table_Kind, index))
 		if type == nil || int(entry.record_size) != size || entry.offset >= u64(len(input)) {
 			continue
 		}
@@ -317,7 +318,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	broken_value: u64
 	broken_field := 0
 	if allow_break && fuzz_choice_rare(&choices, 4) {
-		broken_kind = enum_member_at(module.Table_Kind, 1 + fuzz_choice_below(&choices, module.TABLE_COUNT - 1))
+		broken_kind = foundation.enum_member_at(module.Table_Kind, 1 + fuzz_choice_below(&choices, module.TABLE_COUNT - 1))
 		broken_field = fuzz_choice_below(&choices, 8)
 		broken_value = fuzz_choice_word(&choices, 8)
 		broke = true

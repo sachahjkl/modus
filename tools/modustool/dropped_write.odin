@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:sync"
 import "modus:private/storage/storage_mount"
+import "modustool:foundation"
 
 // The dropped write (src/md/features/dropped_write.md). The disk that the
 // tool serves drops three writes of the console to one object, each found
@@ -36,8 +37,8 @@ DROPPED_WRITE_ROOT_MARKER :: "the version whose root the disk drops"
 DROPPED_WRITE_FIRST_VERSION :: "the version that the disk keeps"
 DROPPED_WRITE_OBJECT :: "kept"
 DROPPED_WRITE_STORE :: "console" // The private store of the console.
-TEST_DROPPED_WRITE_DISK :: BUILD_FOLDER + "/test_dropped_write_disk.img"
-TEST_OUTPUT_DROPPED_WRITE :: BUILD_FOLDER + "/test_output_dropped_write_%d.txt"
+TEST_DROPPED_WRITE_DISK :: foundation.BUILD_FOLDER + "/test_dropped_write_disk.img"
+TEST_OUTPUT_DROPPED_WRITE :: foundation.BUILD_FOLDER + "/test_output_dropped_write_%d.txt"
 
 // The line of the open when the newest root names a wrong block and the
 // root before it names none (src/modules/system/storage/main.odin).
@@ -181,8 +182,8 @@ dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
 	if !before_ok {
 		return false
 	}
-	test_passed_print("the dropped write: the disk answered Ok to the write of block %d and did not keep it; the read back refused that commit before its root; the disk dropped the root of a later commit, and the read back of the root refused it; the object %s read its first version after each, with no restart", server.dropped_block, DROPPED_WRITE_OBJECT)
-	test_passed_print("the dropped write: the disk hid the loss of block %d from the read back; the open on the host of the image at the root of generation %d refuses that root and uses the generation %d, with 0 wrong blocks; the image at the end opens its generation %d with the object %s damaged, the limit of the read back", server.hidden_block, hidden_commit, before, end_generation, DROPPED_WRITE_OBJECT)
+	foundation.test_passed_print("the dropped write: the disk answered Ok to the write of block %d and did not keep it; the read back refused that commit before its root; the disk dropped the root of a later commit, and the read back of the root refused it; the object %s read its first version after each, with no restart", server.dropped_block, DROPPED_WRITE_OBJECT)
+	foundation.test_passed_print("the dropped write: the disk hid the loss of block %d from the read back; the open on the host of the image at the root of generation %d refuses that root and uses the generation %d, with 0 wrong blocks; the image at the end opens its generation %d with the object %s damaged, the limit of the read back", server.hidden_block, hidden_commit, before, end_generation, DROPPED_WRITE_OBJECT)
 	if err := os.write_entire_file(TEST_DROPPED_WRITE_DISK, server.durable_at_hidden_root); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", TEST_DROPPED_WRITE_DISK, err)
 		return false

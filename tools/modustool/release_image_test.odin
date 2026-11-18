@@ -11,6 +11,7 @@ import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/system_description"
 import "modus:support/cryptography/ed25519"
+import "modustool:foundation"
 
 // The seed of a release signing key of these tests only: 32 bytes.
 @(private = "file")
@@ -161,7 +162,7 @@ a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 	folder, error := os.make_directory_temp("", "release_image_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
 	defer os.remove_all(folder)
-	volume := join(folder, "/boot_volume_test.img")
+	volume := foundation.join(folder, "/boot_volume_test.img")
 	root_text, console_text, kernel_text: string = "the module root of the build", "the module console of the build", "the kernel of the build"
 	kernel_hash := blake3.hash(transmute([]u8)kernel_text)
 	build_files := release_test_files(root_text, console_text, "fonts")
@@ -219,7 +220,7 @@ a_release_holds_the_pointer_theme_of_the_system_only :: proc(t: ^testing.T) {
 	folder, error := os.make_directory_temp("", "release_image_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
 	defer os.remove_all(folder)
-	volume := join(folder, "/boot_volume_test.img")
+	volume := foundation.join(folder, "/boot_volume_test.img")
 	root_text, console_text, kernel_text: string = "the module root of the build", "the module console of the build", "the kernel of the build"
 	kernel_hash := blake3.hash(transmute([]u8)kernel_text)
 	repository_license, license_found := repository_license_read()
@@ -378,31 +379,31 @@ a_key_folder_is_written_from_the_secrets_of_a_workflow :: proc(t: ^testing.T) {
 		_ = os.unset_env(FIRMWARE_CERTIFICATE_TEXT_VARIABLE)
 		_ = os.unset_env(RELEASE_SIGNING_KEY_TEXT_VARIABLE)
 	}
-	key_folder := join(folder, "/keys")
+	key_folder := foundation.join(folder, "/keys")
 	testing.expect(t, key_folder_write(key_folder), "the folder is written")
-	system_seed, system_read := signing_key_file_read(join(key_folder, "/", SIGNING_KEY_FILE_NAME))
+	system_seed, system_read := signing_key_file_read(foundation.join(key_folder, "/", SIGNING_KEY_FILE_NAME))
 	testing.expect(t, system_read)
 	testing.expect_value(t, system_seed[0], u8(0xAB))
-	release_data, release_error := os.read_entire_file(join(key_folder, "/", RELEASE_SIGNING_KEY_FILE_NAME), context.temp_allocator)
+	release_data, release_error := os.read_entire_file(foundation.join(key_folder, "/", RELEASE_SIGNING_KEY_FILE_NAME), context.temp_allocator)
 	testing.expect_value(t, release_error, nil)
 	release_seed, release_read := release_key_decode(string(release_data))
 	testing.expect(t, release_read)
 	testing.expect(t, string(release_seed[:]) == string(seed), "the release signing key is the value of its variable")
 	for name in ([]string{SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX, FIRMWARE_SIGNING_KEY_FILE_NAME, FIRMWARE_CERTIFICATE_FILE_NAME, RELEASE_SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX}) {
-		testing.expectf(t, os.exists(join(key_folder, "/", name)), "%s is in the key folder", name)
+		testing.expectf(t, os.exists(foundation.join(key_folder, "/", name)), "%s is in the key folder", name)
 	}
 	testing.expect(t, !key_folder_write(key_folder), "a key folder is never written over")
 
 	// A write that fails part of the way removes what it wrote: here the
 	// third file exists already, so the first two are written, then removed.
-	partial_folder := join(folder, "/partial_keys")
+	partial_folder := foundation.join(folder, "/partial_keys")
 	testing.expect_value(t, os.make_directory(partial_folder), nil)
-	_ = os.write_entire_file(join(partial_folder, "/", FIRMWARE_SIGNING_KEY_FILE_NAME), "a file that was there\n")
+	_ = os.write_entire_file(foundation.join(partial_folder, "/", FIRMWARE_SIGNING_KEY_FILE_NAME), "a file that was there\n")
 	testing.expect(t, !key_folder_write(partial_folder), "a file that exists stops the write")
-	testing.expect(t, !os.exists(join(partial_folder, "/", SIGNING_KEY_FILE_NAME)), "the files of a failed write are removed")
-	testing.expect(t, !os.exists(join(partial_folder, "/", SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX)), "the files of a failed write are removed")
-	testing.expect(t, os.exists(join(partial_folder, "/", FIRMWARE_SIGNING_KEY_FILE_NAME)), "a file that was there stays")
+	testing.expect(t, !os.exists(foundation.join(partial_folder, "/", SIGNING_KEY_FILE_NAME)), "the files of a failed write are removed")
+	testing.expect(t, !os.exists(foundation.join(partial_folder, "/", SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX)), "the files of a failed write are removed")
+	testing.expect(t, os.exists(foundation.join(partial_folder, "/", FIRMWARE_SIGNING_KEY_FILE_NAME)), "a file that was there stays")
 
 	_ = os.set_env(RELEASE_SIGNING_KEY_TEXT_VARIABLE, "AAAA")
-	testing.expect(t, !key_folder_write(join(folder, "/other_keys")), "a release signing key of another form is refused")
+	testing.expect(t, !key_folder_write(foundation.join(folder, "/other_keys")), "a release signing key of another form is refused")
 }

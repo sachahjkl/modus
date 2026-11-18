@@ -5,6 +5,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // The tests of the engine of the fuzzing on the host: a target with a
 // planted fault that the engine must find in a fixed count of executions
@@ -190,13 +191,13 @@ the_printed_commands_of_the_compiler_are_split :: proc(t: ^testing.T) {
 the_package_of_a_folder_is_the_name_that_its_sources_declare :: proc(t: ^testing.T) {
 	// The folder support/terminal holds the package terminal_records: a
 	// selection by the name of the folder counted none of its edges.
-	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_SUPPORT + "/terminal"), "terminal_records")
-	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_CONTRACT + "/module"), "module")
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_SUPPORT + "/terminal"), "terminal_records")
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_CONTRACT + "/module"), "module")
 	// A kernel part is a folder under the kernel.
-	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_KERNEL + "/iommu"), "iommu")
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_KERNEL + "/iommu"), "iommu")
 	// A folder that does not exist gives the name of the folder.
-	testing.expect_value(t, fuzz_package_name_of_folder(SOURCE_FOLDER_SUPPORT + "/no_such_folder"), "no_such_folder")
-	names := fuzz_package_names({SOURCE_FOLDER_SUPPORT + "/terminal", SOURCE_FOLDER_SUPPORT + "/quic"})
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_SUPPORT + "/no_such_folder"), "no_such_folder")
+	names := fuzz_package_names({foundation.SOURCE_FOLDER_SUPPORT + "/terminal", foundation.SOURCE_FOLDER_SUPPORT + "/quic"})
 	testing.expect(t, slice.equal(names, []string{"terminal_records", "quic"}))
 	// The name ends at a space or a "/": a comment after it is no part of
 	// it. A line with no name, or that is no package line, gives none.
@@ -239,11 +240,11 @@ each_fuzz_target_has_a_name_a_limit_and_its_packages :: proc(t: ^testing.T) {
 
 @(test)
 a_corpus_out_of_its_form_is_refused :: proc(t: ^testing.T) {
-	root := BUILD_FOLDER + "/fuzz_corpus_form_test"
+	root := foundation.BUILD_FOLDER + "/fuzz_corpus_form_test"
 	defer {
 		_ = os.remove_all(root)
 	}
-	testing.expect(t, reset_folder(root))
+	testing.expect(t, foundation.reset_folder(root))
 	good := []u8{1, 2, 3}
 	_, written := fuzz_input_write(strings.concatenate({root, "/module_file/", FUZZ_REGRESSION_PART}, context.temp_allocator), good)
 	testing.expect(t, written)
@@ -251,9 +252,9 @@ a_corpus_out_of_its_form_is_refused :: proc(t: ^testing.T) {
 	// A file whose name is not its hash, a part that is not one of the
 	// two, and a folder that names no target.
 	reach := strings.concatenate({root, "/module_file/", FUZZ_REACH_PART}, context.temp_allocator)
-	testing.expect(t, make_folder(reach))
+	testing.expect(t, foundation.make_folder(reach))
 	testing.expect(t, os.write_entire_file(strings.concatenate({reach, "/0000"}, context.temp_allocator), good) == nil)
-	testing.expect(t, make_folder(strings.concatenate({root, "/module_file/other"}, context.temp_allocator)))
-	testing.expect(t, make_folder(strings.concatenate({root, "/no_such_target"}, context.temp_allocator)))
+	testing.expect(t, foundation.make_folder(strings.concatenate({root, "/module_file/other"}, context.temp_allocator)))
+	testing.expect(t, foundation.make_folder(strings.concatenate({root, "/no_such_target"}, context.temp_allocator)))
 	testing.expect_value(t, len(fuzz_corpus_problems(root, fuzz_targets())), 3)
 }

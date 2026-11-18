@@ -3,6 +3,7 @@ package modustool
 import "modus:contract/blake3"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // The line of a source place: the text only from a file with the hash of
 // the build.
@@ -55,7 +56,7 @@ call_source_line_of_content :: proc(t: ^testing.T) {
 // line of the store in the file.
 @(test)
 debugger_scenario_names_the_line_of_debug_target :: proc(t: ^testing.T) {
-	content, read := read_file(DEBUG_TARGET_SOURCE_FILE)
+	content, read := foundation.read_file(DEBUG_TARGET_SOURCE_FILE)
 	if !testing.expect(t, read, DEBUG_TARGET_SOURCE_FILE + " is read") {
 		return
 	}

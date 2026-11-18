@@ -3,6 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 // site_graph_test_names gives a list of names in the memory of the test: a
 // slice literal would live in the frame of the procedure that returns it.
@@ -142,14 +143,14 @@ site_graph_layout_refusals :: proc(t: ^testing.T) {
 // cycle, and the rules of the layout hold.
 @(test)
 site_graph_layout_of_the_build :: proc(t: ^testing.T) {
-	inputs := make([]Site_Graph_Input, len(module_builds), context.temp_allocator)
-	for build, index in module_builds {
+	inputs := make([]Site_Graph_Input, len(foundation.module_builds), context.temp_allocator)
+	for build, index in foundation.module_builds {
 		inputs[index] = {name = build.name, kind = build.kernel ? Site_Graph_Kind.Kernel : Site_Graph_Kind.No_Entry, imports = build.imports}
 	}
 	layout, problem := site_graph_layout(inputs, SITE_GRAPH_BAND_COLUMNS)
 	testing.expect_value(t, problem, "")
 	imports := 0
-	for build in module_builds {
+	for build in foundation.module_builds {
 		imports += len(build.imports)
 	}
 	testing.expect_value(t, len(layout.edges), imports)

@@ -1,4 +1,4 @@
-package modustool
+package foundation
 
 import "core:testing"
 

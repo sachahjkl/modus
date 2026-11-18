@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // Secure Boot (docs/TRUSTED_BOOT.md, section 7): the firmware starts only a
 // boot program that the firmware signing key signed.
@@ -22,11 +23,11 @@ import "core:strings"
 
 FIRMWARE_SIGNING_KEY_FILE_NAME :: "firmware_signing_key.pem"
 FIRMWARE_CERTIFICATE_FILE_NAME :: "firmware_signing_key.crt"
-TEST_FIRMWARE_SIGNING_KEY_FILE :: RESOURCE_FOLDER + "/keys/test_" + FIRMWARE_SIGNING_KEY_FILE_NAME
-TEST_FIRMWARE_CERTIFICATE_FILE :: RESOURCE_FOLDER + "/keys/test_" + FIRMWARE_CERTIFICATE_FILE_NAME
+TEST_FIRMWARE_SIGNING_KEY_FILE :: foundation.RESOURCE_FOLDER + "/keys/test_" + FIRMWARE_SIGNING_KEY_FILE_NAME
+TEST_FIRMWARE_CERTIFICATE_FILE :: foundation.RESOURCE_FOLDER + "/keys/test_" + FIRMWARE_CERTIFICATE_FILE_NAME
 // The variable store of the machine with Secure Boot on: OVMF_FULL_VARS
 // with the certificate enrolled. machine_command copies it for each machine.
-SECURE_BOOT_VARIABLES :: BUILD_FOLDER + "/ovmf_vars_secure_boot.fd"
+SECURE_BOOT_VARIABLES :: foundation.BUILD_FOLDER + "/ovmf_vars_secure_boot.fd"
 // The owner of the enrolled certificates (SignatureOwner in the UEFI
 // signature lists): a fixed identifier of this system, which the firmware
 // stores and does not check.
@@ -90,7 +91,7 @@ firmware_signing_key_new :: proc(folder: string, test: bool) -> bool {
 	// -days 36500: the firmware does not check the dates of a db
 	// certificate; a short life gives no protection here, only a failure of
 	// the tools that do check it.
-	run({"openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "36500", "-nodes", "-subj", FIRMWARE_CERTIFICATE_SUBJECT, "-keyout", key_path, "-out", certificate_path}) or_return
+	foundation.run({"openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "36500", "-nodes", "-subj", FIRMWARE_CERTIFICATE_SUBJECT, "-keyout", key_path, "-out", certificate_path}) or_return
 	if !test {
 		if err := os.change_mode(key_path, os.perm(0o600)); err != nil {
 			fmt.eprintfln("modustool: cannot make %s private: %v", key_path, err)
@@ -109,13 +110,13 @@ firmware_signing_key_new :: proc(folder: string, test: bool) -> bool {
 boot_program_sign :: proc(signature: Firmware_Signature, process_path, signed_path: string) -> bool {
 	key := firmware_signing_key_find() or_return
 	_ = os.remove(signed_path)
-	run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", signed_path, process_path}) or_return
+	foundation.run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", signed_path, process_path}) or_return
 	// A private key that does not belong to its certificate gives a
 	// signature that the enrolled certificate does not verify: the firmware
 	// would refuse the boot program on every machine.
-	run({"sbverify", "--cert", key.certificate_path, signed_path}) or_return
+	foundation.run({"sbverify", "--cert", key.certificate_path, signed_path}) or_return
 	if signature == .Signed_Then_Changed {
-		process := read_file(signed_path) or_return
+		process := foundation.read_file(signed_path) or_return
 		// The middle of the file is in the boot image that the boot program
 		// holds: a byte that the Authenticode hash covers. The signature is
 		// at the end of the file.
@@ -142,5 +143,5 @@ secure_boot_variables_write :: proc() -> bool {
 		return false
 	}
 	_ = os.remove(SECURE_BOOT_VARIABLES)
-	return run({"virt-fw-vars", "--input", template, "--output", SECURE_BOOT_VARIABLES, "--set-pk", SECURE_BOOT_OWNER, key.certificate_path, "--add-kek", SECURE_BOOT_OWNER, key.certificate_path, "--add-db", SECURE_BOOT_OWNER, key.certificate_path, "--secure-boot"})
+	return foundation.run({"virt-fw-vars", "--input", template, "--output", SECURE_BOOT_VARIABLES, "--set-pk", SECURE_BOOT_OWNER, key.certificate_path, "--add-kek", SECURE_BOOT_OWNER, key.certificate_path, "--add-db", SECURE_BOOT_OWNER, key.certificate_path, "--secure-boot"})
 }

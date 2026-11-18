@@ -12,6 +12,7 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 import "modus:support/web"
+import "modustool:foundation"
 
 // The test of TCP against a stack that this project did not write
 // (docs/NETWORK.md). The machine has QEMU user networking: its TCP talks
@@ -386,23 +387,23 @@ forward_fetch :: proc(forward: Forward, path: string, clock_offset_seconds: i64)
 			fmt.eprintfln("modustool: test failed: /large from the machine has %d bytes and the hash %016x", len(content), hash)
 			return false
 		}
-		test_passed_print("the TCP of the host fetched /large from server through libslirp: %d bytes, fnv1a64 %016x as expected, %.1f MB/s", len(content), hash, speed)
+		foundation.test_passed_print("the TCP of the host fetched /large from server through libslirp: %d bytes, fnv1a64 %016x as expected, %.1f MB/s", len(content), hash, speed)
 	case "/sink":
 		wanted := fmt.tprintf("received %d bytes, fnv1a64 %016x", web.LARGE_SIZE, web.pattern_hash(web.LARGE_SIZE))
 		if !strings.has_prefix(string(content), wanted) {
 			fmt.eprintfln("modustool: test failed: server answered \"%s\" to /sink, not \"%s\"", string(content), wanted)
 			return false
 		}
-		test_passed_print("the TCP of the host sent 1 MiB to server through libslirp, and server gave the same hash, %.1f MB/s", speed)
+		foundation.test_passed_print("the TCP of the host sent 1 MiB to server through libslirp, and server gave the same hash, %.1f MB/s", speed)
 	case:
-		test_passed_print("the TCP of the host fetched %s from server through libslirp: %d bytes in %.2f ms: \"%s\"", path, len(content), time.duration_milliseconds(took), strings.trim_space(strings.split_lines(string(content), context.temp_allocator)[0]))
+		foundation.test_passed_print("the TCP of the host fetched %s from server through libslirp: %d bytes in %.2f ms: \"%s\"", path, len(content), time.duration_milliseconds(took), strings.trim_space(strings.split_lines(string(content), context.temp_allocator)[0]))
 	}
 	return true
 }
 
 // The frames of the machine with libslirp, beside its log: two machines
 // that run at the same time write two files. `run` has no log file.
-FRAMES_OF_USER_NETWORK :: BUILD_FOLDER + "/frames_of_user_network.pcap"
+FRAMES_OF_USER_NETWORK :: foundation.BUILD_FOLDER + "/frames_of_user_network.pcap"
 FRAMES_OF_USER_NETWORK_SUFFIX :: "_frames_of_user_network.pcap"
 
 frames_of_user_network_file :: proc(test_output: string) -> string {

@@ -14,6 +14,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The address of the site: the pages get canonical addresses, Open Graph,
 // a JSON-LD graph and a sitemap from it. An empty address gives a site of
@@ -236,9 +237,9 @@ run_site :: proc(args: []string) -> int {
 		address = strings.trim_suffix(args[1], "/")
 	case:
 		fmt.eprintln("modustool: site [--address https://<host>/<path>]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
-	return site_build(address) ? 0 : EXIT_FAILURE
+	return site_build(address) ? 0 : foundation.EXIT_FAILURE
 }
 
 // site_relative gives the link from one page to a path of the site: as many
@@ -351,19 +352,19 @@ site_redirect_html :: proc(site: ^Site, old_path: string, page: Site_Page) -> st
 	link := site_page_link(site, old_path, page.path)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>")
-	site_escape(&b, page.title)
+	foundation.site_escape(&b, page.title)
 	strings.write_string(&b, " - " + SITE_SYSTEM_NAME + "</title>\n<meta name=\"robots\" content=\"noindex\">\n")
 	if site.address != "" {
 		strings.write_string(&b, "<link rel=\"canonical\" href=\"")
-		site_escape(&b, site_page_address(site.address, page.path))
+		foundation.site_escape(&b, site_page_address(site.address, page.path))
 		strings.write_string(&b, "\">\n")
 	}
 	strings.write_string(&b, SITE_REFRESH_OPEN)
-	site_escape(&b, link)
+	foundation.site_escape(&b, link)
 	strings.write_string(&b, "\">\n</head>\n<body>\n<p>This page is now at <a href=\"")
-	site_escape(&b, link)
+	foundation.site_escape(&b, link)
 	strings.write_string(&b, "\">")
-	site_escape(&b, page.title)
+	foundation.site_escape(&b, page.title)
 	strings.write_string(&b, "</a>.</p>\n</body>\n</html>\n")
 	return strings.to_string(b)
 }
@@ -471,48 +472,6 @@ site_description_cut :: proc(text: string) -> string {
 	return strings.concatenate({strings.trim_right(plain[:cut], ",;:"), " ..."}, context.temp_allocator)
 }
 
-// site_git_commit reads the commit of the work tree from the files of git,
-// with no host process: .git is a folder, or a file "gitdir: <folder>" in a
-// work tree; HEAD names a reference, which is a file or a line of
-// packed-refs in the common folder.
-site_git_commit :: proc() -> string {
-	read_trimmed :: proc(path: string) -> string {
-		data, err := os.read_entire_file(path, context.temp_allocator)
-		if err != nil {
-			return ""
-		}
-		return strings.trim_space(string(data))
-	}
-	git_folder := ".git"
-	if !os.is_dir(git_folder) {
-		pointer := read_trimmed(".git")
-		if !strings.has_prefix(pointer, "gitdir: ") {
-			return ""
-		}
-		git_folder = pointer[len("gitdir: "):]
-	}
-	head := read_trimmed(strings.concatenate({git_folder, "/HEAD"}, context.temp_allocator))
-	if !strings.has_prefix(head, "ref: ") {
-		return len(head) == 40 ? head : ""
-	}
-	reference := head[len("ref: "):]
-	common := git_folder
-	if relative := read_trimmed(strings.concatenate({git_folder, "/commondir"}, context.temp_allocator)); relative != "" {
-		common = os.is_absolute_path(relative) ? relative : strings.concatenate({git_folder, "/", relative}, context.temp_allocator)
-	}
-	for folder in ([]string{git_folder, common}) {
-		if commit := read_trimmed(strings.concatenate({folder, "/", reference}, context.temp_allocator)); len(commit) == 40 {
-			return commit
-		}
-	}
-	for line in site_lines(read_trimmed(strings.concatenate({common, "/packed-refs"}, context.temp_allocator))) {
-		if strings.has_suffix(line, strings.concatenate({" ", reference}, context.temp_allocator)) && len(line) > 40 {
-			return line[:40]
-		}
-	}
-	return ""
-}
-
 // site_glossary_terms gives the terms of the glossary as the pages, the
 // search and the page graph use them, with their short definition. The
 // longest come first, so that "Module metadata" is found before "Module";
@@ -544,7 +503,7 @@ SITE_MAKER_PICTURE :: "froment_software.png"
 site_write_file :: proc(site: ^Site, path: string, data: []u8) -> bool {
 	target := strings.concatenate({SITE_FOLDER, "/", path}, context.temp_allocator)
 	if folder := strings.last_index_byte(target, '/'); folder > 0 {
-		make_folder(target[:folder]) or_return
+		foundation.make_folder(target[:folder]) or_return
 	}
 	if err := os.write_entire_file(target, data); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", target, err)
@@ -560,7 +519,7 @@ site_write_file :: proc(site: ^Site, path: string, data: []u8) -> bool {
 			site.file_versions[path] = site_bytes_version(data)
 		}
 	}
-	if width, height, is_png := site_png_size(data); is_png {
+	if width, height, is_png := foundation.site_png_size(data); is_png {
 		site.picture_sizes[path] = {width, height}
 	}
 	return true
@@ -577,8 +536,8 @@ site_build :: proc(address: string) -> bool {
 	site.pages = make([dynamic]Site_Page, context.temp_allocator)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 
-	properties_text := site_read(SITE_PROPERTIES_FILE) or_return
-	readme_text := site_read(SITE_README_FILE) or_return
+	properties_text := foundation.site_read(SITE_PROPERTIES_FILE) or_return
+	readme_text := foundation.site_read(SITE_README_FILE) or_return
 	properties_problem, readme_problem: string
 	site.principles, properties_problem = site_properties_parse(properties_text)
 	site.readme, readme_problem = site_readme_parse(readme_text)
@@ -601,7 +560,7 @@ site_build :: proc(address: string) -> bool {
 	site_news_read(&site) or_return
 	// The planned work: a fault of the form of its file stops the command.
 	site_roadmap_read(&site) or_return
-	site.commit = site_git_commit()
+	site.commit = foundation.site_git_commit()
 	now := time.now()
 	year, month, day := time.date(now)
 	hour, minute, _ := time.clock(now)
@@ -609,7 +568,7 @@ site_build :: proc(address: string) -> bool {
 
 	// The guides: each document of docs/ but the working records. The
 	// glossary, a folder of docs/, is pages of the reference.
-	document_paths := files_with_suffix("docs", ".md") or_return
+	document_paths := foundation.files_with_suffix("docs", ".md") or_return
 	for path in document_paths {
 		name := site_file_name(path)
 		working := false
@@ -647,7 +606,7 @@ site_build :: proc(address: string) -> bool {
 	site.byte_layout_problems = make([dynamic]string, context.temp_allocator)
 	site.diagram_problems = make([dynamic]string, context.temp_allocator)
 
-	if !reset_folder(SITE_FOLDER) {
+	if !foundation.reset_folder(SITE_FOLDER) {
 		return false
 	}
 	// The pictures of the mark and the icons: each row of the site of the
@@ -662,7 +621,7 @@ site_build :: proc(address: string) -> bool {
 	}
 	if card, has_card := icon_files[SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD]; has_card {
 		// Other sites show the card on any background and at this size.
-		width, height, _ := site_png_size(card)
+		width, height, _ := foundation.site_png_size(card)
 		if width != SITE_CARD_WIDTH || height != SITE_CARD_HEIGHT || !site_png_is_opaque(card) {
 			fmt.eprintfln("modustool: site: %s is %d by %d or not opaque; the picture for other sites is opaque, %d by %d", SITE_MARK_CARD, width, height, SITE_CARD_WIDTH, SITE_CARD_HEIGHT)
 			return false
@@ -803,7 +762,7 @@ site_build :: proc(address: string) -> bool {
 	// again with the same pixels through the compressing encoder.
 	source_picture_bytes, written_picture_bytes, picture_count := 0, 0, 0
 	for target, source in site.copies {
-		data := read_file(source) or_return
+		data := foundation.read_file(source) or_return
 		if strings.has_suffix(target, ".png") {
 			compressed, compressed_ok := site_png_compress(data)
 			if !compressed_ok {
@@ -983,7 +942,7 @@ site_build :: proc(address: string) -> bool {
 			from_build += 1
 		}
 	}
-	fmt.printfln("modustool: site: %d of %d numbers measured: %d from %s, %d from the logs in %s/ that are newer", len(site.measured) - missing, len(site.measured), from_record, MEASURE_RECORD_FILE, from_build, BUILD_FOLDER)
+	fmt.printfln("modustool: site: %d of %d numbers measured: %d from %s, %d from the logs in %s/ that are newer", len(site.measured) - missing, len(site.measured), from_record, MEASURE_RECORD_FILE, from_build, foundation.BUILD_FOLDER)
 	if site.measure_record.present {
 		record := site.measure_record.record
 		fmt.printfln("modustool: site: %s: the full check of %s, on the tree of %s (%s), the release %s, %d checks passed", MEASURE_RECORD_FILE, record.time, site_short_commit(record.commit), measure_tree_state_names[record.tree], record.release, record.checks_passed)
@@ -1027,12 +986,12 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		return site_relative(page.path, target)
 	}
 	write(&b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>")
-	site_escape(&b, page.title)
+	foundation.site_escape(&b, page.title)
 	if page.section != .Home {
 		write(&b, " - " + SITE_SYSTEM_NAME)
 	}
 	write(&b, "</title>\n<meta name=\"description\" content=\"")
-	site_escape(&b, page.description)
+	foundation.site_escape(&b, page.description)
 	write(&b, "\">\n<meta name=\"color-scheme\" content=\"dark light\">\n")
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"%s\">\n", site_color(site_dark_colors().background))
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site_color(site_light_colors().background))
@@ -1109,11 +1068,11 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		write(&crumbs, is_documentation ? "<nav class=\"crumbs\" aria-label=\"Breadcrumbs\">\n<ol>\n" : "<nav class=\"crumbs page\" aria-label=\"Breadcrumbs\">\n<ol>\n")
 		for crumb in page.crumbs {
 			fmt.sbprintf(&crumbs, "<li><a href=\"%s\">", site_page_link(site, page.path, crumb.path))
-			site_escape(&crumbs, crumb.title)
+			foundation.site_escape(&crumbs, crumb.title)
 			write(&crumbs, "</a></li>\n")
 		}
 		write(&crumbs, "<li aria-current=\"page\">")
-		site_escape(&crumbs, page.title)
+		foundation.site_escape(&crumbs, page.title)
 		write(&crumbs, "</li>\n</ol>\n</nav>\n")
 	}
 	if is_documentation {
@@ -1153,9 +1112,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 				write(&b, ", ")
 			}
 			write(&b, "<a href=\"")
-			site_escape(&b, site_repository_file(site, source))
+			foundation.site_escape(&b, site_repository_file(site, source))
 			write(&b, "\"><code>")
-			site_escape(&b, source)
+			foundation.site_escape(&b, source)
 			write(&b, "</code></a>")
 		}
 		write(&b, ".</p>\n")
@@ -1176,7 +1135,7 @@ site_cards_html :: proc(site: ^Site, from_page, body: string) -> string {
 
 // site_release_id gives the anchor of a release on the page of the releases.
 site_release_id :: proc(release_number: string) -> string {
-	return strings.concatenate({"release-", site_slug(release_number)}, context.temp_allocator)
+	return strings.concatenate({"release-", foundation.site_slug(release_number)}, context.temp_allocator)
 }
 
 // site_attribute_values gives each value of an attribute in the HTML of a

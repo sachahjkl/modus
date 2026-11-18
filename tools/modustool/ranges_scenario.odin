@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The large objects of a store (docs/STORAGE.md, "Large objects"): the
 // process `ranges` makes an object of 8 GiB from three range writes, makes
 // 1000 small writes at scrambled offsets and one commit, and checks that the
@@ -10,8 +12,8 @@ package modustool
 // counts of a commit and the times are measures in the lines; the scenario
 // waits for the parts that do not depend on the machine.
 
-TEST_RANGES_DISK :: BUILD_FOLDER + "/test_ranges_disk.img"
-TEST_OUTPUT_RANGES :: BUILD_FOLDER + "/test_output_ranges_%d.txt"
+TEST_RANGES_DISK :: foundation.BUILD_FOLDER + "/test_ranges_disk.img"
+TEST_OUTPUT_RANGES :: foundation.BUILD_FOLDER + "/test_output_ranges_%d.txt"
 
 scenario_ranges_first := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},

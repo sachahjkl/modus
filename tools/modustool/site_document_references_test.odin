@@ -2,6 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // A site with the guide of the architecture, whose page has a few headings
 // of known ids. The file of the guide is read for its title only when the
@@ -154,10 +155,10 @@ site_document_pointers_find_their_headings :: proc(t: ^testing.T) {
 site_document_pointers_to_a_working_record :: proc(t: ^testing.T) {
 	site := reference_test_site()
 	record :: "docs/SITE.md"
-	content, ok := site_read_quiet(record)
+	content, ok := foundation.site_read_quiet(record)
 	testing.expect(t, ok)
 	pages_line := 0
-	for line, index in site_lines(content) {
+	for line, index in foundation.site_lines(content) {
 		if line == "## The pages" {
 			pages_line = index + 1
 			break
@@ -270,7 +271,7 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 	site := test_site()
 	site.documents["docs/ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
 	site.documents["ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
-	content, ok := site_read_quiet("docs/ARCHITECTURE.md")
+	content, ok := foundation.site_read_quiet("docs/ARCHITECTURE.md")
 	testing.expect(t, ok)
 	renderer := site_renderer_make(&site, "docs/guides/ARCHITECTURE/index.html", "docs/ARCHITECTURE.md")
 	site_render_markdown(&renderer, content)
@@ -347,7 +348,7 @@ site_document_pointer_check :: proc(t: ^testing.T) {
 @(test)
 site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	site := test_site()
-	paths, ok := files_with_suffix("docs", ".md")
+	paths, ok := foundation.files_with_suffix("docs", ".md")
 	testing.expect(t, ok)
 	for path in paths {
 		name := site_file_name(path)

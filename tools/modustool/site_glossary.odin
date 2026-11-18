@@ -6,6 +6,7 @@ package modustool
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 // The script of the index of the glossary: it sends an address of an entry
 // at the index to the page of the group of the term. The index is whole
@@ -105,7 +106,7 @@ site_glossary_write :: proc(renderer: ^Site_Renderer, group: Glossary_Group) {
 		renderer.linked_terms[term.id] = true
 		append(&renderer.headings, Site_Heading{level = 2, text = term.name, id = term.id, first_paragraph = term.definition})
 		fmt.sbprintf(b, "<div class=\"term-entry\">\n<h2 id=\"%s\">", term.id)
-		site_escape(b, term.name)
+		foundation.site_escape(b, term.name)
 		strings.write_string(b, "</h2>\n<p class=\"term-definition\">")
 		site_render_inline(renderer, term.definition)
 		strings.write_string(b, "</p>\n")
@@ -135,13 +136,13 @@ site_glossary_avoided_write :: proc(b: ^strings.Builder, words: string) {
 		if closing < 0 {
 			break
 		}
-		site_escape(b, rest[:open])
+		foundation.site_escape(b, rest[:open])
 		strings.write_string(b, "<code>")
-		site_escape(b, rest[open + 1:open + 1 + closing])
+		foundation.site_escape(b, rest[open + 1:open + 1 + closing])
 		strings.write_string(b, "</code>")
 		rest = rest[open + 1 + closing + 1:]
 	}
-	site_escape(b, rest)
+	foundation.site_escape(b, rest)
 }
 
 // site_glossary_name_less orders two names of terms as a dictionary does:
@@ -179,7 +180,7 @@ site_glossary_letter_id :: proc(letter: string) -> string {
 	if letter == "#" {
 		return "letter-signs"
 	}
-	return strings.concatenate({"letter-", site_slug(letter)}, context.temp_allocator)
+	return strings.concatenate({"letter-", foundation.site_slug(letter)}, context.temp_allocator)
 }
 
 // site_glossary_index_write writes the index of the glossary: the
@@ -203,14 +204,14 @@ site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 	for term in terms {
 		renderer.ids[term.id] = true
 	}
-	title_id := site_unique_id(&renderer, site_slug(glossary.title))
+	title_id := site_unique_id(&renderer, foundation.site_slug(glossary.title))
 	groups_id := site_unique_id(&renderer, "groups")
 	terms_id := site_unique_id(&renderer, "terms-from-a-to-z")
 
 	b := &renderer.builder
 	strings.write_string(b, "<article class=\"prose\">\n")
 	fmt.sbprintf(b, "<h1 id=\"%s\">", title_id)
-	site_escape(b, glossary.title)
+	foundation.site_escape(b, glossary.title)
 	strings.write_string(b, "</h1>\n")
 	if glossary.introduction != "" {
 		site_render_markdown(&renderer, glossary.introduction, glossary.introduction_line)
@@ -221,7 +222,7 @@ site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 	fmt.sbprintf(b, "<h2 id=\"%s\">The groups</h2>\n<ul class=\"glossary-groups\">\n", groups_id)
 	for group in glossary.groups {
 		fmt.sbprintf(b, "<li><a href=\"%s\">", site_page_link(site, index_page, site_glossary_group_page(group.id)))
-		site_escape(b, group.name)
+		foundation.site_escape(b, group.name)
 		fmt.sbprintf(b, "</a> <span class=\"glossary-count\">%s</span></li>\n", site_glossary_term_count_words(len(group.terms)))
 	}
 	strings.write_string(b, "</ul>\n")
@@ -252,9 +253,9 @@ site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 		}
 		group_link := site_page_link(site, index_page, site_glossary_group_page(term.group_id))
 		fmt.sbprintf(b, "<div id=\"%s\" %s=\"%s\">\n<dt><a href=\"%s#%s\">", term.id, SITE_GLOSSARY_GROUP_PAGE_ATTRIBUTE, group_link, group_link, term.id)
-		site_escape(b, term.name)
+		foundation.site_escape(b, term.name)
 		strings.write_string(b, "</a> <span class=\"glossary-index-group\">")
-		site_escape(b, term.group)
+		foundation.site_escape(b, term.group)
 		strings.write_string(b, "</span></dt>\n<dd>")
 		site_render_inline(&renderer, term.definition)
 		strings.write_string(b, "</dd>\n</div>\n")
@@ -286,20 +287,20 @@ site_glossary_pages_add :: proc(site: ^Site) -> Site_Reference_Entry {
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<article class=\"prose\">\n")
 		fmt.sbprintf(&b, "<h1 id=\"%s\">", group.id)
-		site_escape(&b, group.name)
+		foundation.site_escape(&b, group.name)
 		fmt.sbprintf(&b, "</h1>\n<p class=\"glossary-group-place\">A group of the <a href=\"%s\">glossary</a>, with %s. The index of the glossary lists the terms of every group from A to Z.</p>\n", site_page_link(site, path, index_page), site_glossary_term_count_words(len(group.terms)))
 		strings.write_string(&b, strings.to_string(renderer.builder))
 		strings.write_string(&b, "</article>\n<nav class=\"neighbours\" aria-label=\"Other groups of the glossary\">\n")
 		if group_index > 0 {
 			previous := glossary.groups[group_index - 1]
 			fmt.sbprintf(&b, "<a rel=\"prev\" href=\"%s\">Previous: ", site_page_link(site, path, site_glossary_group_page(previous.id)))
-			site_escape(&b, previous.name)
+			foundation.site_escape(&b, previous.name)
 			strings.write_string(&b, "</a>\n")
 		}
 		if group_index + 1 < len(glossary.groups) {
 			next := glossary.groups[group_index + 1]
 			fmt.sbprintf(&b, "<a rel=\"next\" href=\"%s\">Next: ", site_page_link(site, path, site_glossary_group_page(next.id)))
-			site_escape(&b, next.name)
+			foundation.site_escape(&b, next.name)
 			strings.write_string(&b, "</a>\n")
 		}
 		strings.write_string(&b, "</nav>\n")

@@ -11,6 +11,7 @@ import "core:fmt"
 import "core:strings"
 import module "modus:contract/module"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 // site_module_by_name gives the module of module_builds with this name.
 site_module_by_name :: proc(site: ^Site, name: string) -> (item: Site_Module, found: bool) {
@@ -30,7 +31,7 @@ site_module_link :: proc(site: ^Site, b: ^strings.Builder, from_page, name: stri
 		return
 	}
 	strings.write_string(b, "<code>")
-	site_escape(b, name)
+	foundation.site_escape(b, name)
 	strings.write_string(b, "</code>")
 }
 
@@ -62,7 +63,7 @@ site_process_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []strin
 // The site reads the table only when each process has its row
 // (process_roles_problems), so found is false only for a module that is no
 // process of the boot image.
-site_role_row_of :: proc(rows: []Site_Role_Row, name: string) -> (row: Site_Role_Row, found: bool) {
+site_role_row_of :: proc(rows: []foundation.Site_Role_Row, name: string) -> (row: foundation.Site_Role_Row, found: bool) {
 	for candidate in rows {
 		if candidate.name == name {
 			return candidate, true
@@ -95,9 +96,9 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		b := strings.builder_make(context.temp_allocator)
 		in_image := 0
 		for item in reference.modules {
-			in_image += module_in_boot_image(item.build) ? 1 : 0
+			in_image += foundation.module_in_boot_image(item.build) ? 1 : 0
 		}
-		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a module with an entry is one that the root service starts as a process; the others are modules that a process loads or calls. The source of each is in <code>" + SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a module with an entry is one that the root service starts as a process; the others are modules that a process loads or calls. The source of each is in <code>" + foundation.SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
 		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
 		// One table for each group, in the order of the tree of the documentation.
 		for group in Site_Module_Group {
@@ -114,11 +115,11 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				if site_module_group(item) != group {
 					continue
 				}
-				fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", site_slug(item.build.name))
+				fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", foundation.site_slug(item.build.name))
 				site_module_link(site, &b, modules_page, item.build.name)
 				// A column of two states: each cell has the icon of its state.
 				strings.write_string(&b, "</td><td>")
-				site_value(&b, module_in_boot_image(item.build) ? value_kinds.Value_Kind.Yes : value_kinds.Value_Kind.No, module_in_boot_image(item.build) ? "yes" : "no", true)
+				site_value(&b, foundation.module_in_boot_image(item.build) ? value_kinds.Value_Kind.Yes : value_kinds.Value_Kind.No, foundation.module_in_boot_image(item.build) ? "yes" : "no", true)
 				fmt.sbprintf(&b, "</td><td>%d</td><td>", len(item.description.exports))
 				// A module with no import has an empty cell: "none" in most
 				// rows would hide the few that import.
@@ -133,7 +134,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_table_end(&b, modules_table)
 		}
 		strings.write_string(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"")
-		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
+		foundation.site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
 		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
 		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module, with a page for each: its documentation, its exports, its imports, and for a module with an entry its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
@@ -142,7 +143,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 
 	// One page for each module. The list of the builds holds the comment
 	// above the row of a module with settings of its own.
-	modules_text, _ := site_read_quiet(SITE_MODULES_FILE)
+	modules_text, _ := foundation.site_read_quiet(SITE_MODULES_FILE)
 	crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
 	append(&crumbs, ..site_crumbs(.Reference))
 	append(&crumbs, Site_Crumb{title = "Modules", path = modules_page})
@@ -152,7 +153,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		b := strings.builder_make(context.temp_allocator)
 		title := fmt.tprintf("The %s %s", item.kind, build.name)
 		strings.write_string(&b, "<h1>")
-		site_escape(&b, title)
+		foundation.site_escape(&b, title)
 		strings.write_string(&b, "</h1>\n<div class=\"prose\">\n")
 		// A build of the source of another module with settings of its own
 		// says so first: the documentation below is the comment of that
@@ -174,7 +175,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "<tr><td>Source</td><td class=\"name\">")
 		site_value_link(&b, .File, site_folder_address(site, build.source), build.source, true)
 		strings.write_string(&b, "</td></tr>\n<tr><td>Boot image</td><td>")
-		if !module_in_boot_image(build) {
+		if !foundation.module_in_boot_image(build) {
 			site_value(&b, .No, "no", true)
 			strings.write_string(&b, ": not in the boot image")
 		} else if entry, found := site_boot_image_entry(site, build.name); found {
@@ -232,8 +233,8 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		} else {
 			exports_table := site_table_start(&b, "Exports", {{"Export", .Name}, {"What it does", .Prose}})
 			for export in description.exports {
-				fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#export-%s\"><code>", site_slug(export.name))
-				site_escape(&b, site_export_signature(description, export))
+				fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#export-%s\"><code>", foundation.site_slug(export.name))
+				foundation.site_escape(&b, site_export_signature(description, export))
 				strings.write_string(&b, "</code></a></td>")
 				site_text_cell(&b, site_source_comment_plain(site, export.about))
 				strings.write_string(&b, "</tr>\n")
@@ -259,7 +260,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			// the page of the grants: the root service and a disk process
 			// have none, so their cell names the grants with no link.
 			if has_role {
-				fmt.sbprintf(&b, "<tr><td><a href=\"%s#processes-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), site_slug(build.name))
+				fmt.sbprintf(&b, "<tr><td><a href=\"%s#processes-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), foundation.site_slug(build.name))
 			} else {
 				strings.write_string(&b, "<tr><td>Grants</td><td>")
 			}
@@ -303,12 +304,12 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: it asks for the least budget.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
-			fmt.sbprintf(&b, "<p class=\"source\">The role is read from <code>process_roles</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_ROLES_FILE), SITE_ROOT_ROLES_FILE)
+			fmt.sbprintf(&b, "<p class=\"source\">The role is read from <code>process_roles</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, foundation.SITE_ROOT_ROLES_FILE), foundation.SITE_ROOT_ROLES_FILE)
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
 			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a process, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
-			append(&sources, SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE)
+			append(&sources, foundation.SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"
 		if len(build.defines) > 0 {
@@ -334,11 +335,11 @@ site_module_build_note :: proc(site: ^Site, b: ^strings.Builder, item: Site_Modu
 	if other_item, found := site_module_by_name(site, same_source); found {
 		// A link in a sentence: no colored value in running prose.
 		fmt.sbprintf(b, "The module <a href=\"%s\"><code>", site_page_link(site, item.page, other_item.page))
-		site_escape(b, same_source)
+		foundation.site_escape(b, same_source)
 		strings.write_string(b, "</code></a> built with ")
 	} else {
 		strings.write_string(b, "The source <code>")
-		site_escape(b, item.build.source)
+		foundation.site_escape(b, item.build.source)
 		strings.write_string(b, "</code> built with ")
 	}
 	strings.write_string(b, len(item.build.defines) == 1 ? "the setting " : "the settings ")
@@ -347,11 +348,11 @@ site_module_build_note :: proc(site: ^Site, b: ^strings.Builder, item: Site_Modu
 			strings.write_string(b, ", ")
 		}
 		strings.write_string(b, "<code>")
-		site_escape(b, define)
+		foundation.site_escape(b, define)
 		strings.write_string(b, "</code>")
 	}
 	strings.write_string(b, ". The text after this paragraph is the comment of that source.</p>\n")
-	if comment := site_comment_above(modules_text, strings.concatenate({"\t{name = \"", item.build.name, "\","}, context.temp_allocator)); comment != "" {
+	if comment := foundation.site_comment_above(modules_text, strings.concatenate({"\t{name = \"", item.build.name, "\","}, context.temp_allocator)); comment != "" {
 		site_source_comment(site, b, item.page, comment, .Paragraphs)
 	}
 }
@@ -375,7 +376,7 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_
 			direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
 			parameter := strings.builder_make(context.temp_allocator)
 			strings.write_string(&parameter, "<code class=\"value value-type\">")
-			site_escape(&parameter, name)
+			foundation.site_escape(&parameter, name)
 			strings.write_string(&parameter, ": ")
 			strings.write_string(&parameter, site_type_html(site, module_name, description, type, detail, direction, true))
 			strings.write_string(&parameter, "</code>")
@@ -395,7 +396,7 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_
 			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_type_reference_html(site, site_module_record_key(module_name, record_name), record_name, true)}, context.temp_allocator)})
 		}
 	}
-	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.markdown, page = page, facts = facts[:], source = export.file, line = export.line})
+	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", foundation.site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.markdown, page = page, facts = facts[:], source = export.file, line = export.line})
 }
 
 // The tiles of the boot image on the home: one tile for each module of the
@@ -415,8 +416,8 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	}
 	built := len(entries) > 0
 	if !built {
-		for build in module_builds {
-			if module_in_boot_image(build) {
+		for build in foundation.module_builds {
+			if foundation.module_in_boot_image(build) {
 				append(&entries, Site_Image_Entry{name = build.name})
 			}
 		}
@@ -428,7 +429,7 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	rules := strings.builder_make(context.temp_allocator)
 	strings.write_string(b, "<section class=\"card accent-boot\" aria-labelledby=\"boot-image\">\n<h2 id=\"boot-image\">The boot image</h2>\n<ul class=\"tiles\">\n")
 	for entry in entries {
-		class := strings.concatenate({"tile-", site_slug(entry.name)}, context.temp_allocator)
+		class := strings.concatenate({"tile-", foundation.site_slug(entry.name)}, context.temp_allocator)
 		if built {
 			width := max(int(entry.size * SITE_TILE_ROWS * SITE_TILE_ROW_WIDTH / total), SITE_TILE_LEAST)
 			color := graphics.hue_color(entry.hash[0])
@@ -437,10 +438,10 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 		fmt.sbprintf(b, "<li class=\"tile %s\">", class)
 		if item, found := site_module_by_name(site, entry.name); found {
 			fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(site, page, item.page))
-			site_escape(b, entry.name)
+			foundation.site_escape(b, entry.name)
 			strings.write_string(b, "</a>")
 		} else {
-			site_escape(b, entry.name)
+			foundation.site_escape(b, entry.name)
 		}
 		strings.write_string(b, "</li>\n")
 	}

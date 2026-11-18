@@ -13,6 +13,7 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 MEASURE_HISTORY_FOLDER :: MEASURE_RECORD_FOLDER + "/releases"
 MEASURE_HISTORY_FILE_EXTENSION :: ".txt"
@@ -194,7 +195,7 @@ measure_history_read :: proc(folder: string) -> (releases: []Measure_History_Rel
 // release. A record that does not read stops the release.
 measure_history_copy_prepare :: proc(number: Release_Number) -> (copy: Measure_History_Copy, ok: bool) {
 	number_text := release_number_text(number)
-	record_text, has_record := site_read_quiet(MEASURE_RECORD_FILE)
+	record_text, has_record := foundation.site_read_quiet(MEASURE_RECORD_FILE)
 	if !has_record {
 		fmt.printfln("modustool: %s is absent: the release %s has no copy in %s", MEASURE_RECORD_FILE, number_text, MEASURE_HISTORY_FOLDER)
 		return {}, true
@@ -222,7 +223,7 @@ measure_history_copy_write :: proc(copy: Measure_History_Copy) -> bool {
 	if !copy.write {
 		return true
 	}
-	make_folder(MEASURE_HISTORY_FOLDER) or_return
+	foundation.make_folder(MEASURE_HISTORY_FOLDER) or_return
 	if error := os.write_entire_file(copy.path, transmute([]u8)copy.text); error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", copy.path, error)
 		return false
@@ -259,18 +260,18 @@ measure_history_tag_record_command :: proc(number: Release_Number) -> []string {
 run_measure_history :: proc(args: []string) -> int {
 	if len(args) != 0 {
 		fmt.eprintln("modustool measure-history takes no argument")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	tag_list, list_ok := command_output(ship_tag_list_command())
 	if !list_ok {
 		fmt.eprintln("modustool: measure-history: git cannot list the release tags")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	tags := measure_history_release_tags(tag_list)
 	kept, read_problem := measure_history_read(MEASURE_HISTORY_FOLDER)
 	if read_problem != "" {
 		fmt.eprintfln("modustool: measure-history: %s", read_problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	releases := make([dynamic]Measure_History_Release, context.temp_allocator)
 	append(&releases, ..kept)
@@ -282,7 +283,7 @@ run_measure_history :: proc(args: []string) -> int {
 		}
 		with_record += 1
 		path := measure_history_file_path(number)
-		if existing, exists := site_read_quiet(path); exists {
+		if existing, exists := foundation.site_read_quiet(path); exists {
 			present += 1
 			if existing != record_text {
 				fmt.printfln("modustool: measure-history: %s differs from %s in the tag %s; the file is kept", path, MEASURE_RECORD_FILE, release_tag_name(number))
@@ -300,7 +301,7 @@ run_measure_history :: proc(args: []string) -> int {
 			continue
 		}
 		if !measure_history_copy_write(Measure_History_Copy{write = true, path = path, text = record_text}) {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		record, _ := measure_record_parse(record_text)
 		append(&releases, Measure_History_Release{release = number, path = path, text = record_text, record = record})
@@ -419,7 +420,7 @@ measure_history_chart_svg :: proc(points: []Measure_History_Point, label: string
 		}
 	}
 	fmt.sbprintf(&b, "<svg class=\"measure-history-chart\" viewBox=\"0 0 %d %d\" role=\"img\" aria-label=\"", MEASURE_HISTORY_CHART_WIDTH, MEASURE_HISTORY_CHART_HEIGHT)
-	site_escape(&b, label)
+	foundation.site_escape(&b, label)
 	strings.write_string(&b, "\">\n")
 	fmt.sbprintf(&b, "<line class=\"measure-history-scale\" x1=\"0\" y1=\"%d\" x2=\"%d\" y2=\"%d\"/>\n", top, MEASURE_HISTORY_CHART_WIDTH, top)
 	fmt.sbprintf(&b, "<line class=\"measure-history-scale\" x1=\"0\" y1=\"%d\" x2=\"%d\" y2=\"%d\"/>\n", bottom, MEASURE_HISTORY_CHART_WIDTH, bottom)
@@ -447,9 +448,9 @@ measure_history_chart_svg :: proc(points: []Measure_History_Point, label: string
 			continue
 		}
 		fmt.sbprintf(&b, "<rect class=\"measure-history-point\" x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\"><title>", measure_history_point_x(index, len(points)) - half, measure_history_point_y(point.value, most) - half, MEASURE_HISTORY_POINT_SIZE, MEASURE_HISTORY_POINT_SIZE)
-		site_escape(&b, point.release)
+		foundation.site_escape(&b, point.release)
 		strings.write_string(&b, ": ")
-		site_escape(&b, point.value_text)
+		foundation.site_escape(&b, point.value_text)
 		strings.write_string(&b, "</title></rect>\n")
 	}
 	strings.write_string(&b, "</svg>\n")
@@ -502,7 +503,7 @@ site_measure_history_write :: proc(site: ^Site, b: ^strings.Builder) {
 			strings.write_string(b, "<div class=\"measure-charts\">\n")
 		}
 		drawn += 1
-		slug := site_slug(series.sentence)
+		slug := foundation.site_slug(series.sentence)
 		most_text := ""
 		most := 0.0
 		for point in points {
@@ -511,43 +512,43 @@ site_measure_history_write :: proc(site: ^Site, b: ^strings.Builder) {
 			}
 		}
 		fmt.sbprintf(b, "<article class=\"card measure-chart %s\" id=\"history-%s\">\n<h3>", site_accent_class(measure.accent), slug)
-		site_escape(b, series.title)
+		foundation.site_escape(b, series.title)
 		fmt.sbprintf(b, "</h3>\n<p class=\"measure-unit\">From 0 to <code class=\"value value-%s\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Number])
-		site_escape(b, most_text)
+		foundation.site_escape(b, most_text)
 		strings.write_string(b, "</code> ")
-		site_escape(b, series.unit)
+		foundation.site_escape(b, series.unit)
 		faster: string = series.faster == .Higher ? "A higher number is faster." : "A lower number is faster."
 		fmt.sbprintf(b, ". %s</p>\n", faster)
 		strings.write_string(b, measure_history_chart_svg(points, fmt.tprintf("%s, over %d releases", series.title, len(points))))
 		strings.write_string(b, "<p class=\"measure-history-releases\"><span>")
-		site_escape(b, points[0].release)
+		foundation.site_escape(b, points[0].release)
 		strings.write_string(b, "</span><span>")
-		site_escape(b, points[len(points) - 1].release)
+		foundation.site_escape(b, points[len(points) - 1].release)
 		strings.write_string(b, "</span></p>\n<details class=\"measure-history-numbers\"><summary>The number of each release</summary>\n<ul>\n")
 		for point in points {
 			strings.write_string(b, "<li>")
-			site_escape(b, point.release)
+			foundation.site_escape(b, point.release)
 			if !point.present {
 				strings.write_string(b, ": no number: ")
-				site_escape(b, point.missing)
+				foundation.site_escape(b, point.missing)
 				strings.write_string(b, "</li>\n")
 				continue
 			}
 			fmt.sbprintf(b, ": <code class=\"value value-%s\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Number])
-			site_escape(b, point.value_text)
+			foundation.site_escape(b, point.value_text)
 			strings.write_string(b, "</code>, the run of ")
 			if point.commit != "" {
 				strings.write_string(b, "<code>")
-				site_escape(b, point.commit[:min(MEASURE_COMMIT_SHORT_LENGTH, len(point.commit))])
+				foundation.site_escape(b, point.commit[:min(MEASURE_COMMIT_SHORT_LENGTH, len(point.commit))])
 				strings.write_string(b, "</code>")
 			} else {
 				strings.write_string(b, "an unknown commit")
 			}
 			strings.write_string(b, " at ")
-			site_escape(b, point.time)
+			foundation.site_escape(b, point.time)
 			if len(hosts) > 1 {
 				strings.write_string(b, ", on ")
-				site_escape(b, point.host)
+				foundation.site_escape(b, point.host)
 			}
 			strings.write_string(b, "</li>\n")
 		}

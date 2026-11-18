@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 // The picture of the choice of the font (docs/FONTS.md, "The font file"):
 // the same lines of the system in each candidate and in Spleen, at the
@@ -32,8 +33,8 @@ candidates_picture_write :: proc() -> bool {
 	fonts := make([dynamic]Picture_Font, context.temp_allocator)
 	append(&fonts, Picture_Font{label = "Spleen 8x16 (bitmap, the fallback)"})
 	for candidate in vector_font_candidates {
-		path := join(VECTOR_FONT_FOLDER, "/", candidate.name, ".ttf")
-		bytes := read_file(path) or_return
+		path := foundation.join(VECTOR_FONT_FOLDER, "/", candidate.name, ".ttf")
+		bytes := foundation.read_file(path) or_return
 		cache := glyph_cache_of(bytes, candidate.name, true) or_return
 		label := fmt.tprintf("%s%s", candidate.family, candidate.name == DEFAULT_VECTOR_FONT ? " (default)" : "")
 		append(&fonts, Picture_Font{label = label, cache = cache, grid_fit = true})

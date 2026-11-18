@@ -1,10 +1,12 @@
 package modustool
 
+import "modustool:foundation"
+
 // The module `cryptography` as it ships: the process cryptography_vectors
 // imports it and runs the published vectors of each primitive through its
 // exports, on the machine (docs/CRYPTOGRAPHY.md).
 
-TEST_OUTPUT_CRYPTOGRAPHY :: BUILD_FOLDER + "/test_output_cryptography.txt"
+TEST_OUTPUT_CRYPTOGRAPHY :: foundation.BUILD_FOLDER + "/test_output_cryptography.txt"
 
 scenario_cryptography := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},

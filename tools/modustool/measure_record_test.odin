@@ -3,6 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "modustool:foundation"
 
 @(private = "file")
 test_measure_record :: proc() -> Measure_Record {
@@ -187,7 +188,7 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 			case TEST_OUTPUT_MEASURE_CLOCK, TEST_OUTPUT_MEASURE_DISK:
 				// The log of the measure run of one process of the table.
 				for process in measure_processes {
-					if path == strings.concatenate({BUILD_FOLDER, "/test_output_measure_", process.name, ".txt"}, context.temp_allocator) {
+					if path == strings.concatenate({foundation.BUILD_FOLDER, "/test_output_measure_", process.name, ".txt"}, context.temp_allocator) {
 						steps := make([dynamic]Step, context.temp_allocator)
 						measure_process_steps(process, &steps)
 						waited ||= waits(steps[:], measure.pattern)
@@ -199,7 +200,7 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 				waited ||= waits(scenario_tcp_real[:], measure.pattern)
 			case TEST_OUTPUT_CRYPTOGRAPHY:
 				waited ||= waits(scenario_cryptography[:], measure.pattern)
-			case BUILD_FOLDER + "/test_output_persist_1.txt":
+			case foundation.BUILD_FOLDER + "/test_output_persist_1.txt":
 				waited ||= waits(scenario_persist_first[:], measure.pattern)
 			case REPRODUCIBLE_BUILD_RECORD:
 				waited = true

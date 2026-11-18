@@ -10,6 +10,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/enum_word"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // The loop of the kernel fuzzing with no counters
 // (src/md/infrastructure/kernel_fuzzing.md, "The loop and the speed";
@@ -336,11 +337,11 @@ operation_oracle_signature :: proc(finding: Operation_Finding, sequence: ^operat
 // a child with one of these names, so the line of a fault of a child is
 // never the line of a fault of isolation.
 @(rodata)
-operation_protected_names := [?]string{OPERATION_FUZZING_MODULE, OPERATION_ROOT_MODULE}
+operation_protected_names := [?]string{foundation.OPERATION_FUZZING_MODULE, OPERATION_ROOT_MODULE}
 
 // The starts of the lines of the kernel when one of them stops.
 @(rodata)
-operation_isolation_marks := [?]string{"kernel: process " + OPERATION_FUZZING_MODULE + " stopped", "kernel: process " + OPERATION_ROOT_MODULE + " stopped"}
+operation_isolation_marks := [?]string{"kernel: process " + foundation.OPERATION_FUZZING_MODULE + " stopped", "kernel: process " + OPERATION_ROOT_MODULE + " stopped"}
 
 // operation_isolation_line gives the first line of the log that starts
 // with a mark of operation_isolation_marks, or "".
@@ -372,7 +373,7 @@ operation_isolation_fault :: proc(line, log: string) -> Operation_Fault {
 }
 
 // The start of each line of the process operation_fuzzing on the log.
-OPERATION_SERVICE_LINE_START :: "[" + OPERATION_FUZZING_MODULE + "] "
+OPERATION_SERVICE_LINE_START :: "[" + foundation.OPERATION_FUZZING_MODULE + "] "
 
 // operation_end_line_through gives the bytes of a text up to the end of the
 // end line of the sequence `number`, which the service writes after each
@@ -971,7 +972,7 @@ operation_run_folder :: proc(seed: u64) -> string {
 @(private = "file")
 operation_life_write :: proc(folder: string, life: [][]u8) -> bool {
 	_ = os.remove_all(folder)
-	if !make_folder(folder) {
+	if !foundation.make_folder(folder) {
 		return false
 	}
 	for bytes, place in life {
@@ -999,7 +1000,7 @@ operation_text_write :: proc(path, text: string) -> bool {
 operation_fault_write :: proc(kept: ^Operation_Kept_Fault, seed: u64) -> bool {
 	name := fuzz_input_name(transmute([]u8)kept.fault.signature)
 	folder := fmt.tprintf("%s/%s", operation_run_folder(seed), name[:OPERATION_FINDING_NAME_DIGITS])
-	if !make_folder(folder) || !operation_life_write(fmt.tprintf("%s/life", folder), kept.life) || !operation_life_write(fmt.tprintf("%s/minimized", folder), kept.minimized.life) {
+	if !foundation.make_folder(folder) || !operation_life_write(fmt.tprintf("%s/life", folder), kept.life) || !operation_life_write(fmt.tprintf("%s/minimized", folder), kept.minimized.life) {
 		return false
 	}
 	minimized := kept.minimized.life
@@ -1209,7 +1210,7 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 	number := state.mailbox.written
 	lines := ""
 	found := false
-	for started := time.tick_now(); time.tick_since(started) < HANG_BOUND; {
+	for started := time.tick_now(); time.tick_since(started) < foundation.HANG_BOUND; {
 		text := operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)
 		if through, has_end := operation_end_line_through(text, number); has_end {
 			lines = text[:through]
@@ -1223,7 +1224,7 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	if !found {
-		return {kind = .Hang, signature = OPERATION_END_LINE_HANG_SIGNATURE, text = fmt.tprintf("operation_fuzzing counted the sequence %d and wrote no line \"%s%d%s\" within %v", number, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END, HANG_BOUND), log = operation_log_whole()}
+		return {kind = .Hang, signature = OPERATION_END_LINE_HANG_SIGNATURE, text = fmt.tprintf("operation_fuzzing counted the sequence %d and wrote no line \"%s%d%s\" within %v", number, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END, foundation.HANG_BOUND), log = operation_log_whole()}
 	}
 	if line := operation_isolation_line(lines); line != "" {
 		return operation_isolation_fault(line, operation_log_whole())
@@ -1271,7 +1272,7 @@ operation_machine_end :: proc(data: rawptr) {
 	}
 	if !state.exited {
 		_, _ = os.write_string(state.monitor_write, "quit\n")
-		ended, wait_error := os.process_wait(state.host_process, HANG_BOUND)
+		ended, wait_error := os.process_wait(state.host_process, foundation.HANG_BOUND)
 		if wait_error != nil || !ended.exited {
 			_ = os.process_kill(state.host_process)
 			_, _ = os.process_wait(state.host_process)
@@ -1300,7 +1301,7 @@ operation_qemu_open :: proc() -> ^Operation_Qemu {
 	if code := build_system(boot_volumes_of_command(OPERATION_FUZZING_COMMAND)); code != 0 {
 		return nil
 	}
-	if !make_folder(OPERATION_FUZZING_FOLDER) {
+	if !foundation.make_folder(OPERATION_FUZZING_FOLDER) {
 		return nil
 	}
 	state := new(Operation_Qemu)
@@ -1346,7 +1347,7 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 	arguments, problem := operation_fuzzing_arguments_read(args)
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	seed := arguments.seed
 	if !arguments.seed_given {
@@ -1354,7 +1355,7 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 	}
 	state := operation_qemu_open()
 	if state == nil {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer operation_qemu_close(state)
 	machine := operation_qemu_machine(state)
@@ -1371,9 +1372,9 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 		fmt.printfln("modustool:   %s", kept.fault.signature)
 	}
 	if !completed {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The data disk of a run that ended stays only when the run failed.
 	state.part.passed = len(run.kept) == 0
-	return len(run.kept) == 0 ? 0 : EXIT_FAILURE
+	return len(run.kept) == 0 ? 0 : foundation.EXIT_FAILURE
 }

@@ -11,6 +11,7 @@ package modustool
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 SITE_DEMONSTRATIONS_FILE :: "docs/DEMONSTRATIONS.md"
 
@@ -41,7 +42,7 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 	list := make([dynamic]Site_Demonstration, context.temp_allocator)
 	removal_list := make([dynamic]Site_Demonstration_Removal, context.temp_allocator)
 	section := ""
-	for line, index in site_lines(content) {
+	for line, index in foundation.site_lines(content) {
 		if strings.has_prefix(line, "## ") {
 			section = line[3:]
 			continue
@@ -49,7 +50,7 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 		switch {
 		case section == "The table" && strings.has_prefix(line, "| "):
 			cells := site_table_cells(line)
-			number := len(cells) > 0 ? site_digits_value(cells[0]) : -1
+			number := len(cells) > 0 ? foundation.site_digits_value(cells[0]) : -1
 			if number < 1 {
 				continue // The head of the table and its line of dashes.
 			}
@@ -66,7 +67,7 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 			append(&list, Site_Demonstration{number = number, state = cells[2], shown = cells[3], pictures = pictures[:], missing = cells[5], line = index + 1})
 		case strings.has_prefix(section, "What removes"):
 			dot := strings.index(line, ". ")
-			if dot > 0 && site_digits_value(line[:dot]) > 0 {
+			if dot > 0 && foundation.site_digits_value(line[:dot]) > 0 {
 				append(&removal_list, Site_Demonstration_Removal{text = strings.trim_space(line[dot + 2:]), line = index + 1})
 			}
 		}
@@ -85,7 +86,7 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 	numbers := make([dynamic]int, context.temp_allocator)
 	lower := strings.to_lower(text, context.temp_allocator)
 	for index in 0 ..< len(lower) {
-		if index > 0 && site_is_word_byte(lower[index - 1]) {
+		if index > 0 && foundation.site_is_word_byte(lower[index - 1]) {
 			continue
 		}
 		start := -1
@@ -101,10 +102,10 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 		for end < len(lower) && lower[end] >= '0' && lower[end] <= '9' {
 			end += 1
 		}
-		if end == start || (end < len(lower) && site_is_word_byte(lower[end])) {
+		if end == start || (end < len(lower) && foundation.site_is_word_byte(lower[end])) {
 			continue
 		}
-		number := site_digits_value(lower[start:end])
+		number := foundation.site_digits_value(lower[start:end])
 		if number >= 1 && number <= property_count && !slice.contains(numbers[:], number) {
 			append(&numbers, number)
 		}
@@ -117,7 +118,7 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 // renderer gives the same ids to the same text. What the renderer lists as
 // not rendered is listed once, by the guide.
 site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Renderer, ok: bool) {
-	content := site_read(source) or_return
+	content := foundation.site_read(source) or_return
 	page, is_guide := site.documents[source]
 	if !is_guide {
 		page = SITE_PAGE
@@ -138,7 +139,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	principles := site_document_render(site, SITE_PROPERTIES_FILE) or_return
 	properties_page := site.documents[SITE_PROPERTIES_FILE]
 
-	demonstrations_text := site_read(SITE_DEMONSTRATIONS_FILE) or_return
+	demonstrations_text := foundation.site_read(SITE_DEMONSTRATIONS_FILE) or_return
 	demonstrations, removals, demonstrations_problem := site_demonstrations_read(demonstrations_text)
 	if demonstrations_problem != "" {
 		fmt.eprintfln("modustool: site: %s", demonstrations_problem)
@@ -207,9 +208,9 @@ site_status_add :: proc(site: ^Site) -> bool {
 						strings.write_string(&b, ", ")
 					}
 					strings.write_string(&b, "<a href=\"")
-					site_escape(&b, site_repository_file(site, strings.concatenate({"docs/screenshots/", picture, ".png"}, context.temp_allocator)))
+					foundation.site_escape(&b, site_repository_file(site, strings.concatenate({"docs/screenshots/", picture, ".png"}, context.temp_allocator)))
 					strings.write_string(&b, "\"><code>")
-					site_escape(&b, picture)
+					foundation.site_escape(&b, picture)
 					strings.write_string(&b, "</code></a>")
 				}
 				strings.write_string(&b, "</p>\n")

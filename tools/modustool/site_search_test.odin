@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:support/line_editor"
+import "modustool:foundation"
 
 // The matcher of the console over the table that the script also carries:
 // a change of the score or of the order in src/library/support/line_editor fails here
@@ -62,25 +63,6 @@ site_search_script_carries_the_rule_and_the_table :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(script, " cases pass\""), "the self test does not print its count of cases")
 	// The script is a file of the site, never a part of a page.
 	testing.expect(t, !strings.contains(script, "</script"))
-}
-
-@(test)
-site_search_json_escapes :: proc(t: ^testing.T) {
-	escaped :: proc(text: string) -> string {
-		b := strings.builder_make(context.temp_allocator)
-		site_json_string(&b, text)
-		return strings.to_string(b)
-	}
-	testing.expect_value(t, escaped("plain"), "\"plain\"")
-	testing.expect_value(t, escaped("a \"quote\""), "\"a \\\"quote\\\"\"")
-	testing.expect_value(t, escaped("a \\ b"), "\"a \\\\ b\"")
-	testing.expect_value(t, escaped("</script><!--"), "\"\\u003c/script\\u003e\\u003c!--\"")
-	testing.expect_value(t, escaped("a & b"), "\"a \\u0026 b\"")
-	testing.expect_value(t, escaped("one\u2028two\u2029"), "\"one\\u2028two\\u2029\"")
-	testing.expect_value(t, escaped("a\nb\x01\x7f"), "\"a\\nb\\u0001\\u007f\"")
-	testing.expect_value(t, escaped("é ü"), "\"é ü\"")
-	testing.expect_value(t, escaped("a\xffb"), "\"a\\ufffdb\"")
-	testing.expect_value(t, escaped(""), "\"\"")
 }
 
 @(test)
@@ -304,7 +286,7 @@ site_search_segment_cases_table :: proc(t: ^testing.T) {
 	for segment_case in site_search_segment_cases {
 		counts := make([dynamic]int, context.temp_allocator)
 		for word in strings.fields(segment_case.counts, context.temp_allocator) {
-			append(&counts, site_digits_value(word))
+			append(&counts, foundation.site_digits_value(word))
 		}
 		segments := site_search_chart_segments(counts[:])
 		parts := make([dynamic]string, context.temp_allocator)

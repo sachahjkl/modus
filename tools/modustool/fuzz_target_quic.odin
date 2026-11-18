@@ -4,6 +4,7 @@ import "core:slice"
 import "modus:contract/errors"
 import "modus:support/quic"
 import "modus:support/random"
+import "modustool:foundation"
 
 // The fuzz targets of QUIC and TLS 1.3 (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): they read the network before any key
@@ -366,7 +367,7 @@ fuzz_tls_messages_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	}
 	at := 1
 	for at + 3 <= len(input) {
-		level := enum_member_at(quic.Encryption_Level, int(input[at] % 3))
+		level := foundation.enum_member_at(quic.Encryption_Level, int(input[at] % 3))
 		length := int(input[at + 1]) | int(input[at + 2]) << 8
 		at += 3
 		bytes := input[at:min(at + length, len(input))]

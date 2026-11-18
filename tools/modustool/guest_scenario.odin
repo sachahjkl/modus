@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): one
 // machine. The process guest_demo makes a guest process, maps one page of
@@ -20,7 +21,7 @@ import "core:strings"
 // then says that no guest ran, and why: the part is not a proof of a guest
 // there.
 
-TEST_OUTPUT_GUEST :: BUILD_FOLDER + "/test_output_guest.txt"
+TEST_OUTPUT_GUEST :: foundation.BUILD_FOLDER + "/test_output_guest.txt"
 
 // The machine of a host that gives SVM to the test machine.
 @(rodata)

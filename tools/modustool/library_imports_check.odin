@@ -71,6 +71,7 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 // The starts of the paths of the packages that a source of src/ may import.
 // A test runs on the host, and the copy of the cryptography of Odin keeps
@@ -183,9 +184,9 @@ library_source_is_a_test :: proc(file: string) -> bool {
 // path from the root of the tree.
 library_source_kind_of :: proc(file: string) -> Library_Source_Kind {
 	switch {
-	case strings.has_prefix(file, SOURCE_FOLDER_KERNEL + "/"):
+	case strings.has_prefix(file, foundation.SOURCE_FOLDER_KERNEL + "/"):
 		return .Kernel
-	case strings.has_prefix(file, SOURCE_FOLDER_CONTRACT + "/"):
+	case strings.has_prefix(file, foundation.SOURCE_FOLDER_CONTRACT + "/"):
 		return .Contract
 	}
 	return .System
@@ -195,7 +196,7 @@ library_source_kind_of :: proc(file: string) -> Library_Source_Kind {
 // tree names a file of a folder under src/kernel, and not a file of the
 // package of the kernel itself.
 library_source_is_in_a_kernel_part :: proc(file: string) -> bool {
-	start := SOURCE_FOLDER_KERNEL + "/"
+	start := foundation.SOURCE_FOLDER_KERNEL + "/"
 	return strings.has_prefix(file, start) && strings.contains(file[len(start):], "/")
 }
 
@@ -260,18 +261,18 @@ library_import_is_allowed :: proc(path: string, form: Library_Source_Form) -> bo
 		return true
 	}
 	if form.copy {
-		if library_import_names_a_package_under(path, SOURCE_LIBRARY_IMPORT_START) {
+		if library_import_names_a_package_under(path, foundation.SOURCE_LIBRARY_IMPORT_START) {
 			return true
 		}
 		return library_import_names_a_package_under(path, LIBRARY_IMPORT_CORE_START)
 	}
-	library_start := form.kind == .System ? SOURCE_LIBRARY_IMPORT_START : CONTRACT_IMPORT_START
+	library_start := form.kind == .System ? foundation.SOURCE_LIBRARY_IMPORT_START : foundation.CONTRACT_IMPORT_START
 	if library_import_names_a_package_under(path, library_start) {
 		return true
 	}
 	// "kernel:" alone names the package of the kernel itself, which no
 	// file imports: a kernel part names its folder.
-	if form.kind == .Kernel && library_import_names_a_package_under(path, KERNEL_IMPORT_START) {
+	if form.kind == .Kernel && library_import_names_a_package_under(path, foundation.KERNEL_IMPORT_START) {
 		return true
 	}
 	return form.test && library_import_names_a_package_under(path, LIBRARY_IMPORT_CORE_START)
@@ -282,24 +283,24 @@ library_import_is_allowed :: proc(path: string, form: Library_Source_Form) -> bo
 // applies, so that a reader of the message reads the rule that was refused.
 library_import_rule_words :: proc(form: Library_Source_Form) -> string {
 	if form.copy {
-		return "a file of the copy of the cryptography of Odin keeps the imports of its origin: a package of base:, of " + SOURCE_LIBRARY_IMPORT_START + ", of core:, or a relative path of the copy"
+		return "a file of the copy of the cryptography of Odin keeps the imports of its origin: a package of base:, of " + foundation.SOURCE_LIBRARY_IMPORT_START + ", of core:, or a relative path of the copy"
 	}
 	if form.kind == .Kernel {
 		if form.test {
-			return "a test of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, of core:, under " + CONTRACT_IMPORT_START + " or under " + KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
+			return "a test of " + foundation.SOURCE_FOLDER_KERNEL + " imports a package of base:, of core:, under " + foundation.CONTRACT_IMPORT_START + " or under " + foundation.KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
 		}
-		return "a source of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, under " + CONTRACT_IMPORT_START + " or under " + KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
+		return "a source of " + foundation.SOURCE_FOLDER_KERNEL + " imports a package of base:, under " + foundation.CONTRACT_IMPORT_START + " or under " + foundation.KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
 	}
 	if form.kind == .Contract {
 		if form.test {
-			return "a test of " + SOURCE_FOLDER_CONTRACT + " imports a package of base:, of core: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; a contract package imports no support package"
+			return "a test of " + foundation.SOURCE_FOLDER_CONTRACT + " imports a package of base:, of core: or under " + foundation.CONTRACT_IMPORT_START + ", by a path with no \"..\"; a contract package imports no support package"
 		}
-		return "a source of " + SOURCE_FOLDER_CONTRACT + " imports a package of base: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; a contract package imports no support package"
+		return "a source of " + foundation.SOURCE_FOLDER_CONTRACT + " imports a package of base: or under " + foundation.CONTRACT_IMPORT_START + ", by a path with no \"..\"; a contract package imports no support package"
 	}
 	if form.test {
-		return "a test of src/ imports a package of base:, of core: or of " + SOURCE_LIBRARY_IMPORT_START + ", or a relative path of the repository, by a path with no \"..\" after the name of a library; a kernel part (" + KERNEL_IMPORT_START + ") is imported from " + SOURCE_FOLDER_KERNEL + " only"
+		return "a test of src/ imports a package of base:, of core: or of " + foundation.SOURCE_LIBRARY_IMPORT_START + ", or a relative path of the repository, by a path with no \"..\" after the name of a library; a kernel part (" + foundation.KERNEL_IMPORT_START + ") is imported from " + foundation.SOURCE_FOLDER_KERNEL + " only"
 	}
-	return "a source of src/ that is not a test imports a package of base: or of " + SOURCE_LIBRARY_IMPORT_START + ", by a path with no \"..\"; a kernel part (" + KERNEL_IMPORT_START + ") is imported from " + SOURCE_FOLDER_KERNEL + " only"
+	return "a source of src/ that is not a test imports a package of base: or of " + foundation.SOURCE_LIBRARY_IMPORT_START + ", by a path with no \"..\"; a kernel part (" + foundation.KERNEL_IMPORT_START + ") is imported from " + foundation.SOURCE_FOLDER_KERNEL + " only"
 }
 
 // library_source_has_host_build_line says if the first build line of a
@@ -339,7 +340,7 @@ library_relative_import_reaches_a_kernel_part :: proc(file, path: string, form: 
 		return false
 	}
 	landing, relative := library_relative_import_landing(file, path)
-	return relative && (landing == SOURCE_FOLDER_KERNEL || strings.has_prefix(landing, SOURCE_FOLDER_KERNEL + "/"))
+	return relative && (landing == foundation.SOURCE_FOLDER_KERNEL || strings.has_prefix(landing, foundation.SOURCE_FOLDER_KERNEL + "/"))
 }
 
 // library_relative_import_landing gives the folder where a relative import
@@ -354,7 +355,7 @@ library_relative_import_landing :: proc(file, path: string) -> (landing: string,
 	if slash := strings.last_index_byte(file, '/'); slash >= 0 {
 		folder = file[:slash]
 	}
-	return path_without_dots(join(folder, "/", path)), true
+	return path_without_dots(foundation.join(folder, "/", path)), true
 }
 
 // library_relative_import_reaches_another_module says if a relative import
@@ -364,17 +365,17 @@ library_relative_import_landing :: proc(file, path: string) -> (landing: string,
 // of a group names no module, and is refused from each file.
 library_relative_import_reaches_another_module :: proc(file, path: string) -> bool {
 	landing, relative := library_relative_import_landing(file, path)
-	if !relative || (landing != SOURCE_FOLDER_MODULES && !strings.has_prefix(landing, SOURCE_FOLDER_MODULES + "/")) {
+	if !relative || (landing != foundation.SOURCE_FOLDER_MODULES && !strings.has_prefix(landing, foundation.SOURCE_FOLDER_MODULES + "/")) {
 		return false
 	}
 	// The parts of src/modules, then the group and the module.
-	module_part_count := strings.count(SOURCE_FOLDER_MODULES, "/") + 3
+	module_part_count := strings.count(foundation.SOURCE_FOLDER_MODULES, "/") + 3
 	parts := strings.split(landing, "/", context.temp_allocator)
 	if len(parts) < module_part_count {
 		return true
 	}
 	module_folder := strings.join(parts[:module_part_count], "/", context.temp_allocator)
-	return !strings.has_prefix(file, join(module_folder, "/"))
+	return !strings.has_prefix(file, foundation.join(module_folder, "/"))
 }
 
 // The intrinsics that read or change the machine, by the start of their
@@ -506,7 +507,7 @@ kernel_part_impure_constructs :: proc(file: string, tree: ^ast.File, form: Libra
 // table of the modules that has a name, the module of a private part. A
 // kernel is not such a module: a private part of it is refused.
 library_module_source_of_name :: proc(name: string) -> (source: string, found: bool) {
-	for build in module_builds {
+	for build in foundation.module_builds {
 		if !build.kernel && build.name == name {
 			return build.source, true
 		}
@@ -521,7 +522,7 @@ library_module_source_of_name :: proc(name: string) -> (source: string, found: b
 @(private = "file")
 library_private_part_parts :: proc(path_in_library: string) -> (module_name: string, part_name: string, named: bool) {
 	parts := strings.split(path_in_library, "/", context.temp_allocator)
-	if len(parts) < 3 || parts[0] != LIBRARY_PART_PRIVATE || parts[1] == "" || parts[2] == "" {
+	if len(parts) < 3 || parts[0] != foundation.LIBRARY_PART_PRIVATE || parts[1] == "" || parts[2] == "" {
 		return "", "", false
 	}
 	return parts[1], parts[2], true
@@ -536,10 +537,10 @@ library_private_part_parts :: proc(path_in_library: string) -> (module_name: str
 // a host program cannot load a module, so the test of a package that calls
 // the exports of that module stands in for it with the code of the part.
 library_private_import_is_allowed :: proc(file, path: string, form: Library_Source_Form) -> bool {
-	if !strings.has_prefix(path, PRIVATE_IMPORT_START) {
+	if !strings.has_prefix(path, foundation.PRIVATE_IMPORT_START) {
 		return true
 	}
-	module_name, _, named := library_private_part_parts(path[len(SOURCE_LIBRARY_IMPORT_START):])
+	module_name, _, named := library_private_part_parts(path[len(foundation.SOURCE_LIBRARY_IMPORT_START):])
 	if !named {
 		return false
 	}
@@ -547,10 +548,10 @@ library_private_import_is_allowed :: proc(file, path: string, form: Library_Sour
 	if !found {
 		return false
 	}
-	if strings.has_prefix(file, join(source, "/")) || strings.has_prefix(file, join(SOURCE_FOLDER_PRIVATE, "/", module_name, "/")) {
+	if strings.has_prefix(file, foundation.join(source, "/")) || strings.has_prefix(file, foundation.join(foundation.SOURCE_FOLDER_PRIVATE, "/", module_name, "/")) {
 		return true
 	}
-	return form.test && strings.has_prefix(source, LIBRARY_MODULE_SOURCES)
+	return form.test && strings.has_prefix(source, foundation.LIBRARY_MODULE_SOURCES)
 }
 
 // library_package_node gives the package of the library that a path inside
@@ -560,7 +561,7 @@ library_private_import_is_allowed :: proc(file, path: string, form: Library_Sour
 // names a package.
 library_package_node :: proc(path_in_library: string) -> (node: string, found: bool) {
 	parts := strings.split(path_in_library, "/", context.temp_allocator)
-	if len(parts) >= 3 && parts[0] == LIBRARY_PART_PRIVATE {
+	if len(parts) >= 3 && parts[0] == foundation.LIBRARY_PART_PRIVATE {
 		return strings.join(parts[:3], "/", context.temp_allocator), parts[1] != "" && parts[2] != ""
 	}
 	if len(parts) >= 2 && parts[1] != "" {
@@ -575,8 +576,8 @@ library_package_node :: proc(path_in_library: string) -> (node: string, found: b
 // boot program or of the runtime.
 @(private = "file")
 library_owner_unit_of :: proc(file: string) -> (unit: string, is_package: bool) {
-	if strings.has_prefix(file, SOURCE_FOLDER_LIBRARY + "/") {
-		rest := file[len(SOURCE_FOLDER_LIBRARY) + 1:]
+	if strings.has_prefix(file, foundation.SOURCE_FOLDER_LIBRARY + "/") {
+		rest := file[len(foundation.SOURCE_FOLDER_LIBRARY) + 1:]
 		if slash := strings.last_index_byte(rest, '/'); slash >= 0 {
 			if node, found := library_package_node(rest[:slash]); found {
 				return node, true
@@ -584,13 +585,13 @@ library_owner_unit_of :: proc(file: string) -> (unit: string, is_package: bool) 
 		}
 		return rest, true
 	}
-	for build in module_builds {
-		if !build.kernel && strings.has_prefix(file, join(build.source, "/")) {
+	for build in foundation.module_builds {
+		if !build.kernel && strings.has_prefix(file, foundation.join(build.source, "/")) {
 			return build.name, false
 		}
 	}
-	for folder in ([]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME}) {
-		if strings.has_prefix(file, join(folder, "/")) {
+	for folder in ([]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_RUNTIME}) {
+		if strings.has_prefix(file, foundation.join(folder, "/")) {
 			return folder, false
 		}
 	}
@@ -622,7 +623,7 @@ library_owner_breaches :: proc(reading: Library_Import_Reading) -> []Library_Imp
 			unit_edges = make([dynamic]string, context.temp_allocator)
 		}
 		for path in imports {
-			if node, found := library_package_node(path[len(SOURCE_LIBRARY_IMPORT_START):]); found {
+			if node, found := library_package_node(path[len(foundation.SOURCE_LIBRARY_IMPORT_START):]); found {
 				append(&unit_edges, node)
 			}
 		}
@@ -659,14 +660,14 @@ library_owner_breaches :: proc(reading: Library_Import_Reading) -> []Library_Imp
 	for node in nodes {
 		owners_of_node := owners[node]
 		node_owners := owners_of_node[:]
-		folder := strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", node}, context.temp_allocator)
+		folder := strings.concatenate({foundation.SOURCE_FOLDER_LIBRARY, "/", node}, context.temp_allocator)
 		text := strings.join(node_owners, ", ", context.temp_allocator)
 		switch {
-		case strings.has_prefix(node, LIBRARY_PART_SUPPORT + "/"):
+		case strings.has_prefix(node, foundation.LIBRARY_PART_SUPPORT + "/"):
 			if len(node_owners) < 2 {
 				append(&list, Library_Import_Breach{file = folder, text = text, reason = .Support_Package_With_One_Owner})
 			}
-		case strings.has_prefix(node, LIBRARY_PART_PRIVATE + "/"):
+		case strings.has_prefix(node, foundation.LIBRARY_PART_PRIVATE + "/"):
 			module_name, _, _ := library_private_part_parts(node)
 			if len(node_owners) != 1 || node_owners[0] != module_name {
 				append(&list, Library_Import_Breach{file = folder, text = text, reason = .Private_Part_Without_Its_Module})
@@ -697,8 +698,8 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 		tree.fullpath = file
 		reader := parser.default_parser()
 		// The check reports a file that the parser refuses in its own words.
-		reader.err = site_code_quiet_error
-		reader.warn = site_code_quiet_error
+		reader.err = foundation.site_code_quiet_error
+		reader.warn = foundation.site_code_quiet_error
 		if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
 			append(&list, Library_Import_Breach{file = file, reason = .Unreadable_File, form = form})
 			return list[:], 0
@@ -707,7 +708,7 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 		for declaration in tree.imports {
 			text := declaration.relpath.text
 			path := strings.trim(text, "\"`")
-			if library_imports != nil && library_import_names_a_package_under(path, SOURCE_LIBRARY_IMPORT_START) {
+			if library_imports != nil && library_import_names_a_package_under(path, foundation.SOURCE_LIBRARY_IMPORT_START) {
 				append(library_imports, strings.clone(path, context.temp_allocator))
 			}
 			if !library_import_is_allowed(path, form) || library_relative_import_reaches_a_kernel_part(file, path, form) {
@@ -748,9 +749,9 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 // tree names the files that the check reads with the rule of a copy.
 library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Import_Reading, ok: bool) {
 	paths := make([dynamic]string, context.temp_allocator)
-	folders := SOURCE_FOLDERS
+	folders := foundation.SOURCE_FOLDERS
 	for folder in folders {
-		source_files_of_a_folder(root == "" ? folder : join(root, "/", folder), &paths) or_return
+		foundation.source_files_of_a_folder(root == "" ? folder : foundation.join(root, "/", folder), &paths) or_return
 	}
 	files := make([dynamic]string, context.temp_allocator)
 	for path in paths {
@@ -758,8 +759,8 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 	}
 	slice.sort(files[:])
 	copied := make(map[string]bool, context.temp_allocator)
-	manifest := root == "" ? CRYPTOGRAPHY_MANIFEST : join(root, "/", CRYPTOGRAPHY_MANIFEST)
-	lines, manifest_ok := manifest_lines(manifest)
+	manifest := root == "" ? foundation.CRYPTOGRAPHY_MANIFEST : foundation.join(root, "/", foundation.CRYPTOGRAPHY_MANIFEST)
+	lines, manifest_ok := foundation.manifest_lines(manifest)
 	if !manifest_ok {
 		return {}, false
 	}
@@ -771,7 +772,7 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 	reading.breaches = make([dynamic]Library_Import_Breach, context.temp_allocator)
 	reading.library_imports = make(map[string][dynamic]string, context.temp_allocator)
 	for file in files {
-		source, read_ok := site_read_quiet(library_source_path(root, file))
+		source, read_ok := foundation.site_read_quiet(library_source_path(root, file))
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return {}, false
@@ -806,14 +807,14 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 	// The files of tools/: the rule of the relative imports into a module
 	// alone.
 	tool_paths := make([dynamic]string, context.temp_allocator)
-	source_files_of_a_folder(root == "" ? LIBRARY_IMPORTS_TOOL_FOLDER : join(root, "/", LIBRARY_IMPORTS_TOOL_FOLDER), &tool_paths) or_return
+	foundation.source_files_of_a_folder(root == "" ? LIBRARY_IMPORTS_TOOL_FOLDER : foundation.join(root, "/", LIBRARY_IMPORTS_TOOL_FOLDER), &tool_paths) or_return
 	tool_files := make([dynamic]string, context.temp_allocator)
 	for path in tool_paths {
 		append(&tool_files, library_source_relative_to_root(root, path))
 	}
 	slice.sort(tool_files[:])
 	for file in tool_files {
-		source, read_ok := site_read_quiet(library_source_path(root, file))
+		source, read_ok := foundation.site_read_quiet(library_source_path(root, file))
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return {}, false
@@ -844,8 +845,8 @@ library_tool_import_breaches_of_source :: proc(file, source: string) -> []Librar
 		tree.src = source
 		tree.fullpath = file
 		reader := parser.default_parser()
-		reader.err = site_code_quiet_error
-		reader.warn = site_code_quiet_error
+		reader.err = foundation.site_code_quiet_error
+		reader.warn = foundation.site_code_quiet_error
 		if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
 			append(&list, Library_Import_Breach{file = file, reason = .Unreadable_File, form = form})
 			return list[:]
@@ -873,14 +874,14 @@ library_import_breach_sentence :: proc(breach: Library_Import_Breach) -> string 
 	case .Refused_Import:
 		return fmt.tprintf("%s:%d: the import %s is refused: %s", breach.file, breach.line, breach.text, library_import_rule_words(breach.form))
 	case .Private_Part_Of_Another_Module:
-		return fmt.tprintf("%s:%d: the import %s is refused: a private part (%s<module>/<part>) is imported from the folder of its module or from a private part of the same module only, and by a host test when <module> is in %s; <module> is the name of a module of the table", breach.file, breach.line, breach.text, PRIVATE_IMPORT_START, LIBRARY_MODULE_SOURCES)
+		return fmt.tprintf("%s:%d: the import %s is refused: a private part (%s<module>/<part>) is imported from the folder of its module or from a private part of the same module only, and by a host test when <module> is in %s; <module> is the name of a module of the table", breach.file, breach.line, breach.text, foundation.PRIVATE_IMPORT_START, foundation.LIBRARY_MODULE_SOURCES)
 	case .Relative_Import_Into_A_Module:
-		return fmt.tprintf("%s:%d: the import %s is refused: a relative import lands in the folder of a module (%s<group>/<module>) from outside it; the code that a module and another reader need is a private part of the module, imported as %s<module>/<part>", breach.file, breach.line, breach.text, SOURCE_FOLDER_MODULES + "/", PRIVATE_IMPORT_START)
+		return fmt.tprintf("%s:%d: the import %s is refused: a relative import lands in the folder of a module (%s<group>/<module>) from outside it; the code that a module and another reader need is a private part of the module, imported as %s<module>/<part>", breach.file, breach.line, breach.text, foundation.SOURCE_FOLDER_MODULES + "/", foundation.PRIVATE_IMPORT_START)
 	case .Support_Package_With_One_Owner:
 		if breach.text == "" {
 			return fmt.tprintf("%s: no body of code reaches this support package: a support package has two owners or more", breach.file)
 		}
-		return fmt.tprintf("%s: only %s reaches this support package: a support package has two owners or more, and a package of one module is its private part, in %s/<module>/", breach.file, breach.text, SOURCE_FOLDER_PRIVATE)
+		return fmt.tprintf("%s: only %s reaches this support package: a support package has two owners or more, and a package of one module is its private part, in %s/<module>/", breach.file, breach.text, foundation.SOURCE_FOLDER_PRIVATE)
 	case .Private_Part_Without_Its_Module:
 		if breach.text == "" {
 			return fmt.tprintf("%s: no body of code reaches this private part: a private part has its module as its one owner", breach.file)
@@ -914,10 +915,10 @@ library_imports_check :: proc() -> bool {
 		fmt.eprintln("modustool: test failed: an import of a source of src/ or of tools/, the build line of a host test, or a construct of a kernel part that is not pure, is refused")
 		return false
 	}
-	test_passed_print("each of the %d imports of the %d sources and of the %d host tests of src/ is allowed, each host test that imports a package of core: starts with the build line of the host, each source of a kernel part is pure, the %d files of the copy of the cryptography of Odin are exempt, and no relative import of the %d files of tools/ lands in a module", reading.import_count, reading.source_count, reading.test_count, reading.copy_count, reading.tool_count)
+	foundation.test_passed_print("each of the %d imports of the %d sources and of the %d host tests of src/ is allowed, each host test that imports a package of core: starts with the build line of the host, each source of a kernel part is pure, the %d files of the copy of the cryptography of Odin are exempt, and no relative import of the %d files of tools/ lands in a module", reading.import_count, reading.source_count, reading.test_count, reading.copy_count, reading.tool_count)
 	return true
 }
 
 run_library_imports :: proc(args: []string) -> int {
-	return library_imports_check() ? 0 : EXIT_FAILURE
+	return library_imports_check() ? 0 : foundation.EXIT_FAILURE
 }

@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // QUIC through the network service (docs/QUIC.md, section 6): the network
 // device goes to the peer of the tool. `quic_echo` listens on the UDP port
 // 4433 with a listen grant; the peer is its QUIC client, with src/library/support/quic
@@ -8,7 +10,7 @@ package modustool
 // The weak seed: the machine of the randomness with no rdrand and no
 // rdseed starts quic_echo too (random_scenario.odin): it makes no key.
 
-TEST_OUTPUT_QUIC :: BUILD_FOLDER + "/test_output_quic.txt"
+TEST_OUTPUT_QUIC :: foundation.BUILD_FOLDER + "/test_output_quic.txt"
 
 scenario_quic := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},

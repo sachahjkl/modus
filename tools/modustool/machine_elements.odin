@@ -6,6 +6,7 @@ import "core:strings"
 import "core:time"
 
 import "modus:private/compositor/bar"
+import "modustool:foundation"
 
 // The press of a machine test on an element by its name
 // (src/md/infrastructure/test_pointer.md; docs/TOOLS.md, "The scenario
@@ -80,7 +81,7 @@ element_line_read :: proc(log: string, owner, element: string) -> (x, y, width, 
 element_center_wait :: proc(machine: ^Machine, owner, element: string, index: int) -> (x, y: int, ok: bool) {
 	found := Element_Line.Absent
 	element_x, element_y, width, height: int
-	for start := time.now(); time.since(start) < HANG_BOUND; {
+	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		element_x, element_y, width, height, found = element_line_read(log_read(machine), owner, element)
 		if found == .Placed {
 			break
@@ -89,7 +90,7 @@ element_center_wait :: proc(machine: ^Machine, owner, element: string, index: in
 	}
 	if found != .Placed {
 		words := found == .Gone ? "says that it is gone" : "has no line of it"
-		fmt.eprintfln("modustool: test failed: step %d: the element %s of %s is not placed: the log %s within %v", index + 1, element, owner, words, HANG_BOUND)
+		fmt.eprintfln("modustool: test failed: step %d: the element %s of %s is not placed: the log %s within %v", index + 1, element, owner, words, foundation.HANG_BOUND)
 		return 0, 0, false
 	}
 	x, y = element_x + width / 2, element_y + height / 2
@@ -174,7 +175,7 @@ PRESS_LINE :: "compositor: a press of the left button at "
 // press_place_read waits for the line of the first press after the byte
 // `from` of the log, and gives the place where the compositor took it.
 press_place_read :: proc(machine: ^Machine, from: int, index: int) -> (x, y: int, ok: bool) {
-	for start := time.now(); time.since(start) < HANG_BOUND; {
+	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
 		at := len(text) > from ? strings.index(text[from:], PRESS_LINE) : -1
 		end := at < 0 ? -1 : strings.index_byte(text[from + at:], '\n')
@@ -192,7 +193,7 @@ press_place_read :: proc(machine: ^Machine, from: int, index: int) -> (x, y: int
 		}
 		return x_read, y_read, true
 	}
-	fmt.eprintfln("modustool: test failed: step %d: the compositor wrote no line of the press within %v: the machine did not receive the press", index + 1, HANG_BOUND)
+	fmt.eprintfln("modustool: test failed: step %d: the compositor wrote no line of the press within %v: the machine did not receive the press", index + 1, foundation.HANG_BOUND)
 	return 0, 0, false
 }
 
@@ -245,8 +246,8 @@ window_front_bring :: proc(machine: ^Machine, title: string, index: int) -> bool
 	// line of its surface comes before that picture.
 	shown := fmt.tprintf("compositor: window %s is shown", title)
 	for start := time.now(); !strings.contains(log_read(machine), shown); {
-		if time.since(start) >= HANG_BOUND {
-			fmt.eprintfln("modustool: test failed: step %d: the compositor did not show the window %s within %v", index + 1, title, HANG_BOUND)
+		if time.since(start) >= foundation.HANG_BOUND {
+			fmt.eprintfln("modustool: test failed: step %d: the compositor did not show the window %s within %v", index + 1, title, foundation.HANG_BOUND)
 			return false
 		}
 		log_change_wait(machine)
@@ -267,7 +268,7 @@ window_front_bring :: proc(machine: ^Machine, title: string, index: int) -> bool
 	pointer_click(machine, line_x, line_y, index) or_return
 	mark := strings.concatenate({"compositor: window ", title, " in front"}, context.temp_allocator)
 	arrived := false
-	for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
+	for start := time.now(); !arrived && time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
 		if arrived = len(text) > before && strings.contains(text[before:], mark); !arrived {
 			log_change_wait(machine)
@@ -277,7 +278,7 @@ window_front_bring :: proc(machine: ^Machine, title: string, index: int) -> bool
 		fmt.eprintfln("modustool: test failed: step %d: the window %s did not come to the front", index + 1, title)
 		return false
 	}
-	test_passed_print("the window %s came to the front", title)
+	foundation.test_passed_print("the window %s came to the front", title)
 	return true
 }
 
@@ -319,7 +320,7 @@ element_wheel :: proc(machine: ^Machine, owner, element: string, notches: int, i
 		fmt.eprintfln("modustool: test failed: step %d: the machine did not take the %d notches of the wheel", index + 1, notches)
 		return false
 	}
-	test_passed_print("the tool turned the wheel by %d notches over the element %s of %s at %d,%d", notches, element, owner, x, y)
+	foundation.test_passed_print("the tool turned the wheel by %d notches over the element %s of %s at %d,%d", notches, element, owner, x, y)
 	return true
 }
 
@@ -331,6 +332,6 @@ element_click :: proc(machine: ^Machine, owner, element: string, index: int) -> 
 		window_front_where_covered(machine, owner, x, y, index) or_return
 	}
 	pointer_click(machine, x, y, index) or_return
-	test_passed_print("the tool pressed the element %s of %s at %d,%d", element, owner, x, y)
+	foundation.test_passed_print("the tool pressed the element %s of %s at %d,%d", element, owner, x, y)
 	return true
 }

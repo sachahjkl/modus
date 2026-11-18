@@ -7,6 +7,7 @@ import "core:testing"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modustool:foundation"
 
 // A struct whose layout has padding inside and at its end: a u8, three
 // bytes, a u32, a u16, two bytes.
@@ -106,12 +107,12 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 	packages := SITE_TYPE_PACKAGES
 	for folder in packages {
 		package_name := folder[strings.last_index_byte(folder, '/') + 1:]
-		paths, ok := files_with_suffix(folder, ".odin")
+		paths, ok := foundation.files_with_suffix(folder, ".odin")
 		testing.expect(t, ok)
 		for path in paths {
-			text, read := site_read_quiet(path)
+			text, read := foundation.site_read_quiet(path)
 			testing.expect(t, read)
-			for line in site_lines(text) {
+			for line in foundation.site_lines(text) {
 				if !strings.has_prefix(line, "#assert(size_of(") {
 					continue
 				}
@@ -126,8 +127,8 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 				if end < 0 {
 					continue
 				}
-				value := site_digits_value(value_text[:end])
-				if value < 0 || !site_is_identifier(name) {
+				value := foundation.site_digits_value(value_text[:end])
+				if value < 0 || !foundation.site_is_identifier(name) {
 					continue // A size that is a constant, or a type of another form: the compiler checks it.
 				}
 				key := strings.concatenate({package_name, ".", name}, context.temp_allocator)
@@ -316,8 +317,8 @@ site_signatures_with_type_references :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "popovertarget=\"card-type-wire-integer\""), html)
 	testing.expect_value(t, site_html_unescape(site_tags_removed(html)), site_export_signature(description, export))
 
-	member := Site_Enumeration_Member{name = "Memory_Create", number = 2, comment = "(budget, page_count, Memory_Flags) -> memory handle. The memory is zero."}
-	operation := site_operation_parts(member)
+	member := foundation.Site_Enumeration_Member{name = "Memory_Create", number = 2, comment = "(budget, page_count, Memory_Flags) -> memory handle. The memory is zero."}
+	operation := foundation.site_operation_parts(member)
 	operation_html := site_operation_signature_html(&site, operation)
 	// The attributes of the button follow popovertarget: the name ends it.
 	testing.expect(t, strings.contains(operation_html, "popovertarget=\"card-type-operation-memory-flags\""), operation_html)
@@ -325,11 +326,11 @@ site_signatures_with_type_references :: proc(t: ^testing.T) {
 	// The words that name no type stay words: no count of a type with no card.
 	testing.expect(t, !strings.contains(operation_html, "value-type"), operation_html)
 	testing.expect_value(t, site_html_unescape(site_tags_removed(operation_html)), "Memory_Create(budget, page_count, Memory_Flags) -> memory handle")
-	testing.expect_value(t, site_operation_signature_html(&site, site_operation_parts(Site_Enumeration_Member{name = "None", comment = "No form."})), "")
+	testing.expect_value(t, site_operation_signature_html(&site, foundation.site_operation_parts(foundation.Site_Enumeration_Member{name = "None", comment = "No form."})), "")
 
-	command := Site_Console_Command{name = "repeat", parameters = []string{"Text", "Integer"}, result = "Text"}
+	command := foundation.Site_Console_Command{name = "repeat", parameters = []string{"Text", "Integer"}, result = "Text"}
 	command_html := site_console_signature_html(&site, command)
-	testing.expect_value(t, site_html_unescape(site_tags_removed(command_html)), site_console_signature(command))
+	testing.expect_value(t, site_html_unescape(site_tags_removed(command_html)), foundation.site_console_signature(command))
 	testing.expect(t, strings.contains(command_html, "popovertarget=\"card-type-wire-integer\""), command_html)
 
 	// The symbol writes the signature with its references.

@@ -6,6 +6,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The child of the fuzzing (src/md/infrastructure/fuzzing.md, "The harness
 // is the tool"): a second copy of the tool, started as `fuzz-child`, that
@@ -188,7 +189,7 @@ fuzz_child_corpus :: proc(target_name: string) -> (inputs: [dynamic]Fuzz_Stored_
 run_fuzz_child :: proc(args: []string) -> int {
 	if len(args) < 5 {
 		fmt.eprintln("modustool: fuzz-child <run|check|replay|corpus> <target> <mailbox> <seed> <executions> [<file>]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	mode: Fuzz_Child_Mode
 	mode_found := false
@@ -202,26 +203,26 @@ run_fuzz_child :: proc(args: []string) -> int {
 	executions, executions_ok := strconv.parse_u64(args[4])
 	if !mode_found || !target_found || !seed_ok || !executions_ok || (mode == .Replay && len(args) < 6) {
 		fmt.eprintln("modustool: fuzz-child: a wrong argument")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	child := &fuzz_child_state
 	mailbox, mapped := fuzz_mailbox_map(args[2], create = false)
 	if !mapped || mailbox.magic != FUZZ_MAILBOX_MAGIC {
 		fmt.eprintfln("modustool: fuzz-child: cannot map the mailbox %s", args[2])
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	child.mailbox = mailbox
 	arena, arena_ok := fuzz_input_arena_make(target.input_limit)
 	if !arena_ok || !fuzz_fault_handlers_install(mailbox) {
 		fmt.eprintln("modustool: fuzz-child: cannot prepare the input arena and the handler of the faults")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	child.arena = arena
 	child.kept_folder = strings.clone(fuzz_run_folder(target.name, FUZZ_KEPT_PART))
 	child.kept_names = make(map[string]bool)
 	if target.start != nil && !target.start() {
 		fmt.eprintfln("modustool: fuzz-child: the target %s cannot start", target.name)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	engine: Fuzz_Engine
 	fuzz_engine_init(&engine, target, seed, fuzz_execute_in_child)
@@ -232,7 +233,7 @@ run_fuzz_child :: proc(args: []string) -> int {
 		input, error := os.read_entire_file(args[5], context.allocator)
 		if error != nil {
 			fmt.eprintfln("modustool: fuzz-child: cannot read %s: %v", args[5], error)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		// Two executions: the input against the page after it, then
 		// against the page before it.
@@ -336,12 +337,12 @@ fuzz_child_reach :: proc(engine: ^Fuzz_Engine) -> int {
 		reach_bytes += len(candidate.bytes)
 	}
 	folder := fuzz_corpus_folder(engine.target.name, FUZZ_REACH_PART)
-	if !reset_folder(folder) {
-		return EXIT_FAILURE
+	if !foundation.reset_folder(folder) {
+		return foundation.EXIT_FAILURE
 	}
 	for input in reach {
 		if _, ok := fuzz_input_write(folder, input); !ok {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 	}
 	fuzz_child_report(engine)

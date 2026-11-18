@@ -6,6 +6,7 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // One source must give one module: the identity of a module is the hash of
 // its content, so a build must be deterministic. Two commands check it:
@@ -19,7 +20,7 @@ import "core:strings"
 
 // No build resets this folder (a build resets the folder of the objects).
 // Each `check` and each `repeat` empties it first.
-DIFFERENT_BUILDS_FOLDER :: BUILD_FOLDER + "/different_builds"
+DIFFERENT_BUILDS_FOLDER :: foundation.BUILD_FOLDER + "/different_builds"
 
 // One file that a build writes, and what it is.
 Build_Output :: struct {
@@ -29,13 +30,13 @@ Build_Output :: struct {
 
 // The outputs of one module: the module, the LLVM IR that Odin wrote, the
 // object that llc made from it, and its debug object.
-module_build_outputs :: proc(build: Module_Build) -> [4]Build_Output {
-	folder := fmt.aprintf("%s/%s", MODULE_BUILD_FOLDER, build.name)
+module_build_outputs :: proc(build: foundation.Module_Build) -> [4]Build_Output {
+	folder := fmt.aprintf("%s/%s", foundation.MODULE_BUILD_FOLDER, build.name)
 	return {
-		{kind = "module", path = fmt.aprintf("%s/%s.module", MODULE_BUILD_FOLDER, build.name)},
+		{kind = "module", path = fmt.aprintf("%s/%s.module", foundation.MODULE_BUILD_FOLDER, build.name)},
 		{kind = "LLVM IR", path = fmt.aprintf("%s/%s.ll", folder, build.name)},
 		{kind = "object", path = fmt.aprintf("%s/objects/%s.o", folder, build.name)},
-		{kind = "debug object", path = fmt.aprintf("%s/%s.debug", MODULE_BUILD_FOLDER, build.name)},
+		{kind = "debug object", path = fmt.aprintf("%s/%s.debug", foundation.MODULE_BUILD_FOLDER, build.name)},
 	}
 }
 
@@ -93,7 +94,7 @@ record_build_output :: proc(results: ^Distinct_Results, build_number: int) -> bo
 
 keep_variant_file :: proc(results: ^Distinct_Results, variant: int) -> string {
 	folder := fmt.tprintf("%s/%s", DIFFERENT_BUILDS_FOLDER, results.owner)
-	if !make_folder(folder) {
+	if !foundation.make_folder(folder) {
 		return "(not kept)"
 	}
 	kept := fmt.tprintf("%s/%s.variant_%d", folder, results.output.path[strings.last_index(results.output.path, "/") + 1:], variant)
@@ -175,7 +176,7 @@ run_repeat :: proc(args: []string) -> int {
 	}
 	if !parsed || count < 2 {
 		fmt.eprintln("modustool: repeat <module> <count>, or repeat all <count> [host_processes], with a count of 2 or more")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	// Each build of this command is a whole build: it counts the results
 	// of the compiler, not the outputs that a build record keeps.
@@ -183,18 +184,18 @@ run_repeat :: proc(args: []string) -> int {
 	if args[0] == "all" {
 		return repeat_all(count)
 	}
-	build: Module_Build
-	for item in module_builds {
+	build: foundation.Module_Build
+	for item in foundation.module_builds {
 		if item.name == args[0] {
 			build = item
 		}
 	}
 	if build.name == "" {
 		fmt.eprintfln("modustool: repeat: no module %s", args[0])
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
-	if !reset_folder(DIFFERENT_BUILDS_FOLDER) {
-		return EXIT_FAILURE
+	if !foundation.reset_folder(DIFFERENT_BUILDS_FOLDER) {
+		return foundation.EXIT_FAILURE
 	}
 	results: [4]Distinct_Results
 	for output, index in module_build_outputs(build) {
@@ -202,11 +203,11 @@ run_repeat :: proc(args: []string) -> int {
 	}
 	for number in 1 ..= count {
 		if !build_module(build) {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		for &result in results {
 			if !record_build_output(&result, number) {
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 		}
 		free_all(context.temp_allocator)
@@ -217,7 +218,7 @@ run_repeat :: proc(args: []string) -> int {
 		same = same && len(result.contents) == 1
 		free_results(&result)
 	}
-	return same ? 0 : EXIT_FAILURE
+	return same ? 0 : foundation.EXIT_FAILURE
 }
 
 // repeat_all builds every module and the boot program count times, in the
@@ -225,12 +226,12 @@ run_repeat :: proc(args: []string) -> int {
 // boot programs), LLVM IR files, objects and debug objects.
 repeat_all :: proc(count: int) -> int {
 	build_whole = true
-	if !reset_folder(DIFFERENT_BUILDS_FOLDER) {
-		return EXIT_FAILURE
+	if !foundation.reset_folder(DIFFERENT_BUILDS_FOLDER) {
+		return foundation.EXIT_FAILURE
 	}
 	all := make([dynamic]Distinct_Results)
 	defer delete(all)
-	for build in module_builds {
+	for build in foundation.module_builds {
 		for output in module_build_outputs(build) {
 			append(&all, Distinct_Results{owner = build.name, output = output})
 		}
@@ -240,17 +241,17 @@ repeat_all :: proc(count: int) -> int {
 	}
 	for number in 1 ..= count {
 		if !build_modules() || !main_boot_volume_build() {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		for &result in all {
 			if !record_build_output(&result, number) {
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 		}
 		fmt.printfln("modustool: repeat: build %d of %d done", number, count)
 		free_all(context.temp_allocator)
 	}
-	fmt.printfln("modustool: repeat: %d builds of each of %d modules and of the boot program", count, len(module_builds))
+	fmt.printfln("modustool: repeat: %d builds of each of %d modules and of the boot program", count, len(foundation.module_builds))
 	fmt.printfln("%-20s %8s %16s %12s %17s %23s", "module", "builds", "distinct files", "distinct IR", "distinct objects", "distinct debug objects")
 	same := true
 	for index := 0; index < len(all); {
@@ -278,7 +279,7 @@ repeat_all :: proc(count: int) -> int {
 		}
 		fmt.printfln("%-20s %8s %16s %12s %17s %23s", owner, fmt.tprintf("%d", count), row[0], row[1], row[2], row[3])
 	}
-	return same ? 0 : EXIT_FAILURE
+	return same ? 0 : foundation.EXIT_FAILURE
 }
 
 // outputs_same_after_second_build builds the modules and the boot program a
@@ -291,7 +292,7 @@ outputs_same_after_second_build :: proc() -> bool {
 	// is the same bytes with no proof. The first build must be whole too:
 	// the commands that call this procedure set build_whole before it.
 	build_whole = true
-	reset_folder(DIFFERENT_BUILDS_FOLDER) or_return
+	foundation.reset_folder(DIFFERENT_BUILDS_FOLDER) or_return
 	all := make([dynamic]Distinct_Results)
 	defer {
 		for &result in all {
@@ -299,12 +300,12 @@ outputs_same_after_second_build :: proc() -> bool {
 		}
 		delete(all)
 	}
-	for build in module_builds {
+	for build in foundation.module_builds {
 		for output in module_build_outputs(build) {
 			append(&all, Distinct_Results{owner = build.name, output = output})
 		}
 	}
-	theme_paths := files_with_suffix(POINTER_BUILD_FOLDER, ".pointers") or_return
+	theme_paths := foundation.files_with_suffix(POINTER_BUILD_FOLDER, ".pointers") or_return
 	for path in theme_paths {
 		append(&all, Distinct_Results{owner = "pointers", output = {kind = "pointer theme file", path = path}})
 	}
@@ -328,8 +329,8 @@ outputs_same_after_second_build :: proc() -> bool {
 	if different != 0 {
 		return false
 	}
-	same_bytes_line := fmt.tprintf("%d modules, their LLVM IR, their objects and their debug objects, %d pointer theme files, and the boot program and its object are the same bytes after a second build", len(module_builds), len(theme_paths))
-	test_passed_print("%s", same_bytes_line)
+	same_bytes_line := fmt.tprintf("%d modules, their LLVM IR, their objects and their debug objects, %d pointer theme files, and the boot program and its object are the same bytes after a second build", len(foundation.module_builds), len(theme_paths))
+	foundation.test_passed_print("%s", same_bytes_line)
 	// The command `site` quotes this line.
 	if err := os.write_entire_file(REPRODUCIBLE_BUILD_RECORD, strings.concatenate({same_bytes_line, "\n"}, context.temp_allocator)); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", REPRODUCIBLE_BUILD_RECORD, err)
@@ -347,17 +348,17 @@ outputs_same_after_second_build :: proc() -> bool {
 modules_same_without_debug_information :: proc() -> bool {
 	build_whole = true
 	debug_information = false
-	module_build_folder = MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
+	foundation.module_build_folder = MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	built := build_modules_in_parallel()
 	debug_information = true
-	module_build_folder = MODULE_BUILD_FOLDER
+	foundation.module_build_folder = foundation.MODULE_BUILD_FOLDER
 	if !built {
 		return false
 	}
 	different := 0
-	for build in module_builds {
-		with := read_file(join(MODULE_BUILD_FOLDER, "/", build.name, ".module")) or_return
-		without := read_file(join(MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION, "/", build.name, ".module")) or_return
+	for build in foundation.module_builds {
+		with := foundation.read_file(foundation.join(foundation.MODULE_BUILD_FOLDER, "/", build.name, ".module")) or_return
+		without := foundation.read_file(foundation.join(MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION, "/", build.name, ".module")) or_return
 		if !slice.equal(with, without) {
 			fmt.eprintfln("modustool: test failed: the module %s is not the same bytes without debug information: %s", build.name, first_difference("module", with, without))
 			different += 1
@@ -366,7 +367,7 @@ modules_same_without_debug_information :: proc() -> bool {
 	if different != 0 {
 		return false
 	}
-	test_passed_print("%d modules are the same bytes with and without debug information: the debug objects change no module", len(module_builds))
+	foundation.test_passed_print("%d modules are the same bytes with and without debug information: the debug objects change no module", len(foundation.module_builds))
 	return true
 }
 

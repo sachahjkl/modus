@@ -6,6 +6,7 @@ import "modus:contract/enum_word"
 import "modus:contract/palette_table"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
+import "modustool:foundation"
 
 // The fuzz target of the palette table (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the compositor maps the table of the
@@ -51,7 +52,7 @@ fuzz_palette_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return FUZZ_PASSED
 	}
 	body := input[1:]
-	switch enum_member_at(Fuzz_Palette_Part, int(input[0]) % len(Fuzz_Palette_Part)) {
+	switch foundation.enum_member_at(Fuzz_Palette_Part, int(input[0]) % len(Fuzz_Palette_Part)) {
 	case .Entries:
 		header := fuzz_palette_place(0, body[:min(len(body), size_of(palette_table.Header))])
 		entries := fuzz_palette_place(palette_table.ENTRIES_OFFSET, body[len(header):])
@@ -351,7 +352,7 @@ fuzz_palette_table_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) 
 	if len(input) < 1 {
 		return
 	}
-	switch enum_member_at(Fuzz_Palette_Part, int(input[0]) % len(Fuzz_Palette_Part)) {
+	switch foundation.enum_member_at(Fuzz_Palette_Part, int(input[0]) % len(Fuzz_Palette_Part)) {
 	case .Entries:
 		if len(input) >= 1 + size_of(palette_table.Header) {
 			append(regions, Fuzz_Region{offset = 1, type = palette_table.Header, count = 1})

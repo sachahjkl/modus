@@ -11,6 +11,7 @@ import "core:fmt"
 import "core:odin/tokenizer"
 import "core:strings"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 // The classes of the code. Each one has a short class name, because a page
 // of declarations holds thousands of them:
@@ -98,17 +99,13 @@ Site_Code_Token :: struct {
 	end:   int,
 }
 
-// The tokenizer reports a fault of the text to its handler; the caller
-// reads the count of faults, and a block with a fault is written plain.
-site_code_quiet_error :: proc(pos: tokenizer.Pos, format: string, args: ..any) {}
-
 // site_code_odin_tokens gives the tokens of a text, or false when the
 // tokenizer refuses it (an illegal character, a string or a comment with no
 // end). The tokenizer gives comments as tokens and skips the spaces and the
 // line feeds; the caller writes the bytes between two tokens as they are.
 site_code_odin_tokens :: proc(source: string) -> (tokens: []Site_Code_Token, ok: bool) {
 	t: tokenizer.Tokenizer
-	tokenizer.init(&t, source, "", site_code_quiet_error)
+	tokenizer.init(&t, source, "", foundation.site_code_quiet_error)
 	list := make([dynamic]Site_Code_Token, context.temp_allocator)
 	position := 0
 	for {
@@ -407,7 +404,7 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 		if open != .None && (class != open || strings.trim_space(gap) != "") {
 			close_span(b, &open)
 		}
-		site_escape(b, gap)
+		foundation.site_escape(b, gap)
 		bytes := source[token.start:token.end]
 		if token.kind == .Ident && links != nil && (class == .None || class == .Type || class == .Literal) {
 			if place := site_code_link_place(links, source, tokens, index); place >= 0 {
@@ -420,7 +417,7 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 		switch class {
 		case .None:
 			close_span(b, &open)
-			site_escape(b, bytes)
+			foundation.site_escape(b, bytes)
 		case .Reference:
 			close_span(b, &open)
 			site_type_reference(site, b, keys[index], bytes, false)
@@ -430,12 +427,12 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 				fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
 				open = class
 			}
-			site_escape(b, bytes)
+			foundation.site_escape(b, bytes)
 		}
 		position = token.end
 	}
 	close_span(b, &open)
-	site_escape(b, source[position:])
+	foundation.site_escape(b, source[position:])
 	return true
 }
 
@@ -452,7 +449,7 @@ site_code_block_html :: proc(site: ^Site, source, package_name, place: string) -
 		site.first_code_block_not_colored = place
 	}
 	plain := strings.builder_make(context.temp_allocator)
-	site_escape(&plain, source)
+	foundation.site_escape(&plain, source)
 	return strings.to_string(plain)
 }
 
@@ -461,6 +458,6 @@ site_code_block_html :: proc(site: ^Site, source, package_name, place: string) -
 // tokenizer.
 site_code_span :: proc(b: ^strings.Builder, class: Site_Code_Class, text: string) {
 	fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
-	site_escape(b, text)
+	foundation.site_escape(b, text)
 	strings.write_string(b, "</span>")
 }

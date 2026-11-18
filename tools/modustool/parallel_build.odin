@@ -4,9 +4,8 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "core:sync"
-import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // The parallel build of the modules, and the pool of processes that it
 // shares with the boot volumes (boot_volumes.odin). Each step of a module runs in its own
@@ -37,84 +36,13 @@ import "core:time"
 // `modustool build <host_processes>` and `repeat all <count> <host_processes>` set it.
 module_build_host_processes := 0
 
-// What one process of a build gave.
-Build_Host_Process_Outcome :: struct {
-	started:  bool,
-	success:  bool,
-	output:   []u8, // Its standard output, then its standard error.
-	duration: time.Duration, // From its start to its end: a measure.
-}
-
-// The processes of one step of a build, which the worker threads share:
-// the modules of one level, or the boot volumes that must be built.
-Build_Host_Process_Pool :: struct {
-	commands: [][]string, // One command for each process.
-	next:     int, // The next place in commands to take (atomic).
-	failed:   bool, // A process failed: no new process starts (atomic).
-	outcomes: []Build_Host_Process_Outcome, // By place in commands.
-}
-
-// build_host_processes_run runs each command in its own process, at most
-// `processes` at once, and keeps the output of each one. After a failure no
-// new process starts; the processes that run end. The outcomes have the
-// order of the commands; the caller frees the output of each one.
-build_host_processes_run :: proc(commands: [][]string, host_processes: int, allocator := context.allocator) -> []Build_Host_Process_Outcome {
-	pool := Build_Host_Process_Pool {
-		commands = commands,
-		outcomes = make([]Build_Host_Process_Outcome, len(commands), allocator),
-	}
-	workers := make([]^thread.Thread, max(0, min(host_processes, len(commands))), context.temp_allocator)
-	for &worker in workers {
-		worker = thread.create_and_start_with_data(&pool, build_host_process_worker)
-	}
-	thread.join_multiple(..workers)
-	for worker in workers {
-		thread.destroy(worker)
-	}
-	return pool.outcomes
-}
-
-// build_host_process_worker takes the commands of a pool one at a time and runs
-// each one.
-build_host_process_worker :: proc(data: rawptr) {
-	pool := (^Build_Host_Process_Pool)(data)
-	for {
-		place := sync.atomic_add(&pool.next, 1)
-		if place >= len(pool.commands) || sync.atomic_load(&pool.failed) {
-			return
-		}
-		command := pool.commands[place]
-		started := time.tick_now()
-		state, standard_output, standard_error, error := os.process_exec({command = command}, context.allocator)
-		output := make([]u8, len(standard_output) + len(standard_error))
-		copy(output, standard_output)
-		copy(output[len(standard_output):], standard_error)
-		if error != nil {
-			delete(output)
-			output = transmute([]u8)fmt.aprintfln("modustool: cannot start %s: %v", command[0], error)
-		}
-		delete(standard_output)
-		delete(standard_error)
-		success := error == nil && state.exited && state.success
-		pool.outcomes[place] = {
-			started  = true,
-			success  = success,
-			output   = output,
-			duration = time.tick_since(started),
-		}
-		if !success {
-			sync.atomic_store(&pool.failed, true)
-		}
-	}
-}
-
 // module_levels gives the level of each module of the table: 0 with no
 // import, else one more than the highest level of its imports. The table
 // lists each module after its imports.
 module_levels :: proc() -> (levels: []int, ok: bool) {
-	levels = make([]int, len(module_builds), context.temp_allocator)
-	for build, index in module_builds {
-		for earlier in module_builds[:index] {
+	levels = make([]int, len(foundation.module_builds), context.temp_allocator)
+	for build, index in foundation.module_builds {
+		for earlier in foundation.module_builds[:index] {
 			if earlier.name == build.name {
 				fmt.eprintfln("modustool: two modules of the table have the name %s", build.name)
 				return nil, false
@@ -122,7 +50,7 @@ module_levels :: proc() -> (levels: []int, ok: bool) {
 		}
 		for name in build.imports {
 			found := false
-			for earlier, earlier_index in module_builds[:index] {
+			for earlier, earlier_index in foundation.module_builds[:index] {
 				if earlier.name == name {
 					levels[index] = max(levels[index], levels[earlier_index] + 1)
 					found = true
@@ -159,13 +87,13 @@ module_step_host_processes_run :: proc(tool_path: string, indexes: []int, step: 
 		command := make([]string, 6, context.temp_allocator)
 		command[0] = tool_path
 		command[1] = "module"
-		command[2] = module_builds[index].name
+		command[2] = foundation.module_builds[index].name
 		command[3] = test_build_checks ? "with_checks" : "without_checks"
 		command[4] = debug_information ? "with_debug_information" : "without_debug_information"
 		command[5] = step
 		commands[place] = command
 	}
-	outcomes := build_host_processes_run(commands, host_processes, context.temp_allocator)
+	outcomes := foundation.build_host_processes_run(commands, host_processes, context.temp_allocator)
 	finished = make([]bool, len(indexes), context.temp_allocator)
 	ok = true
 	for index, place in indexes {
@@ -176,7 +104,7 @@ module_step_host_processes_run :: proc(tool_path: string, indexes: []int, step: 
 		delete(outcome.output)
 		finished[place] = outcome.started && outcome.success
 		if outcome.started && !outcome.success {
-			fmt.eprintfln("modustool: the %s step of %s failed", step, module_builds[index].name)
+			fmt.eprintfln("modustool: the %s step of %s failed", step, foundation.module_builds[index].name)
 			ok = false
 		}
 	}
@@ -234,7 +162,7 @@ build_modules_in_parallel :: proc() -> bool {
 	}
 	// The folder that every module process writes under exists before the
 	// first process starts.
-	make_folder(module_build_folder) or_return
+	foundation.make_folder(foundation.module_build_folder) or_return
 	// The modules whose steps of this build are done, kept ones too.
 	done_count := 0
 	highest := 0
@@ -251,7 +179,7 @@ build_modules_in_parallel :: proc() -> bool {
 			if level != level_number {
 				continue
 			}
-			step, reason := module_step_of_build(module_builds[index])
+			step, reason := module_step_of_build(foundation.module_builds[index])
 			switch step {
 			case .Kept:
 				kept_count += 1
@@ -266,7 +194,7 @@ build_modules_in_parallel :: proc() -> bool {
 			append(&convert_indexes, index)
 			append(&convert_steps, step)
 			if built_count + converted_count <= BUILT_MODULE_NAMES_MOST {
-				fmt.sbprintf(&step_names, "%s%s (%s: %s)", built_count + converted_count > 1 ? ", " : "", module_builds[index].name, step == .Built ? "built" : "converted", reason)
+				fmt.sbprintf(&step_names, "%s%s (%s: %s)", built_count + converted_count > 1 ? ", " : "", foundation.module_builds[index].name, step == .Built ? "built" : "converted", reason)
 			}
 		}
 		build_measure.record_checks += time.tick_since(checks_started)
@@ -289,13 +217,13 @@ build_modules_in_parallel :: proc() -> bool {
 				continue
 			}
 			done_count += 1
-			if !module_records_write(module_builds[index], convert_steps[place]) && build_inputs.usable {
-				fmt.printfln("modustool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", module_builds[index].name)
+			if !module_records_write(foundation.module_builds[index], convert_steps[place]) && build_inputs.usable {
+				fmt.printfln("modustool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", foundation.module_builds[index].name)
 			}
 		}
 		build_measure.record_writes += time.tick_since(writes_started)
 		if !compiled || !converted {
-			fmt.eprintfln("modustool: %d of %d modules are not built, because a step of a module failed", len(module_builds) - done_count, len(module_builds))
+			fmt.eprintfln("modustool: %d of %d modules are not built, because a step of a module failed", len(foundation.module_builds) - done_count, len(foundation.module_builds))
 			return false
 		}
 	}
@@ -305,10 +233,10 @@ build_modules_in_parallel :: proc() -> bool {
 	build_measure.modules += time.tick_since(modules_started)
 	build_measure_budget_requests()
 	if built_count + converted_count == 0 {
-		fmt.printfln("modustool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(module_builds))
+		fmt.printfln("modustool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(foundation.module_builds))
 	} else if kept_count + converted_count > 0 || !build_whole {
 		more := built_count + converted_count > BUILT_MODULE_NAMES_MOST ? fmt.tprintf(", and %d more", built_count + converted_count - BUILT_MODULE_NAMES_MOST) : ""
-		fmt.printfln("modustool: %d of %d modules kept, %d converted, %d built: %s%s", kept_count, len(module_builds), converted_count, built_count, strings.to_string(step_names), more)
+		fmt.printfln("modustool: %d of %d modules kept, %d converted, %d built: %s%s", kept_count, len(foundation.module_builds), converted_count, built_count, strings.to_string(step_names), more)
 	}
 	return true
 }
@@ -320,22 +248,22 @@ run_module :: proc(args: []string) -> int {
 	step_is_known := len(args) == 3 || (len(args) == 4 && (args[3] == MODULE_STEP_COMPILE || args[3] == MODULE_STEP_CONVERT))
 	if !step_is_known || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "with_debug_information" && args[2] != "without_debug_information") {
 		fmt.eprintln("modustool: module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	test_build_checks = args[1] == "with_checks"
 	// A module with no debug information goes to a folder of its own: the
 	// modules of the build stay as they are.
 	debug_information = args[2] == "with_debug_information"
-	module_build_folder = debug_information ? MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
+	foundation.module_build_folder = debug_information ? foundation.MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	// A developer who builds one module passes no parallel build: the rule
 	// of the imports is read here. A step of the parallel build has a
 	// parent that read it.
 	if len(args) == 3 {
 		if _, imports_hold := library_imports_hold(); !imports_hold {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 	}
-	for build in module_builds {
+	for build in foundation.module_builds {
 		if build.name != args[0] {
 			continue
 		}
@@ -348,10 +276,10 @@ run_module :: proc(args: []string) -> int {
 		case:
 			built = module_convert(build)
 		}
-		return built ? 0 : EXIT_FAILURE
+		return built ? 0 : foundation.EXIT_FAILURE
 	}
 	fmt.eprintfln("modustool: module: no module %s", args[0])
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 // parse_module_build_host_processes reads the count of processes of the

@@ -15,6 +15,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modus:support/sentence"
+import "modustool:foundation"
 
 // The call from the host (docs/MODULE_CONTRACT.md, section 4, "A call from
 // the host"): `modustool call "monitor.processes()"` calls an export of a
@@ -119,7 +120,7 @@ module_read :: proc(client: ^Call_Client, service: string) -> (file: []u8, hash:
 			return item.file, item.hash, ""
 		}
 	}
-	path := module_path(service)
+	path := foundation.module_path(service)
 	bytes, err := os.read_entire_file(path, context.allocator)
 	if err != nil {
 		return nil, {}, fmt.tprintf("no module %s in %s: build it, or name a service of the build (%v)", service, path, err)
@@ -608,7 +609,7 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		}
 		append(&outcome.lines, write_sentence("error: ", &answer.error, "remote", field))
 		if answer.error.argument == remote.FIELD_HASH {
-			append(&outcome.lines, fmt.tprintf("error: the machine runs %s %s; the request named %s (%s is %s): start the machine of this build", call.service, hex_of(answer.hash[:8]), hex_of(client.last_hash[:8]), module_path(call.service), hex_of(call.request.hash[:8])))
+			append(&outcome.lines, fmt.tprintf("error: the machine runs %s %s; the request named %s (%s is %s): start the machine of this build", call.service, hex_of(answer.hash[:8]), hex_of(client.last_hash[:8]), foundation.module_path(call.service), hex_of(call.request.hash[:8])))
 		}
 		return outcome
 	case .Ok:
@@ -961,18 +962,18 @@ run_call :: proc(args: []string) -> int {
 	key_bytes, key_ok := hex.decode(transmute([]u8)key_text, context.temp_allocator)
 	if len(args) != 2 || !key_ok || len(key_bytes) != 32 {
 		fmt.eprintln("modustool: call <the public key of remote, 64 hexadecimal digits, from its window> \"service.export(arguments)\", for example call 3f2a...9c \"monitor.processes()\"")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	key: [32]u8
 	copy(key[:], key_bytes)
 	socket, problem := call_socket_path(CALL_SOCKET_RUN_NAME)
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	client: Call_Client
 	if !call_client_open(&client, socket, key) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer call_client_close(&client)
 	result := call_run(&client, args[1])
@@ -983,5 +984,5 @@ run_call :: proc(args: []string) -> int {
 			fmt.eprintln(line)
 		}
 	}
-	return result.outcome == .Result ? 0 : EXIT_FAILURE
+	return result.outcome == .Result ? 0 : foundation.EXIT_FAILURE
 }

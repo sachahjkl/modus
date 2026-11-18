@@ -44,7 +44,7 @@ import "modus:support/system"
 
 // The process draws through the drawing module only: the interface
 // package declares its exports with this setting, which the row of the
-// module in the module table gives (tools/modustool/modules.odin).
+// module in the module table gives (tools/modustool/foundation/module_table.odin).
 #assert(interface.DRAWING_THROUGH_MODULE, "processor_frame is built with -define:DRAWING_THROUGH_MODULE=true")
 
 // The reference screen:

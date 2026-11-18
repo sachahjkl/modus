@@ -35,20 +35,6 @@ comment_markdown_inline_plain_text :: proc(t: ^testing.T) {
 	testing.expect_value(t, markdown_inline_plain("two\nlines", true), "two lines")
 }
 
-// A line of an Odin source as a line of the Markdown of its comment: the
-// marker and one space go, the indentation after them stays.
-@(test)
-comment_markdown_line_of_a_source :: proc(t: ^testing.T) {
-	code, comment, is_comment := markdown_comment_line("\tName = 3, // (a, b) -> c.")
-	testing.expect(t, code == "Name = 3," && comment == "(a, b) -> c." && is_comment)
-	_, nested, _ := markdown_comment_line("\t//   - a nested item")
-	testing.expect_value(t, nested, "  - a nested item")
-	_, empty, empty_is_comment := markdown_comment_line("\t//")
-	testing.expect(t, empty == "" && empty_is_comment)
-	_, _, not_comment := markdown_comment_line("x := \"// not a comment\"")
-	testing.expect(t, !not_comment)
-}
-
 @(private = "file")
 render_comment :: proc(site: ^Site, markdown: string, form: Site_Comment_Form = .Paragraphs) -> string {
 	return site_source_comment_html(site, "docs/reference/operations/index.html", markdown, form)
@@ -179,19 +165,4 @@ comment_markdown_and_the_comment_rules :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(comment_rule_breaches_of_source("a.odin", marked, exempt)), 0)
 	testing.expect_value(t, len(comment_rule_breaches_of_source("a.odin", "// **the caller owns it (property 14)**\n", exempt)), 1)
 	testing.expect_value(t, len(comment_rule_breaches_of_source("a.odin", "// - a choice (choice 186)\n", exempt)), 1)
-}
-
-// The form of an operation can run over two lines of its comment, and its
-// text is Markdown after it.
-@(test)
-comment_markdown_operation_over_lines :: proc(t: ^testing.T) {
-	operation := site_operation_parts(Site_Enumeration_Member{name = "Do", comment = "(a,\nb) -> the\ncount.\n**More** text.\n\n- an item"})
-	testing.expect_value(t, operation.parameters, "a, b")
-	testing.expect_value(t, operation.result, "the count")
-	testing.expect_value(t, operation.text, "**More** text.\n\n- an item")
-	members, problem := site_enumeration_read("Thing :: enum u8 {\n\tA = 4, // The first.\n\t//\n\t// - an item\n\t//   that continues\n}\n", "file.odin", "Thing")
-	testing.expect_value(t, problem, "")
-	if len(members) == 1 {
-		testing.expect_value(t, members[0].comment, "The first.\n\n- an item\n  that continues")
-	}
 }

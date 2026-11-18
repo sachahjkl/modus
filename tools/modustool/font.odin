@@ -5,6 +5,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "modus:contract/glyph_cache"
+import "modustool:foundation"
 
 // The font of the graphics library is Spleen 8x16, a bitmap font that is
 // drawn for this size. The command "font" converts its BDF file to Odin data.
@@ -15,7 +16,6 @@ import "modus:contract/glyph_cache"
 // sign; a character that the BDF file lacks stops the command.
 
 FONT_SOURCE_VARIABLE :: "FONT_SOURCE"
-FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
 FONT_WIDTH :: 8
 FONT_HEIGHT :: 16
 
@@ -23,12 +23,12 @@ run_font :: proc(args: []string) -> int {
 	path := os.get_env(FONT_SOURCE_VARIABLE, context.temp_allocator)
 	if path == "" {
 		fmt.eprintln("modustool: " + FONT_SOURCE_VARIABLE + " is not set. Use the development shell: nix develop")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	source, err := os.read_entire_file(path, context.temp_allocator)
 	if err != nil {
 		fmt.eprintfln("modustool: cannot read %s: %v", path, err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	glyphs: [glyph_cache.CHARACTER_COUNT][FONT_HEIGHT]u8
 	found := 0
@@ -46,7 +46,7 @@ run_font :: proc(args: []string) -> int {
 			}
 		case strings.has_prefix(line, "BBX ") && line != "BBX 8 16 0 -4":
 			fmt.eprintfln("modustool: %s: a glyph is not %dx%d: %s", path, FONT_WIDTH, FONT_HEIGHT, line)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		case line == "BITMAP":
 			row = 0
 		case line == "ENDCHAR":
@@ -64,7 +64,7 @@ run_font :: proc(args: []string) -> int {
 	}
 	if found != len(glyphs) {
 		fmt.eprintfln("modustool: %s has %d of the %d characters", path, found, len(glyphs))
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 
 	out := strings.builder_make(context.temp_allocator)
@@ -93,10 +93,10 @@ run_font :: proc(args: []string) -> int {
 		fmt.sbprintfln(&out, "}, // %d", int(character))
 	}
 	fmt.sbprintln(&out, "}")
-	if write_err := os.write_entire_file(FONT_OUTPUT, strings.to_string(out)); write_err != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", FONT_OUTPUT, write_err)
-		return EXIT_FAILURE
+	if write_err := os.write_entire_file(foundation.FONT_OUTPUT, strings.to_string(out)); write_err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", foundation.FONT_OUTPUT, write_err)
+		return foundation.EXIT_FAILURE
 	}
-	fmt.printfln("modustool: wrote %s: %d characters of %dx%d pixels", FONT_OUTPUT, found, FONT_WIDTH, FONT_HEIGHT)
+	fmt.printfln("modustool: wrote %s: %d characters of %dx%d pixels", foundation.FONT_OUTPUT, found, FONT_WIDTH, FONT_HEIGHT)
 	return 0
 }

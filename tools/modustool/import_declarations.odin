@@ -7,6 +7,7 @@ import "core:odin/ast"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 // The check of the declarations of an importer (docs/MODULE_CONTRACT.md,
 // "The declaration of an import is checked").
@@ -479,11 +480,11 @@ package_state_of_file :: proc(path: string, state: ^Describe_State) -> (target: 
 	state.records = make([dynamic]Record_Description, context.temp_allocator)
 	state.structs = make(map[string]Struct_Source, context.temp_allocator)
 	file_name := path[strings.last_index_byte(path, '/') + 1:]
-	for other in files_with_suffix(folder_of_path(path), ".odin") or_return {
+	for other in foundation.files_with_suffix(folder_of_path(path), ".odin") or_return {
 		if strings.has_suffix(other, "_test.odin") {
 			continue
 		}
-		source := read_file(other) or_return
+		source := foundation.read_file(other) or_return
 		parsed := parse_source(other, string(source), state) or_return
 		if other[strings.last_index_byte(other, '/') + 1:] == file_name {
 			target = parsed
@@ -557,12 +558,12 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 	// folder of the system: it is read where it is. This comes first: the
 	// path of such a folder can hold the name of a source folder of the
 	// system, and the cut below would then name a file of the system.
-	if outside_source_folder != "" && strings.has_prefix(path, join(outside_source_folder, "/")) {
+	if outside_source_folder != "" && strings.has_prefix(path, foundation.join(outside_source_folder, "/")) {
 		return path, true
 	}
 	folders := INPUT_FOLDERS
 	for folder in folders {
-		place := strings.last_index(path, join("/", folder, "/"))
+		place := strings.last_index(path, foundation.join("/", folder, "/"))
 		if place < 0 {
 			continue
 		}
@@ -606,7 +607,7 @@ declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []strin
 // module (slot_symbols, from convert) has such a declaration. A
 // source is parsed only when it has the word `foreign` and the name of an
 // export of an import.
-import_declarations_check :: proc(build: Module_Build, imports: []Import_File, slot_symbols: []string) -> bool {
+import_declarations_check :: proc(build: foundation.Module_Build, imports: []Import_File, slot_symbols: []string) -> bool {
 	if len(imports) == 0 {
 		return true
 	}
@@ -634,7 +635,7 @@ import_declarations_check :: proc(build: Module_Build, imports: []Import_File, s
 		if !of_the_repository || !strings.has_suffix(path, ".odin") {
 			continue
 		}
-		source := read_file(path) or_return
+		source := foundation.read_file(path) or_return
 		if !strings.contains(string(source), "foreign") {
 			continue
 		}
@@ -648,7 +649,7 @@ import_declarations_check :: proc(build: Module_Build, imports: []Import_File, s
 		if !names_an_export {
 			continue
 		}
-		_, file_agrees := import_declarations_of_file_agree(join("convert ", build.name), path, exports[:], &compared_names)
+		_, file_agrees := import_declarations_of_file_agree(foundation.join("convert ", build.name), path, exports[:], &compared_names)
 		agree &&= file_agrees
 	}
 	// Each call of an import went through a declaration that was compared.

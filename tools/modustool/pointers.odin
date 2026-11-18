@@ -11,6 +11,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The pointer themes (docs/POINTERS.md). The command "pointers" reads a
 // pointer manifest of resources/pointers, and for a manifest with sources
@@ -26,7 +27,7 @@ import "core:time"
 // tool makes the theme of the system only.
 
 POINTER_THEME_SOURCE_VARIABLE :: "POINTER_THEME_SOURCE"
-POINTER_BUILD_FOLDER :: BUILD_FOLDER + "/pointers"
+POINTER_BUILD_FOLDER :: foundation.BUILD_FOLDER + "/pointers"
 SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest" // The outlines of the theme of the system.
 LINK_DEPTH_LIMIT :: 8
 // A coordinate of an outline is a number of units with at most three
@@ -139,13 +140,13 @@ run_pointers :: proc(args: []string) -> int {
 	if len(args) > 0 && args[0] == "preview" {
 		if len(args) != 2 {
 			fmt.eprintln("modustool: pointers preview <file.png>: draws each shape of the theme of the system in one picture")
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		return run_pointers_preview(args[1]) // pointers_preview.odin
 	}
 	source := len(args) > 0 ? args[0] : os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator)
 	_, ok := build_pointer_themes(source, true)
-	return ok ? 0 : EXIT_FAILURE
+	return ok ? 0 : foundation.EXIT_FAILURE
 }
 
 // build_pointer_themes makes each theme of pointer_theme_builds whose
@@ -165,7 +166,7 @@ build_pointer_themes :: proc(source: string, print_tables: bool) -> (resources: 
 			fmt.printfln("modustool: pointers: %s is not set: the boot image has no %s, only the theme of the system", POINTER_THEME_SOURCE_VARIABLE, build.resource)
 			continue
 		}
-		text, read_ok := read_file(build.manifest)
+		text, read_ok := foundation.read_file(build.manifest)
 		if !read_ok {
 			return nil, false
 		}
@@ -1191,7 +1192,7 @@ source_resolve :: proc(folder: string, sources: []string) -> (name: string, data
 	for source in sources {
 		name = source
 		for depth := 0; ; depth += 1 {
-			path := join(folder, "/", name)
+			path := foundation.join(folder, "/", name)
 			info, err := os.lstat(path, context.temp_allocator)
 			if err != nil {
 				name = ""

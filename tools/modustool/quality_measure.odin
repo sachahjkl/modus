@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // The lines, as the compositor writes them
 // (src/modules/system/compositor/quality_measures.odin). The tool checks
@@ -189,7 +190,7 @@ quality_lines_check :: proc(path: string) -> bool {
 	if len(problems) > 0 {
 		return false
 	}
-	test_passed_print("the lines of the quality profile and of the three measures of the standard of quality in %s are in their form", path)
+	foundation.test_passed_print("the lines of the quality profile and of the three measures of the standard of quality in %s are in their form", path)
 	for line in strings.split_lines(log, context.temp_allocator) {
 		if strings.contains(line, QUALITY_PROFILE_LINE) || strings.contains(line, QUALITY_WINDOW_START_LOCKS) {
 			fmt.println(strings.trim_right(line, "\r"))

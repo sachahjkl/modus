@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "modus:contract/byte_order"
 import "modus:contract/timed_stream"
+import "modustool:foundation"
 
 // Sound, the first timed stream: one machine with a virtio sound device
 // whose output goes to a wave file (src/md/features/timed_stream.md, "The
@@ -17,7 +18,7 @@ import "modus:contract/timed_stream"
 // and the left channel must cross zero as a tone of 440 Hz does. The check
 // counts frames: it reads no time of the host.
 
-TEST_OUTPUT_SOUND :: BUILD_FOLDER + "/test_output_sound.txt"
+TEST_OUTPUT_SOUND :: foundation.BUILD_FOLDER + "/test_output_sound.txt"
 // The wave file of the sound device, beside the log of its machine.
 SOUND_OUTPUT_SUFFIX :: "_sound.wav"
 
@@ -84,11 +85,11 @@ sound_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	switch found.place {
 	case .At_The_Frame_Of_The_Line:
-		test_passed_print("the sound output holds the tone from the frame %d, the frame that the line of tone names, with a span of %d frames and %d crossings of zero in %d frames (a tone of %d Hz has %d); it holds %d frames", found.first_sound_frame, found.tone_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.frames)
+		foundation.test_passed_print("the sound output holds the tone from the frame %d, the frame that the line of tone names, with a span of %d frames and %d crossings of zero in %d frames (a tone of %d Hz has %d); it holds %d frames", found.first_sound_frame, found.tone_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.frames)
 	case .After_Frames_Of_The_Device:
 		// Not a failure: QEMU wrote frames that the stream did not give,
 		// which depends on the load of the host. The place is not proved.
-		test_passed_print("the sound output holds the tone with a span of %d frames, %d frames of silence that QEMU wrote inside it, and %d crossings of zero in %d frames (a tone of %d Hz has %d); it starts at the frame %d, %d frames after the frame that the line names: QEMU wrote frames that the stream did not give, so the place is not proved", found.tone_frames, found.inserted_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.first_sound_frame, found.first_sound_frame - frame)
+		foundation.test_passed_print("the sound output holds the tone with a span of %d frames, %d frames of silence that QEMU wrote inside it, and %d crossings of zero in %d frames (a tone of %d Hz has %d); it starts at the frame %d, %d frames after the frame that the line names: QEMU wrote frames that the stream did not give, so the place is not proved", found.tone_frames, found.inserted_frames, found.crossings, TONE_WINDOW_FRAMES, TONE_CHECK_HERTZ, tone_crossings_expected(), found.first_sound_frame, found.first_sound_frame - frame)
 	}
 	// The file of a test that passed would fill the build folder: about
 	// 192 KB for each second of the machine.

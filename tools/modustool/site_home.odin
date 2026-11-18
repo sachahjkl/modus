@@ -8,6 +8,7 @@ package modustool
 import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
+import "modustool:foundation"
 
 // What the card of a stage of the start says: what the stage does, which
 // code runs it, and the guide that explains it. The key is the name of the
@@ -197,16 +198,16 @@ site_home_guide_link :: proc(site: ^Site, b: ^strings.Builder, from_page, docume
 		return false
 	}
 	strings.write_string(b, "<a href=\"")
-	site_escape(b, site_page_link(site, from_page, page))
+	foundation.site_escape(b, site_page_link(site, from_page, page))
 	if anchor != "" {
 		strings.write_string(b, "#")
-		site_escape(b, anchor)
+		foundation.site_escape(b, anchor)
 	}
 	strings.write_string(b, "\">")
-	site_escape(b, title)
+	foundation.site_escape(b, title)
 	if anchor != "" {
 		strings.write_string(b, ": ")
-		site_escape(b, heading)
+		foundation.site_escape(b, heading)
 	}
 	strings.write_string(b, "</a>")
 	return true
@@ -250,7 +251,7 @@ site_boot_timeline_write :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 		strings.write_string(b, "</svg>\n<p class=\"boot-scale\">The ")
 		site_value(b, .Time, site_milliseconds_text(after_first), false)
 		strings.write_string(b, " after the ")
-		site_escape(b, stages[0].who)
+		foundation.site_escape(b, stages[0].who)
 		enlarged := total * 10 / after_first
 		fmt.sbprintf(b, ", %d.%d times wider. A stage is at least %d %% of this bar wide, so that each one shows.</p>\n", enlarged / 10, enlarged % 10, SITE_BOOT_SYSTEM_LEAST_SHARE / 10)
 	}
@@ -260,15 +261,15 @@ site_boot_timeline_write :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 	strings.write_string(b, "<div class=\"boot-parts\">\n<ol class=\"boot-stages\">\n")
 	for stage, index in stages {
 		fmt.sbprintf(b, "<li class=\"boot-stage boot-stage-%d %s\"><div class=\"boot-stage-row\" tabindex=\"0\" aria-describedby=\"boot-card-%d\"><span class=\"boot-stage-square\" aria-hidden=\"true\"></span><span class=\"boot-stage-name\"><span class=\"boot-stage-who\">", index, site_who_class(stage.who), index)
-		site_escape(b, stage.who)
+		foundation.site_escape(b, stage.who)
 		strings.write_string(b, "</span>")
 		if stage.what != "" {
 			strings.write_string(b, " ")
-			site_escape(b, stage.what)
+			foundation.site_escape(b, stage.what)
 		}
 		strings.write_string(b, "</span>")
 		fmt.sbprintf(b, "<code class=\"value value-%s boot-stage-time\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Time])
-		site_escape(b, site_milliseconds_text(stage.microseconds))
+		foundation.site_escape(b, site_milliseconds_text(stage.microseconds))
 		strings.write_string(b, "</code></div></li>\n")
 	}
 	strings.write_string(b, "</ol>\n<div class=\"boot-cards\">\n")
@@ -285,7 +286,7 @@ site_boot_timeline_write :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 	for stage, index in stages {
 		name := site_boot_stage_name(stage)
 		fmt.sbprintf(b, "<div class=\"boot-card boot-card-%d %s\" id=\"boot-card-%d\">\n<p class=\"boot-card-title\"><strong>", index, site_who_class(stage.who), index)
-		site_escape(b, name)
+		foundation.site_escape(b, name)
 		strings.write_string(b, "</strong> ")
 		site_value(b, .Time, site_milliseconds_text(stage.microseconds), false)
 		strings.write_string(b, "</p>\n")
@@ -302,7 +303,7 @@ site_boot_timeline_write :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 			strings.write_string(b, "</dd>\n")
 		}
 		strings.write_string(b, "<dt>Measured from</dt><dd><code>" + SITE_BOOT_STAGE_PREFIX)
-		site_escape(b, name)
+		foundation.site_escape(b, name)
 		fmt.sbprintf(b, ": %d us</code></dd>\n", stage.microseconds)
 		if has_text {
 			link := strings.builder_make(context.temp_allocator)
@@ -379,7 +380,7 @@ site_chart_values :: proc(chart: Site_Measure_Chart, line: string) -> (values: [
 		for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
 			digits += 1
 		}
-		value := site_digits_value(rest[:digits])
+		value := foundation.site_digits_value(rest[:digits])
 		if value < 0 || !strings.has_prefix(rest[digits:], chart.unit_after) {
 			return values, 0, false
 		}
@@ -440,7 +441,7 @@ site_measure_charts_write :: proc(site: ^Site, b: ^strings.Builder, from_page: s
 				most = max(most, value)
 			}
 			fmt.sbprintf(b, "<article class=\"card measure-chart %s\">\n<h3>", site_accent_class(number.measure.accent))
-			site_escape(b, chart.title)
+			foundation.site_escape(b, chart.title)
 			strings.write_string(b, "</h3>\n<ul class=\"measure-bars\">\n")
 			shown := 0
 			for bar in chart.bars {
@@ -448,19 +449,19 @@ site_measure_charts_write :: proc(site: ^Site, b: ^strings.Builder, from_page: s
 					continue
 				}
 				strings.write_string(b, "<li class=\"measure-row\"><span class=\"measure-label\">")
-				site_escape(b, bar.label)
+				foundation.site_escape(b, bar.label)
 				fmt.sbprintf(b, "</span><svg class=\"measure-bar\" aria-hidden=\"true\"><rect class=\"measure-bar-fill\" width=\"%s\" height=\"100%%\"/></svg>", site_search_chart_percent(site_chart_bar_width(values[shown], most)))
 				fmt.sbprintf(b, "<code class=\"value value-%s measure-value\">", value_kinds.VALUE_KIND_NAMES[chart.kind])
-				site_escape(b, site_grouped_number(values[shown]))
+				foundation.site_escape(b, site_grouped_number(values[shown]))
 				strings.write_string(b, "</code></li>\n")
 				shown += 1
 			}
 			strings.write_string(b, "</ul>\n<p class=\"measure-unit\">In ")
-			site_escape(b, chart.unit)
+			foundation.site_escape(b, chart.unit)
 			strings.write_string(b, ". Each bar starts at zero.</p>\n<p>")
 			site_inline(b, chart.about)
 			if site_page_exists(site, numbers_page) {
-				fmt.sbprintf(b, " <a href=\"%s#number-%s\">The line of the log, and how to read it</a>", site_page_link(site, from_page, numbers_page), site_slug(number.measure.sentence))
+				fmt.sbprintf(b, " <a href=\"%s#number-%s\">The line of the log, and how to read it</a>", site_page_link(site, from_page, numbers_page), foundation.site_slug(number.measure.sentence))
 			}
 			strings.write_string(b, "</p>\n</article>\n")
 			break
@@ -510,7 +511,7 @@ site_release_band_write :: proc(site: ^Site, b: ^strings.Builder, from_page: str
 	types := CHANGE_TYPES
 	strings.write_string(b, "<section class=\"card accent-boot release-band\" aria-labelledby=\"release\">\n<h2 id=\"release\">The newest release</h2>\n<p class=\"release-head\">")
 	fmt.sbprintf(b, "<span class=\"value value-%s release-number\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Version])
-	site_escape(b, site.release)
+	foundation.site_escape(b, site.release)
 	fmt.sbprintf(b, "</span> <span class=\"release-facts\"><time datetime=\"%s\">%s</time>, <strong>%d</strong> changes</span></p>\n", release_moment_attribute(newest), release_moment_shown(newest), len(newest.entries))
 	shown := min(len(newest.entries), SITE_RELEASE_BAND_CHANGE_COUNT)
 	if shown > 0 {

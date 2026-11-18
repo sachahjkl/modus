@@ -5,6 +5,7 @@ import "core:mem"
 import "core:slice"
 import info "modus:contract/boot_info"
 import "modus:contract/system_description"
+import "modustool:foundation"
 
 // The fuzz targets of the system description and the boot image
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
@@ -156,7 +157,7 @@ fuzz_boot_image_generated_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	image := boot_image_encode(all[:], module_count)
 
 	description_in_image := description
-	change := enum_member_at(Fuzz_Boot_Change, fuzz_choice_below(&choices, len(Fuzz_Boot_Change)))
+	change := foundation.enum_member_at(Fuzz_Boot_Change, fuzz_choice_below(&choices, len(Fuzz_Boot_Change)))
 	changed_index := -1 // The entry of the description whose file changed.
 	// The signature covers the security version; the checks do not compare
 	// it with a file, so a change there can pass them.

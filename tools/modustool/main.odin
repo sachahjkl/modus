@@ -46,13 +46,7 @@ import "core:time"
 import "modus:contract/remote"
 import "modus:contract/timed_stream"
 import "modus:support/pci"
-
-EXIT_FAILURE :: 1
-EXIT_USAGE :: 2
-
-ROOT_MARK :: "flake.nix"
-
-BUILD_FOLDER :: "build"
+import "modustool:foundation"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -72,155 +66,156 @@ BUILD_FOLDER :: "build"
 // compile and its tests are the longest, and a long folder that starts
 // last makes the whole run longer.
 HOST_TEST_FOLDERS :: [?]string {
-	TOOL_SOURCE_FOLDER,
-	SOURCE_FOLDER_RUNTIME,
-	SOURCE_FOLDER_CONTRACT + "/blake3",
-	SOURCE_FOLDER_CONTRACT + "/module",
-	SOURCE_FOLDER_CONTRACT + "/isolated",
-	SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
-	SOURCE_FOLDER_CONTRACT + "/remote",
-	SOURCE_FOLDER_CONTRACT + "/root_ring",
-	SOURCE_FOLDER_CONTRACT + "/enum_word",
-	SOURCE_FOLDER_SUPPORT + "/sentence",
-	SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
-	SOURCE_FOLDER_PRIVATE + "/cryptography/cryptography_primitives",
-	SOURCE_FOLDER_SUPPORT + "/quic",
-	SOURCE_FOLDER_CONTRACT + "/date",
-	SOURCE_FOLDER_CONTRACT + "/disk_process_page",
-	SOURCE_FOLDER_KERNEL + "/iommu",
-	SOURCE_FOLDER_CONTRACT + "/bridge_requester",
-	SOURCE_FOLDER_KERNEL + "/debug_exception",
-	SOURCE_FOLDER_KERNEL + "/processor_counters",
-	SOURCE_FOLDER_KERNEL + "/stolen_time",
-	SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
-	SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
-	SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",
-	SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
-	SOURCE_FOLDER_SUPPORT + "/principals",
-	SOURCE_FOLDER_SUPPORT + "/tpm2",
-	SOURCE_FOLDER_SUPPORT + "/disk_process",
-	SOURCE_FOLDER_SUPPORT + "/calendar",
-	SOURCE_FOLDER_SUPPORT + "/line_editor",
-	SOURCE_FOLDER_PRIVATE + "/console/console_language",
-	SOURCE_FOLDER_PRIVATE + "/debugger/debugging",
-	LIBRARY_MODULE_SOURCES + "interface_module",
-	LIBRARY_MODULE_SOURCES + "drawing",
-	DEMONSTRATION_MODULE_SOURCES + "sample",
-	SOURCE_FOLDER_SUPPORT + "/system",
-	SOURCE_FOLDER_SUPPORT + "/twins",
-	SOURCE_FOLDER_PRIVATE + "/kernel_events/kernel_events_rounds",
-	SOURCE_FOLDER_CONTRACT + "/tpm_service",
-	SOURCE_FOLDER_SUPPORT + "/storage",
-	SOURCE_FOLDER_PRIVATE + "/compositor/bar",
-	SOURCE_FOLDER_PRIVATE + "/compositor/palette",
-	SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
-	SOURCE_FOLDER_PRIVATE + "/compositor/quality",
-	SOURCE_FOLDER_CONTRACT + "/palette_table",
-	SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
-	SOURCE_FOLDER_SUPPORT + "/graphics",
-	SOURCE_FOLDER_SUPPORT + "/interface",
-	SOURCE_FOLDER_PRIVATE + "/inspect/addresses",
-	SOURCE_FOLDER_PRIVATE + "/manual/information",
-	SOURCE_FOLDER_SUPPORT + "/vector_font",
-	SOURCE_FOLDER_SUPPORT + "/network",
-	SOURCE_FOLDER_SUPPORT + "/tcp",
-	SOURCE_FOLDER_SUPPORT + "/virtio",
-	SOURCE_FOLDER_SUPPORT + "/bochs_display",
-	SOURCE_FOLDER_SUPPORT + "/web",
-	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
-	SOURCE_FOLDER_SUPPORT + "/random",
-	SOURCE_FOLDER_CONTRACT + "/entropy_service",
-	SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
-	SOURCE_FOLDER_CONTRACT + "/settings",
-	LIBRARY_MODULE_SOURCES + "text_shaping",
-	SOURCE_FOLDER_SUPPORT + "/text_shaping",
-	SOURCE_FOLDER_SUPPORT + "/mark",
-	SOURCE_FOLDER_SUPPORT + "/terminal",
-	SOURCE_FOLDER_CONTRACT + "/cut_mark",
-	SOURCE_FOLDER_CONTRACT + "/text_encoding",
-	SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
-	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
-	SOURCE_FOLDER_CONTRACT + "/system_description",
-	SOURCE_FOLDER_CONTRACT + "/replacement_list",
-	SOURCE_FOLDER_PRIVATE + "/root/replacement_signature",
-	SOURCE_FOLDER_CONTRACT + "/operation",
-	SOURCE_FOLDER_CONTRACT + "/operation_sequence",
-	SOURCE_FOLDER_CONTRACT + "/debug_object",
-	SOURCE_FOLDER_CONTRACT + "/value_kinds",
-	SOURCE_FOLDER_PRIVATE + "/manual/source_comment_markdown",
-	SOURCE_FOLDER_PRIVATE + "/console/console_results",
-	SOURCE_FOLDER_SUPPORT + "/key_path",
-	SOURCE_FOLDER_SUPPORT + "/kind_icons",
-	SOURCE_FOLDER_CONTRACT + "/manual_pages",
-	SOURCE_FOLDER_PRIVATE + "/manual/manual_navigation",
-	SOURCE_FOLDER_CONTRACT + "/ring",
-	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
-	SOURCE_FOLDER_CONTRACT + "/datagram",
-	SOURCE_FOLDER_CONTRACT + "/byte_order",
-	SOURCE_FOLDER_CONTRACT + "/timed_stream",
-	SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
-	SOURCE_FOLDER_KERNEL + "/acpi_processors",
+	foundation.TOOL_SOURCE_FOLDER,
+	foundation.TOOL_SOURCE_FOLDER + "/foundation",
+	foundation.SOURCE_FOLDER_RUNTIME,
+	foundation.SOURCE_FOLDER_CONTRACT + "/blake3",
+	foundation.SOURCE_FOLDER_CONTRACT + "/module",
+	foundation.SOURCE_FOLDER_CONTRACT + "/isolated",
+	foundation.SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
+	foundation.SOURCE_FOLDER_CONTRACT + "/remote",
+	foundation.SOURCE_FOLDER_CONTRACT + "/root_ring",
+	foundation.SOURCE_FOLDER_CONTRACT + "/enum_word",
+	foundation.SOURCE_FOLDER_SUPPORT + "/sentence",
+	foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
+	foundation.SOURCE_FOLDER_PRIVATE + "/cryptography/cryptography_primitives",
+	foundation.SOURCE_FOLDER_SUPPORT + "/quic",
+	foundation.SOURCE_FOLDER_CONTRACT + "/date",
+	foundation.SOURCE_FOLDER_CONTRACT + "/disk_process_page",
+	foundation.SOURCE_FOLDER_KERNEL + "/iommu",
+	foundation.SOURCE_FOLDER_CONTRACT + "/bridge_requester",
+	foundation.SOURCE_FOLDER_KERNEL + "/debug_exception",
+	foundation.SOURCE_FOLDER_KERNEL + "/processor_counters",
+	foundation.SOURCE_FOLDER_KERNEL + "/stolen_time",
+	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
+	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
+	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",
+	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
+	foundation.SOURCE_FOLDER_SUPPORT + "/principals",
+	foundation.SOURCE_FOLDER_SUPPORT + "/tpm2",
+	foundation.SOURCE_FOLDER_SUPPORT + "/disk_process",
+	foundation.SOURCE_FOLDER_SUPPORT + "/calendar",
+	foundation.SOURCE_FOLDER_SUPPORT + "/line_editor",
+	foundation.SOURCE_FOLDER_PRIVATE + "/console/console_language",
+	foundation.SOURCE_FOLDER_PRIVATE + "/debugger/debugging",
+	foundation.LIBRARY_MODULE_SOURCES + "interface_module",
+	foundation.LIBRARY_MODULE_SOURCES + "drawing",
+	foundation.DEMONSTRATION_MODULE_SOURCES + "sample",
+	foundation.SOURCE_FOLDER_SUPPORT + "/system",
+	foundation.SOURCE_FOLDER_SUPPORT + "/twins",
+	foundation.SOURCE_FOLDER_PRIVATE + "/kernel_events/kernel_events_rounds",
+	foundation.SOURCE_FOLDER_CONTRACT + "/tpm_service",
+	foundation.SOURCE_FOLDER_SUPPORT + "/storage",
+	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/bar",
+	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/palette",
+	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
+	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/quality",
+	foundation.SOURCE_FOLDER_CONTRACT + "/palette_table",
+	foundation.SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
+	foundation.SOURCE_FOLDER_SUPPORT + "/graphics",
+	foundation.SOURCE_FOLDER_SUPPORT + "/interface",
+	foundation.SOURCE_FOLDER_PRIVATE + "/inspect/addresses",
+	foundation.SOURCE_FOLDER_PRIVATE + "/manual/information",
+	foundation.SOURCE_FOLDER_SUPPORT + "/vector_font",
+	foundation.SOURCE_FOLDER_SUPPORT + "/network",
+	foundation.SOURCE_FOLDER_SUPPORT + "/tcp",
+	foundation.SOURCE_FOLDER_SUPPORT + "/virtio",
+	foundation.SOURCE_FOLDER_SUPPORT + "/bochs_display",
+	foundation.SOURCE_FOLDER_SUPPORT + "/web",
+	foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
+	foundation.SOURCE_FOLDER_SUPPORT + "/random",
+	foundation.SOURCE_FOLDER_CONTRACT + "/entropy_service",
+	foundation.SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
+	foundation.SOURCE_FOLDER_CONTRACT + "/settings",
+	foundation.LIBRARY_MODULE_SOURCES + "text_shaping",
+	foundation.SOURCE_FOLDER_SUPPORT + "/text_shaping",
+	foundation.SOURCE_FOLDER_SUPPORT + "/mark",
+	foundation.SOURCE_FOLDER_SUPPORT + "/terminal",
+	foundation.SOURCE_FOLDER_CONTRACT + "/cut_mark",
+	foundation.SOURCE_FOLDER_CONTRACT + "/text_encoding",
+	foundation.SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
+	foundation.SOURCE_FOLDER_SUPPORT + "/instruction_sets",
+	foundation.SOURCE_FOLDER_CONTRACT + "/system_description",
+	foundation.SOURCE_FOLDER_CONTRACT + "/replacement_list",
+	foundation.SOURCE_FOLDER_PRIVATE + "/root/replacement_signature",
+	foundation.SOURCE_FOLDER_CONTRACT + "/operation",
+	foundation.SOURCE_FOLDER_CONTRACT + "/operation_sequence",
+	foundation.SOURCE_FOLDER_CONTRACT + "/debug_object",
+	foundation.SOURCE_FOLDER_CONTRACT + "/value_kinds",
+	foundation.SOURCE_FOLDER_PRIVATE + "/manual/source_comment_markdown",
+	foundation.SOURCE_FOLDER_PRIVATE + "/console/console_results",
+	foundation.SOURCE_FOLDER_SUPPORT + "/key_path",
+	foundation.SOURCE_FOLDER_SUPPORT + "/kind_icons",
+	foundation.SOURCE_FOLDER_CONTRACT + "/manual_pages",
+	foundation.SOURCE_FOLDER_PRIVATE + "/manual/manual_navigation",
+	foundation.SOURCE_FOLDER_CONTRACT + "/ring",
+	foundation.SOURCE_FOLDER_CONTRACT + "/glyph_cache",
+	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",
+	foundation.SOURCE_FOLDER_CONTRACT + "/byte_order",
+	foundation.SOURCE_FOLDER_CONTRACT + "/timed_stream",
+	foundation.SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
+	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
-BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
+BOOT_OBJECT_FOLDER :: foundation.BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot
 // volume has its own object folder (boot_volumes.odin).
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + BOOT_PROGRAM_FILE_NAME
 BOOT_PROGRAM_OBJECT :: BOOT_OBJECT_FOLDER + "/" + MAIN_BOOT_VOLUME_NAME + "/" + BOOT_PROGRAM_OBJECT_FILE_NAME
-BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
-BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
-BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
-BOOT_VOLUME_MEASURE :: BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `modustool measure`.
-BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
-TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
+BOOT_VOLUME :: foundation.BUILD_FOLDER + "/boot_volume.img"
+BOOT_VOLUME_FAILS :: foundation.BUILD_FOLDER + "/boot_volume_fails.img"
+BOOT_VOLUME_SHORTAGE :: foundation.BUILD_FOLDER + "/boot_volume_shortage.img"
+BOOT_VOLUME_MEASURE :: foundation.BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `modustool measure`.
+BOOT_VOLUME_WITHOUT_RETURN_CHECK :: foundation.BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
+TEST_OUTPUT_SHORTAGE :: foundation.BUILD_FOLDER + "/test_output_shortage.txt"
 // The machine of the operation sequences (operation_sequences.odin), with
 // the kernel that ships.
-BOOT_VOLUME_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_volume_operation_sequences.img"
-TEST_OUTPUT_OPERATION_SEQUENCES :: BUILD_FOLDER + "/test_output_operation_sequences.txt"
-BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
+BOOT_VOLUME_OPERATION_SEQUENCES :: foundation.BUILD_FOLDER + "/boot_volume_operation_sequences.img"
+TEST_OUTPUT_OPERATION_SEQUENCES :: foundation.BUILD_FOLDER + "/test_output_operation_sequences.txt"
+BOOT_VOLUME_SELF_TEST :: foundation.BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 // The volumes of `test trusted_boot` (trusted_boot_scenario.odin): one byte
 // of a module changed after the system description was made; one bit of the
 // description signature changed; one byte of a module changed before it was
 // made (another system, signed, measured).
-BOOT_VOLUME_CHANGED_MODULE :: BUILD_FOLDER + "/boot_volume_changed_module.img"
-BOOT_VOLUME_WRONG_SIGNATURE :: BUILD_FOLDER + "/boot_volume_wrong_signature.img"
-BOOT_VOLUME_OTHER_SYSTEM :: BUILD_FOLDER + "/boot_volume_other_system.img"
+BOOT_VOLUME_CHANGED_MODULE :: foundation.BUILD_FOLDER + "/boot_volume_changed_module.img"
+BOOT_VOLUME_WRONG_SIGNATURE :: foundation.BUILD_FOLDER + "/boot_volume_wrong_signature.img"
+BOOT_VOLUME_OTHER_SYSTEM :: foundation.BUILD_FOLDER + "/boot_volume_other_system.img"
 // More volumes that the boot program must refuse: one byte of the kernel
 // changed; no system description; an entry that states another hash.
-BOOT_VOLUME_CHANGED_KERNEL :: BUILD_FOLDER + "/boot_volume_changed_kernel.img"
-BOOT_VOLUME_WITHOUT_DESCRIPTION :: BUILD_FOLDER + "/boot_volume_without_description.img"
-BOOT_VOLUME_STATED_HASH :: BUILD_FOLDER + "/boot_volume_stated_hash.img"
+BOOT_VOLUME_CHANGED_KERNEL :: foundation.BUILD_FOLDER + "/boot_volume_changed_kernel.img"
+BOOT_VOLUME_WITHOUT_DESCRIPTION :: foundation.BUILD_FOLDER + "/boot_volume_without_description.img"
+BOOT_VOLUME_STATED_HASH :: foundation.BUILD_FOLDER + "/boot_volume_stated_hash.img"
 // The boot program signed for Secure Boot, and the same with one byte
 // changed after the signature (secure_boot.odin).
-BOOT_VOLUME_SECURE_BOOT :: BUILD_FOLDER + "/boot_volume_secure_boot.img"
-BOOT_VOLUME_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
+BOOT_VOLUME_SECURE_BOOT :: foundation.BUILD_FOLDER + "/boot_volume_secure_boot.img"
+BOOT_VOLUME_SECURE_BOOT_CHANGED :: foundation.BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
 // The volumes of the TPM floors, signed for Secure Boot: a newer system (a
 // security version one above the repository), and a newer system whose
 // boot program has a newer key (a key number one above too).
-BOOT_VOLUME_NEWER_SYSTEM :: BUILD_FOLDER + "/boot_volume_newer_system.img"
-BOOT_VOLUME_NEWER_KEY :: BUILD_FOLDER + "/boot_volume_newer_key.img"
+BOOT_VOLUME_NEWER_SYSTEM :: foundation.BUILD_FOLDER + "/boot_volume_newer_system.img"
+BOOT_VOLUME_NEWER_KEY :: foundation.BUILD_FOLDER + "/boot_volume_newer_key.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 // The private copy of the variable store of the firmware of `run`. A test
 // machine has its own copy beside its log, with the same name after the
 // name of its log (machine_command): two machines that run at the same
 // time never write one store.
-FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
-FIRMWARE_FULL_VARIABLES :: BUILD_FOLDER + "/ovmf_full_vars.fd"
-FIRMWARE_TPM_VARIABLES :: BUILD_FOLDER + "/ovmf_tpm_vars.fd"
+FIRMWARE_VARIABLES :: foundation.BUILD_FOLDER + "/ovmf_vars.fd"
+FIRMWARE_FULL_VARIABLES :: foundation.BUILD_FOLDER + "/ovmf_full_vars.fd"
+FIRMWARE_TPM_VARIABLES :: foundation.BUILD_FOLDER + "/ovmf_tpm_vars.fd"
 FIRMWARE_VARIABLES_SUFFIX :: "_ovmf_vars.fd"
 FIRMWARE_FULL_VARIABLES_SUFFIX :: "_ovmf_full_vars.fd"
 FIRMWARE_TPM_VARIABLES_SUFFIX :: "_ovmf_tpm_vars.fd"
-TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
-TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
-TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
+TEST_OUTPUT :: foundation.BUILD_FOLDER + "/test_output.txt"
+TEST_OUTPUT_FAILS :: foundation.BUILD_FOLDER + "/test_output_fails.txt"
+TEST_OUTPUT_SELF_TEST :: foundation.BUILD_FOLDER + "/test_output_self_test_%d.txt"
 // The disks beside the boot volume (src/library/support/pci has their places on the
 // bus). The data disk keeps the stores of the storage service: `run` uses
 // one that stays from run to run; each part of the test makes a new one of
 // its own (Test_Part_Run). The disk of the measures holds no data that a
 // process keeps: `run` uses SCRATCH_DISK, and a test machine a new one
 // beside its log.
-DATA_DISK :: BUILD_FOLDER + "/data_disk.img"
-SCRATCH_DISK :: BUILD_FOLDER + "/scratch_disk.img"
+DATA_DISK :: foundation.BUILD_FOLDER + "/data_disk.img"
+SCRATCH_DISK :: foundation.BUILD_FOLDER + "/scratch_disk.img"
 SCRATCH_DISK_SUFFIX :: "_scratch_disk.img"
 // The processors of each machine (`-smp`). The whole test starts at most
 // one part for each of these counts of processors of the host
@@ -228,41 +223,10 @@ SCRATCH_DISK_SUFFIX :: "_scratch_disk.img"
 MACHINE_PROCESSOR_COUNT :: 4
 // The data disk of the three machines of the test of persistence: new
 // before the first one, kept for the two others.
-TEST_PERSIST_DISK :: BUILD_FOLDER + "/test_persist_disk.img"
-TEST_OUTPUT_PERSIST :: BUILD_FOLDER + "/test_output_persist_%d.txt"
+TEST_PERSIST_DISK :: foundation.BUILD_FOLDER + "/test_persist_disk.img"
+TEST_OUTPUT_PERSIST :: foundation.BUILD_FOLDER + "/test_output_persist_%d.txt"
 DATA_DISK_SIZE :: 64 << 20
 SCRATCH_DISK_SIZE :: 32 << 20
-
-DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
-// The pictures and other files of the repository that a build reads.
-RESOURCE_FOLDER :: "resources"
-// The development log: one folder of pictures per run of `screenshots`. It
-// is beside the repository, not in it: no run replaces the pictures of
-// another run. It is beside the main working tree: a run in a worktree
-// writes there too, not beside the worktree.
-DEVELOPMENT_LOG_NAME :: "kernel-devlog"
-
-// development_log_folder gives the development log beside the main
-// working tree.
-development_log_folder :: proc() -> string {
-	if !os.is_file(".git") {
-		return "../" + DEVELOPMENT_LOG_NAME // The main working tree: .git is a folder.
-	}
-	content, _ := read_file(".git")
-	return development_log_folder_of(string(content))
-}
-
-// development_log_folder_of gives the development log for the content of
-// the file .git. In a worktree, it is "gitdir: <main>/.git/worktrees/<name>".
-development_log_folder_of :: proc(git_file: string) -> string {
-	text := strings.trim_space(git_file)
-	if strings.has_prefix(text, "gitdir: ") {
-		if at := strings.index(text, "/.git/worktrees/"); at > len("gitdir: ") {
-			return join(text[len("gitdir: "):at], "/../", DEVELOPMENT_LOG_NAME)
-		}
-	}
-	return "../" + DEVELOPMENT_LOG_NAME
-}
 
 Command :: struct {
 	name, about: string,
@@ -416,7 +380,7 @@ COMMANDS :: [?]Command {
 	// - `compress`: no machine; it compresses each PNG file of
 	//   `docs/screenshots` and `resources` whose data is stored with no
 	//   compression, and prints the bytes before and after.
-	{name = "screenshots", about = "take the pictures and the logs of the check of the flake (its one run of the machine test), run the measure runs on the host, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "take the pictures and the logs of the check of the flake (its one run of the machine test), run the measure runs on the host, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + foundation.DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + foundation.DOCUMENT_SCREENSHOT_FOLDER + " and " + foundation.RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	// Runs a machine that measures, with no other load: the numbers that it
 	// prints are measures, never conditions of the test.
 	//
@@ -449,12 +413,12 @@ COMMANDS :: [?]Command {
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
 	// - `heron`: the film of the process heron.
-	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
+	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only
 	// to change the font.
-	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
+	{name = "font", about = "convert the BDF file of the font to " + foundation.FONT_OUTPUT, run = run_font},
 	// Converts the pointer manifests of `resources/pointers` to the pointer
 	// theme files of the boot image, in `build/pointers`.
 	//
@@ -540,10 +504,10 @@ COMMANDS :: [?]Command {
 	// `src/library/support/cryptography` that the manifest of the origin does not name:
 	// the files that the project wrote, which a reviewer checks before the
 	// lines go into the list.
-	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = run_cryptography_system_hashes},
+	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + foundation.CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = run_cryptography_system_hashes},
 	// Checks that each file that the manifest of the origin names is its file
 	// in Odin with the listed changes only. `modustool check` runs it.
-	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
+	{name = "cryptography-origin", about = "check that each file of " + foundation.CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
 	// Checks that each import of each source file of src/ follows the rule
 	// of its file: a source that is not a test imports no package of the
 	// core library, the kernel and a contract package import no support
@@ -554,7 +518,7 @@ COMMANDS :: [?]Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
+	{name = "rule-checks", about = "check that " + foundation.OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
@@ -688,7 +652,7 @@ COMMANDS :: [?]Command {
 	// It is the proof of a change that must not change the system, such as
 	// a move of the sources
 	// (docs/TOOLS.md, "The hashes of the modules of two builds").
-	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = run_module_hashes},
+	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + foundation.MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = run_module_hashes},
 	// Runs every check of the work tree, and writes no file of the
 	// repository: the count of its checks goes to build/checks_passed.txt.
 	// The full check of a batch is `nix flake check`, which runs this
@@ -756,9 +720,9 @@ main :: proc() {
 	}
 	// The command module-build runs from the folder of another project: it
 	// finds the folder of the system by itself, and refuses a wrong one.
-	if os.args[1] != "module-build" && !os.exists(ROOT_MARK) {
+	if os.args[1] != "module-build" && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
-		os.exit(EXIT_USAGE)
+		os.exit(foundation.EXIT_USAGE)
 	}
 	commands := COMMANDS
 	for c in commands {
@@ -768,7 +732,7 @@ main :: proc() {
 	}
 	fmt.eprintfln("modustool: no command %s", os.args[1])
 	usage()
-	os.exit(EXIT_USAGE)
+	os.exit(foundation.EXIT_USAGE)
 }
 
 usage :: proc() {
@@ -793,7 +757,7 @@ run_build :: proc(args: []string) -> int {
 	}
 	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_host_processes(rest[0])) {
 		fmt.eprintln("modustool: build [whole] [host_processes]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	return build_system(nil)
 }
@@ -806,11 +770,11 @@ run_build :: proc(args: []string) -> int {
 build_system :: proc(needed_volumes: []string) -> int {
 	build_measure_start()
 	if !build_modules() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	volumes_started := time.tick_now()
 	if !boot_volumes_build(needed_volumes) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	build_measure_step("the boot volumes, in all", volumes_started)
 	build_measure_print()
@@ -825,13 +789,13 @@ run_machine :: proc(args: []string) -> int {
 		return code
 	}
 	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The peer receives the calls of `modustool call` on a Unix socket of
 	// the private folder of the user: `modustool call` finds it by its name.
 	peer: Peer
 	if !peer_start(&peer, CALL_SOCKET_RUN_NAME) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The developer names the key of each start of remote in `modustool
 	// call`: this peer takes it.
@@ -844,10 +808,10 @@ run_machine :: proc(args: []string) -> int {
 	defer peer_stop(&peer)
 	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, &peer)
 	if !ok {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
-	if !run(command) {
-		return EXIT_FAILURE
+	if !foundation.run(command) {
+		return foundation.EXIT_FAILURE
 	}
 	return 0
 }
@@ -857,7 +821,7 @@ run_machine :: proc(args: []string) -> int {
 run_test :: proc(args: []string) -> int {
 	if problem := test_arguments_problem(args); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	// The times of the test are measures: the report never changes the result.
 	test_started := time.tick_now()
@@ -867,8 +831,8 @@ run_test :: proc(args: []string) -> int {
 	if build_code != 0 {
 		return build_code
 	}
-	if !reset_folder(SCREENSHOT_FOLDER) {
-		return EXIT_FAILURE
+	if !foundation.reset_folder(SCREENSHOT_FOLDER) {
+		return foundation.EXIT_FAILURE
 	}
 	parts := test_parts[:]
 	if len(args) == 1 {
@@ -878,7 +842,7 @@ run_test :: proc(args: []string) -> int {
 			}
 		}
 	}
-	processors := test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
+	processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
 	at_once := test_parts_at_once(len(parts), processors)
 	picture_names_forget()
 	if len(parts) > 1 {
@@ -893,20 +857,10 @@ run_test :: proc(args: []string) -> int {
 	}
 	test_times_report(runs, build_duration, test_started)
 	if !passed {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.println("modustool: all tests passed")
 	return 0
-}
-
-// The count of the checks that passed in this process: the measure record
-// states it. Each check that passes prints its line through
-// test_passed_print. A peer thread can print one, so the count is atomic.
-test_passed_count: int
-
-test_passed_print :: proc(format: string, args: ..any) {
-	sync.atomic_add(&test_passed_count, 1)
-	fmt.printfln("modustool: test passed: %s", fmt.tprintf(format, ..args))
 }
 
 // The check of the flake that runs `modustool check` in the sandbox of Nix.
@@ -914,14 +868,14 @@ test_passed_print :: proc(format: string, args: ..any) {
 FLAKE_CHECK_ATTRIBUTE :: ".#checks.x86_64-linux.boot-test"
 // The link to the output of that check: it keeps the output in the store
 // while the link exists.
-FLAKE_CHECK_LINK :: BUILD_FOLDER + "/flake_check"
+FLAKE_CHECK_LINK :: foundation.BUILD_FOLDER + "/flake_check"
 // The folders of the output of the check (flake.nix, bootTest): the logs
 // and the records of build/, and the pictures of the test.
 FLAKE_CHECK_LOGS :: FLAKE_CHECK_LINK + "/logs"
 FLAKE_CHECK_PICTURES :: FLAKE_CHECK_LINK + "/screenshots"
 // The count of the checks that passed in `modustool check`: the measure
 // record of `screenshots` adds it to the checks of its own measure runs.
-CHECKS_PASSED_FILE :: BUILD_FOLDER + "/checks_passed.txt"
+CHECKS_PASSED_FILE :: foundation.BUILD_FOLDER + "/checks_passed.txt"
 
 // run_screenshots takes the outputs of the one run of the machine test of
 // the full check, the check of the flake (src/md/infrastructure/full_check.md):
@@ -933,13 +887,13 @@ CHECKS_PASSED_FILE :: BUILD_FOLDER + "/checks_passed.txt"
 // the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "compress" {
-		count, compressed_all := pictures_compress([]string{DOCUMENT_SCREENSHOT_FOLDER, RESOURCE_FOLDER})
+		count, compressed_all := pictures_compress([]string{foundation.DOCUMENT_SCREENSHOT_FOLDER, foundation.RESOURCE_FOLDER})
 		fmt.printfln("modustool: %d PNG files, %d compressed: %d bytes before, %d bytes after", count.picture_count, count.compressed_count, count.bytes_before, count.bytes_after)
-		return compressed_all ? 0 : EXIT_FAILURE
+		return compressed_all ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) != 0 {
 		fmt.eprintln("modustool: screenshots takes no argument, or `compress`")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	// The facts of the tree before the pass changes it: the pass writes the
 	// pictures and the record into the repository. A log of the check is
@@ -947,16 +901,16 @@ run_screenshots :: proc(args: []string) -> int {
 	run_facts := measure_run_facts_read()
 	// The check of the flake runs the host checks, the whole machine test
 	// and the second build in the sandbox; it fails when one of them fails.
-	if !run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs"}) {
-		return EXIT_FAILURE
+	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs"}) {
+		return foundation.EXIT_FAILURE
 	}
 	if !flake_check_outputs_take() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The pictures are a fact of the machines, which all passed: they go
 	// to the documents now.
 	if !screenshots_copy() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The rates of the record come from measure runs on the host, with no
 	// other machine: the test measures none (measure_runs.odin).
@@ -964,10 +918,10 @@ run_screenshots :: proc(args: []string) -> int {
 		return code
 	}
 	if !measure_runs_of_the_record() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !measure_record_write(run_facts) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	return 0
 }
@@ -978,18 +932,18 @@ run_screenshots :: proc(args: []string) -> int {
 // each copy is a new file. It adds the checks that passed in the check to
 // the count of this process.
 flake_check_outputs_take :: proc() -> bool {
-	reset_folder(SCREENSHOT_FOLDER) or_return
-	pictures := files_with_suffix(FLAKE_CHECK_PICTURES, ".png") or_return
-	logs := files_with_suffix(FLAKE_CHECK_LOGS, ".txt") or_return
+	foundation.reset_folder(SCREENSHOT_FOLDER) or_return
+	pictures := foundation.files_with_suffix(FLAKE_CHECK_PICTURES, ".png") or_return
+	logs := foundation.files_with_suffix(FLAKE_CHECK_LOGS, ".txt") or_return
 	if len(pictures) == 0 || len(logs) == 0 {
 		fmt.eprintfln("modustool: the output of the check of the flake has %d pictures and %d logs: it is not the output of a whole test", len(pictures), len(logs))
 		return false
 	}
 	for list, place in ([2][]string{pictures, logs}) {
-		folder := place == 0 ? SCREENSHOT_FOLDER : BUILD_FOLDER
+		folder := place == 0 ? SCREENSHOT_FOLDER : foundation.BUILD_FOLDER
 		for source in list {
 			target := strings.concatenate({folder, source[strings.last_index_byte(source, '/'):]}, context.temp_allocator)
-			file_copy_as_new(target, source) or_return
+			foundation.file_copy_as_new(target, source) or_return
 		}
 	}
 	text, read_error := os.read_entire_file(CHECKS_PASSED_FILE, context.temp_allocator)
@@ -998,42 +952,25 @@ flake_check_outputs_take :: proc() -> bool {
 		fmt.eprintfln("modustool: the check of the flake gave no count of its checks in %s", CHECKS_PASSED_FILE)
 		return false
 	}
-	sync.atomic_add(&test_passed_count, count)
+	sync.atomic_add(&foundation.test_passed_count, count)
 	fmt.printfln("modustool: took %d pictures and %d logs of the check of the flake (%d checks passed there)", len(pictures), len(logs), count)
-	return true
-}
-
-// file_copy_as_new writes the bytes of source to a new file target, with
-// the permissions of a new file: a copy of a file of the store keeps no
-// read-only mode, so a later copy can write over it.
-file_copy_as_new :: proc(target, source: string) -> bool {
-	bytes, read_error := os.read_entire_file(source, context.temp_allocator)
-	if read_error != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", source, read_error)
-		return false
-	}
-	_ = os.remove(target)
-	if write_error := os.write_entire_file(target, bytes); write_error != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", target, write_error)
-		return false
-	}
 	return true
 }
 
 // screenshots_copy copies the pictures of the test to the documents and to
 // a new folder of the development log.
 screenshots_copy :: proc() -> bool {
-	pictures, ok := files_with_suffix(SCREENSHOT_FOLDER, ".png")
+	pictures, ok := foundation.files_with_suffix(SCREENSHOT_FOLDER, ".png")
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
-	development_log := development_log_folder()
+	development_log := foundation.development_log_folder()
 	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d", development_log, year, int(month), day, hour, minute, second)
-	if !ok || !make_folder(DOCUMENT_SCREENSHOT_FOLDER) || !make_folder(development_log) || !make_folder(log_folder) {
+	if !ok || !foundation.make_folder(foundation.DOCUMENT_SCREENSHOT_FOLDER) || !foundation.make_folder(development_log) || !foundation.make_folder(log_folder) {
 		return false
 	}
 	for picture in pictures {
-		for folder in ([]string{DOCUMENT_SCREENSHOT_FOLDER, log_folder}) {
+		for folder in ([]string{foundation.DOCUMENT_SCREENSHOT_FOLDER, log_folder}) {
 			target := strings.concatenate({folder, picture[strings.last_index(picture, "/"):]}, context.temp_allocator)
 			if err := os.copy_file(target, picture); err != nil {
 				fmt.eprintfln("modustool: cannot write %s: %v", target, err)
@@ -1045,7 +982,7 @@ screenshots_copy :: proc() -> bool {
 	return true
 }
 
-TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
+TEST_OUTPUT_MEASURE :: foundation.BUILD_FOLDER + "/test_output_measure.txt"
 
 // run_measure runs the measures of the process `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other processes of
@@ -1072,23 +1009,23 @@ run_measure :: proc(args: []string) -> int {
 	}
 	part := test_part_run_make(MEASURE_COMMAND)
 	defer test_part_run_free(&part)
-	if !make_folder(SCREENSHOT_FOLDER) || !test_part_run_start(&part) {
-		return EXIT_FAILURE
+	if !foundation.make_folder(SCREENSHOT_FOLDER) || !test_part_run_start(&part) {
+		return foundation.EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "windows" {
-		return measure_windows(&part) ? 0 : EXIT_FAILURE
+		return measure_windows(&part) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "address_space" {
-		return machine_test(&part, scenario_measure_address_space[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) ? 0 : EXIT_FAILURE
+		return machine_test(&part, scenario_measure_address_space[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) ? 0 : foundation.EXIT_FAILURE
 	}
 	// `measure <process>`: one process that measures itself, alone.
 	if len(args) == 1 {
 		if process, found := measure_process_find(args[0]); found {
-			return measure_process_run(&part, process) ? 0 : EXIT_FAILURE
+			return measure_process_run(&part, process) ? 0 : foundation.EXIT_FAILURE
 		}
 	}
 	if shortage {
-		return shortage_tests_run(&part) ? 0 : EXIT_FAILURE
+		return shortage_tests_run(&part) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "scheduler" {
 		count := 1
@@ -1097,27 +1034,27 @@ run_measure :: proc(args: []string) -> int {
 			for character in args[1] {
 				if character < '0' || character > '9' {
 					fmt.eprintln("modustool: measure scheduler <count>: the count is a number")
-					return EXIT_FAILURE
+					return foundation.EXIT_FAILURE
 				}
 				count = count * 10 + int(character - '0')
 			}
 		}
 		for run in 1 ..= count {
 			// Not in the temporary allocator: the scenario frees it after each step.
-			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", BUILD_FOLDER, run)
+			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", foundation.BUILD_FOLDER, run)
 			defer delete(output)
 			if !machine_test(&part, scenario_measure_scheduler[:], {volume = BOOT_VOLUME_MEASURE, output = output, exit_status = MACHINE_STOP_OK}) {
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 		}
 		return 0
 	}
 	if len(args) != 0 {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	return 0
 }
@@ -1125,87 +1062,87 @@ run_measure :: proc(args: []string) -> int {
 run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build_whole = true
-	if !run({"odin", "check", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG, KERNEL_LIBRARY_FLAG}) {
-		return EXIT_FAILURE
+	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG}) {
+		return foundation.EXIT_FAILURE
 	}
 	// The kernel and the contract packages import no support package. The
 	// compiler does not refuse such an import: the library is one.
 	if !library_imports_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The count of the kernel operations is the count that the properties
 	// state, no source of the system calls an allocator, each export that
 	// fails gives an error record, and no family of integer constants is a
 	// closed set of choices.
 	if !operation_count_check() || !allocator_check() || !export_error_record_check() || !choice_constant_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	host_test_folders := HOST_TEST_FOLDERS
 	if !host_tests_run(host_test_folders[:]) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The fuzz targets: their corpus, then a fixed count of new executions
 	// with the seed of the sources (src/md/infrastructure/fuzzing.md).
 	if !fuzz_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !cryptography_origin_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !logo_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !readme_pictures_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !fixed_addresses_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !test_bound_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !text_cut_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !comment_rule_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !glossary_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !intent_index_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !source_paths_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !changelog_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !news_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !roadmap_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !byte_layouts_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !reuse_list_check() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !outputs_same_after_second_build() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// `screenshots` reads the count from the output of the check of the
 	// flake, for its measure record.
-	count_line := fmt.tprintf("%d\n", sync.atomic_load(&test_passed_count))
+	count_line := fmt.tprintf("%d\n", sync.atomic_load(&foundation.test_passed_count))
 	if write_error := os.write_entire_file(CHECKS_PASSED_FILE, count_line); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", CHECKS_PASSED_FILE, write_error)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	return 0
 }
@@ -1310,7 +1247,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.eprintfln("modustool: cannot copy %s: %v", firmware_variables, err)
 		return nil, false
 	}
-	if !run({"chmod", "u+w", variables_copy}) {
+	if !foundation.run({"chmod", "u+w", variables_copy}) {
 		return nil, false
 	}
 	listener_port := forward.listener != nil ? forward.listener.port : 0
@@ -1573,21 +1510,6 @@ network_device_problem :: proc(device: string) -> string {
 	return ""
 }
 
-// run starts a host process with the terminal of this tool and waits for its end.
-run :: proc(command: []string) -> bool {
-	host_process, err := os.process_start({command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
-	if err != nil {
-		fmt.eprintfln("modustool: cannot start %s: %v", command[0], err)
-		return false
-	}
-	state, wait_err := os.process_wait(host_process)
-	if wait_err != nil || !state.success {
-		fmt.eprintfln("modustool: %s failed (code %d)", command[0], state.exit_code)
-		return false
-	}
-	return true
-}
-
 // disk_prepare makes a disk of zero bytes when the file is absent, or always
 // with fresh.
 disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
@@ -1601,30 +1523,4 @@ disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
 		return false
 	}
 	return true
-}
-
-// make_folder makes a folder and each folder above it. Two processes of the
-// parallel build can make the same folder above theirs at the same time:
-// the one that loses gets "exists" for that folder before its own folder is
-// made, so it tries again.
-make_folder :: proc(path: string) -> bool {
-	err: os.Error
-	for _ in 0 ..< 4 {
-		err = os.make_directory_all(path)
-		if err == nil || os.exists(path) {
-			return true
-		}
-	}
-	fmt.eprintfln("modustool: cannot create %s: %v", path, err)
-	return false
-}
-
-reset_folder :: proc(path: string) -> bool {
-	if os.exists(path) {
-		if err := os.remove_all(path); err != nil {
-			fmt.eprintfln("modustool: cannot remove %s: %v", path, err)
-			return false
-		}
-	}
-	return make_folder(path)
 }

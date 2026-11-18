@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // The start of each line, in the order of the log. The process writes them
 // (src/modules/demonstrations/processor_frame/main.odin, measure_log).
@@ -173,7 +174,7 @@ processor_frame_lines_check :: proc(path: string) -> bool {
 	if len(problems) > 0 {
 		return false
 	}
-	test_passed_print("the %d measure lines of processor_frame in %s are in their form, and each part drew its pixels", len(processor_frame_parts), path)
+	foundation.test_passed_print("the %d measure lines of processor_frame in %s are in their form, and each part drew its pixels", len(processor_frame_parts), path)
 	for line in measure_process_lines(log, "processor_frame") {
 		if strings.contains(line, "processor_frame: measure: ") {
 			fmt.println(line)

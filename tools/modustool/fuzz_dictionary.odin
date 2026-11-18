@@ -8,6 +8,7 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // The dictionary of a fuzz target (src/md/infrastructure/fuzzing.md, "The
 // mutators"): each constant and each enumerated value that the packages
@@ -126,8 +127,8 @@ fuzz_constants_of_file :: proc(path, source: string, values: ^[dynamic]i64, text
 		file.src = source
 		file.fullpath = path
 		reader := parser.default_parser()
-		reader.err = site_code_quiet_error
-		reader.warn = site_code_quiet_error
+		reader.err = foundation.site_code_quiet_error
+		reader.warn = foundation.site_code_quiet_error
 		if !parser.parse_file(&reader, file) || file.syntax_error_count > 0 {
 			return
 		}

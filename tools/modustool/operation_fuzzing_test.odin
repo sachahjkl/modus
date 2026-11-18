@@ -8,6 +8,7 @@ import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // ---------------------------------------------------------------------
 // The arguments.
@@ -235,11 +236,11 @@ a_late_line_of_isolation_belongs_to_the_sequence_that_caused_it :: proc(t: ^test
 // not exist gives no line.
 @(test)
 the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
-	folder :: BUILD_FOLDER + "/operation_log_lines_test"
+	folder :: foundation.BUILD_FOLDER + "/operation_log_lines_test"
 	defer {
 		_ = os.remove_all(folder)
 	}
-	testing.expect(t, reset_folder(folder))
+	testing.expect(t, foundation.reset_folder(folder))
 	path := folder + "/log.txt"
 	scanned: i64
 	testing.expect_value(t, operation_log_new_lines(path, &scanned), "")
@@ -263,7 +264,7 @@ the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
 @(test)
 a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	BEFORE_SERVICE :: "rootrootx"
-	CONTENT :: BEFORE_SERVICE + OPERATION_FUZZING_MODULE
+	CONTENT :: BEFORE_SERVICE + foundation.OPERATION_FUZZING_MODULE
 	name_place := operation_parameter_place(.Process_Create, "name")
 	length_place := operation_parameter_place(.Process_Create, "name_length")
 	testing.expect(t, name_place >= 0 && length_place >= 0, "Process_Create has no name or no name_length")
@@ -286,12 +287,12 @@ a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	create(sequence, name_place, length_place, 0, 4) // "root"
 	create(sequence, name_place, length_place, 4, 5) // "rootx"
 	create(sequence, name_place, length_place, 4, 3) // "roo"
-	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(OPERATION_FUZZING_MODULE))
+	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(foundation.OPERATION_FUZZING_MODULE))
 	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(CONTENT)) // past the content
 	testing.expect_value(t, operation_protected_names_changed(sequence), 2)
 	testing.expect_value(t, string(sequence.content[:len(BEFORE_SERVICE)]), "_ootrootx")
 	testing.expect_value(t, sequence.content[len(BEFORE_SERVICE)], u8(OPERATION_PROTECTED_NAME_CHANGE))
-	testing.expect_value(t, string(sequence.content[len(BEFORE_SERVICE) + 1:len(CONTENT)]), string(OPERATION_FUZZING_MODULE)[1:])
+	testing.expect_value(t, string(sequence.content[len(BEFORE_SERVICE) + 1:len(CONTENT)]), string(foundation.OPERATION_FUZZING_MODULE)[1:])
 	testing.expect_value(t, operation_protected_names_changed(sequence), 0)
 	bytes, accepted := operation_sequence_encode(sequence)
 	defer delete(bytes)
@@ -867,14 +868,14 @@ a_run_ends_at_its_bound_of_findings :: proc(t: ^testing.T) {
 a_run_keeps_a_fault_after_the_last_count_of_a_life :: proc(t: ^testing.T) {
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND, at_drain = true}
 	machine := fake_machine_of(&fake)
-	run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 100, life_sequences = 1, findings_most = OPERATION_FINDINGS_MOST})
-	defer operation_run_free(&run)
+	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 100, life_sequences = 1, findings_most = OPERATION_FINDINGS_MOST})
+	defer operation_run_free(&foundation.run)
 	testing.expect(t, ok)
-	testing.expect_value(t, len(run.kept), 1)
+	testing.expect_value(t, len(foundation.run.kept), 1)
 	testing.expect(t, fake.drains > 0, "no life was drained")
-	if len(run.kept) == 1 {
-		testing.expect_value(t, len(run.kept[0].life), 1)
-		words := words_of(run.kept[0].minimized.life[0])
+	if len(foundation.run.kept) == 1 {
+		testing.expect_value(t, len(foundation.run.kept[0].life), 1)
+		words := words_of(foundation.run.kept[0].minimized.life[0])
 		testing.expectf(t, slice.equal(words, []u32{FAKE_FIRST, FAKE_SECOND}), "the minimized steps are %v", words)
 	}
 }
@@ -885,12 +886,12 @@ a_run_keeps_a_fault_after_the_last_count_of_a_life :: proc(t: ^testing.T) {
 a_run_drains_its_last_life :: proc(t: ^testing.T) {
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND}
 	machine := fake_machine_of(&fake)
-	run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 1, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST})
-	defer operation_run_free(&run)
+	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 1, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST})
+	defer operation_run_free(&foundation.run)
 	testing.expect(t, ok)
 	testing.expect_value(t, fake.drains, 1)
-	testing.expect_value(t, run.executions, 1)
-	testing.expect_value(t, len(run.kept), 0)
+	testing.expect_value(t, foundation.run.executions, 1)
+	testing.expect_value(t, len(foundation.run.kept), 0)
 }
 
 // An error of the tool ends the run with an error, and is never a finding.
@@ -898,12 +899,12 @@ a_run_drains_its_last_life :: proc(t: ^testing.T) {
 an_error_of_the_tool_ends_the_run_and_is_no_finding :: proc(t: ^testing.T) {
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND, tool_error_at = 3}
 	machine := fake_machine_of(&fake)
-	run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 50, life_sequences = 4, findings_most = OPERATION_FINDINGS_MOST})
-	defer operation_run_free(&run)
+	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 50, life_sequences = 4, findings_most = OPERATION_FINDINGS_MOST})
+	defer operation_run_free(&foundation.run)
 	testing.expect(t, !ok, "an error of the tool is taken")
-	testing.expect_value(t, run.executions, 3)
-	testing.expect_value(t, run.faults, 0)
-	testing.expect_value(t, len(run.kept), 0)
+	testing.expect_value(t, foundation.run.executions, 3)
+	testing.expect_value(t, foundation.run.faults, 0)
+	testing.expect_value(t, len(foundation.run.kept), 0)
 	testing.expect(t, !fake.running, "the machine was not ended")
 }
 
@@ -937,13 +938,13 @@ a_kept_fault_outlives_the_temporary_memory :: proc(t: ^testing.T) {
 	keeper_saw_the_signature = false
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND, temporary_signature = true}
 	machine := fake_machine_of(&fake)
-	run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 200, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST}, keeper_over_temporary_memory)
-	defer operation_run_free(&run)
+	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 200, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST}, keeper_over_temporary_memory)
+	defer operation_run_free(&foundation.run)
 	testing.expect(t, ok)
 	testing.expect(t, keeper_saw_the_signature, "the keeper saw another signature")
-	testing.expect_value(t, len(run.kept), 1)
-	if len(run.kept) == 1 {
-		testing.expect_value(t, run.kept[0].fault.signature, FAKE_SIGNATURE)
+	testing.expect_value(t, len(foundation.run.kept), 1)
+	if len(foundation.run.kept) == 1 {
+		testing.expect_value(t, foundation.run.kept[0].fault.signature, FAKE_SIGNATURE)
 	}
 	failing := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND}
 	failing_machine := fake_machine_of(&failing)

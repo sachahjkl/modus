@@ -10,6 +10,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 Site_Heading :: struct {
 	level:           int,
@@ -97,32 +98,6 @@ site_renderer_make :: proc(site: ^Site, page, source: string) -> Site_Renderer {
 		items = make([dynamic]Site_List_Item, context.temp_allocator),
 		linked_terms = make(map[string]bool, context.temp_allocator),
 	}
-}
-
-// site_slug gives an id from a text: the lowercase letters and the digits,
-// one "-" for each run of other characters, none at the ends.
-site_slug :: proc(text: string) -> string {
-	builder := strings.builder_make(context.temp_allocator)
-	dash := false
-	for index in 0 ..< len(text) {
-		character := text[index]
-		if character >= 'A' && character <= 'Z' {
-			character += 'a' - 'A'
-		}
-		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
-			if dash && strings.builder_len(builder) > 0 {
-				strings.write_byte(&builder, '-')
-			}
-			strings.write_byte(&builder, character)
-			dash = false
-		} else {
-			dash = true
-		}
-	}
-	if strings.builder_len(builder) == 0 {
-		return "part"
-	}
-	return strings.to_string(builder)
 }
 
 // site_unique_id gives the slug, or the slug with "-2", "-3"... when the page
@@ -229,7 +204,7 @@ site_is_table_separator :: proc(line: string) -> bool {
 // first_heading_level: the level that the first heading of the file takes
 // (1 for a guide, whose title is the h1 of its page).
 site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_line_number: int = 1) {
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	b := &renderer.builder
 	index := 0
 	for index < len(lines) {
@@ -258,7 +233,7 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 			continue
 		}
 		if level, text := site_heading_level(line); level > 0 {
-			id := site_unique_id(renderer, site_slug(text))
+			id := site_unique_id(renderer, foundation.site_slug(text))
 			if level == 2 {
 				renderer.section = id
 			}
@@ -374,7 +349,7 @@ site_render_example :: proc(renderer: ^Site_Renderer, lines: []string, start: in
 	b := &renderer.builder
 	strings.write_string(b, "<pre><code>")
 	for line in lines[start:end] {
-		site_escape(b, line[min(max(shared, 0), len(line)):])
+		foundation.site_escape(b, line[min(max(shared, 0), len(line)):])
 		strings.write_byte(b, '\n')
 	}
 	strings.write_string(b, "</code></pre>\n")
@@ -428,7 +403,7 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		place := fmt.tprintf("%s:%d", site_renderer_place(renderer), start + first_line_number)
 		strings.write_string(b, site_code_block_html(renderer.site, strings.to_string(code_text), "", place))
 	} else {
-		site_escape(b, strings.to_string(code_text))
+		foundation.site_escape(b, strings.to_string(code_text))
 	}
 	strings.write_string(b, "</code></pre>\n")
 	if index >= len(lines) {
@@ -615,7 +590,7 @@ site_term_name :: proc(cell: string) -> string {
 site_repository_path :: proc(source, text: string) -> (path: string, found: bool) {
 	candidate := text
 	// "file.odin:34": a line of a file.
-	if colon := strings.last_index_byte(candidate, ':'); colon > 0 && site_digits_value(candidate[colon + 1:]) >= 0 {
+	if colon := strings.last_index_byte(candidate, ':'); colon > 0 && foundation.site_digits_value(candidate[colon + 1:]) >= 0 {
 		candidate = candidate[:colon]
 	}
 	// A path from the root of the host ("/dev/kvm") is not a file of the
@@ -628,7 +603,7 @@ site_repository_path :: proc(source, text: string) -> (path: string, found: bool
 		cleaned := strings.trim_suffix(option, "/")
 		// A text with no folder (a source comment) has no folder option: "/"
 		// and the candidate would be a path of the host.
-		if strings.has_prefix(cleaned, BUILD_FOLDER) || cleaned == "" || strings.has_prefix(cleaned, "/") {
+		if strings.has_prefix(cleaned, foundation.BUILD_FOLDER) || cleaned == "" || strings.has_prefix(cleaned, "/") {
 			continue
 		}
 		if os.exists(cleaned) {
@@ -710,7 +685,7 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 			closing := strings.index_byte(text[index + 1:], 0)
 			if closing >= 0 {
 				flush(renderer, text[plain_start:index])
-				number := site_digits_value(text[index + 1:index + 1 + closing])
+				number := foundation.site_digits_value(text[index + 1:index + 1 + closing])
 				if number >= 0 && number < len(renderer.comment_references) {
 					site_document_references_write(renderer.site, b, renderer.page, renderer.comment_references[number], " and ")
 				}
@@ -774,21 +749,21 @@ site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 	b := &renderer.builder
 	if renderer.site == nil {
 		strings.write_string(b, "<code>")
-		site_escape(b, code)
+		foundation.site_escape(b, code)
 		strings.write_string(b, "</code>")
 		return
 	}
 	if target, named := site_code_link(renderer.site, code); named && !renderer.in_heading {
 		fmt.sbprintf(b, "<a class=\"reference\" href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, target))
-		site_escape(b, code)
+		foundation.site_escape(b, code)
 		strings.write_string(b, "</code></a>")
 		return
 	}
 	if path, found := site_repository_path(renderer.source, code); found && !renderer.in_heading {
 		strings.write_string(b, "<a href=\"")
-		site_escape(b, site_repository_file(renderer.site, path))
+		foundation.site_escape(b, site_repository_file(renderer.site, path))
 		strings.write_string(b, "\"><code>")
-		site_escape(b, code)
+		foundation.site_escape(b, code)
 		strings.write_string(b, "</code></a>")
 		return
 	}
@@ -798,7 +773,7 @@ site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 		return
 	}
 	strings.write_string(b, "<code>")
-	site_escape(b, code)
+	foundation.site_escape(b, code)
 	strings.write_string(b, "</code>")
 }
 
@@ -816,7 +791,7 @@ site_write_link :: proc(renderer: ^Site_Renderer, label, target: string) {
 	}
 	if strings.has_prefix(address, "https://") || strings.has_prefix(address, "http://") {
 		strings.write_string(b, "<a href=\"")
-		site_escape(b, address)
+		foundation.site_escape(b, address)
 		strings.write_string(b, "\">")
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
@@ -832,7 +807,7 @@ site_write_link :: proc(renderer: ^Site_Renderer, label, target: string) {
 	}
 	if os.exists(resolved) {
 		strings.write_string(b, "<a href=\"")
-		site_escape(b, site_repository_file(renderer.site, resolved))
+		foundation.site_escape(b, site_repository_file(renderer.site, resolved))
 		strings.write_string(b, "\">")
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
@@ -848,10 +823,10 @@ site_write_picture :: proc(renderer: ^Site_Renderer, alt, target: string) {
 	folder := renderer.source[:max(strings.last_index_byte(renderer.source, '/'), 0)]
 	resolved := site_path_join(folder, target)
 	data, err := os.read_entire_file(resolved, context.temp_allocator)
-	width, height, is_png := site_png_size(data)
+	width, height, is_png := foundation.site_png_size(data)
 	if err != nil || !is_png {
 		site_not_rendered(renderer, 0, fmt.tprintf("a picture %s that is not a PNG file of the repository: its text only", target))
-		site_escape(&renderer.builder, alt)
+		foundation.site_escape(&renderer.builder, alt)
 		return
 	}
 	site_path := strings.concatenate({SITE_PICTURE_FOLDER, "/", site_file_name(resolved)}, context.temp_allocator)
@@ -889,10 +864,6 @@ site_path_join :: proc(folder, relative: string) -> string {
 	return strings.join(parts[:], "/", context.temp_allocator)
 }
 
-site_is_word_byte :: proc(character: u8) -> bool {
-	return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_' || character >= 0x80
-}
-
 site_lower :: proc(character: u8) -> u8 {
 	return character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character
 }
@@ -900,7 +871,7 @@ site_lower :: proc(character: u8) -> u8 {
 // site_term_at says if a term of the glossary starts at index of text: the
 // same letters with no regard to case, a whole word, or the word with "s".
 site_term_at :: proc(text: string, index: int, name: string) -> (length: int, found: bool) {
-	if index + len(name) > len(text) || (index > 0 && site_is_word_byte(text[index - 1])) {
+	if index + len(name) > len(text) || (index > 0 && foundation.site_is_word_byte(text[index - 1])) {
 		return 0, false
 	}
 	for offset in 0 ..< len(name) {
@@ -909,10 +880,10 @@ site_term_at :: proc(text: string, index: int, name: string) -> (length: int, fo
 		}
 	}
 	end := index + len(name)
-	if end < len(text) && text[end] == 's' && (end + 1 >= len(text) || !site_is_word_byte(text[end + 1])) {
+	if end < len(text) && text[end] == 's' && (end + 1 >= len(text) || !foundation.site_is_word_byte(text[end + 1])) {
 		end += 1
 	}
-	if end < len(text) && site_is_word_byte(text[end]) {
+	if end < len(text) && foundation.site_is_word_byte(text[end]) {
 		return 0, false
 	}
 	return end - index, true
@@ -926,13 +897,13 @@ site_term_at :: proc(text: string, index: int, name: string) -> (length: int, fo
 site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 	b := &renderer.builder
 	if renderer.in_heading || renderer.comment || renderer.site == nil || len(renderer.site.terms) == 0 {
-		site_escape(b, text)
+		foundation.site_escape(b, text)
 		return
 	}
 	written := 0
 	index := 0
 	for index < len(text) {
-		if index > 0 && site_is_word_byte(text[index - 1]) {
+		if index > 0 && foundation.site_is_word_byte(text[index - 1]) {
 			index += 1
 			continue
 		}
@@ -946,7 +917,7 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 			if !found {
 				continue
 			}
-			site_escape(b, text[written:index])
+			foundation.site_escape(b, text[written:index])
 			if renderer.glossary && term.page == renderer.page {
 				fmt.sbprintf(b, "<a class=\"term\" href=\"#%s\">", term.id)
 			} else if renderer.glossary {
@@ -962,7 +933,7 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 				}
 				strings.write_string(b, ">")
 			}
-			site_escape(b, text[index:index + length])
+			foundation.site_escape(b, text[index:index + length])
 			strings.write_string(b, "</a>")
 			renderer.linked_terms[term.id] = true
 			index += length
@@ -974,5 +945,5 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 			index += 1
 		}
 	}
-	site_escape(b, text[written:])
+	foundation.site_escape(b, text[written:])
 }

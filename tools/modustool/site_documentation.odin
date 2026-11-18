@@ -9,6 +9,7 @@ import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import "modus:contract/blake3"
+import "modustool:foundation"
 
 // The starts of the tree and of the list "On this page": the check of a
 // page counts them, so each one is written by this file only.
@@ -102,7 +103,7 @@ site_tree_link :: proc(site: ^Site, b: ^strings.Builder, from_page, target, titl
 	strings.write_byte(b, '>')
 	if is_code {
 		strings.write_string(b, "<code>")
-		site_escape(b, title)
+		foundation.site_escape(b, title)
 		strings.write_string(b, "</code>")
 	} else {
 		site_plain(b, title)
@@ -175,7 +176,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 						strings.write_string(&b, " aria-current=\"page\"")
 					}
 					strings.write_byte(&b, '>')
-					site_escape(&b, group.name)
+					foundation.site_escape(&b, group.name)
 					fmt.sbprintf(&b, " <span class=\"tree-count\">%d</span></a></li>\n", len(group.terms))
 				}
 				strings.write_string(&b, "</ul>\n")
@@ -509,9 +510,9 @@ Site_Symbol :: struct {
 site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol) {
 	site.symbol_count += 1
 	fmt.sbprintf(b, "<section class=\"symbol\">\n<h3 id=\"%s\" data-outline=\"", symbol.id)
-	site_escape(b, symbol.name)
+	foundation.site_escape(b, symbol.name)
 	strings.write_string(b, "\"><code>")
-	site_escape(b, symbol.name)
+	foundation.site_escape(b, symbol.name)
 	strings.write_string(b, "</code></h3>\n")
 	if symbol.signature_html != "" {
 		strings.write_string(b, "<pre class=\"signature\"><code>")
@@ -519,7 +520,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 		strings.write_string(b, "</code></pre>\n")
 	} else if symbol.signature != "" {
 		strings.write_string(b, "<pre class=\"signature\"><code>")
-		site_escape(b, symbol.signature)
+		foundation.site_escape(b, symbol.signature)
 		strings.write_string(b, "</code></pre>\n")
 	}
 	if strings.trim_space(symbol.description) == "" {
@@ -534,7 +535,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 			} else {
 				strings.write_string(b, "<dt>")
 			}
-			site_escape(b, fact.label)
+			foundation.site_escape(b, fact.label)
 			strings.write_string(b, "</dt><dd>")
 			strings.write_string(b, fact.html)
 			strings.write_string(b, "</dd>\n")
@@ -557,7 +558,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 // site_text_html gives a text as escaped HTML, for a fact of a symbol.
 site_text_html :: proc(text: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
-	site_escape(&b, text)
+	foundation.site_escape(&b, text)
 	return strings.to_string(b)
 }
 
@@ -567,11 +568,11 @@ site_whole_word_at :: proc(text: string, index: int, name: string) -> bool {
 	if index + len(name) > len(text) || text[index:index + len(name)] != name {
 		return false
 	}
-	if index > 0 && site_is_word_byte(text[index - 1]) {
+	if index > 0 && foundation.site_is_word_byte(text[index - 1]) {
 		return false
 	}
 	after := index + len(name)
-	return after >= len(text) || !site_is_word_byte(text[after])
+	return after >= len(text) || !foundation.site_is_word_byte(text[after])
 }
 
 // site_names_in_text gives the names of a list that a text holds as whole

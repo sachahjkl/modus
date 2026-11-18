@@ -15,6 +15,7 @@ import "core:time"
 import "modus:private/storage/storage_mount"
 import block_tree "modus:private/storage/storage_object"
 import tree "modus:private/storage/storage_tree"
+import "modustool:foundation"
 
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it
@@ -45,8 +46,8 @@ import tree "modus:private/storage/storage_tree"
 POWER_LOSS_SEED :: 20261111 // The moment of the loss and the random subsets: one seed, printed.
 POWER_LOSS_RANDOM_SUBSETS :: 300
 SECTOR_SIZE :: 512
-TEST_POWER_LOSS_DISK :: BUILD_FOLDER + "/test_power_loss_disk.img"
-TEST_OUTPUT_POWER_LOSS :: BUILD_FOLDER + "/test_output_power_loss_%d.txt"
+TEST_POWER_LOSS_DISK :: foundation.BUILD_FOLDER + "/test_power_loss_disk.img"
+TEST_OUTPUT_POWER_LOSS :: foundation.BUILD_FOLDER + "/test_output_power_loss_%d.txt"
 
 // The bytes of an object that the search keeps whole. A larger object is
 // compared by the values of its blocks, and a version of it by its root:
@@ -670,7 +671,7 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 		fmt.eprintfln("modustool: test failed: %d of %d images of the disk after the loss of power are wrong; the first: %s", search.wrong, search.images, search.first_wrong)
 		return false
 	}
-	test_passed_print("%d images of the disk after the loss of power %s, %d of them with a torn write, each one checked with the code of the storage service on the host in %d ms: %d give the durable commit, %d the commit in flight, none a mix; each object and each of its versions byte for byte (%d versions durable, %d in flight, %d thinned by the commit in flight)", search.images, what, search.torn_images, i64(search.elapsed / time.Millisecond), search.older_images, search.newer_images, search.versions_durable, search.versions_in_flight, search.thinned_in_flight)
+	foundation.test_passed_print("%d images of the disk after the loss of power %s, %d of them with a torn write, each one checked with the code of the storage service on the host in %d ms: %d give the durable commit, %d the commit in flight, none a mix; each object and each of its versions byte for byte (%d versions durable, %d in flight, %d thinned by the commit in flight)", search.images, what, search.torn_images, i64(search.elapsed / time.Millisecond), search.older_images, search.newer_images, search.versions_durable, search.versions_in_flight, search.thinned_in_flight)
 	if thinning && search.thinned_in_flight == 0 {
 		fmt.eprintfln("modustool: test failed: the commit in flight at the loss of power thinned no version: the store was not at its limit")
 		return false
@@ -689,7 +690,7 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 		fmt.eprintfln("modustool: test failed: %d durable commits and %d flushes reached the disk: a commit needs two", commits, server.flushes)
 		return false
 	}
-	test_passed_print("%d durable commits, and %d flushes reached the disk: the block service passes each flush of the storage service to the device", commits, server.flushes)
+	foundation.test_passed_print("%d durable commits, and %d flushes reached the disk: the block service passes each flush of the storage service to the device", commits, server.flushes)
 	image, torn_root := hard_image(server.durable, pending)
 	defer delete(image)
 	sync.mutex_unlock(&server.lock)
@@ -808,7 +809,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.eprintfln("modustool: test failed: the settings: the durable image has %s record of settings (valid: %v); the image with each write, valid: %v", durable_found ? "a" : "no", durable_valid, in_flight_valid)
 		return false
 	}
-	test_passed_print("the settings: %d images of the disk after the loss of power, %d with a torn write: %d give the durable record (%s, generation %d), %d the record in flight (%s, generation %d), none a mix", search.images, search.torn_images, search.older_images, durable_text, durable.mount.generation, search.newer_images, in_flight_text, in_flight.mount.generation)
+	foundation.test_passed_print("the settings: %d images of the disk after the loss of power, %d with a torn write: %d give the durable record (%s, generation %d), %d the record in flight (%s, generation %d), none a mix", search.images, search.torn_images, search.older_images, durable_text, durable.mount.generation, search.newer_images, in_flight_text, in_flight.mount.generation)
 	hard, _ := hard_image(server.durable, pending)
 	defer delete(hard)
 	sync.mutex_unlock(&server.lock)
@@ -909,7 +910,7 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 		sync.mutex_unlock(&server.lock)
 		return false
 	}
-	test_passed_print("the range writes: %d images of the disk after the loss of power in a loop of range commits, %d of them with a torn write: %d give the durable commit (generation %d), %d the commit of range writes in flight (generation %d, the object loop with %d blocks of data), none a mix", search.images, search.torn_images, search.older_images, durable.mount.generation, search.newer_images, in_flight.mount.generation, len(loop_in_flight.blocks))
+	foundation.test_passed_print("the range writes: %d images of the disk after the loss of power in a loop of range commits, %d of them with a torn write: %d give the durable commit (generation %d), %d the commit of range writes in flight (generation %d, the object loop with %d blocks of data), none a mix", search.images, search.torn_images, search.older_images, durable.mount.generation, search.newer_images, in_flight.mount.generation, len(loop_in_flight.blocks))
 	// The same object under two names (docs/STORAGE.md, "4.7 The same object
 	// one time"): the two entries name one root in the durable image and in
 	// the image with each write; the search above checked the hash index of
@@ -924,7 +925,7 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 			return false
 		}
 	}
-	test_passed_print("the range writes: in each image, the hash index that the open made names each root that it must, and no store keeps one object two times; twin_a and twin_b name one root")
+	foundation.test_passed_print("the range writes: in each image, the hash index that the open made names each root that it must, and no store keeps one object two times; twin_a and twin_b name one root")
 	hard, torn_root := hard_image(server.durable, pending)
 	defer delete(hard)
 	sync.mutex_unlock(&server.lock)

@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import draw_record "modus:contract/draw_record"
 import module "modus:contract/module"
+import "modustool:foundation"
 
 // One field as the compiler places it, written with offset_of and size_of,
 // so that the test does not read the layout through the type information
@@ -348,11 +349,11 @@ byte_layout_text_of_the_header :: proc(t: ^testing.T) {
 byte_layout_guides_hold_the_text_of_the_code :: proc(t: ^testing.T) {
 	layouts, ok := byte_layouts_read()
 	testing.expect(t, ok, "the byte layouts are read")
-	paths, listed := files_with_suffix(BYTE_LAYOUT_DOCUMENT_FOLDER, ".md")
+	paths, listed := foundation.files_with_suffix(BYTE_LAYOUT_DOCUMENT_FOLDER, ".md")
 	testing.expect(t, listed, "the guides are listed")
 	contract_fences := 0
 	for path in paths {
-		content, read := site_read(path)
+		content, read := foundation.site_read(path)
 		if !testing.expectf(t, read, "%s is read", path) {
 			continue
 		}

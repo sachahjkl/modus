@@ -2,11 +2,11 @@ package modustool
 
 import "core:fmt"
 import "core:os"
-import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // The parts of the machine test (src/md/infrastructure/machine_test_parts.md).
 // One table holds each part: `test <part>` finds its row, the whole test
@@ -207,7 +207,7 @@ test_part_guide_row :: proc(part: Test_Part) -> string {
 // machines outside the test. Its texts are in memory of its own: a scenario
 // frees the temporary memory after each step.
 test_part_run_make :: proc(name: string) -> Test_Part_Run {
-	return {name = strings.clone(name), data_disk = fmt.aprintf("%s/test_data_disk_%s.img", BUILD_FOLDER, name)}
+	return {name = strings.clone(name), data_disk = fmt.aprintf("%s/test_data_disk_%s.img", foundation.BUILD_FOLDER, name)}
 }
 
 // test_part_run_start makes the new data disk of the part: a part starts
@@ -246,17 +246,6 @@ remembered_values_forget :: proc(part: ^Test_Part_Run) {
 // A part runs its machines one after the other.
 test_parts_at_once :: proc(part_count: int, processors: int) -> int {
 	return max(1, min(part_count, processors / MACHINE_PROCESSOR_COUNT))
-}
-
-// test_processors_of gives the processors that the test counts on: the
-// processors of the host, or fewer when the sandbox of Nix gives the build
-// fewer (NIX_BUILD_CORES, a number; 0, empty or not a number: no bound).
-test_processors_of :: proc(host_processors: int, nix_build_cores: string) -> int {
-	cores, is_number := strconv.parse_int(nix_build_cores, 10)
-	if !is_number || cores <= 0 {
-		return host_processors
-	}
-	return min(host_processors, cores)
 }
 
 // The pictures that the parts of this run saved, by name, with the part of

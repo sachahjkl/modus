@@ -11,6 +11,7 @@ import "core:os"
 import "core:strings"
 import "modus:contract/blake3"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 SITE_MODULE_GRAPH_FOLDER :: SITE_REFERENCE_FOLDER + "/module-graph"
 SITE_MODULE_GRAPH_SCRIPT :: "module_graph.js"
@@ -417,9 +418,9 @@ site_graph_hash_text :: proc(hash: [32]u8) -> string {
 // a node names the identity card that the script opens for it.
 site_graph_svg :: proc(site: ^Site, b: ^strings.Builder, page: string, inputs: []Site_Graph_Input, layout: Site_Graph_Layout, label: string, current: int, cards: bool) {
 	strings.write_string(b, "<div class=\"graph-box\" role=\"region\" tabindex=\"0\" aria-label=\"")
-	site_escape(b, label)
+	foundation.site_escape(b, label)
 	fmt.sbprintf(b, "\">\n<svg class=\"graph\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" role=\"group\" aria-label=\"", layout.width, layout.height, layout.width, layout.height)
-	site_escape(b, label)
+	foundation.site_escape(b, label)
 	strings.write_string(b, "\">\n")
 	// The heading of each layer, and of the band.
 	for x, layer in layout.column_x {
@@ -500,7 +501,7 @@ Site_Module_License :: struct {
 }
 
 site_module_card_id :: proc(name: string) -> string {
-	return strings.concatenate({"module-card-", site_slug(name)}, context.temp_allocator)
+	return strings.concatenate({"module-card-", foundation.site_slug(name)}, context.temp_allocator)
 }
 
 // site_module_card_of gathers the identity card of one module from the
@@ -542,10 +543,10 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 	strings.write_string(b, "<p class=\"module-card-title\">")
 	if card.page != "" && card.page != page {
 		fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(site, page, card.page))
-		site_escape(b, card.name)
+		foundation.site_escape(b, card.name)
 		strings.write_string(b, "</a>")
 	} else {
-		site_escape(b, card.name)
+		foundation.site_escape(b, card.name)
 	}
 	fmt.sbprintf(b, " <span class=\"module-card-kind\">%s</span></p>\n<dl class=\"module-card-facts\">\n", site_graph_kind_names[card.kind])
 	strings.write_string(b, "<dt>Hash</dt><dd>")
@@ -566,11 +567,11 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 		}
 		anchor: string = license.anchor != "" ? strings.concatenate({"#", license.anchor}, context.temp_allocator) : ""
 		fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(site, page, strings.concatenate({licenses_page, anchor}, context.temp_allocator)))
-		site_escape(b, license.license)
+		foundation.site_escape(b, license.license)
 		strings.write_string(b, "</a>")
 		if index > 0 {
 			strings.write_string(b, " (")
-			site_escape(b, license.what)
+			foundation.site_escape(b, license.what)
 			strings.write_string(b, ")")
 		}
 	}
@@ -580,7 +581,7 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 	strings.write_string(b, "</dd>\n</dl>\n")
 	if card.about != "" {
 		strings.write_string(b, "<p class=\"module-card-about\">")
-		site_escape(b, card.about)
+		foundation.site_escape(b, card.about)
 		strings.write_string(b, "</p>\n")
 	}
 	strings.write_string(b, "</div>\n")
@@ -593,7 +594,7 @@ site_graph_table :: proc(site: ^Site, b: ^strings.Builder, page: string, inputs:
 	// What a module imports and what imports it are lists of names.
 	table := site_table_start(b, "The edges of the module graph", {{"Module", .Name}, {"Kind", .Short}, {"Imports", .List}, {"Imported by", .List}}, {.Module, .None, .Module, .Module})
 	for input, index in inputs {
-		fmt.sbprintf(b, "<tr id=\"graph-%s\"><td class=\"code name\">", site_slug(input.name))
+		fmt.sbprintf(b, "<tr id=\"graph-%s\"><td class=\"code name\">", foundation.site_slug(input.name))
 		site_module_link(site, b, page, input.name)
 		fmt.sbprintf(b, "</td><td>%s</td><td>", site_graph_kind_names[input.kind])
 		imported := make([dynamic]string, context.temp_allocator)
@@ -633,7 +634,7 @@ site_module_graph_inputs :: proc(site: ^Site) -> []Site_Graph_Input {
 		}
 		if entry, found := site_boot_image_entry(site, item.build.name); found {
 			input.size, input.hash, input.hash_known = entry.size, entry.hash, true
-		} else if data, err := os.read_entire_file(module_path(item.build.name), context.temp_allocator); err == nil {
+		} else if data, err := os.read_entire_file(foundation.module_path(item.build.name), context.temp_allocator); err == nil {
 			input.size, input.hash, input.hash_known = u64(len(data)), blake3.hash(data), true
 		}
 		inputs[index] = input
@@ -689,7 +690,7 @@ site_module_neighbours_write :: proc(site: ^Site, b: ^strings.Builder, page: str
 	strings.write_string(b, "<h2 id=\"neighbours\">Neighbours</h2>\n")
 	neighbours, current := site_module_neighbours_inputs(inputs, name)
 	if current < 0 || len(neighbours) == 1 {
-		fmt.sbprintf(b, "<p>It imports no module, and no module imports it. The <a href=\"%s#graph-%s\">module graph</a> shows it with the other modules that have no edge.</p>\n", site_page_link(site, page, graph_page), site_slug(name))
+		fmt.sbprintf(b, "<p>It imports no module, and no module imports it. The <a href=\"%s#graph-%s\">module graph</a> shows it with the other modules that have no edge.</p>\n", site_page_link(site, page, graph_page), foundation.site_slug(name))
 		return
 	}
 	layout, problem := site_graph_layout(neighbours, 1)
@@ -745,7 +746,7 @@ site_module_graph_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Referenc
 		}
 		strings.write_string(&b, ".</p>\n")
 	}
-	fmt.sbprintf(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"%s\"><code>%s</code></a>, the boot image of the last build and the module files of <code>%s</code>.</p>\n", site_repository_file(site, SITE_MODULES_FILE), SITE_MODULES_FILE, MODULE_BUILD_FOLDER)
+	fmt.sbprintf(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"%s\"><code>%s</code></a>, the boot image of the last build and the module files of <code>%s</code>.</p>\n", site_repository_file(site, SITE_MODULES_FILE), SITE_MODULES_FILE, foundation.MODULE_BUILD_FOLDER)
 	site_page_add(site, Site_Page{path = path, title = "The module graph", description = site_description_cut(fmt.tprintf("The %d modules of %s as a graph: %d imports, in layers by depth, with the identity card of each module.", len(inputs), SITE_SYSTEM_NAME, len(layout.edges))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation, script = SITE_MODULE_GRAPH_SCRIPT})
 	append(entries, Site_Reference_Entry{path = path, title = "The module graph", what = "Each module as a node, each import as an edge, in layers by depth; the identity card of each module.", source = SITE_MODULES_FILE, count = len(layout.edges), kind = .Module})
 	fmt.printfln("modustool: site: the module graph: %d nodes, %d edges, depth %d, %d nodes with no edge; modules with no entry that no module imports: %s", len(inputs), len(layout.edges), depth, layout.band_count, len(unimported) == 0 ? "none" : strings.join(unimported[:], ", ", context.temp_allocator))

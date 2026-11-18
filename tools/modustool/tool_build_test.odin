@@ -3,13 +3,14 @@ package modustool
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // The binary of the development shell finds its sources only from its own
 // place: a binary at another place, at the place of the older command, or
 // a file of a build that runs, has no root.
 @(test)
 tool_root_only_from_the_place_of_the_binary :: proc(t: ^testing.T) {
-	for executable in ([]string{"", "modustool", TOOL_BINARY, "/" + TOOL_BINARY, "/home/someone/modus/" + BUILD_FOLDER + "/modustool", "/home/someone/modus/" + TOOL_BINARY + ".7.next", "/home/someone/modus/" + TOOL_BINARY + "/other", "/nix/store/x-modustool/bin/modustool"}) {
+	for executable in ([]string{"", "modustool", TOOL_BINARY, "/" + TOOL_BINARY, "/home/someone/modus/" + foundation.BUILD_FOLDER + "/modustool", "/home/someone/modus/" + TOOL_BINARY + ".7.next", "/home/someone/modus/" + TOOL_BINARY + "/other", "/nix/store/x-modustool/bin/modustool"}) {
 		_, found := tool_root_of_binary(executable)
 		testing.expectf(t, !found, "%q has no root", executable)
 	}
@@ -45,7 +46,7 @@ tool_compile_command_writes_files_of_the_host_process :: proc(t: ^testing.T) {
 // check, whose binary never compiles itself.
 @(test)
 tool_compile_words_of_the_flake :: proc(t: ^testing.T) {
-	bytes, error := os.read_entire_file(ROOT_MARK, context.temp_allocator)
+	bytes, error := os.read_entire_file(foundation.ROOT_MARK, context.temp_allocator)
 	testing.expect(t, error == nil, "the test runs from the root of the repository")
 	flake := string(bytes)
 	base := TOOL_COMPILE_COMMAND
@@ -107,7 +108,7 @@ tool_binary_is_compiled_again_for_each_change :: proc(t: ^testing.T) {
 	testing.expect(t, !current, "a source changed")
 	testing.expect_value(t, reason, "an input changed")
 	testing.expect(t, os.write_entire_file(source, TOOL_BUILD_TREE_SOURCE) == nil)
-	beside := join(root, "/tools/b.odin")
+	beside := foundation.join(root, "/tools/b.odin")
 	testing.expect(t, os.write_entire_file(beside, "package a\n") == nil)
 	current, reason = decide(root, record_path, binary, inputs)
 	testing.expect(t, !current, "a new file beside a source")
@@ -137,13 +138,13 @@ TOOL_BUILD_TREE_BINARY :: "the binary"
 tool_build_tree :: proc(t: ^testing.T, name: string) -> (root, source, binary, record_path: string) {
 	working, error := os.get_working_directory(context.temp_allocator)
 	testing.expect(t, error == nil)
-	root = join(working, "/", BUILD_FOLDER, "/", name)
-	testing.expect(t, reset_folder(root))
-	testing.expect(t, make_folder(join(root, "/tools")))
-	testing.expect(t, make_folder(join(root, "/", TOOL_BUILD_FOLDER)))
-	source = join(root, "/tools/a.odin")
-	binary = join(root, "/", TOOL_BINARY)
-	record_path = join(root, "/", TOOL_BUILD_RECORD)
+	root = foundation.join(working, "/", foundation.BUILD_FOLDER, "/", name)
+	testing.expect(t, foundation.reset_folder(root))
+	testing.expect(t, foundation.make_folder(foundation.join(root, "/tools")))
+	testing.expect(t, foundation.make_folder(foundation.join(root, "/", TOOL_BUILD_FOLDER)))
+	source = foundation.join(root, "/tools/a.odin")
+	binary = foundation.join(root, "/", TOOL_BINARY)
+	record_path = foundation.join(root, "/", TOOL_BUILD_RECORD)
 	testing.expect(t, os.write_entire_file(source, TOOL_BUILD_TREE_SOURCE) == nil)
 	testing.expect(t, os.write_entire_file(binary, TOOL_BUILD_TREE_BINARY) == nil)
 	return

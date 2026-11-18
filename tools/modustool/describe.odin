@@ -9,6 +9,7 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // The descriptions of the exports of a module come from its source: the
 // description is enough to call a function with no other knowledge of the
@@ -84,11 +85,11 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 	integer_constants := make(map[string]u64, context.temp_allocator)
 	// The structs of all the files first: an export of one file can use a
 	// struct of another file.
-	for path in files_with_suffix(folder, ".odin") or_return {
+	for path in foundation.files_with_suffix(folder, ".odin") or_return {
 		if strings.has_suffix(path, "_test.odin") {
 			continue
 		}
-		source := read_file(path) or_return
+		source := foundation.read_file(path) or_return
 		file := parse_source(path, string(source), &state) or_return
 		budget_request_read(file, &description.budget) or_return
 		integer_constants_read(file, &integer_constants)
@@ -167,7 +168,7 @@ parse_source :: proc(path, source: string, state: ^Describe_State) -> (file: ^as
 	for item in file.imports {
 		full := strings.trim(item.fullpath, "\"")
 		// The folder lives as long as the description, not as one step.
-		folder, in_source_library := source_library_package_folder(full, context.allocator)
+		folder, in_source_library := foundation.source_library_package_folder(full, context.allocator)
 		if !in_source_library {
 			continue
 		}
@@ -222,11 +223,11 @@ imported_structs :: proc(name: string, state: ^Describe_State) -> bool {
 		return known
 	}
 	state.read[name] = true
-	for path in files_with_suffix(folder, ".odin") or_return {
+	for path in foundation.files_with_suffix(folder, ".odin") or_return {
 		if strings.has_suffix(path, "_test.odin") {
 			continue
 		}
-		source := read_file(path) or_return
+		source := foundation.read_file(path) or_return
 		file := ast.new_from_positions(ast.File, {}, {})
 		file.src = string(source)
 		file.fullpath = path
@@ -320,7 +321,7 @@ integer_unit_of_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (i
 		return {}, false
 	}
 	folder, imported := state.imports[library.name]
-	if !imported || folder != SOURCE_FOLDER_CONTRACT + "/value_kinds" {
+	if !imported || folder != foundation.SOURCE_FOLDER_CONTRACT + "/value_kinds" {
 		return {}, false
 	}
 	return value_kinds.integer_unit_of_type_name(selector.field.name)
@@ -365,17 +366,17 @@ table_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (kind: modul
 				continue
 			}
 			if len(call.args) != 1 {
-				return .Table, 0, enum_member_at(module.Direction, value), true, false
+				return .Table, 0, foundation.enum_member_at(module.Direction, value), true, false
 			}
 			record, is_record, record_ok := struct_record(state, call.args[0], true)
-			return .Table, record, enum_member_at(module.Direction, value), true, is_record && record_ok
+			return .Table, record, foundation.enum_member_at(module.Direction, value), true, is_record && record_ok
 		}
 		return
 	}
 	name := name_of(pointer.elem)
 	for form, value in forms {
 		if name == strings.concatenate({"Bytes_To_", form}, context.temp_allocator) {
-			return .Bytes, 0, enum_member_at(module.Direction, value), true, true
+			return .Bytes, 0, foundation.enum_member_at(module.Direction, value), true, true
 		}
 	}
 	return
@@ -1017,10 +1018,10 @@ markdown_of :: proc(docs: ^ast.Comment_Group) -> string {
 		if !strings.has_prefix(token.text, "//") {
 			continue
 		}
-		_, line, _ := markdown_comment_line(token.text)
-		comment = markdown_comment_add(comment, line)
+		_, line, _ := foundation.markdown_comment_line(token.text)
+		comment = foundation.markdown_comment_add(comment, line)
 	}
-	return markdown_comment_end(comment)
+	return foundation.markdown_comment_end(comment)
 }
 
 // text_of gives the documentation text of a comment that a module carries

@@ -8,16 +8,17 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The report of the similarity finder, its two tables, and the command
 // `modustool similarity` (src/md/infrastructure/similarity_finder.md,
 // "12. The commands and the output").
 
-SIMILARITY_OUTPUT_FOLDER :: BUILD_FOLDER + "/similarity"
+SIMILARITY_OUTPUT_FOLDER :: foundation.BUILD_FOLDER + "/similarity"
 SIMILARITY_REPORT_FILE :: SIMILARITY_OUTPUT_FOLDER + "/report.txt"
 SIMILARITY_FAMILIES_FILE :: SIMILARITY_OUTPUT_FOLDER + "/families.tsv"
 SIMILARITY_MEMBERS_FILE :: SIMILARITY_OUTPUT_FOLDER + "/members.tsv"
-SIMILARITY_KEPT_FILE :: TOOL_SOURCE_FOLDER + "/similarity_kept.txt"
+SIMILARITY_KEPT_FILE :: foundation.TOOL_SOURCE_FOLDER + "/similarity_kept.txt"
 
 // The families that the terminal shows; the report file holds each one.
 SIMILARITY_TERMINAL_FAMILIES_MOST :: 30
@@ -27,7 +28,7 @@ SIMILARITY_NEAR_LISTED_MOST :: 20
 
 // The source files that a command of the tool writes: the finder does not
 // read them, as their source is not Odin code of the project.
-SIMILARITY_GENERATED_SOURCES :: [?]string{FONT_OUTPUT}
+SIMILARITY_GENERATED_SOURCES :: [?]string{foundation.FONT_OUTPUT}
 // The first line of a file that a command writes.
 SIMILARITY_GENERATED_MARK :: "// This file is the output of"
 
@@ -36,13 +37,13 @@ SIMILARITY_GENERATED_MARK :: "// This file is the output of"
 // writes.
 similarity_repository_sources :: proc(allocator: mem.Allocator) -> (sources: []Similarity_Source, skipped: []Similarity_Skipped_File, ok: bool) {
 	paths := make([dynamic]string, context.temp_allocator)
-	folders := SOURCE_FOLDERS
+	folders := foundation.SOURCE_FOLDERS
 	for folder in folders {
-		source_files_of_a_folder(folder, &paths) or_return
+		foundation.source_files_of_a_folder(folder, &paths) or_return
 	}
-	source_files_of_a_folder(TOOL_SOURCE_FOLDER, &paths) or_return
+	foundation.source_files_of_a_folder(foundation.TOOL_SOURCE_FOLDER, &paths) or_return
 	copied := make(map[string]bool, context.temp_allocator)
-	lines := manifest_lines(CRYPTOGRAPHY_MANIFEST) or_return
+	lines := foundation.manifest_lines(foundation.CRYPTOGRAPHY_MANIFEST) or_return
 	for fields in lines {
 		if len(fields) > 0 {
 			copied[fields[0]] = true
@@ -54,7 +55,7 @@ similarity_repository_sources :: proc(allocator: mem.Allocator) -> (sources: []S
 	slice.sort(paths[:])
 	for path in paths {
 		if path in copied {
-			append(&not_read, Similarity_Skipped_File{path = strings.clone(path, allocator), reason = "a copy of a work of others: " + CRYPTOGRAPHY_MANIFEST})
+			append(&not_read, Similarity_Skipped_File{path = strings.clone(path, allocator), reason = "a copy of a work of others: " + foundation.CRYPTOGRAPHY_MANIFEST})
 			continue
 		}
 		if _, is_generated := slice.linear_search(generated[:], path); is_generated {
@@ -541,12 +542,12 @@ run_similarity :: proc(args: []string) -> int {
 	case mode == "pair" && len(args) == 3:
 	case:
 		fmt.eprintln(usage_line)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	arena: virtual.Arena
 	if virtual.arena_init_growing(&arena) != nil {
 		fmt.eprintln("modustool: cannot reserve the memory of the similarity finder")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer virtual.arena_destroy(&arena)
 	allocator := virtual.arena_allocator(&arena)
@@ -554,7 +555,7 @@ run_similarity :: proc(args: []string) -> int {
 	read_start := time.tick_now()
 	sources, skipped, read := similarity_repository_sources(allocator)
 	if !read {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	read_time := time.tick_since(read_start)
 	switch mode {
@@ -562,7 +563,7 @@ run_similarity :: proc(args: []string) -> int {
 		path, line, ok := similarity_place_argument(args[1])
 		if !ok {
 			fmt.eprintln(usage_line)
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
 		analysis := similarity_analysis_make(sources, allocator)
 		defer similarity_analysis_destroy(analysis)
@@ -570,7 +571,7 @@ run_similarity :: proc(args: []string) -> int {
 		text, found := similarity_near_text(analysis, path, line)
 		if !found {
 			fmt.eprintln(text)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		fmt.print(text)
 		return 0
@@ -579,7 +580,7 @@ run_similarity :: proc(args: []string) -> int {
 		other_path, other_line, other_ok := similarity_place_argument(args[2])
 		if !first_ok || !other_ok {
 			fmt.eprintln(usage_line)
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
 		analysis := similarity_analysis_make(sources, allocator)
 		defer similarity_analysis_destroy(analysis)
@@ -587,7 +588,7 @@ run_similarity :: proc(args: []string) -> int {
 		text, found := similarity_pair_text(analysis, first_path, first_line, other_path, other_line)
 		if !found {
 			fmt.eprintln(text)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		fmt.print(text)
 		return 0
@@ -597,7 +598,7 @@ run_similarity :: proc(args: []string) -> int {
 		data, error := os.read_entire_file(SIMILARITY_KEPT_FILE, allocator)
 		if error != nil {
 			fmt.eprintfln("modustool: cannot read %s: %v", SIMILARITY_KEPT_FILE, error)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		kept_text = string(data)
 	}
@@ -605,11 +606,11 @@ run_similarity :: proc(args: []string) -> int {
 	defer similarity_analysis_destroy(analysis)
 	if error := os.make_directory_all(SIMILARITY_OUTPUT_FOLDER); error != nil && error != .Exist {
 		fmt.eprintfln("modustool: cannot make %s: %v", SIMILARITY_OUTPUT_FOLDER, error)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	report := similarity_report(analysis, skipped, -1)
 	if !similarity_write_output(SIMILARITY_REPORT_FILE, report) || !similarity_write_output(SIMILARITY_FAMILIES_FILE, similarity_families_table(analysis)) || !similarity_write_output(SIMILARITY_MEMBERS_FILE, similarity_members_table(analysis)) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.print(similarity_report(analysis, skipped, SIMILARITY_TERMINAL_FAMILIES_MOST))
 	fmt.print(similarity_times_text(analysis, read_time))

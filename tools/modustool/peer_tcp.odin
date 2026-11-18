@@ -9,6 +9,7 @@ import "modus:contract/byte_order"
 import "modus:contract/datagram"
 import "modus:support/tcp"
 import "modus:support/web"
+import "modustool:foundation"
 
 // The peer as a TCP client of the process `server` (docs/NETWORK.md, "With
 // the controlled peer"). The tool asks for one case at a time (step Peer);
@@ -362,7 +363,7 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 	case "slow":
 		// 32 connections of one host, 7 kinds in turn, then a page.
 		for index in 0 ..< 32 {
-			add(state, {attack = enum_member_at(Attack, 1 + index % 7)})
+			add(state, {attack = foundation.enum_member_at(Attack, 1 + index % 7)})
 		}
 		client := client_page(true)
 		client.delayed = true

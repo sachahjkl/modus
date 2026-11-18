@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // A text is never cut in silence (docs/ARCHITECTURE.md): the writer of
 // src/library/support/sentence counts the bytes that its buffer does not hold, and its
@@ -13,14 +14,14 @@ import "core:strings"
 // named `writer`: the name that each source of the system gives to its
 // writer today. It cannot see a writer of another name: it reads text, not
 // types.
-TEXT_CUT_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, SOURCE_FOLDER_MODULES}
-TEXT_CUT_WRITER_FOLDER :: SOURCE_FOLDER_SUPPORT + "/sentence"
+TEXT_CUT_CHECKED_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES}
+TEXT_CUT_WRITER_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/sentence"
 
 text_cut_check :: proc() -> bool {
 	files := make([dynamic]string, context.temp_allocator)
 	folders := TEXT_CUT_CHECKED_FOLDERS
 	for folder in folders {
-		source_files_of_a_folder(folder, &files) or_return
+		foundation.source_files_of_a_folder(folder, &files) or_return
 	}
 	found := 0
 	for path in files {
@@ -40,7 +41,7 @@ text_cut_check :: proc() -> bool {
 	if found > 0 {
 		return false
 	}
-	test_passed_print("no source sets the count of a writer or reads its buffer by hand (%d files read)", len(files))
+	foundation.test_passed_print("no source sets the count of a writer or reads its buffer by hand (%d files read)", len(files))
 	return true
 }
 

@@ -4,8 +4,9 @@
 // move of a folder is a change of one line of this file. A path that is
 // written as text in another file is a folder that a check no longer reads
 // after a move, with no error.
-package modustool
+package foundation
 
+import "core:os"
 import "core:strings"
 
 SOURCE_FOLDER_KERNEL :: "src/kernel" // The kernel.
@@ -116,9 +117,18 @@ KERNEL_LIBRARY_FLAG :: "-collection:" + KERNEL_LIBRARY_NAME + "=" + SOURCE_FOLDE
 
 // source_folder_takes_kernel_library says if the compile or the host test
 // of a folder gets the flag of the kernel parts: the kernel, each folder
-// under it, and this tool.
+// under it, and this tool with each of its packages, because a package of
+// the tool that imports another one compiles in the kernel parts that the
+// other one imports.
 source_folder_takes_kernel_library :: proc(folder: string) -> bool {
-	return folder == SOURCE_FOLDER_KERNEL || strings.has_prefix(folder, SOURCE_FOLDER_KERNEL + "/") || folder == TOOL_SOURCE_FOLDER
+	return folder == SOURCE_FOLDER_KERNEL || strings.has_prefix(folder, SOURCE_FOLDER_KERNEL + "/") || source_folder_is_of_the_tool(folder)
+}
+
+// source_folder_is_of_the_tool says if a folder is the folder of the
+// command of the tool or of one of its packages: its compile and its host
+// test get the flag of the source library of the tool.
+source_folder_is_of_the_tool :: proc(folder: string) -> bool {
+	return folder == TOOL_SOURCE_FOLDER || strings.has_prefix(folder, TOOL_SOURCE_FOLDER + "/")
 }
 
 // source_library_package_folder gives the folder of the package that the
@@ -144,6 +154,11 @@ source_library_package_folder :: proc(import_path: string, allocator := context.
 // it, and the readers of the system sources do not resolve it.
 TOOL_LIBRARY_NAME :: "modustool"
 TOOL_IMPORT_START :: TOOL_LIBRARY_NAME + ":"
+// The flag of the compiler for the source library of the tool. Each
+// compile of the tool and each host test of a folder of the tool gives
+// it: flake.nix gives the same words for the first binary and for the
+// derivation of the check.
+TOOL_LIBRARY_FLAG :: "-collection:" + TOOL_LIBRARY_NAME + "=" + TOOL_SOURCE_FOLDER
 
 // tool_library_package_folder gives the folder of the package of the tool
 // that the path of an import line names: "modustool:build" is the folder
@@ -168,4 +183,96 @@ path_from_folder_to_root :: proc(folder: string) -> string {
 		strings.write_string(&path, "../")
 	}
 	return strings.to_string(path)
+}
+
+ROOT_MARK :: "flake.nix"
+
+BUILD_FOLDER :: "build"
+
+// The pictures and other files of the repository that a build reads.
+RESOURCE_FOLDER :: "resources"
+
+DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
+
+// The development log: one folder of pictures per run of `screenshots`. It
+// is beside the repository, not in it: no run replaces the pictures of
+// another run. It is beside the main working tree: a run in a worktree
+// writes there too, not beside the worktree.
+DEVELOPMENT_LOG_NAME :: "kernel-devlog"
+
+// development_log_folder gives the development log beside the main
+// working tree.
+development_log_folder :: proc() -> string {
+	if !os.is_file(".git") {
+		return "../" + DEVELOPMENT_LOG_NAME // The main working tree: .git is a folder.
+	}
+	content, _ := read_file(".git")
+	return development_log_folder_of(string(content))
+}
+
+// development_log_folder_of gives the development log for the content of
+// the file .git. In a worktree, it is "gitdir: <main>/.git/worktrees/<name>".
+development_log_folder_of :: proc(git_file: string) -> string {
+	text := strings.trim_space(git_file)
+	if strings.has_prefix(text, "gitdir: ") {
+		if at := strings.index(text, "/.git/worktrees/"); at > len("gitdir: ") {
+			return join(text[len("gitdir: "):at], "/../", DEVELOPMENT_LOG_NAME)
+		}
+	}
+	return "../" + DEVELOPMENT_LOG_NAME
+}
+
+// The file that declares the kernel operations: the check of their count
+// reads it, and so do the fuzzing and the site.
+OPERATION_SOURCE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
+
+TOOL_SOURCE_FOLDER :: "tools/modustool"
+
+FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
+
+// The table of the roles of the root service (process_roles_check.odin).
+SITE_ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
+
+SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
+
+// site_git_commit reads the commit of the work tree from the files of git,
+// with no host process: .git is a folder, or a file "gitdir: <folder>" in a
+// work tree; HEAD names a reference, which is a file or a line of
+// packed-refs in the common folder.
+site_git_commit :: proc() -> string {
+	read_trimmed :: proc(path: string) -> string {
+		data, err := os.read_entire_file(path, context.temp_allocator)
+		if err != nil {
+			return ""
+		}
+		return strings.trim_space(string(data))
+	}
+	git_folder := ".git"
+	if !os.is_dir(git_folder) {
+		pointer := read_trimmed(".git")
+		if !strings.has_prefix(pointer, "gitdir: ") {
+			return ""
+		}
+		git_folder = pointer[len("gitdir: "):]
+	}
+	head := read_trimmed(strings.concatenate({git_folder, "/HEAD"}, context.temp_allocator))
+	if !strings.has_prefix(head, "ref: ") {
+		return len(head) == 40 ? head : ""
+	}
+	reference := head[len("ref: "):]
+	common := git_folder
+	if relative := read_trimmed(strings.concatenate({git_folder, "/commondir"}, context.temp_allocator)); relative != "" {
+		common = os.is_absolute_path(relative) ? relative : strings.concatenate({git_folder, "/", relative}, context.temp_allocator)
+	}
+	for folder in ([]string{git_folder, common}) {
+		if commit := read_trimmed(strings.concatenate({folder, "/", reference}, context.temp_allocator)); len(commit) == 40 {
+			return commit
+		}
+	}
+	for line in site_lines(read_trimmed(strings.concatenate({common, "/packed-refs"}, context.temp_allocator))) {
+		if strings.has_suffix(line, strings.concatenate({" ", reference}, context.temp_allocator)) && len(line) > 40 {
+			return line[:40]
+		}
+	}
+	return ""
 }

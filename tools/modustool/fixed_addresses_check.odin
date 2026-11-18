@@ -3,17 +3,18 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The fixed ranges have one source: the enumeration Fixed_Range of
 // src/library/contract/fixed_addresses (its comment says why). A constant of another
 // file written as BAND_START + n * SLOT would be a range with no member,
 // which no check of the package sees. So no file of these folders, but the
 // package itself, names BAND_START or SLOT of that package.
-FIXED_ADDRESSES_FOLDER :: SOURCE_FOLDER_CONTRACT + "/fixed_addresses"
+FIXED_ADDRESSES_FOLDER :: foundation.SOURCE_FOLDER_CONTRACT + "/fixed_addresses"
 // The end of the line that imports the package, with its quotes.
-FIXED_ADDRESSES_IMPORT :: "\"" + CONTRACT_IMPORT_START + "fixed_addresses\""
+FIXED_ADDRESSES_IMPORT :: "\"" + foundation.CONTRACT_IMPORT_START + "fixed_addresses\""
 // The kernel too, with its kernel parts: a part can import the package.
-FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, SOURCE_FOLDER_MODULES}
+FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES}
 FIXED_ADDRESSES_PRIVATE_NAMES :: [?]string{"BAND_START", "SLOT"}
 
 fixed_addresses_check :: proc() -> bool {
@@ -21,7 +22,7 @@ fixed_addresses_check :: proc() -> bool {
 	folders := FIXED_ADDRESSES_CHECKED_FOLDERS
 	names := FIXED_ADDRESSES_PRIVATE_NAMES
 	for folder in folders {
-		source_files_of_a_folder(folder, &files) or_return
+		foundation.source_files_of_a_folder(folder, &files) or_return
 	}
 	found := 0
 	for path in files {
@@ -60,7 +61,7 @@ fixed_addresses_check :: proc() -> bool {
 	if found > 0 {
 		return false
 	}
-	test_passed_print("no file outside %s names BAND_START or SLOT (%d files read)", FIXED_ADDRESSES_FOLDER, len(files))
+	foundation.test_passed_print("no file outside %s names BAND_START or SLOT (%d files read)", FIXED_ADDRESSES_FOLDER, len(files))
 	return true
 }
 
@@ -83,24 +84,4 @@ fixed_addresses_import_name :: proc(text: string) -> (name: string, imports: boo
 @(private = "file")
 identifier_byte :: proc(byte: u8) -> bool {
 	return byte == '_' || byte >= 'a' && byte <= 'z' || byte >= 'A' && byte <= 'Z' || byte >= '0' && byte <= '9'
-}
-
-// source_files_of_a_folder appends the .odin files of a folder and of its
-// folders.
-source_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool {
-	entries, err := os.read_all_directory_by_path(folder, context.temp_allocator)
-	if err != nil {
-		fmt.eprintfln("modustool: cannot list %s: %v", folder, err)
-		return false
-	}
-	for entry in entries {
-		path := join(folder, "/", entry.name)
-		switch {
-		case entry.type == .Directory:
-			source_files_of_a_folder(path, files) or_return
-		case strings.has_suffix(entry.name, ".odin"):
-			append(files, path)
-		}
-	}
-	return true
 }

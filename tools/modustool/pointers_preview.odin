@@ -5,6 +5,7 @@ import "modus:support/graphics"
 import "core:fmt"
 import "core:os"
 import "core:time"
+import "modustool:foundation"
 
 // The preview sheet of the theme of the system, for a reader who draws a
 // shape: `modustool pointers preview <file.png>` reads the manifest of the
@@ -41,19 +42,19 @@ pointer_preview_magnification :: proc(size: u32) -> int {
 
 run_pointers_preview :: proc(output: string) -> int {
 	start := time.tick_now()
-	text, read_ok := read_file(SYSTEM_POINTER_MANIFEST)
+	text, read_ok := foundation.read_file(SYSTEM_POINTER_MANIFEST)
 	if !read_ok {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	manifest, problem := manifest_parse(SYSTEM_POINTER_MANIFEST, string(text))
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	file, _, made_problem := pointer_theme_make(manifest, "")
 	if made_problem != "" {
 		fmt.eprintfln("modustool: %s: %s", SYSTEM_POINTER_MANIFEST, made_problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	sizes := manifest.sizes[:]
 	form_width := POINTER_PREVIEW_GAP
@@ -141,11 +142,11 @@ run_pointers_preview :: proc(output: string) -> int {
 	}
 	data, encoded := mark_pixels_png_quick(output, width, height, 3, rgb)
 	if !encoded {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if err := os.write_entire_file(output, data); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", output, err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: pointers: wrote %s (%d by %d pixels): %d shapes in %d forms at the sizes %v, in %.1f ms", output, width, height, len(manifest.shapes), len(pointer_pictures.Pointer_Form), sizes, time.duration_milliseconds(time.tick_since(start)))
 	return 0

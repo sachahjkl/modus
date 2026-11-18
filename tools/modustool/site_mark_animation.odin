@@ -30,6 +30,7 @@ import "core:fmt"
 import "core:image/png"
 import "core:strings"
 import "modus:support/mark"
+import "modustool:foundation"
 
 SITE_MARK_ANIMATION_SCRIPT :: "mark_animation.js"
 // The icon of the tab that the script draws during an animation: the size
@@ -237,11 +238,11 @@ site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_ad
 	// What the site adds: the addresses of the three tile maps, and where
 	// a sprite is in the tile map of the icon of the tab and in that icon.
 	write(&b, ",\"sheets\":{\"dark\":")
-	site_json_string(&b, sheet_addresses[0])
+	foundation.site_json_string(&b, sheet_addresses[0])
 	write(&b, ",\"light\":")
-	site_json_string(&b, sheet_addresses[1])
+	foundation.site_json_string(&b, sheet_addresses[1])
 	write(&b, ",\"icon\":")
-	site_json_string(&b, sheet_addresses[2])
+	foundation.site_json_string(&b, sheet_addresses[2])
 	icon_layout := tile_maps.icon.layout
 	write(&b, "},\"icon\":{\"size\":")
 	number(&b, SITE_MARK_ANIMATION_ICON_SIZE)

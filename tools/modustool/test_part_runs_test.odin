@@ -6,6 +6,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:time"
+import "modustool:foundation"
 
 // The ports of these tests are under 1024: the system never gives one of
 // them to a bind of port 0, so no machine of a test that runs at the same
@@ -118,7 +119,7 @@ part_that_notes_its_run :: proc(_: ^Test_Part_Run) -> bool {
 @(private = "file")
 part_that_waits_for_the_failure :: proc(_: ^Test_Part_Run) -> bool {
 	for start := time.tick_now(); !sync.atomic_load(&pool_failure_seen); {
-		if time.tick_since(start) > HANG_BOUND {
+		if time.tick_since(start) > foundation.HANG_BOUND {
 			return false
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
@@ -202,20 +203,6 @@ the_pool_waits_for_the_parts_that_run :: proc(t: ^testing.T) {
 	}
 }
 
-// The count of processors: NIX_BUILD_CORES bounds it when it is a number
-// above 0; any other text leaves the count of the host.
-@(test)
-the_sandbox_bounds_the_processors :: proc(t: ^testing.T) {
-	testing.expect_value(t, test_processors_of(16, ""), 16)
-	testing.expect_value(t, test_processors_of(16, "0"), 16)
-	testing.expect_value(t, test_processors_of(16, "-4"), 16)
-	testing.expect_value(t, test_processors_of(16, "four"), 16)
-	testing.expect_value(t, test_processors_of(16, "4x"), 16)
-	testing.expect_value(t, test_processors_of(16, "1"), 1)
-	testing.expect_value(t, test_processors_of(16, "8"), 8)
-	testing.expect_value(t, test_processors_of(16, "64"), 16)
-}
-
 // A picture name that a part took is refused to another part, and given
 // again to the same part.
 @(test)
@@ -260,7 +247,7 @@ PATTERN_NUMBERS :: 40
 @(private = "file")
 part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 	paths := make([dynamic][2]string, context.temp_allocator)
-	files, listed := files_with_suffix(TOOL_SOURCE_FOLDER, ".odin")
+	files, listed := foundation.files_with_suffix(foundation.TOOL_SOURCE_FOLDER, ".odin")
 	testing.expect(t, listed, "the test runs from the root of the repository")
 	for path in files {
 		if strings.has_suffix(path, "_test.odin") {
@@ -311,7 +298,7 @@ the_files_of_the_parts_are_distinct :: proc(t: ^testing.T) {
 	testing.expect_value(t, paths_first_repeat(paths), "")
 	// The data disk of `run` is never the disk of a part.
 	for path in paths {
-		whole := strings.concatenate({BUILD_FOLDER, path[1]}, context.temp_allocator)
+		whole := strings.concatenate({foundation.BUILD_FOLDER, path[1]}, context.temp_allocator)
 		testing.expectf(t, whole != DATA_DISK && whole != SCRATCH_DISK, "%s is a disk of a command", path[0])
 	}
 }

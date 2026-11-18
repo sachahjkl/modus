@@ -3,6 +3,7 @@ package modustool
 import "core:image/png"
 import "core:os"
 import "core:testing"
+import "modustool:foundation"
 
 // A picture of squares of two colors with a gradient line: a few distinct
 // rows, as on a screen. In context.allocator: the caller deletes it.
@@ -94,9 +95,9 @@ png_data_is_stored_reads_the_first_block :: proc(t: ^testing.T) {
 // that is not a PNG file stops the run.
 @(test)
 pictures_compress_converts_only_stored_files :: proc(t: ^testing.T) {
-	folder :: BUILD_FOLDER + "/test_picture_compression"
+	folder :: foundation.BUILD_FOLDER + "/test_picture_compression"
 	_ = os.remove_all(folder)
-	testing.expect(t, make_folder(folder + "/inner"))
+	testing.expect(t, foundation.make_folder(folder + "/inner"))
 	defer os.remove_all(folder)
 	pixels := test_picture_pixels(64, 48, 3)
 	defer delete(pixels)

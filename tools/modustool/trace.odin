@@ -5,6 +5,7 @@ import debug_object "modus:contract/debug_object"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // The names of the procedures of a stack trace. A process that has the
 // debug image names each frame itself: "fault::three + 0x8 in fault
@@ -50,7 +51,7 @@ trace_check :: proc(line: string, names: string) -> (found: string, ok: bool) {
 		if !parsed {
 			return fmt.tprintf("the frame \"%s\" has no offset", frame), false
 		}
-		object, read := read_file(debug_object_path(parts[0]))
+		object, read := foundation.read_file(debug_object_path(parts[0]))
 		if !read {
 			return fmt.tprintf("no debug object of the module %s", parts[0]), false
 		}
@@ -62,7 +63,7 @@ trace_check :: proc(line: string, names: string) -> (found: string, ok: bool) {
 }
 
 // The source file of the module fault, as its debug object names it.
-FAULT_SOURCE_FILE :: DEMONSTRATION_MODULE_SOURCES + "fault/main.odin"
+FAULT_SOURCE_FILE :: foundation.DEMONSTRATION_MODULE_SOURCES + "fault/main.odin"
 
 // source_lines_of_procedure gives the first and the last line (from 1) of a
 // procedure of the top level of an Odin source: the line that starts with
@@ -98,9 +99,9 @@ test_debug_objects :: proc() -> bool {
 		fmt.eprintfln(format, ..args)
 		return false
 	}
-	object := read_file(debug_object_path("fault")) or_return
-	elf := read_file(join(MODULE_BUILD_FOLDER, "/fault/linked.elf")) or_return
-	module_file := read_file(module_path("fault")) or_return
+	object := foundation.read_file(debug_object_path("fault")) or_return
+	elf := foundation.read_file(foundation.join(foundation.MODULE_BUILD_FOLDER, "/fault/linked.elf")) or_return
+	module_file := foundation.read_file(foundation.module_path("fault")) or_return
 	if fault := debug_object.check(object); fault != .None {
 		return fail("%s", debug_object.fault_sentences[fault])
 	}
@@ -129,7 +130,7 @@ test_debug_objects :: proc() -> bool {
 	}
 	// The lines of three come from the source itself: a line added above
 	// the procedure moves them, and the check moves with them.
-	source := read_file(FAULT_SOURCE_FILE) or_return
+	source := foundation.read_file(FAULT_SOURCE_FILE) or_return
 	first_line, last_line, has_lines := source_lines_of_procedure(string(source), "three")
 	if !has_lines {
 		return fail("%s has no procedure three", FAULT_SOURCE_FILE)
@@ -165,7 +166,7 @@ test_debug_objects :: proc() -> bool {
 	// The source file of the first instruction has the hash of the file
 	// of the repository.
 	source_of_line, has_source := debug_object.source_line_of(object, three.start)
-	source_file := read_file(FAULT_SOURCE_FILE) or_return
+	source_file := foundation.read_file(FAULT_SOURCE_FILE) or_return
 	if !has_source || source_of_line.path != FAULT_SOURCE_FILE || !source_of_line.content_hash_known || source_of_line.content_hash != blake3.hash(source_file) {
 		return fail("the source file of fault::three is %s, and its hash is not the hash of " + FAULT_SOURCE_FILE, source_of_line.path)
 	}
@@ -176,7 +177,7 @@ test_debug_objects :: proc() -> bool {
 		return fail("the parameter address of fault::three is not a parameter of the type uintptr of 8 bytes: found %v, %v %v", has_address, address, address_type)
 	}
 	parts, _ := debug_object.tables(object)
-	test_passed_print("the debug object of fault names fault::three at %x to %x, its first instruction at %s:%d; %d procedures, %d files, %d rows; a changed object is refused", three.start, three.start + three.size, first.file, first.line, len(parts.procedures), len(parts.files) - 1, len(parts.lines))
-	test_passed_print("the debug object of fault describes its module only, has the hash of " + FAULT_SOURCE_FILE + ", and gives the parameter address of fault::three as a uintptr, place %v, register %d, offset %d; %d types, %d globals, %d variables in %d ranges", address.location, address.register, address.offset, len(parts.types) - 1, len(parts.globals), len(parts.variables), len(parts.ranges))
+	foundation.test_passed_print("the debug object of fault names fault::three at %x to %x, its first instruction at %s:%d; %d procedures, %d files, %d rows; a changed object is refused", three.start, three.start + three.size, first.file, first.line, len(parts.procedures), len(parts.files) - 1, len(parts.lines))
+	foundation.test_passed_print("the debug object of fault describes its module only, has the hash of " + FAULT_SOURCE_FILE + ", and gives the parameter address of fault::three as a uintptr, place %v, register %d, offset %d; %d types, %d globals, %d variables in %d ranges", address.location, address.register, address.offset, len(parts.types) - 1, len(parts.globals), len(parts.variables), len(parts.ranges))
 	return true
 }

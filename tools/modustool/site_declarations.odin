@@ -15,10 +15,11 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:odin/tokenizer"
 import "core:strings"
+import "modustool:foundation"
 
 // The folders whose declarations the index holds: the sources of the system.
 // The tool is not read: its names are not names of the system.
-SITE_DECLARATION_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, SOURCE_FOLDER_MODULES}
+SITE_DECLARATION_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES}
 // The id of the card of a declaration on a page is this prefix and the
 // place of the declaration in the index; its first sentence has the suffix
 // of the type cards too, so that a screen reader reads it with the link.
@@ -287,8 +288,8 @@ site_declarations_of_file :: proc(path, source: string) -> (found: []Site_Declar
 		file.fullpath = path
 		reader := parser.default_parser()
 		// The command reports a file that the parser refuses by its count.
-		reader.err = site_code_quiet_error
-		reader.warn = site_code_quiet_error
+		reader.err = foundation.site_code_quiet_error
+		reader.warn = foundation.site_code_quiet_error
 		if !parser.parse_file(&reader, file) || file.syntax_error_count > 0 {
 			return nil, false
 		}
@@ -321,7 +322,7 @@ site_declaration_index_fill :: proc(index: ^Site_Declaration_Index, names: []str
 		site_odin_files_under(folder, &paths)
 	}
 	for path in paths {
-		source, read_ok := site_read_quiet(path)
+		source, read_ok := foundation.site_read_quiet(path)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", path)
 			return false
@@ -384,11 +385,11 @@ site_declaration_span_read :: proc(code: string) -> (span: Site_Declaration_Span
 				return {}, false
 			}
 		}
-		if !site_is_identifier(span.qualifier) {
+		if !foundation.site_is_identifier(span.qualifier) {
 			return {}, false
 		}
 	}
-	if !site_is_identifier(text) || site_is_odin_word(text) {
+	if !foundation.site_is_identifier(text) || site_is_odin_word(text) {
 		return {}, false
 	}
 	span.name = text
@@ -597,7 +598,7 @@ site_declaration_export_page :: proc(site: ^Site, declaration: Site_Declaration)
 		}
 		for export in item.description.exports {
 			if export.name == declaration.name {
-				return strings.concatenate({item.page, "#export-", site_slug(export.name)}, context.temp_allocator)
+				return strings.concatenate({item.page, "#export-", foundation.site_slug(export.name)}, context.temp_allocator)
 			}
 		}
 	}
@@ -617,7 +618,7 @@ site_declaration_address :: proc(site: ^Site, from_page: string, declaration: Si
 // site_declaration_type_key gives the key of the type card of a declaration
 // that is a type of the contract, or "".
 site_declaration_type_key :: proc(site: ^Site, declaration: Site_Declaration) -> string {
-	if declaration.kind != .Type || !strings.has_prefix(declaration.folder, SOURCE_FOLDER_CONTRACT + "/") {
+	if declaration.kind != .Type || !strings.has_prefix(declaration.folder, foundation.SOURCE_FOLDER_CONTRACT + "/") {
 		return ""
 	}
 	key := strings.concatenate({declaration.package_name, ".", declaration.name}, context.temp_allocator)
@@ -640,7 +641,7 @@ site_declaration_reference :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 	}
 	id := site_declaration_card_id(place)
 	strings.write_string(b, "<a class=\"declaration-reference\" href=\"")
-	site_escape(b, site_declaration_address(site, from_page, declaration))
+	foundation.site_escape(b, site_declaration_address(site, from_page, declaration))
 	fmt.sbprintf(b, "\" data-declaration-card=\"%s\" aria-describedby=\"%s%s\">", id, id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
 	site_value(b, site_declaration_value_kinds[declaration.kind], code, true)
 	strings.write_string(b, "</a>")
@@ -652,14 +653,14 @@ site_declaration_reference :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 site_declaration_link_in_code :: proc(site: ^Site, b: ^strings.Builder, from_page, text: string, class: Site_Code_Class, place: int) {
 	declaration := site.declarations.declarations[place]
 	strings.write_string(b, "<a class=\"declaration-link\" href=\"")
-	site_escape(b, site_declaration_address(site, from_page, declaration))
+	foundation.site_escape(b, site_declaration_address(site, from_page, declaration))
 	strings.write_string(b, "\">")
 	if class != .None && site_code_classes[class].name != "" {
 		fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
-		site_escape(b, text)
+		foundation.site_escape(b, text)
 		strings.write_string(b, "</span>")
 	} else {
-		site_escape(b, text)
+		foundation.site_escape(b, text)
 	}
 	strings.write_string(b, "</a>")
 }
@@ -705,13 +706,13 @@ site_code_span_is_odin :: proc(code: string) -> bool {
 		}
 		// "NAME=value" with no space is a setting of a command or of the
 		// environment, not an assignment of the code.
-		if text[index] == '=' && index > 0 && index + 1 < len(text) && site_is_word_byte(text[index - 1]) && site_is_word_byte(text[index + 1]) {
+		if text[index] == '=' && index > 0 && index + 1 < len(text) && foundation.site_is_word_byte(text[index - 1]) && foundation.site_is_word_byte(text[index + 1]) {
 			return false
 		}
 	}
 	labels := 0
 	for index in 1 ..< len(text) {
-		if text[index] == ':' && index + 1 < len(text) && text[index + 1] == ' ' && site_is_word_byte(text[index - 1]) {
+		if text[index] == ':' && index + 1 < len(text) && text[index + 1] == ' ' && foundation.site_is_word_byte(text[index - 1]) {
 			labels += 1
 		}
 	}
@@ -784,7 +785,7 @@ site_declaration_code_span :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 	links := Site_Code_Links{site = site, from_page = from_page, context_folders = context_folders}
 	strings.write_string(b, "<code class=\"code-inline\">")
 	if !site_code_odin(site, b, code, "", &links) {
-		site_escape(b, code)
+		foundation.site_escape(b, code)
 	}
 	strings.write_string(b, "</code>")
 	return true
@@ -801,7 +802,7 @@ site_declaration_cards_html :: proc(site: ^Site, from_page, body: string) -> str
 			continue
 		}
 		seen[id] = true
-		place := site_digits_value(id[len(SITE_DECLARATION_CARD_PREFIX):])
+		place := foundation.site_digits_value(id[len(SITE_DECLARATION_CARD_PREFIX):])
 		if place < 0 || place >= len(site.declarations.declarations) {
 			continue // The check of the page names it.
 		}
@@ -824,25 +825,25 @@ site_declaration_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page:
 	id := site_declaration_card_id(place)
 	address := site_declaration_address(site, from_page, declaration)
 	fmt.sbprintf(b, "<div class=\"declaration-card\" id=\"%s\" popover>\n<p class=\"declaration-card-title\"><a href=\"", id)
-	site_escape(b, address)
+	foundation.site_escape(b, address)
 	strings.write_string(b, "\">")
 	site_value(b, site_declaration_value_kinds[declaration.kind], declaration.name, true)
 	strings.write_string(b, "</a> <span class=\"declaration-card-kind\">")
-	site_escape(b, fmt.tprintf("%s of the package %s", site_declaration_kind_names[declaration.kind], declaration.package_name))
+	foundation.site_escape(b, fmt.tprintf("%s of the package %s", site_declaration_kind_names[declaration.kind], declaration.package_name))
 	strings.write_string(b, "</span></p>\n<pre class=\"declaration-card-signature\"><code>")
 	if !site_code_odin(site, b, declaration.signature, "", nil) {
-		site_escape(b, declaration.signature)
+		foundation.site_escape(b, declaration.signature)
 	}
 	fmt.sbprintf(b, "</code></pre>\n<p class=\"declaration-card-summary\" id=\"%s%s\">", id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
 	if declaration.first_sentence != "" {
-		site_escape(b, site_source_comment_plain(site, declaration.first_sentence))
+		foundation.site_escape(b, site_source_comment_plain(site, declaration.first_sentence))
 		strings.write_byte(b, '.')
 	} else {
-		site_escape(b, fmt.tprintf("A %s with no comment in its source.", site_declaration_kind_names[declaration.kind]))
+		foundation.site_escape(b, fmt.tprintf("A %s with no comment in its source.", site_declaration_kind_names[declaration.kind]))
 	}
 	strings.write_string(b, "</p>\n<p class=\"declaration-card-place\"><a href=\"")
-	site_escape(b, fmt.tprintf("%s#L%d", site_repository_file(site, declaration.file), declaration.line))
+	foundation.site_escape(b, fmt.tprintf("%s#L%d", site_repository_file(site, declaration.file), declaration.line))
 	strings.write_string(b, "\">")
-	site_escape(b, fmt.tprintf("%s:%d", declaration.file, declaration.line))
+	foundation.site_escape(b, fmt.tprintf("%s:%d", declaration.file, declaration.line))
 	strings.write_string(b, "</a></p>\n</div>\n")
 }

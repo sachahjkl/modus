@@ -4,6 +4,7 @@ import "core:testing"
 import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // The list "**Statuses**" of a comment: a comment with no list, a list with
 // no line, a name that is no status, the status Ok, a code mark with no end
@@ -398,7 +399,7 @@ the_oracles_of_the_planted_steps :: proc(t: ^testing.T) {
 a_release_refuses_the_modules_of_a_test_image :: proc(t: ^testing.T) {
 	module_bytes := []u8{1, 2, 3}
 	testing.expect(t, release_test_module_problem(module_bytes, "bytes") != "", "bytes that are no boot image are taken")
-	for name in ([]string{OPERATION_FUZZING_MODULE, OPERATION_SEQUENCE_RUNNER_MODULE}) {
+	for name in ([]string{foundation.OPERATION_FUZZING_MODULE, foundation.OPERATION_SEQUENCE_RUNNER_MODULE}) {
 		files := []Image_File{{name = "root", file = module_bytes}, {name = name, file = module_bytes}}
 		image := boot_image_encode(files, len(files))
 		testing.expectf(t, release_test_module_problem(image, "an image") != "", "an image with %s is taken", name)
@@ -412,15 +413,15 @@ a_release_refuses_the_modules_of_a_test_image :: proc(t: ^testing.T) {
 @(test)
 the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testing.T) {
 	found := 0
-	for build in module_builds {
+	for build in foundation.module_builds {
 		if build.only_in_image == "" {
 			continue
 		}
 		found += 1
-		testing.expectf(t, build.name == OPERATION_FUZZING_MODULE || build.name == OPERATION_SEQUENCE_RUNNER_MODULE, "%s is in one image only", build.name)
-		testing.expect_value(t, build.only_in_image, BOOT_IMAGE_OPERATION_SEQUENCES)
-		testing.expect(t, !module_in_boot_image(build), "a module of one image is in the boot image")
-		testing.expect(t, module_in_a_boot_image(build), "a module of one image is in no image")
+		testing.expectf(t, build.name == foundation.OPERATION_FUZZING_MODULE || build.name == foundation.OPERATION_SEQUENCE_RUNNER_MODULE, "%s is in one image only", build.name)
+		testing.expect_value(t, build.only_in_image, foundation.BOOT_IMAGE_OPERATION_SEQUENCES)
+		testing.expect(t, !foundation.module_in_boot_image(build), "a module of one image is in the boot image")
+		testing.expect(t, foundation.module_in_a_boot_image(build), "a module of one image is in no image")
 	}
 	testing.expect_value(t, found, 2)
 }

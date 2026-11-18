@@ -8,6 +8,7 @@ import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // The corpus of the kernel operations (src/md/infrastructure/kernel_fuzzing.md,
 // "The corpus of the operations"): the folder `operations` of the corpus of
@@ -490,17 +491,17 @@ operation_regression_add :: proc(folder: string) -> int {
 	life, signature, problem := operation_finding_life_read(folder)
 	if problem != "" {
 		fmt.eprintfln("modustool: fuzz regression operations: %s", problem)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	defer operation_life_free(life)
 	defer delete(signature)
 	if len(signature) > OPERATION_REGRESSION_SIGNATURE_BYTES_MOST {
 		fmt.eprintfln("modustool: fuzz regression operations: the signature has %d bytes, past %d", len(signature), OPERATION_REGRESSION_SIGNATURE_BYTES_MOST)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	state := operation_qemu_open()
 	if state == nil {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer operation_qemu_close(state)
 	machine := operation_qemu_machine(state)
@@ -508,14 +509,14 @@ operation_regression_add :: proc(folder: string) -> int {
 	switch {
 	case !outcome.booted:
 		fmt.eprintfln("modustool: fuzz regression operations: %d machines in a row did not reach the line \"%s\": an error of the build", outcome.boots, OPERATION_MAILBOX_LINE)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	case outcome.tool_error:
 		fmt.eprintfln("modustool: fuzz regression operations: an error of the tool: %s", outcome.fault.text)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	case outcome.faulting >= 0:
 		fmt.eprintfln("modustool: fuzz regression operations: %s still breaks an oracle on the kernel that ships, at its sequence %d (%s): fix the fault first", folder, outcome.faulting, outcome.fault.signature)
 		fmt.eprintfln("modustool:   %s", outcome.fault.text)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	last := new(operation_sequence.Sequence)
 	defer free(last)
@@ -523,18 +524,18 @@ operation_regression_add :: proc(folder: string) -> int {
 	expectations, answer_problem := operation_step_expectations_of(last, state.results)
 	if answer_problem != "" {
 		fmt.eprintfln("modustool: fuzz regression operations: %s", answer_problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer delete(expectations)
 	bytes, written := operation_regression_write({signature = signature, life = life, expectations = expectations})
 	if !written {
 		fmt.eprintln("modustool: fuzz regression operations: the life passes the bounds of a regression input")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer delete(bytes)
 	path, stored := fuzz_input_write(OPERATION_REGRESSION_FOLDER, bytes)
 	if !stored {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	state.part.passed = true
 	fmt.printfln("modustool: fuzz regression operations: the regression input %s of %s, %d sequences; the last sequence must get:", path, signature, len(life))

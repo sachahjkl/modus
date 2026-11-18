@@ -14,6 +14,7 @@ import "modus:contract/system_description"
 import crypto "modus:support/cryptography/compatibility_crypto"
 import "modus:support/cryptography/ed25519"
 import "modus:support/cryptography/sha2"
+import "modustool:foundation"
 
 // The release image (src/md/infrastructure/release_image.md): the disk
 // image that a release publishes, its checksum list, and the release
@@ -30,10 +31,10 @@ import "modus:support/cryptography/sha2"
 // The folder of the published files, and the folder of the disk before
 // its compression.
 RELEASE_OUTPUT_FOLDER :: "dist"
-RELEASE_DISK_FOLDER :: BUILD_FOLDER + "/release"
+RELEASE_DISK_FOLDER :: foundation.BUILD_FOLDER + "/release"
 // The section of the release in CHANGELOG.md, for the notes of the
 // published release.
-RELEASE_NOTES_FILE :: BUILD_FOLDER + "/release_notes.md"
+RELEASE_NOTES_FILE :: foundation.BUILD_FOLDER + "/release_notes.md"
 RELEASE_CHECKSUM_FILE_NAME :: "SHA256SUMS.txt"
 RELEASE_SIGNATURE_SUFFIX :: ".sig"
 RELEASE_IMAGE_ARCHITECTURE :: "x86_64"
@@ -50,15 +51,15 @@ RELEASE_SIGNATURE_CONTEXT :: "modus release checksums 1\n"
 RELEASE_SIGNING_KEY_FILE_NAME :: "release_signing_key"
 // The public key that a reader verifies a release with. The release
 // command refuses a release signing key with another public key.
-RELEASE_PUBLIC_KEY_FILE :: RESOURCE_FOLDER + "/keys/" + RELEASE_SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX
+RELEASE_PUBLIC_KEY_FILE :: foundation.RESOURCE_FOLDER + "/keys/" + RELEASE_SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX
 RELEASE_KEY_SIZE :: ed25519.PUBLIC_KEY_SIZE // A seed has the same size.
 // The certificate of the firmware signing key of the publisher, which a
 // principal enrols in the firmware for Secure Boot. The release command
 // refuses a key folder with another certificate.
-RELEASE_FIRMWARE_CERTIFICATE_FILE :: RESOURCE_FOLDER + "/keys/" + FIRMWARE_CERTIFICATE_FILE_NAME
+RELEASE_FIRMWARE_CERTIFICATE_FILE :: foundation.RESOURCE_FOLDER + "/keys/" + FIRMWARE_CERTIFICATE_FILE_NAME
 // The release volume: the main boot image with its boot program signed
 // for Secure Boot. Only `release image` builds it.
-BOOT_VOLUME_RELEASE :: BUILD_FOLDER + "/boot_volume_release.img"
+BOOT_VOLUME_RELEASE :: foundation.BUILD_FOLDER + "/boot_volume_release.img"
 // The module that the kernel starts first, under this name in each boot
 // image.
 ROOT_SERVICE_MODULE :: "root"
@@ -134,8 +135,8 @@ release_image_file_name :: proc(release_number: string) -> string {
 }
 
 release_files_of :: proc(folder, release_number: string) -> Release_Files {
-	checksum_path := join(folder, "/", RELEASE_CHECKSUM_FILE_NAME)
-	return {image_path = join(folder, "/", release_image_file_name(release_number)), checksum_path = checksum_path, signature_path = join(checksum_path, RELEASE_SIGNATURE_SUFFIX)}
+	checksum_path := foundation.join(folder, "/", RELEASE_CHECKSUM_FILE_NAME)
+	return {image_path = foundation.join(folder, "/", release_image_file_name(release_number)), checksum_path = checksum_path, signature_path = foundation.join(checksum_path, RELEASE_SIGNATURE_SUFFIX)}
 }
 
 // release_boot_volume gives the release volume: the main boot image, the
@@ -327,7 +328,7 @@ release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
 	}
 	for &entry in modules {
 		name := system_description.name_of(&entry.name)
-		for build in module_builds {
+		for build in foundation.module_builds {
 			if build.only_in_image != "" && build.name == name {
 				return fmt.tprintf("%s holds the module %s, which only the boot image of a test holds: a release never publishes it", image_name, name)
 			}
@@ -435,7 +436,7 @@ repository_license_read :: proc() -> (license: string, ok: bool) {
 	if read_error != nil {
 		return "", false
 	}
-	lines := site_lines(string(text))
+	lines := foundation.site_lines(string(text))
 	if len(lines) == 0 {
 		return "", false
 	}
@@ -665,13 +666,13 @@ release_disk_partition :: proc(disk: []u8) -> (partition: []u8, problem: string)
 // the checksum list, and its release signature with the seed. The disk
 // before its compression stays in disk_folder.
 release_files_write :: proc(volume_path, release_number, disk_folder, output_folder: string, release_seed: []u8, packaging: Release_Packaging) -> (files: Release_Files, ok: bool) {
-	build_image := read_file(BOOT_IMAGE) or_return
-	kernel_module := read_file(module_path(system_description.KERNEL_ENTRY_NAME)) or_return
+	build_image := foundation.read_file(BOOT_IMAGE) or_return
+	kernel_module := foundation.read_file(foundation.module_path(system_description.KERNEL_ENTRY_NAME)) or_return
 	if problem := release_volume_problem(volume_path, packaging, build_image, blake3.hash(kernel_module)); problem != "" {
 		fmt.eprintfln("modustool: release: %s", problem)
 		return
 	}
-	volume := read_file(volume_path) or_return
+	volume := foundation.read_file(volume_path) or_return
 	disk, encoded := release_disk_encode(volume)
 	if !encoded {
 		fmt.eprintfln("modustool: release: %s is not a whole count of sectors of %d bytes", volume_path, DISK_SECTOR_SIZE)
@@ -682,19 +683,19 @@ release_files_write :: proc(volume_path, release_number, disk_folder, output_fol
 		fmt.eprintfln("modustool: release: the disk of %s does not read back as the volume: %s", volume_path, disk_problem)
 		return
 	}
-	make_folder(disk_folder) or_return
+	foundation.make_folder(disk_folder) or_return
 	// The folder is emptied: the workflow publishes each file of it, and a
 	// file of an older release must not go with this one.
-	reset_folder(output_folder) or_return
+	foundation.reset_folder(output_folder) or_return
 	image_name := release_image_file_name(release_number)
-	disk_path := join(disk_folder, "/", strings.trim_suffix(image_name, RELEASE_COMPRESSED_SUFFIX))
+	disk_path := foundation.join(disk_folder, "/", strings.trim_suffix(image_name, RELEASE_COMPRESSED_SUFFIX))
 	if err := os.write_entire_file(disk_path, disk); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", disk_path, err)
 		return
 	}
 	files = release_files_of(output_folder, release_number)
-	run([]string{"zstd", RELEASE_COMPRESSION_LEVEL, "-T0", "-q", "-o", files.image_path, disk_path}) or_return
-	compressed := read_file(files.image_path) or_return
+	foundation.run([]string{"zstd", RELEASE_COMPRESSION_LEVEL, "-T0", "-q", "-o", files.image_path, disk_path}) or_return
+	compressed := foundation.read_file(files.image_path) or_return
 	checksum_list := release_checksum_list_text(image_name, compressed)
 	signature_text := release_sign(release_seed, transmute([]u8)checksum_list) or_return
 	public_key := public_key_of_seed(release_seed) or_return
@@ -776,7 +777,7 @@ key_folder_of :: proc(signing_key_path: string) -> string {
 // the key folder of SYSTEM_SIGNING_KEY, with the rules of a private key
 // file.
 release_signing_key_read :: proc() -> (seed: [RELEASE_KEY_SIZE]u8, ok: bool) {
-	path := join(key_folder_of(os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator)), "/", RELEASE_SIGNING_KEY_FILE_NAME)
+	path := foundation.join(key_folder_of(os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator)), "/", RELEASE_SIGNING_KEY_FILE_NAME)
 	if path_inside_repository(path) {
 		fmt.eprintfln("modustool: release: %s is inside the repository: the private key of the publisher of the system stays outside it", path)
 		return
@@ -788,7 +789,7 @@ release_signing_key_read :: proc() -> (seed: [RELEASE_KEY_SIZE]u8, ok: bool) {
 	if !private_key_file_check(path) {
 		return
 	}
-	data := read_file(path) or_return
+	data := foundation.read_file(path) or_return
 	defer crypto.zero_explicit(raw_data(data), len(data))
 	decoded, valid := release_key_decode(string(data))
 	if !valid {
@@ -840,11 +841,11 @@ release_image_command :: proc() -> int {
 	// to the test keys here.
 	if os.get_env(SIGNING_KEY_VARIABLE, context.temp_allocator) == "" {
 		fmt.eprintfln("modustool: release: %s names no signing key: a release is signed by the keys of the publisher of the system, never by the test keys", SIGNING_KEY_VARIABLE)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	signing_key, signing_key_found := signing_key_read()
 	if !signing_key_found {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// is_test compares the public key with the test public key, whatever
 	// the path: a copy of the test seed in a key folder is refused too.
@@ -852,56 +853,56 @@ release_image_command :: proc() -> int {
 	ed25519.private_key_clear(&signing_key.private_key)
 	if signed_by_test_key {
 		fmt.eprintfln("modustool: release: %s is the test signing key, whose private key is published: a release never uses it", signing_key.path)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	firmware_key, firmware_key_found := firmware_signing_key_find()
 	if !firmware_key_found {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if firmware_key.is_test {
 		fmt.eprintfln("modustool: release: %s is the test firmware signing key, whose private key is published: a release never uses it", firmware_key.key_path)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The certificate that a principal enrols must be the one that signs.
-	key_folder_certificate, key_folder_certificate_read := read_file(firmware_key.certificate_path)
+	key_folder_certificate, key_folder_certificate_read := foundation.read_file(firmware_key.certificate_path)
 	repository_certificate, repository_certificate_error := os.read_entire_file(RELEASE_FIRMWARE_CERTIFICATE_FILE, context.temp_allocator)
 	if !key_folder_certificate_read {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// is_test of the firmware signing key says only where the key was
 	// found: a copy of the test pair in a key folder is found by its bytes.
-	test_certificate := read_file(TEST_FIRMWARE_CERTIFICATE_FILE) or_else nil
-	test_firmware_key := read_file(TEST_FIRMWARE_SIGNING_KEY_FILE) or_else nil
-	key_folder_firmware_key, key_folder_firmware_key_read := read_file(firmware_key.key_path)
+	test_certificate := foundation.read_file(TEST_FIRMWARE_CERTIFICATE_FILE) or_else nil
+	test_firmware_key := foundation.read_file(TEST_FIRMWARE_SIGNING_KEY_FILE) or_else nil
+	key_folder_firmware_key, key_folder_firmware_key_read := foundation.read_file(firmware_key.key_path)
 	defer crypto.zero_explicit(raw_data(key_folder_firmware_key), len(key_folder_firmware_key))
 	if !key_folder_firmware_key_read || test_certificate == nil || test_firmware_key == nil {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if string(key_folder_certificate) == string(test_certificate) || string(key_folder_firmware_key) == string(test_firmware_key) {
 		fmt.eprintfln("modustool: release: %s holds a copy of the test firmware signing key, whose private key is published: a release never uses it", key_folder_of(firmware_key.key_path))
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if repository_certificate_error != nil || string(repository_certificate) != string(key_folder_certificate) {
 		fmt.eprintfln("modustool: release: %s is not %s: a principal could not enrol the certificate that signs the boot program; commit a copy of the certificate of the key folder", RELEASE_FIRMWARE_CERTIFICATE_FILE, firmware_key.certificate_path)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	release_seed, release_seed_found := release_signing_key_read()
 	if !release_seed_found {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer crypto.zero_explicit(&release_seed, size_of(release_seed))
 	public_key, public_key_made := public_key_of_seed(release_seed[:])
 	repository_key, repository_key_found := release_repository_public_key_read()
 	if !public_key_made || !repository_key_found {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if public_key != repository_key {
 		fmt.eprintfln("modustool: release: the release signing key of the key folder has the public key %s, and %s holds %s: no reader could verify the release", base64url_text(public_key[:]), RELEASE_PUBLIC_KEY_FILE, base64url_text(repository_key[:]))
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	notes, notes_found := release_notes_text(release_number)
 	if !notes_found {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 
 	// A whole build with the checks of the kernel: the build that the
@@ -914,23 +915,23 @@ release_image_command :: proc() -> int {
 	build_pointer_theme_of_the_owner = false
 	build_measure_start()
 	if !build_modules() {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	volume := release_boot_volume()
 	if problem := boot_volume_release_problem(volume); problem != "" {
 		fmt.eprintfln("modustool: release: %s: a release never ships it", problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
-	if !make_folder(BOOT_OBJECT_FOLDER) || !system_key_write() || !boot_volume_build(volume) {
-		return EXIT_FAILURE
+	if !foundation.make_folder(BOOT_OBJECT_FOLDER) || !system_key_write() || !boot_volume_build(volume) {
+		return foundation.EXIT_FAILURE
 	}
 	build_measure_print()
 	if _, written := release_files_write(volume.path, release_number, RELEASE_DISK_FOLDER, RELEASE_OUTPUT_FOLDER, release_seed[:], .Publisher_Keys_Only); !written {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if err := os.write_entire_file(RELEASE_NOTES_FILE, transmute([]u8)notes); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", RELEASE_NOTES_FILE, err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: release: the release %s is in %s, and its notes in %s", release_number, RELEASE_OUTPUT_FOLDER, RELEASE_NOTES_FILE)
 	return 0
@@ -944,13 +945,13 @@ run_release :: proc(args: []string) -> int {
 	if len(args) == 2 && args[0] == "tag-check" {
 		if problem := release_tag_problem(args[1], release.RELEASE_NUMBER); problem != "" {
 			fmt.eprintfln("modustool: release: %s", problem)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		fmt.printfln("modustool: release: the tag %s names the release %s", args[1], release.RELEASE_NUMBER)
 		return 0
 	}
 	fmt.eprintln("modustool: release image | release tag-check <tag>")
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 // run_verify is the command `verify <image> <checksum list>`, with the
@@ -958,16 +959,16 @@ run_release :: proc(args: []string) -> int {
 run_verify :: proc(args: []string) -> int {
 	if len(args) != 2 {
 		fmt.eprintfln("modustool: verify <%s> <%s>: the release signature %s%s must be beside the checksum list", release_image_file_name("<release number>"), RELEASE_CHECKSUM_FILE_NAME, RELEASE_CHECKSUM_FILE_NAME, RELEASE_SIGNATURE_SUFFIX)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	public_key, found := release_repository_public_key_read()
 	if !found {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	digits, problem := release_files_verify(args[0], args[1], public_key)
 	if problem != "" {
 		fmt.eprintfln("modustool: verify: %s", problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: verify: %s carries the release signature of the release signing key %s, and %s has the SHA-256 that it names: %s", args[1], base64url_text(public_key[:]), args[0], digits)
 	return 0
@@ -993,8 +994,8 @@ host_random_bytes :: proc(bytes: []u8) -> bool {
 // release_signing_key_new writes a new release signing key in a key
 // folder: the seed, readable by its owner only, and the public key.
 release_signing_key_new :: proc(folder: string) -> bool {
-	private_path := join(folder, "/", RELEASE_SIGNING_KEY_FILE_NAME)
-	public_path := join(private_path, SIGNING_KEY_PUBLIC_SUFFIX)
+	private_path := foundation.join(folder, "/", RELEASE_SIGNING_KEY_FILE_NAME)
+	public_path := foundation.join(private_path, SIGNING_KEY_PUBLIC_SUFFIX)
 	seed: [RELEASE_KEY_SIZE]u8
 	defer crypto.zero_explicit(&seed, size_of(seed))
 	host_random_bytes(seed[:]) or_return
@@ -1098,7 +1099,7 @@ key_folder_write :: proc(folder: string) -> bool {
 		{RELEASE_SIGNING_KEY_FILE_NAME + SIGNING_KEY_PUBLIC_SUFFIX, base64url_text(release_public[:]), 0o644},
 	}
 	for key_file in key_files {
-		path := join(folder, "/", key_file.name)
+		path := foundation.join(folder, "/", key_file.name)
 		line := strings.concatenate({key_file.text, "\n"}, context.temp_allocator)
 		written := file_create_new(path, transmute([]u8)line, key_file.mode)
 		crypto.zero_explicit(raw_data(line), len(line))

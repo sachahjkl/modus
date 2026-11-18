@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:support/mark"
+import "modustool:foundation"
 
 // The request of a test: the still picture of the home of the site.
 @(private = "file")
@@ -338,11 +339,11 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 	// nothing, in the build folder.
 	request, out, problem = mark_command_request([]string{"still"})
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, out, BUILD_FOLDER + "/mark_still.png")
-	testing.expect_value(t, request.picture, Mark_Picture{file_name = BUILD_FOLDER + "/mark_still.png", variant = .Smooth, heron_cell = 8})
+	testing.expect_value(t, out, foundation.BUILD_FOLDER + "/mark_still.png")
+	testing.expect_value(t, request.picture, Mark_Picture{file_name = foundation.BUILD_FOLDER + "/mark_still.png", variant = .Smooth, heron_cell = 8})
 	request, out, problem = mark_command_request([]string{"table", "--forms", "no"})
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, out, BUILD_FOLDER + "/mark_table.json")
+	testing.expect_value(t, out, foundation.BUILD_FOLDER + "/mark_table.json")
 	testing.expect(t, request.what == .Table && !request.with_forms)
 	request, _, problem = mark_command_request([]string{"still", "--variant", "cells", "--cell", "1", "--background", "scheme", "--size", "32"})
 	testing.expect_value(t, problem, "")
@@ -360,7 +361,7 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 	// the scheme comes after the entry.
 	request, out, problem = mark_command_request([]string{"still", "--format", "ico", "--variant", "cells", "--cell", "1", "--size", "32", "--entry", "smooth:2:48", "--scheme", "light"})
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, out, BUILD_FOLDER + "/mark_still.ico")
+	testing.expect_value(t, out, foundation.BUILD_FOLDER + "/mark_still.ico")
 	testing.expect_value(t, request.format, Mark_Format.ICO)
 	testing.expect_value(t, len(request.entries), 1)
 	favicon, _ := mark_use_entries(SITE_FAVICON)
@@ -373,18 +374,18 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 	testing.expect_value(t, mark_request_refusal(request), "")
 	request, out, problem = mark_command_request([]string{"still", "--format", "svg", "--variant", "cells", "--cell", "1", "--scheme", "light", "--dark-rule", "yes"})
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, out, BUILD_FOLDER + "/mark_still.svg")
+	testing.expect_value(t, out, foundation.BUILD_FOLDER + "/mark_still.svg")
 	testing.expect(t, request.format == .SVG && request.dark_rule)
 	testing.expect_value(t, mark_request_refusal(request), "")
 	request, out, problem = mark_command_request([]string{"animation", "--animation", "dash", "--format", "apng"})
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, out, BUILD_FOLDER + "/mark_animation.apng")
+	testing.expect_value(t, out, foundation.BUILD_FOLDER + "/mark_animation.apng")
 	testing.expect(t, request.what == .Animation && request.has_animation && request.animation == .Dash)
 	testing.expect_value(t, mark_request_refusal(request), "")
 	// With no format an animation is an animated PNG file.
 	request, out, problem = mark_command_request([]string{"animation", "--animation", "blink"})
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, out, BUILD_FOLDER + "/mark_animation.apng")
+	testing.expect_value(t, out, foundation.BUILD_FOLDER + "/mark_animation.apng")
 	testing.expect_value(t, mark_request_format(request), Mark_Format.APNG)
 	// The command reads the smooth variant at one pixel; the generator
 	// refuses it.
@@ -440,7 +441,7 @@ MARK_FORMAT_FILES :: [?]string{"tools/modustool/mark_pictures.odin", "tools/modu
 @(test)
 only_the_generator_draws_the_mark :: proc(t: ^testing.T) {
 	files := make([dynamic]string, context.temp_allocator)
-	if !source_files_of_a_folder("tools/modustool", &files) {
+	if !foundation.source_files_of_a_folder("tools/modustool", &files) {
 		// The test does not run from the root of the repository: it has no
 		// file to read, and says so.
 		testing.expect(t, false, "the sources of tools/modustool are not readable from the folder of the test")

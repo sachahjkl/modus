@@ -2,6 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // The folders of the sources of a small tree, at the root.
 @(private = "file")
@@ -140,7 +141,7 @@ tree_of_the_tool_exists :: proc(path: string) -> bool {
 // name of the tool inside a longer path or alone is not read.
 @(test)
 source_path_of_a_file_of_the_tool_is_read :: proc(t: ^testing.T) {
-	folders := [?]string{TOOLS_FOLDER}
+	folders := [?]string{foundation.TOOLS_FOLDER}
 	problems, count := source_path_problems("docs/TOOLS.md", "Good: `tools/modustool/main.odin`, `tools/modustool/build/modules.odin`, `tools/modustool/*_scenario.odin`, `tools/modustool`.\nGone: `tools/modustool/modules.odin`, `tools/modustool/gone/*.odin`.\nNot read: `modustool check`, `build/tools/gone`, `./tools/gone`.\n", folders[:], tree_of_the_tool_exists)
 	testing.expect_value(t, count, 6)
 	if !testing.expect_value(t, len(problems), 2) {
@@ -154,7 +155,7 @@ source_path_of_a_file_of_the_tool_is_read :: proc(t: ^testing.T) {
 // and each one names a file or a folder that exists.
 @(test)
 source_paths_of_the_tool_in_the_documents_of_the_repository :: proc(t: ^testing.T) {
-	folders := [?]string{TOOLS_FOLDER}
+	folders := [?]string{foundation.TOOLS_FOLDER}
 	problems, span_count, _, read := source_path_problems_of_the_documents(folders[:])
 	if !testing.expect(t, read, "the documents are read") {
 		return
@@ -164,7 +165,7 @@ source_paths_of_the_tool_in_the_documents_of_the_repository :: proc(t: ^testing.
 	}
 	testing.expect(t, span_count > 100, "the documents hold too few spans of the tool: the check reads none")
 	checked := source_path_checked_folders()
-	testing.expect_value(t, checked[len(checked) - 1], TOOLS_FOLDER)
+	testing.expect_value(t, checked[len(checked) - 1], foundation.TOOLS_FOLDER)
 }
 
 // The documents of the repository name sources that exist.
