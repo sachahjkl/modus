@@ -28,6 +28,10 @@ scenario_program_film := [?]Step {
 	// The boot. The processes write in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
+	// processes() reads the service monitor, which the start list does not
+	// start: it starts before the film, out of the picture of the scenes.
+	{kind = .Type, text = "start(\"monitor\")"},
+	{kind = .Wait, text = "monitor: ok", any_order = true},
 	{kind = .Front, text = "console"},
 	// The pointer leaves the window: a press on the background, in the
 	// corner of the screen, which no window covers. The console keeps the

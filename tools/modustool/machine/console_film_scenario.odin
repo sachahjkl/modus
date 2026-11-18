@@ -34,6 +34,10 @@ scenario_console_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0"},
+	// processes() reads the service monitor, which the start list does not
+	// start: it starts before the film, out of the picture of the scenes.
+	{kind = .Type, text = "start(\"monitor\")"},
+	{kind = .Wait, text = "monitor: ok", any_order = true},
 	{kind = .Front, text = "console"},
 	// The pointer leaves the window: a press on the background, in the
 	// corner of the screen, which no window covers. The console keeps the
