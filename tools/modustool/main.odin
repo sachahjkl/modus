@@ -245,7 +245,7 @@ COMMANDS :: [?]foundation.Command {
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
 	// - `heron`: the film of the process heron.
-	{name = "film", about = "build, start the machine, film a scenario (" + machine.FILM_NAMES + "; no argument: terminal), and write " + machine.FILM_FOLDER + "/<name>.mp4, " + machine.FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + checks.FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = machine.run_film},
+	{name = "film", about = "build, start the machine, film a scenario (" + machine.FILM_NAMES + "; no argument: terminal), and write " + machine.FILM_FOLDER + "/<name>.mp4, " + machine.FILM_FOLDER + "/<name>.webm, the film cues " + machine.FILM_FOLDER + "/<name>" + machine.FILM_CUES_SUFFIX + ", a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + checks.FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = machine.run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only

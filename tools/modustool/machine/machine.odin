@@ -128,7 +128,7 @@ Step_Kind :: enum {
 	Film_Start, // Start the film with the name text: from now on a worker saves the screen FILM_RATE times in one second, while the next steps run.
 	Film_Stop, // End the film that the last Film_Start started.
 	Film_Type, // Press the keys of text one by one, with the period of a hand that types (film_key_periods), and no Enter.
-	Film_Hold, // Do nothing for `milliseconds`: the time that a viewer needs to see the state of the screen.
+	Film_Hold, // Do nothing for `milliseconds`: the time that a viewer needs to see the state of the screen. With a text, the hold starts the film cue of that name (film.odin).
 	Quit, // End QEMU: the machine does not stop by itself.
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
@@ -5178,6 +5178,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 		case .Film_Hold:
+			// A hold with a text starts a cue: its time is the moment the
+			// scene reached its state, before the hold.
+			if step.text != "" && !film_cue_note(machine, step.text) {
+				fmt.eprintfln("modustool: test failed: step %d: the cue %s is refused", index + 1, step.text)
+				return false
+			}
 			// A time of a film, for its viewer: the scenario of a test has
 			// no such step, and waits for a condition (film.odin).
 			time.sleep(time.Duration(step.milliseconds) * time.Millisecond)
