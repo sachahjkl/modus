@@ -229,7 +229,7 @@ rebase_location :: proc "contextless" (file: []u8, memory: []u8, memory_offset: 
 // code offset outside the module.
 //
 // Example: `module.export_address(file, op.PROCESS_BASE, head.entry_export)`
-// gives the entry of a process.
+// gives the entry of the module of a process.
 export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u32) -> (address: uintptr, ok: bool) {
 	if export_index == 0 {
 		return 0, false

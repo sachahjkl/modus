@@ -58,7 +58,7 @@ Iommu_Vendor :: enum u8 {
 	Amd, // AMD-Vi: the table IVRS.
 }
 
-// One remapping unit that the kernel processes. The fields of the context
+// One remapping unit that the kernel programs. The fields of the context
 // tables and of the fault records are of VT-d; the requester and the event
 // log are of AMD-Vi. The queue is the queue of invalidations of either
 // vendor: a ring of records of 16 bytes that the kernel waits for.
@@ -1063,7 +1063,7 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 }
 
 // remapping_unit_check reads the capabilities of a unit of VT-d, and
-// refuses a unit that the kernel does not process, with one line.
+// refuses a unit that the kernel does not program, with one line.
 @(private = "file")
 remapping_unit_check :: proc "contextless" (unit: ^Iommu_Unit) -> bool {
 	// A mode that the firmware left on: the kernel would take over a unit

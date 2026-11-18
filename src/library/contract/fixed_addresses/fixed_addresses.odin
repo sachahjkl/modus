@@ -16,7 +16,7 @@
 //
 // An address of the band has no other source than this table. No other
 // file computes an address from BAND_START or SLOT: `modustool check`
-// refuses a file of contract, support, processes or modules outside this
+// refuses a file of kernel, contract, support, private or modules outside this
 // folder that names them (tools/modustool/fixed_addresses_check.odin).
 //
 // A mapping that a process places by its own choice goes outside the
@@ -94,7 +94,7 @@ Fixed_Range :: enum u8 {
 	// real-time clock: each process reads the date of the day there with
 	// no call. The root service maps it.
 	Storage_File, // The file of the storage service (src/library/support/storage).
-	// The file of the process of the storage service, read-only, in a
+	// The file of the module of the storage service, read-only, in a
 	// process that the root service connects to the storage service at its
 	// start: the process reads the descriptions of the exports there. The
 	// root service maps it, and gives its size at the value 3 of the

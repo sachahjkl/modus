@@ -815,7 +815,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// kernel maps with no attribute of its own.
 			regions[region].uncached = registers
 			// The function whose registers these are: the process that holds
-			// the handle is its service for the IOMMU. Pixels process no
+			// the handle is its service for the IOMMU. Pixels program no
 			// access of the device: video memory has no requester. Behind a
 			// conventional bridge, the requester is the one that the devices
 			// there share.

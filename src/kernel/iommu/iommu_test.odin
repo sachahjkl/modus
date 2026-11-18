@@ -224,7 +224,7 @@ two_units_and_reserved_ranges :: proc(t: ^testing.T) {
 	}
 }
 
-// Each form that the kernel does not process gives its problem, and the
+// Each form that the kernel does not program gives its problem, and the
 // IOMMU stays off.
 @(test)
 the_forms_that_the_kernel_refuses :: proc(t: ^testing.T) {

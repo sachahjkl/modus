@@ -1710,7 +1710,7 @@ module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
 	return MODULE_WRITER_NAMES[writer]
 }
 
-// The module records of one process: the process module, the modules that
+// The module records of one process: its own module, the modules that
 // it imports and the modules that it loads while it runs. `Process_Module`
 // gives `No_Slot` for one more.
 PROCESS_MODULE_CAPACITY :: 16

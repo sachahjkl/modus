@@ -1,4 +1,4 @@
-// The performance counters of the processor that the kernel processes for a
+// The performance counters of the processor that the kernel programs for a
 // thread: the four events of the thread counters, their encodings on Intel
 // and on AMD Zen, and the registers of each vendor. The formats are those of
 // the "Intel 64 and IA-32 Architectures Software Developer's Manual", volume
