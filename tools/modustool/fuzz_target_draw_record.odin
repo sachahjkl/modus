@@ -69,8 +69,8 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		draw_record.Draw_Horizontal_Gradient{left_color = 3, right_color = 4},
 		draw_record.Draw_Text{first = 0, count = 4, color = 5, scale = 1},
 		draw_record.Draw_Clip{},
-		draw_record.Draw_Point_Grid{color = 6},
-		draw_record.Draw_Folded_Gap{line_color = 7, track_color = 8},
+		// The grid of points: a pattern of cells of 2 pixels each 24 pixels.
+		draw_record.Draw_Rectangle{color = 6, repetition = {cell_x = pixel(12), cell_y = pixel(12), cell_width = 2 * draw_record.UNITS_PER_PIXEL, cell_height = 2 * draw_record.UNITS_PER_PIXEL, step_x = 24 * draw_record.UNITS_PER_PIXEL, step_y = 24 * draw_record.UNITS_PER_PIXEL}},
 		draw_record.Draw_Picture{first = 0, stride = 16, generation = 1},
 		draw_record.Draw_Text_Grid{first = 0, count = 32, columns = 2},
 		draw_record.Draw_Line{start_x = pixel(1), start_y = pixel(1), end_x = pixel(9), end_y = pixel(5), color = 9, thickness = 2},
