@@ -20,7 +20,7 @@ JITTER_SAMPLES :: 2048 // The deltas of the cycle counter in one gathering.
 FRESH_LIMIT :: 10 * 1024 // Bytes that key_derive hashes at most: a gathering has 8320.
 
 // How strong the source of a seed is (modus:contract/operation,
-// Seed_Strength): each program receives it with its seed
+// Seed_Strength): each process receives it with its seed
 // (`op.CONTEXT_VALUE_SEED_STRENGTH`), and `fill_for_a_key` refuses a seed
 // below the strength that the caller asks. Its words are
 // `op.seed_strength_names`.
@@ -83,7 +83,7 @@ rdrand_read :: proc "contextless" () -> (value: u64, ok: bool) {
 
 // processor_features says if the processor has rdrand (CPUID 1, ECX bit
 // 30) and rdseed (CPUID 7, EBX bit 18). An instruction that the processor
-// does not have stops the program: it is run only when present.
+// does not have stops the process: it is run only when present.
 processor_features :: proc "contextless" () -> (rdrand, rdseed: bool) {
 	highest, _, _, _ := intrinsics.x86_cpuid(0, 0)
 	_, _, features, _ := intrinsics.x86_cpuid(1, 0)

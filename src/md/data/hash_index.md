@@ -4,7 +4,7 @@ The storage service finds an object of a store by its hash. So when a commit giv
 
 ## Purpose
 
-A program that keeps two copies of one document, a picture under two names, or the same module file twice pays the blocks two times with no index. The model names an object by its hash ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "1. The model"): two entries with one hash name one object. The hash index makes the disk follow the model.
+A process that keeps two copies of one document, a picture under two names, or the same module file twice pays the blocks two times with no index. The model names an object by its hash ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "1. The model"): two entries with one hash name one object. The hash index makes the disk follow the model.
 
 ## Constraints
 
@@ -18,7 +18,7 @@ A program that keeps two copies of one document, a picture under two names, or t
 
 **The index is in the memory of the service, and the open makes it.** It is a table in `storage_mount.State`, beside the reference counts, built by the same walk. For each block that is the root of the current state of an object (the state that an entry names, in a tree of the store or in its removal queue), the table keeps the first 8 bytes of the hash of the entry, the size, the check of the root, and the count of the entries that name that root. A table of slots finds a root by its key: the 8 bytes, the size and the store. A root is one block, so the table never holds more roots than the disk has blocks, and it has twice that many slots.
 
-**The cost of the slots is bounded.** Three rules bound it, because a program can choose its bytes and a hostile disk can choose the hash of each entry:
+**The cost of the slots is bounded.** Three rules bound it, because a process can choose its bytes and a hostile disk can choose the hash of each entry:
 
 - The first slot of a key mixes the 8 bytes with a key of the slots that the service draws from its seed at each start (`HASH_SLOT_MIX`, a product by an odd constant). No party knows it, so no party can choose hashes whose first slots make one long run.
 - One key has at most one slot. A second root with the same key keeps its record and gets no slot, so a thousand entries with one lying hash make no run.
@@ -48,7 +48,7 @@ Three rules close them:
 
 1. **`usage()` through a share of a tree gives the counts of that tree only**: its objects, its trees, the versions of its objects, and its blocks. Its blocks are the nodes of its trees, the blocks of the current state of each object (a block that two states share counted once for each), and the index and the leaves of the versions of each object. No block is counted one time across objects, so no count depends on what the rest of the store holds: a write of the maker outside the tree changes nothing in it, and a removal in the tree takes back what the write of that object added. The counting is a walk of the tree: one read of each node, of the root of each object, and of each version index, through the cache. One call reads at most `SHARE_USAGE_READ_LIMIT` (4096) blocks, so a holder that calls `usage()` in a loop cannot hold the service on a large tree; a tree that needs more gives `USAGE_NOT_COUNTED`. The limit of the store is in the row, and the removal queue, a fact of the store, is not.
 2. **While a store has a writable share of a tree open** (a share that can write, whose root is not the root of the store), no commit of the store looks up a hash, and each root that a commit of the store adds is hidden: a record, so that its entries are counted, and no slot, until its last entry goes. A guess stays hidden after `unshare`.
-3. **A commit looks up a hash only when the caller's own connection reaches the whole store**: the program of the store, or a share of the root of the store.
+3. **A commit looks up a hash only when the caller's own connection reaches the whole store**: the process of the store, or a share of the root of the store.
 
 What is left, for a writable share only. The limit of the store counts the blocks of the whole store, each one time: a write through the share is refused with `Over_Limit`, or thins versions, when the store is at its limit. A holder that writes until its write is refused measures the room left in the store, so it can learn the same facts as from a count of the store: whether its removal freed blocks, or whether a write of the maker took any. It pays for each measure with writes up to the limit, and the thinning that it causes removes versions of the maker. Closing it needs a limit for the part of the store under a share, which the service does not have ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.5 Budgets"). A read-only share has no channel left: it writes nothing.
 
@@ -65,7 +65,7 @@ A share names no store with `open_store`, not even the store of its maker: a pla
 ## Refused forms
 
 - **An index on the disk** (a B+ tree of hashes in each store). Each commit would write its path, a loss of power would need it to agree with the trees, and the open walks every entry anyway. Refused: it adds writes and a second truth.
-- **A hash in each version, and versions in the index.** A version entry has no hash: the format would change (fewer versions in a leaf), or the open would compute the hash of each version. The current states are the objects that a program names; a version shares its blocks with the state after it already. Refused.
+- **A hash in each version, and versions in the index.** A version entry has no hash: the format would change (fewer versions in a leaf), or the open would compute the hash of each version. The current states are the objects that a process names; a version shares its blocks with the state after it already. Refused.
 - **One index for all the stores.** A block would be named from two stores, so the limit of one store would pay for the blocks of another, and a write that takes no block would tell one principal what another one has ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "1.2 The hard points", the secrecy). Refused.
 - **Trust the hash of the entry.** A disk that another party changed can give an entry the hash of other bytes; the entry would then name the bytes of another object. Refused: each candidate is confirmed from its blocks.
 - **The full 32 bytes of the hash in the table.** 8 MiB more of memory for a comparison that the confirmation makes anyway. Refused.
@@ -85,4 +85,4 @@ A share names no store with `open_store`, not even the store of its maker: a pla
 
 ## State
 
-Built: the table in the open, its change at each commit, the key of the slots, the bound of a run, the lookup with its confirmation and its rekey for a write, a commit of ranges, a restore and a clone, the rule of a writable share of a tree, the counts of its own tree for a share of a tree, the hiding of a damaged candidate, the host tests of the table (with random inserts and removals), of the work and of the index after a run of commits against a new open, the check of each image of a loss of power, the cases of the machine tests `ranges` and `hierarchy`. Left: a module named by its hash in the store `programs` still reads all the objects of the store ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps").
+Built: the table in the open, its change at each commit, the key of the slots, the bound of a run, the lookup with its confirmation and its rekey for a write, a commit of ranges, a restore and a clone, the rule of a writable share of a tree, the counts of its own tree for a share of a tree, the hiding of a damaged candidate, the host tests of the table (with random inserts and removals), of the work and of the index after a run of commits against a new open, the check of each image of a loss of power, the cases of the machine tests `ranges` and `hierarchy`. Left: a module named by its hash in the store `module_files` still reads all the objects of the store ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps").

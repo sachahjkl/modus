@@ -56,18 +56,18 @@ Measure_History_Series :: struct {
 // measure names first. The second build gives a fact, not a number: it has
 // no chart.
 measure_history_series := [?]Measure_History_Series {
-	{sentence = "Kernel entries in one second, with 1, 2 and 4 programs that each take the locks of their own objects", title = "Kernel entries in one second, 4 programs", before = "4 lockers ", after = "", unit = "kernel entries in one second", faster = .Higher},
+	{sentence = "Kernel entries in one second, with 1, 2 and 4 processes that each take the locks of their own objects", title = "Kernel entries in one second, 4 processes", before = "4 lockers ", after = "", unit = "kernel entries in one second", faster = .Higher},
 	{sentence = "Reads of the time in one second from the time page, with no kernel entry", title = "Reads of the time page in one second", before = "the time page: ", after = " reads in one second", unit = "reads in one second", faster = .Higher},
 	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", title = "Wakes in one second, EEVDF on a busy machine", before = "a spinner on each processor: ", after = " wakes in one second", unit = "wakes in one second", faster = .Higher},
 	{sentence = "One glyph of the vector font, from its outline and from the glyph cache", title = "One glyph from its outline, scale 1", before = "scale 1 ", after = " ns", unit = "nanoseconds", faster = .Lower},
 	{sentence = "A full frame of the compositor", title = "A full frame of the compositor", before = " windows in ", after = " us", unit = "microseconds", faster = .Lower},
 	{sentence = "Blocks read in one second from a virtio disk, through the block service in user space", title = "Blocks read in one second, 32 in flight", before = "32 in flight: ", after = " blocks in one second", unit = "blocks in one second", faster = .Higher},
-	{sentence = "1000 commits of a program to its private store, one commit for each step", title = "1000 commits to a private store", before = "1000 commits in ", after = " ms", unit = "milliseconds", faster = .Lower},
-	{sentence = "The header and the checksum of one UDP datagram, in the program that sends it", title = "The header and the checksum of one UDP datagram", before = "1472 bytes: ", after = " ns", unit = "nanoseconds", faster = .Lower},
+	{sentence = "1000 commits of a process to its private store, one commit for each step", title = "1000 commits to a private store", before = "1000 commits in ", after = " ms", unit = "milliseconds", faster = .Lower},
+	{sentence = "The header and the checksum of one UDP datagram, in the process that sends it", title = "The header and the checksum of one UDP datagram", before = "1472 bytes: ", after = " ns", unit = "nanoseconds", faster = .Lower},
 	{sentence = "The round trip of one UDP datagram", title = "The round trip of one UDP datagram, the middle of 1000", before = "at least, ", after = " us in the middle", unit = "microseconds", faster = .Lower},
 	{sentence = "UDP datagrams in one second, with 64 in flight", title = "UDP datagrams in one second, 64 in flight", before = "64 datagrams in flight: ", after = " datagrams in one second", unit = "datagrams in one second", faster = .Higher},
-	{sentence = "TCP: 1 MiB that the program `fetch` receives from a server of the host", title = "TCP: 1 MiB received", before = "as expected, ", after = " MB/s", unit = "megabytes in one second", faster = .Higher},
-	{sentence = "TCP: 1 MiB that the program `fetch` sends to a server of the host", title = "TCP: 1 MiB sent", before = "the same hash, ", after = " MB/s", unit = "megabytes in one second", faster = .Higher},
+	{sentence = "TCP: 1 MiB that the process `fetch` receives from a server of the host", title = "TCP: 1 MiB received", before = "as expected, ", after = " MB/s", unit = "megabytes in one second", faster = .Higher},
+	{sentence = "TCP: 1 MiB that the process `fetch` sends to a server of the host", title = "TCP: 1 MiB sent", before = "the same hash, ", after = " MB/s", unit = "megabytes in one second", faster = .Higher},
 	{sentence = "ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`", title = "The seal of one QUIC datagram of 1200 bytes", before = "ChaCha20-Poly1305: ", after = " ns for 1200 bytes", unit = "nanoseconds", faster = .Lower},
 	{sentence = "A clear and a present of a frame of 1920 x 1080 on the processor", title = "A clear and a present at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "A full frame of the compositor at 1920 x 1080 with 4 windows, on the processor", title = "A full frame of the compositor at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
@@ -75,7 +75,7 @@ measure_history_series := [?]Measure_History_Series {
 	{sentence = "The execution of a draw table of a desktop at 1920 x 1080, on the processor", title = "A draw table of a desktop at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "The time of a frame of the compositor, from the first record that it reads to the flip", title = "The time of a frame, from its first record to the flip, the least", before = QUALITY_LEAST, after = QUALITY_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "The time of a key to the screen, through the console", title = "A key to the screen through the console, the least", before = QUALITY_LEAST, after = QUALITY_MEDIAN, unit = "microseconds", faster = .Lower},
-	{sentence = "The start of a window, from Program_Start to its first frame", title = "The start of the window of locks", before = QUALITY_WINDOW_START_TAIL, after = QUALITY_MICROSECONDS, unit = "microseconds", faster = .Lower},
+	{sentence = "The start of a window, from Process_Start to its first frame", title = "The start of the window of locks", before = QUALITY_WINDOW_START_TAIL, after = QUALITY_MICROSECONDS, unit = "microseconds", faster = .Lower},
 }
 
 // What the release command or the history command does with a record.

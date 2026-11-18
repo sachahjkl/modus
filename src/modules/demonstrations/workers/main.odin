@@ -1,6 +1,6 @@
 // A demonstration of the lock and of the word wait.
 //
-// One program, five threads, one queue of work. The first thread cuts a
+// One process, five threads, one queue of work. The first thread cuts a
 // picture in tiles and puts all the tiles in the queue. Four threads take
 // the tiles: each tile is computed by the thread that took it, and has the
 // tint of this thread. A lock keeps the queue correct. A thread with no
@@ -17,7 +17,7 @@
 // exists.
 //
 // **Start**: `start("workers")` in the console, or the bar of the desktop.
-// Its row of `program_roles` has no grant; its budget has room for 9 threads.
+// Its row of `process_roles` has no grant; its budget has room for 9 threads.
 //
 // **What a reader sees**: the picture in the tints of the four threads,
 // which zooms in at each new picture, the tiles of each thread and the
@@ -40,7 +40,7 @@ import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1154, programs = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1154, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 TILE :: 32
 COLUMNS :: 14

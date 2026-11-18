@@ -7,27 +7,27 @@ import op "modus:contract/operation"
 import module "modus:contract/module"
 import "modus:contract/ring"
 
-// A service that serves its own exports: other programs call the exports of
-// this program with isolated calls (package isolated), while it runs.
+// A service that serves its own exports: other processes call the exports of
+// this process with isolated calls (package isolated), while it runs.
 //
-// The exports of a program have descriptions, as the exports of a module
-// have: the caller reads them in the file of the program. This program
+// The exports of a process have descriptions, as the exports of a module
+// have: the caller reads them in the file of the process. This process
 // reads them too, in the same file, to decode each argument record.
 //
 // The root service decides who calls. For each caller it makes one
 // connection: a call ring and a call region. It names them on the service
-// ring of this program (isolated.Service_Command).
+// ring of this process (isolated.Service_Command).
 //
 //   service, _ := system.service_open(ctx)
 //   for {
 //       wait: system.Wait
 //       system.service_wait(&wait, &service)
-//       ... add the other things that the program waits for ...
+//       ... add the other things that the process waits for ...
 //       system.wait_end(&wait)
 //       system.service_run(&service) // The calls execute here, in this thread.
 //   }
 //
-// A program with no grant to serve has a Service that is all zero:
+// A process with no grant to serve has a Service that is all zero:
 // service_wait and service_run do nothing.
 
 // One caller of a service: its call ring and its call region, as the root
@@ -35,8 +35,8 @@ import "modus:contract/ring"
 Connection :: struct {
 	ring_memory:   Handle, // 0: the place is free.
 	region_memory: Handle, // The memory of the call region.
-	calls:         ring.Ring, // The call ring, mapped in this program.
-	region:        []u8, // The call region, mapped in this program.
+	calls:         ring.Ring, // The call ring, mapped in this process.
+	region:        []u8, // The call region, mapped in this process.
 	caller:        Name, // The name of the caller, as the root service names it.
 	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_ERASES_VERSIONS, isolated.CALLER_READS_ONLY, isolated.CALLER_ACTS_FOR_PRINCIPAL).
 }
@@ -53,20 +53,20 @@ service_caller :: proc "contextless" () -> ^Connection {
 	return serving
 }
 
-// The side of a program that serves its own exports: its service ring and
+// The side of a process that serves its own exports: its service ring and
 // its callers. `service_open` makes it; `service_wait` and `service_run`
 // serve it in a loop (the example above).
 Service :: struct {
-	file:        []u8, // The file of this program: the descriptions of its exports.
+	file:        []u8, // The file of this process: the descriptions of its exports.
 	names:       ring.Ring, // The service ring.
 	connections: [isolated.SERVICE_CONNECTION_CAPACITY]Connection, // The callers; a free place has no ring.
 	connected:   int, // The callers connected now.
-	calls:       u64, // The calls that this program executed.
+	calls:       u64, // The calls that this process executed.
 }
 
-// service_open opens the service ring of this program (`GRANT_SERVICE`) and
+// service_open opens the service ring of this process (`GRANT_SERVICE`) and
 // the file of its exports (`GRANT_VALUE_FILE_ADDRESS`). ok is false, and the
-// service is all zero, for a program with no grant to serve, or a ring that
+// service is all zero, for a process with no grant to serve, or a ring that
 // does not open.
 service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: bool) {
 	memory := ctx.handles[GRANT_SERVICE]
@@ -120,11 +120,11 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			break
 		}
 		ring_memory, region_memory := Handle(command.values[0]), Handle(command.values[1])
-		// A word that names no command holds no handle that this program
+		// A word that names no command holds no handle that this process
 		// knows of: it closes nothing.
 		service_command, known := service_command_of_record(command)
 		if !known {
-			log_in("programs", .Warning, "service: the root service sent a command of the kind ", u64(command.kind), ", which names no service command: it is refused")
+			log_in("processes", .Warning, "service: the root service sent a command of the kind ", u64(command.kind), ", which names no service command: it is refused")
 			continue
 		}
 		switch service_command {
@@ -164,7 +164,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 				break
 			}
 			serving = &connection
-			send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command, false))
+			send(&connection.calls.completions, export_serve(service.file, op.PROCESS_BASE, connection.region, connection.ring_memory, command, false))
 			serving = nil
 			calls += 1
 		}
@@ -173,10 +173,10 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 	return calls
 }
 
-// connection_make opens a connection that this program made itself, with
+// connection_make opens a connection that this process made itself, with
 // a call ring and a call region that it created: the storage service makes
 // one for each share (docs/STORAGE.md, "Places"). It is not one of the
-// connections that the root service names: the program keeps it, serves it
+// connections that the root service names: the process keeps it, serves it
 // with connection_serve, and ends it with connection_end.
 connection_make :: proc "contextless" (ring_memory, region_memory: Handle, caller: Name) -> (connection: Connection, ok: bool) {
 	region_pages, size_status := memory_size(region_memory)
@@ -207,7 +207,7 @@ connection_end :: proc "contextless" (connection: ^Connection) {
 }
 
 // connection_serve executes the calls that wait on a connection that this
-// program made itself, as service_run does for the connections of the root
+// process made itself, as service_run does for the connections of the root
 // service. It gives the count of calls.
 connection_serve :: proc "contextless" (service: ^Service, connection: ^Connection) -> (calls: int) {
 	for _ in 0 ..< ring.CAPACITY {
@@ -216,7 +216,7 @@ connection_serve :: proc "contextless" (service: ^Service, connection: ^Connecti
 			break
 		}
 		serving = connection
-		send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command, false))
+		send(&connection.calls.completions, export_serve(service.file, op.PROCESS_BASE, connection.region, connection.ring_memory, command, false))
 		serving = nil
 		calls += 1
 	}
@@ -267,7 +267,7 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 // ring_memory is the memory of the call ring. The caller lends each handle
 // through it; this code proves each handle before the call (handle_state),
 // and closes each one after it. The caller also revokes what it lent
-// (lend_end). An export never receives a handle that this program holds for
+// (lend_end). An export never receives a handle that this process holds for
 // itself.
 // A refusal (Bad_Arguments, Bad_Handle) has an error record in the values
 // of the completion: the argument and why, so that the caller learns the
@@ -395,7 +395,7 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 
 // The copies that a caller made for one isolated call: see lend.
 Lending :: struct {
-	copies: [module.HANDLE_CAPACITY]Handle, // The copies in this program, to close after the call.
+	copies: [module.HANDLE_CAPACITY]Handle, // The copies in this process, to close after the call.
 	count:  int, // The copies in use.
 }
 
@@ -403,7 +403,7 @@ Lending :: struct {
 // caller side of module.Type.Handle. For each Handle argument, for each
 // Handle field of each Record argument, and for the memory object of each
 // table argument that names one (Table_Argument.memory_handle), it makes a copy of the handle in
-// this program with the rights of the description, and gives the receiver
+// this process with the rights of the description, and gives the receiver
 // a handle that comes from the copy, through the call ring. It writes the
 // handle of the receiver in place of the handle of the caller: give it
 // copies of the records. Call it before isolated.encode.

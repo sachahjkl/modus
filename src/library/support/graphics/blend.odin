@@ -211,7 +211,7 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 // in linear light with a gamma of 2, as blend_coverage_row. Alpha 0 keeps
 // each pixel, and alpha 255 is fill: the same pixels, with no blend. A
 // width or a height of 0 or below draws nothing. square_root is the table
-// of the blend (square_root_table_fill): a program passes the table of its
+// of the blend (square_root_table_fill): a process passes the table of its
 // text state, which text_state_start fills at its start, and a test passes
 // its own.
 blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, color: u32, square_root: ^[4096]u8) {
@@ -320,7 +320,7 @@ blend_straight_alpha_row_scalar :: proc "contextless" (to: [^]Color, from: [^]u3
 // gradient across or a picture, takes the reference blend.
 //
 // The tables are in the memory of the caller (Blend_Tables, in the text
-// state of the program). A new table clears nothing: it takes a new
+// state of the process). A new table clears nothing: it takes a new
 // generation, and a value of another generation is computed again.
 
 // Blend_Table: the results for one text color over one pixel color. Each
@@ -332,7 +332,7 @@ Blend_Table :: struct {
 	channels:     [3][256]u32, // For each channel, the result of each coverage from 0 to 255.
 }
 
-// The tables that a program keeps: the ninth pair of colors replaces the
+// The tables that a process keeps: the ninth pair of colors replaces the
 // table that `next` names.
 BLEND_TABLE_COUNT :: 8
 

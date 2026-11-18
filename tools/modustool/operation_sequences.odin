@@ -11,13 +11,13 @@ import "modus:contract/operation_sequence"
 
 // The machine of the operation sequences (src/md/infrastructure/kernel_fuzzing.md,
 // "The machine", "The oracles"): the tool writes each sequence in the
-// mailbox of the program operation_fuzzing through the memory file of the
+// mailbox of the process operation_fuzzing through the memory file of the
 // machine, reads what the kernel answered to each step, and checks the
 // answers against the forms of the kernel operations, the statuses of their
 // reference comments and the budget of the sequence. The machine runs the
 // kernel that ships.
 
-// The line of the program operation_fuzzing that gives the physical address
+// The line of the process operation_fuzzing that gives the physical address
 // of its mailbox.
 OPERATION_MAILBOX_LINE :: "operation_fuzzing: mailbox at "
 // The memory files of the machine of the test part and of a replay: the
@@ -348,7 +348,7 @@ operation_budget_read_findings :: proc(sequence: ^operation_sequence.Sequence, r
 			if before >= 0 {
 				a, b := &results.results[before], &results.results[step]
 				if a.values[0] != b.values[0] || a.values[1] != b.values[1] || a.values[2] != b.values[2] {
-					append(findings, Operation_Finding{.Refusal_Changed_Budget, step, fmt.tprintf("the budget held pages %d, programs %d, threads %d at step %d, and %d, %d, %d here, with only refusals between", a.values[0], a.values[1], a.values[2], before, b.values[0], b.values[1], b.values[2])})
+					append(findings, Operation_Finding{.Refusal_Changed_Budget, step, fmt.tprintf("the budget held pages %d, processes %d, threads %d at step %d, and %d, %d, %d here, with only refusals between", a.values[0], a.values[1], a.values[2], before, b.values[0], b.values[1], b.values[2])})
 				}
 			}
 			before = step
@@ -383,7 +383,7 @@ operation_seed_step :: proc(chosen: operation.Operation) -> operation_sequence.S
 				argument = {source = .Log}
 			case .Memory:
 				argument = {source = .Area_Handle, area = 0}
-			case .None, .Program, .Interrupt, .Ports, .Machine, .Thread:
+			case .None, .Process, .Interrupt, .Ports, .Machine, .Thread:
 				argument.value = OPERATION_SEED_ABSENT_HANDLE
 			}
 		case .Address:
@@ -407,11 +407,11 @@ operation_seed_step :: proc(chosen: operation.Operation) -> operation_sequence.S
 	return item
 }
 
-// A handle number that names no handle of a new program: the slot is past
+// A handle number that names no handle of a new process: the slot is past
 // each handle that the runner holds, with a generation that no slot has.
 OPERATION_SEED_ABSENT_HANDLE :: u64(0xFFFF_0FFF)
 
-// The text of the first area of each seed: the name of a program and a
+// The text of the first area of each seed: the name of a process and a
 // line of the log.
 OPERATION_SEED_TEXT :: "seed"
 
@@ -583,7 +583,7 @@ operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^
 		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT})
 		expect(expectations, &list, Operation_Seed_Expectation{step = 2, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT, absent_detail_argument = COMMIT_BUDGET_ARGUMENT})
 	}
-	// A budget and a program from the budget of the runner, with their
+	// A budget and a process from the budget of the runner, with their
 	// kinds: the stop of the runner ends both, and the budget of the
 	// sequence comes back whole.
 	{
@@ -592,17 +592,17 @@ operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^
 		budget.arguments[1] = {source = .Value, value = 1}
 		budget_state := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Handle_State)}
 		budget_state.arguments[0] = {source = .Result, step = 0}
-		program := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Program_Create)}
-		program.arguments[0] = {source = .Budget}
-		program.arguments[1] = {source = .Area_Address, area = 0}
-		program.arguments[2] = {source = .Value, value = len(OPERATION_SEED_TEXT)}
-		program_state := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Handle_State)}
-		program_state.arguments[0] = {source = .Result, step = 2}
+		process := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Process_Create)}
+		process.arguments[0] = {source = .Budget}
+		process.arguments[1] = {source = .Area_Address, area = 0}
+		process.arguments[2] = {source = .Value, value = len(OPERATION_SEED_TEXT)}
+		process_state := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Handle_State)}
+		process_state.arguments[0] = {source = .Result, step = 2}
 		log := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Log)}
 		log.arguments[0] = {source = .Log}
 		log.arguments[1] = {source = .Area_Address, area = 0}
 		log.arguments[2] = {source = .Value, value = len(OPERATION_SEED_TEXT)}
-		steps := [?]operation_sequence.Sequence_Step{budget, budget_state, program, program_state, log}
+		steps := [?]operation_sequence.Sequence_Step{budget, budget_state, process, process_state, log}
 		add(&list, operation_seed_sequence(steps[:]), allocator)
 	}
 	return list[:]
@@ -684,7 +684,7 @@ Operation_Wait_End :: enum u8 {
 // operation_execute_watched is operation_execute that also watches QEMU,
 // when process is not nil: a machine that stopped ends the wait at once,
 // not at the hang bound, with the state of its end.
-operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, process: ^os.Process) -> (end: Operation_Wait_End, ended: os.Process_State, problem: string) {
+operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, host_process: ^os.Process) -> (end: Operation_Wait_End, ended: os.Process_State, problem: string) {
 	if len(bytes) > operation_sequence.SEQUENCE_BYTES_MOST {
 		return .Tool_Error, {}, "the sequence is larger than its place in the mailbox"
 	}
@@ -707,9 +707,9 @@ operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, head
 		if header.executions != mailbox.executions {
 			return .Mailbox_Broken, {}, fmt.tprintf("the mailbox counts %d executions after %d, and the tool wrote %d sequences", header.executions, mailbox.executions, mailbox.written)
 		}
-		if process != nil {
+		if host_process != nil {
 			// A wait of 0 does not block: Timeout says that QEMU runs.
-			if state, wait_error := os.process_wait(process^, 0); wait_error == nil && state.exited {
+			if state, wait_error := os.process_wait(host_process^, 0); wait_error == nil && state.exited {
 				return .Machine_Ended, state, fmt.tprintf("QEMU ended with the status %d before the service counted the sequence", state.exit_code)
 			}
 		}

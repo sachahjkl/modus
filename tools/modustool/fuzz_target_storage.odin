@@ -2,7 +2,7 @@ package modustool
 
 import "base:runtime"
 import "core:slice"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import format "modus:contract/store"
 import "modus:private/storage/storage_mount"
 import tree "modus:private/storage/storage_tree"
@@ -290,7 +290,7 @@ fuzz_mount_contents :: proc(image: []u8) -> Disk_Contents {
 fuzz_storage_mount_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	choices := fuzz_choices_of(input)
 	file_count := 1 + fuzz_choice_below(&choices, FUZZ_MOUNT_FILE_LIMIT)
-	files := make([]Program_File, file_count, context.temp_allocator)
+	files := make([]Module_File, file_count, context.temp_allocator)
 	names := [FUZZ_MOUNT_FILE_LIMIT]string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta"}
 	for &file, index in files {
 		size := 1 + fuzz_choice_below(&choices, 3 * format.BLOCK_SIZE)
@@ -303,7 +303,7 @@ fuzz_storage_mount_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		}
 		file = {name = names[index], bytes = bytes}
 	}
-	image, encoded := program_disk_encode(files, FUZZ_MOUNT_DISK_SIZE, nil, context.temp_allocator)
+	image, encoded := module_disk_encode(files, FUZZ_MOUNT_DISK_SIZE, nil, context.temp_allocator)
 	if !encoded {
 		return fuzz_broken(.Contract, "the writer of the tool refuses files of the rules")
 	}
@@ -345,8 +345,8 @@ fuzz_storage_mount_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	return FUZZ_PASSED
 }
 
-fuzz_mount_file_of :: proc(files: []Program_File, object: Stored_Object) -> (file: Program_File, found: bool) {
-	if object.store != disk_program.STORE_NAME {
+fuzz_mount_file_of :: proc(files: []Module_File, object: Stored_Object) -> (file: Module_File, found: bool) {
+	if object.store != disk_process.STORE_NAME {
 		return {}, false
 	}
 	for item in files {

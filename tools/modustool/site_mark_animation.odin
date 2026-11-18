@@ -6,7 +6,7 @@
 // the table of the uses of the mark names, and writes the script of the
 // page with the table of the generator in it. It draws no picture of the
 // site. Which animation plays is the rule of src/library/support/mark (play.odin),
-// which the program `heron` of the system follows too;
+// which the process `heron` of the system follows too;
 // site_mark_schedule.odin ties the script to that rule (docs/SITE.md, "The
 // rhythm of the animations").
 //

@@ -174,8 +174,8 @@ thread_counters_unload :: proc "contextless" (thread: ^Thread) {
 // on the calling thread, which is the current thread of this processor:
 // its counts are in the registers of this processor. The caller checked
 // the command (op.thread_control_counts_the_caller). The caller holds the
-// program lock of the calling program.
-thread_counters_control :: proc "contextless" (caller_index: u32, caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
+// process lock of the calling process.
+thread_counters_control :: proc "contextless" (caller_index: u32, caller_process: ^Process, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	thread := &threads[caller_index]
 	// A stop only takes a capability away and gives nothing, so it needs no
 	// handle and no right: a thread whose right was revoked can still stop
@@ -190,7 +190,7 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_program
 	if v[0] == 0 {
 		return .Bad_Handle
 	}
-	named := handle_find(caller_program, v[0], .None) or_return
+	named := handle_find(caller_process, v[0], .None) or_return
 	if named.kind != .Machine {
 		return .Bad_Handle
 	}
@@ -204,7 +204,7 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_program
 	// Stop_Counters returned above; each other command of the set comes to
 	// this procedure only by a fault of its caller.
 	switch command {
-	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Stop_Counters:
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Stop_Counters:
 		return .Bad_Operation
 	case .Start_Counters:
 		if thread.counting {
@@ -215,7 +215,7 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_program
 		thread_counters_load()
 	case .Read_Counters:
 		size := u64(size_of(op.Thread_Counters))
-		if v[4] < size || !user_range(caller_program, v[3], size, true) {
+		if v[4] < size || !user_range(caller_process, v[3], size, true) {
 			return .Bad_Address
 		}
 		if !thread.counting {

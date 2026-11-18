@@ -132,7 +132,7 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 	y := window_y + WINDOW_TITLE_HEIGHT + element_y
 	// The element line comes from the layout of a frame, before its
 	// picture reaches the screen. With no remote service, a settled screen
-	// means only that two pictures in a row were the same, so a program that
+	// means only that two pictures in a row were the same, so a process that
 	// is late to present gives a settled picture of its window before the
 	// change. The read itself is the condition: the cells of the element
 	// show a text of the font that fills its box, as a text element is as

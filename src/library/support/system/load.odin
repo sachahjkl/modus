@@ -9,9 +9,9 @@ import op "modus:contract/operation"
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
 
-// The loader (docs/ARCHITECTURE.md, U3): it builds a program from a module
+// The loader (docs/ARCHITECTURE.md, U3): it builds a process from a module
 // and its imports. It runs in user space. The kernel only creates the empty
-// program and maps memory.
+// process and maps memory.
 
 // image_entries gives the entries of the boot image.
 image_entries :: proc "contextless" (image: []u8) -> []info.Image_Entry {
@@ -74,9 +74,9 @@ image_entry_of :: proc "contextless" (image: []u8, hash: [32]u8) -> ^info.Image_
 	return nil
 }
 
-// A grant: a handle that a new program receives, and the rights of its copy.
+// A grant: a handle that a new process receives, and the rights of its copy.
 //
-// `program_start` gives each grant with `give` at its index of the context;
+// `process_start` gives each grant with `give` at its index of the context;
 // a zero handle is no grant. Example, in the root service:
 // `grants[system.GRANT_MACHINE] = {machine, {.Inspect, .Stop}}`.
 Grant :: struct {
@@ -84,13 +84,13 @@ Grant :: struct {
 	rights: Rights, // The rights of the copy: at most the rights of `handle`.
 }
 
-// A part of a memory object at an address of a program.
+// A part of a memory object at an address of a process.
 //
-// `program_start` maps each one in the new program before its start: a
+// `process_start` maps each one in the new process before its start: a
 // starter gives a fixed range this way.
 Mapping :: struct {
 	memory:     Handle, // The memory object, with the rights of `flags`.
-	address:    u64, // The address in the new program.
+	address:    u64, // The address in the new process.
 	first:      u64, // The first page of the memory object.
 	page_count: u64, // 0: all pages from first.
 	flags:      op.Map_Flags, // The access of the pages.
@@ -102,55 +102,55 @@ PREPARED_CAPACITY :: 64 // Two parts for each module: the code, and the fixed pa
 //   Code:  the segments with no Write: the code and the constants. The
 //          loader never writes them (a rebase or a slot is in a segment
 //          with Write), so their pages are the same at each base, with
-//          each binding: one copy for all the programs of the table.
+//          each binding: one copy for all the processes of the table.
 //   Fixed: the segments that are read-only after the load: the loader
 //          writes their rebases and their slots, so their pages are for
 //          one base and one binding.
 //   All:   each segment: the copy of a module that has no table.
 Module_Part :: enum u8 {
-	All, // Each segment, for one program.
-	Code, // The segments with no Write, shared by every program.
+	All, // Each segment, for one process.
+	Code, // The segments with no Write, shared by every process.
 	Fixed, // The segments read-only after the load, for one base and one binding.
 }
 
 // A prepared module: a memory object that holds one part of a module as the
 // loader prepared it, its segments copied from the file, and for the part
-// Fixed rebased at base and bound. Each program that runs the module maps
+// Fixed rebased at base and bound. Each process that runs the module maps
 // the pages that do not change (the shared code of the module), and
 // receives its own copy of the writable pages. The loader writes the
 // memory object one time; after that, the table holds it with the rights
-// Read and Execute only, so no program writes it.
+// Read and Execute only, so no process writes it.
 Prepared :: struct {
 	hash:    [32]u8, // The hash of the module file.
 	part:    Module_Part, // Which segments the memory object holds.
-	base:    u64, // Fixed: the address of the module in each program that maps it.
+	base:    u64, // Fixed: the address of the module in each process that maps it.
 	binding: [32]u8, // Fixed: what its slots hold (binding_of): zero for a module with no import.
 	first:   u64, // The offset in the module of the first page of the memory object.
 	memory:  Handle, // 0: the place is free.
 	pages:   u64, // The pages of the memory object.
 }
 
-// The prepared modules of a program that starts programs. The zero value is
-// an empty table. The budget of the program that owns the table pays for
-// each prepared module. A prepared module stays while a program maps it:
-// each start closes the ones that no program maps.
+// The prepared modules of a process that starts processes. The zero value is
+// an empty table. The budget of the process that owns the table pays for
+// each prepared module. A prepared module stays while a process maps it:
+// each start closes the ones that no process maps.
 Prepared_Modules :: struct {
-	lock:    Lock, // The threads of the owner that start programs take it.
+	lock:    Lock, // The threads of the owner that start processes take it.
 	modules: [PREPARED_CAPACITY]Prepared,
 }
 
 // The load source: where a loader finds the imports of a module. Nothing
 // else: the loader has no search path and no ambient module store, so a
-// program reaches only the modules that it was granted.
+// process reaches only the modules that it was granted.
 Load_Source :: struct {
-	image:        []u8, // The files that the program was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
+	image:        []u8, // The files that the process was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
 	files:        []Source_File, // Files beside the image, which the starter read and gives. A file of the image with the same hash is taken first.
-	replacements: []module.Replacement, // From the party that starts the program. The program cannot change them.
+	replacements: []module.Replacement, // From the party that starts the process. The process cannot change them.
 }
 
 // A module file of a load source that is not in the image: the root
-// service gives the files of the store `programs` that an import scan kept
-// (docs/MODULE_CONTRACT.md, "A program from a disk"). The loader checks the
+// service gives the files of the store `module_files` that an import scan kept
+// (docs/MODULE_CONTRACT.md, "A module from a disk"). The loader checks the
 // hash and the tables of the bytes before it uses them, as for a file of
 // the image.
 Source_File :: struct {
@@ -159,28 +159,28 @@ Source_File :: struct {
 	name:  string, // The name that a load error gives the hash: for a file of a store, the name of its entry. It names no module.
 }
 
-MODULE_SPACE_CAPACITY :: op.PROGRAM_MODULE_CAPACITY // The modules of one space: the module records that the kernel keeps for one program.
+MODULE_SPACE_CAPACITY :: op.PROCESS_MODULE_CAPACITY // The modules of one space: the module records that the kernel keeps for one process.
 IMPORT_CAPACITY :: 8 // The imports of one module that this loader binds.
 
-// One module that a loader put in a program: a place of a module space.
+// One module that a loader put in a process: a place of a module space.
 Placed :: struct {
 	hash:          [32]u8, // The module that is loaded.
 	replaces:      [32]u8, // Zero, or the hash of the import that a replacement changed to this module.
 	file:          []u8, // The file of the module, in the load source.
 	original:      []u8, // The file of the module that this one replaces: the names of the exports that a slot uses.
-	base:          u64, // The address of the module in the program.
+	base:          u64, // The address of the module in the process.
 	users:         u32, // The modules that import it, and each load of it by the caller. 0: the place is free.
 	loading:       bool, // Its imports are not all loaded: a module that imports it now makes a cycle.
-	mapped:        bool, // Its segments are mapped in the program.
+	mapped:        bool, // Its segments are mapped in the process.
 	import_count:  u8, // The entries of `import_places` in use.
 	import_places: [IMPORT_CAPACITY]u8, // The place of each import.
 }
 
-// The modules that a loader put in one program. Each module is in it one
+// The modules that a loader put in one process. Each module is in it one
 // time: two modules that import a third one call the same copy.
 Module_Space :: struct {
-	program:     Handle, // 0: this program.
-	budget:      Handle, // Pays for the memory of the modules. 0: the budget of this program.
+	process:     Handle, // 0: this process.
+	budget:      Handle, // Pays for the memory of the modules. 0: the budget of this process.
 	source:      Load_Source, // Where the imports come from.
 	next:        u64, // Where the next module goes.
 	modules:     [MODULE_SPACE_CAPACITY]Placed,
@@ -194,7 +194,7 @@ cycles :: #force_inline proc "contextless" () -> u64 {
 }
 
 // module_space_load loads a module and its imports, each one time, in the
-// program of the space. A replacement of the load source applies to each
+// process of the space. A replacement of the load source applies to each
 // import, and not to the module that the caller names. On a failure, the
 // space is as it was before, and error has the stage and the modules of the
 // failure: the caller owns the record.
@@ -239,9 +239,9 @@ module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error
 }
 
 // module_space_release ends one use of a module. A module with no use leaves
-// the program, and its imports lose one use. If the kernel refuses to
+// the process, and its imports lose one use. If the kernel refuses to
 // remove a module, error has the stage Unmap and the module: the space
-// forgets the module, and its memory stays in the program.
+// forgets the module, and its memory stays in the process.
 module_space_release :: proc "contextless" (space: ^Module_Space, index: int, error: ^module.Load_Error) -> bool {
 	item := &space.modules[index]
 	if item.users == 0 {
@@ -292,7 +292,7 @@ import_problems :: proc "contextless" (source: Load_Source, importer: [32]u8, fi
 			return
 		}
 	}
-	// The space of a program holds no more modules: the walk ends there too.
+	// The space of a process holds no more modules: the walk ends there too.
 	if visited.count == len(visited.hashes) {
 		return
 	}
@@ -497,11 +497,11 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	return free
 }
 
-// place_map puts a module in the program of the space, bound to its
+// place_map puts a module in the process of the space, bound to its
 // imports, and writes its module record. With a table of prepared modules,
-// the program maps the shared code of the module from the table, and
+// the process maps the shared code of the module from the table, and
 // receives its own copy of each writable segment. With no table, the
-// program maps a prepared module of its own, all of it, and the budget of
+// process maps a prepared module of its own, all of it, and the budget of
 // the space pays for it.
 @(private)
 place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool {
@@ -509,18 +509,18 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 	if space.prepared == nil {
 		own: Prepared
 		if own, status = module_prepare(item.file, .All, item.base, space.budget, imports, error); status == .Ok {
-			status = segments_map(item.file, &own, &own, space.program, item.base, space.budget, imports, error)
+			status = segments_map(item.file, &own, &own, space.process, item.base, space.budget, imports, error)
 			close(own.memory)
 		}
 	} else {
 		// The code from the table at any base; the fixed part for this base
-		// and this binding; the writable segments of this program.
+		// and this binding; the writable segments of this process.
 		lock(&space.prepared.lock)
 		prepared_sweep(space.prepared)
 		code, fixed: ^Prepared
 		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Ok {
 			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error); status == .Ok {
-				status = segments_map(item.file, code, fixed, space.program, item.base, space.budget, imports, error)
+				status = segments_map(item.file, code, fixed, space.process, item.base, space.budget, imports, error)
 			}
 		}
 		unlock(&space.prepared.lock)
@@ -554,7 +554,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		hash     = item.hash,
 		replaces = item.replaces,
 	}
-	if _, status = call(.Program_Module, u64(space.program), u64(uintptr(&record))); status != .Ok {
+	if _, status = call(.Process_Module, u64(space.process), u64(uintptr(&record))); status != .Ok {
 		error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
 		return false
 	}
@@ -562,7 +562,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 }
 
 // binding_of gives what the slots of a module hold, as one hash: the hash
-// and the base of the module of each import. Two programs with the same
+// and the base of the module of each import. Two processes with the same
 // module at the same base and the same binding can map the same pages.
 @(private)
 binding_of :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> [32]u8 {
@@ -585,7 +585,7 @@ binding_of :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> [32]u8
 place_unmap :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (result: Status) {
 	for index in 1 ..< module.count(item.file, .Segments) {
 		segment, _ := module.record(item.file, .Segments, index, module.Segment)
-		if status := memory_unmap(rawptr(uintptr(item.base + segment.memory_offset)), space.program); status != .Ok && result == .Ok {
+		if status := memory_unmap(rawptr(uintptr(item.base + segment.memory_offset)), space.process); status != .Ok && result == .Ok {
 			result = status
 		}
 	}
@@ -599,7 +599,7 @@ place_remove :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (sta
 		record := op.Module_Record {
 			base = item.base,
 		}
-		if _, removed := call(.Program_Module, u64(space.program), u64(uintptr(&record))); removed != .Ok && status == .Ok {
+		if _, removed := call(.Process_Module, u64(space.process), u64(uintptr(&record))); removed != .Ok && status == .Ok {
 			status = removed
 		}
 	}
@@ -607,7 +607,7 @@ place_remove :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (sta
 	return status
 }
 
-// segment_flags gives the protection of a segment in a program.
+// segment_flags gives the protection of a segment in a process.
 @(private)
 segment_flags :: proc "contextless" (segment: module.Segment) -> (flags: op.Map_Flags) {
 	if .Write in segment.flags && .Read_Only_After_Load not_in segment.flags {
@@ -696,7 +696,7 @@ code_ready :: proc "contextless" (file: []u8, view: []u8, base: u64, imports: []
 	return module.bind(file, view, imports, error, first, end)
 }
 
-// prepared_sweep closes each prepared module of a table that no program
+// prepared_sweep closes each prepared module of a table that no process
 // maps: the count of the holdings of its handle is 0. The caller holds the
 // lock of the table, and sweeps before it finds the parts of one module.
 @(private)
@@ -743,21 +743,21 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 	return free, .Ok
 }
 
-// segments_map maps each segment of a module in a program, with the
+// segments_map maps each segment of a module in a process, with the
 // protection of the segment: a segment of the part Code from code, a
 // segment of the part Fixed from fixed, and a writable segment from a new
 // memory object that the budget pays for, with the bytes of the file,
-// rebased and bound, when code is not the part All. A program does not
+// rebased and bound, when code is not the part All. A process does not
 // write a prepared module.
 @(private)
-segments_map :: proc "contextless" (file: []u8, code, fixed: ^Prepared, program: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
+segments_map :: proc "contextless" (file: []u8, code, fixed: ^Prepared, process: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		flags := segment_flags(segment)
 		from := code
 		if code.part != .All && .Write in flags {
 			own := segment_copy(file, segment, base, budget, imports, error) or_return
-			_, status := memory_map(own, flags, program, base + segment.memory_offset)
+			_, status := memory_map(own, flags, process, base + segment.memory_offset)
 			close(own)
 			if status != .Ok {
 				return status
@@ -767,12 +767,12 @@ segments_map :: proc "contextless" (file: []u8, code, fixed: ^Prepared, program:
 		if code.part != .All && in_part(segment, .Fixed) {
 			from = fixed
 		}
-		memory_map(from.memory, flags, program, base + segment.memory_offset, (segment.memory_offset - from.first) / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
+		memory_map(from.memory, flags, process, base + segment.memory_offset, (segment.memory_offset - from.first) / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
 	}
 	return .Ok
 }
 
-// segment_copy makes the memory of one writable segment for one program:
+// segment_copy makes the memory of one writable segment for one process:
 // the bytes of the file, rebased and bound. The pages that the copy does
 // not write stay pages on first use.
 @(private)
@@ -803,9 +803,9 @@ segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u
 // source: the module and each import, at each level, and for a replaced
 // import both the module that the import names and the module of the
 // replacement. files[0] is the module. A caller gives these files, and only
-// these, to a program that loads the module (a call host). A hash that the
+// these, to a process that loads the module (a call host). A hash that the
 // image of the load source does not have is left out, a file beside the
-// image too: the loader of the other program reports it.
+// image too: the loader of the other process reports it.
 source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry) -> (count: int) {
 	add :: proc "contextless" (files: ^[MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry, count: ^int, entry: ^info.Image_Entry) -> bool {
 		if entry == nil {
@@ -848,36 +848,36 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 	return count
 }
 
-// program_start builds and starts a program from a module file and its
+// process_start builds and starts a process from a module file and its
 // imports.
-//   grants:  each handle that is not 0 is copied to the program with the
-//            rights of the grant; the context of the program has the copy
+//   grants:  each handle that is not 0 is copied to the process with the
+//            rights of the grant; the context of the process has the copy
 //            at the same index.
-//            The index CONTEXT_BUDGET must be 0: the program receives its
+//            The index CONTEXT_BUDGET must be 0: the process receives its
 //            new budget there.
 //   values:   copied to the context.
-//   amounts:  the budget of the program. It comes from the budget of this
-//             program. It pays for the program and for all that the loader
-//             creates. When the program stops, what remains returns.
-//   mappings: memory that the program has from its start, with no handle to
-//             it: the program cannot map it again with other flags.
-//   prepared: not nil: the program maps the shared code of each module from
+//   amounts:  the budget of the process. It comes from the budget of this
+//             process. It pays for the process and for all that the loader
+//             creates. When the process stops, what remains returns.
+//   mappings: memory that the process has from its start, with no handle to
+//             it: the process cannot map it again with other flags.
+//   prepared: not nil: the process maps the shared code of each module from
 //             this table, and the table keeps the prepared module for the
-//             next program of the same module, base and binding. nil: the
-//             program has its own copy of each module, and its budget pays.
+//             next process of the same module, base and binding. nil: the
+//             process has its own copy of each module, and its budget pays.
 //   source:   where the loader finds the imports, and the replacements that
-//             the caller gives to the program.
+//             the caller gives to the process.
 //   error:    when the load fails, the record of the failure.
 //   from_budget: the budget that pays `amounts`, with the right Spend; 0:
-//             the budget of this program.
-// The module is at PROGRAM_BASE, its imports after it.
-// The program stops when the last handle to it closes.
-program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0) -> (program: Handle, status: Status) {
+//             the budget of this process.
+// The module is at PROCESS_BASE, its imports after it.
+// The process stops when the last handle to it closes.
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0) -> (process: Handle, status: Status) {
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 {
 		return 0, .Bad_Operation
 	}
-	// Each program has a random seed from its starter (docs/RANDOMNESS.md):
-	// a starter that forgot it does not start a program with no seed.
+	// Each process has a random seed from its starter (docs/RANDOMNESS.md):
+	// a starter that forgot it does not start a process with no seed.
 	seed_given: u64
 	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
 		seed_given |= values[op.CONTEXT_VALUE_SEED + index]
@@ -886,12 +886,12 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		return 0, .Bad_Operation
 	}
 	head, _ := module.header(file)
-	entry, has_entry := module.export_address(file, op.PROGRAM_BASE, head.entry_export)
+	entry, has_entry := module.export_address(file, op.PROCESS_BASE, head.entry_export)
 	if !has_entry {
 		return 0, .Bad_Operation
 	}
 
-	// The program holds the one handle to its budget: when the program
+	// The process holds the one handle to its budget: when the process
 	// stops, the budget ends.
 	budget: Handle
 	budget, status = budget_create(amounts, from_budget)
@@ -900,16 +900,16 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	}
 	defer close(budget)
 	results: [7]u64
-	results, status = call(.Program_Create, u64(budget), u64(uintptr(raw_data(name))), u64(len(name)))
+	results, status = call(.Process_Create, u64(budget), u64(uintptr(raw_data(name))), u64(len(name)))
 	if status != .Ok {
 		return 0, status
 	}
-	program = Handle(results[0])
+	process = Handle(results[0])
 	space := Module_Space {
-		program  = program,
+		process  = process,
 		budget   = budget,
 		source   = source,
-		next     = op.PROGRAM_BASE,
+		next     = op.PROCESS_BASE,
 		prepared = prepared,
 	}
 	loaded: module.Load_Error
@@ -925,28 +925,28 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		error^ = loaded
 	}
 	if status == .Ok {
-		status = program_fill(program, budget, grants, values, mappings)
+		status = process_fill(process, budget, grants, values, mappings)
 	}
 	if status == .Ok {
-		_, status = call(.Program_Start, u64(program), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
+		_, status = call(.Process_Start, u64(process), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
 	}
 	if status != .Ok {
-		call(.Program_Stop, u64(program), 0)
-		close(program)
+		call(.Process_Stop, u64(process), 0)
+		close(process)
 		return 0, status
 	}
-	return program, .Ok
+	return process, .Ok
 }
 
 @(private)
-program_fill :: proc "contextless" (program: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
+process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
 	for mapping in mappings {
-		memory_map(mapping.memory, mapping.flags, program, mapping.address, mapping.first, mapping.page_count) or_return
+		memory_map(mapping.memory, mapping.flags, process, mapping.address, mapping.first, mapping.page_count) or_return
 	}
 
 	stack := memory_create(op.STACK_PAGES, budget) or_return
 	defer close(stack)
-	memory_map(stack, {.Write}, program, op.STACK_TOP - op.STACK_PAGES * PAGE_SIZE) or_return
+	memory_map(stack, {.Write}, process, op.STACK_TOP - op.STACK_PAGES * PAGE_SIZE) or_return
 
 	record_memory := memory_create(1, budget) or_return
 	defer close(record_memory)
@@ -954,12 +954,12 @@ program_fill :: proc "contextless" (program: Handle, budget: Handle, grants: [op
 	defer memory_unmap(record)
 	for grant, index in grants {
 		if grant.handle != 0 {
-			record.handles[index] = give(program, grant.handle, grant.rights) or_return
+			record.handles[index] = give(process, grant.handle, grant.rights) or_return
 		}
 	}
-	record.handles[op.CONTEXT_BUDGET] = give(program, budget, {.Give, .Read, .Spend}) or_return
+	record.handles[op.CONTEXT_BUDGET] = give(process, budget, {.Give, .Read, .Spend}) or_return
 	record.values = values
-	memory_map(record_memory, {.Write}, program, op.CONTEXT_ADDRESS) or_return
+	memory_map(record_memory, {.Write}, process, op.CONTEXT_ADDRESS) or_return
 	return .Ok
 }
 
@@ -991,7 +991,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		}
 	}
 	described :: proc "contextless" (writer: ^Writer, value: ^module.Described) {
-		// The record can come from another program: a byte that names no
+		// The record can come from another process: a byte that names no
 		// type is written as "?", never as a type.
 		type, type_ok := module.type_of_word(value.type)
 		if !type_ok {
@@ -1049,8 +1049,8 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		name(writer, subject)
 		write_part(writer, error.file_error == .None ? " does not have the hash that names it\n" : " is not a valid module: ")
 		if error.file_error != .None {
-			// The record can come from another program: a value out of the enumeration is a value.
-			write_part(writer, error.file_error <= max(module.Error) ? file_error_names[error.file_error] : "an error that this program does not know")
+			// The record can come from another process: a value out of the enumeration is a value.
+			write_part(writer, error.file_error <= max(module.Error) ? file_error_names[error.file_error] : "an error that this process does not know")
 			write_part(writer, "\n")
 		}
 	case .Cycle:
@@ -1131,7 +1131,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Room:
 		write_part(writer, "no room for ")
 		name(writer, subject)
-		write_part(writer, ": a program has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system\n")
+		write_part(writer, ": a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system\n")
 	}
 	if error.replaced.hash != {} && error.stage != .Cycle {
 		write_part(writer, "on the path of the load, the replacement table gives ")
@@ -1160,27 +1160,27 @@ write_hash :: proc "contextless" (writer: ^Writer, value: [32]u8) {
 	write_part(writer, "...")
 }
 
-// program_entries gives the count of kernel entries of a program, from its
+// process_entries gives the count of kernel entries of a process, from its
 // start. The handle needs the right Read.
-program_entries :: proc "contextless" (program: Handle) -> u64 {
-	results, _ := call(.Program_State, u64(program))
+process_entries :: proc "contextless" (process: Handle) -> u64 {
+	results, _ := call(.Process_State, u64(process))
 	return results[2]
 }
 
-// program_state gives the state of a program, and its code when it stopped.
-program_state :: proc "contextless" (program: Handle) -> (state: op.Program_State, code: u32) {
-	results, _ := call(.Program_State, u64(program))
+// process_state gives the state of a process, and its code when it stopped.
+process_state :: proc "contextless" (process: Handle) -> (state: op.Process_State, code: u32) {
+	results, _ := call(.Process_State, u64(process))
 	known: bool
-	state, known = enum_word.member_of_word(op.Program_State, results[0])
+	state, known = enum_word.member_of_word(op.Process_State, results[0])
 	if !known {
-		kernel_word_refused("the state of a program", results[0])
+		kernel_word_refused("the state of a process", results[0])
 	}
 	return state, u32(results[1])
 }
 
-// program_stop_report gives where a program stopped on a fault, and the
+// process_stop_report gives where a process stopped on a fault, and the
 // module of the instruction. The handle needs the right Read.
-program_stop_report :: proc "contextless" (program: Handle) -> (report: op.Stop_Report) {
-	call(.Program_State, u64(program), u64(uintptr(&report)))
+process_stop_report :: proc "contextless" (process: Handle) -> (report: op.Stop_Report) {
+	call(.Process_State, u64(process), u64(uintptr(&report)))
 	return report
 }

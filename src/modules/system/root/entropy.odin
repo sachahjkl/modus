@@ -12,17 +12,17 @@ import "modus:support/system"
 // The entropy service (src/md/features/entropy_device.md): the device
 // service of the entropy device, with this service as its one client. This
 // service asks it for two reads at its start, and mixes them into the
-// generator that gives each program its seed. It never waits for them: a
+// generator that gives each process its seed. It never waits for them: a
 // device that does not answer leaves the seed of the processor, and the
 // start goes on.
 //
 // After the reads of the start, it asks for one read every
 // FRESH_BYTES_PERIOD_MILLISECONDS, mixes it into its generator the same
 // way, and writes 32 bytes of its stream in the fresh bytes page of each
-// program (src/md/features/fresh_bytes.md; the code is in fresh_bytes.odin). The period
-// bounds the time that a reader of one copy of the state of a program
+// process (src/md/features/fresh_bytes.md; the code is in fresh_bytes.odin). The period
+// bounds the time that a reader of one copy of the state of a process
 // keeps its stream; the device and this service pay one read and one pass
-// over the pages for each period, whatever the programs draw.
+// over the pages for each period, whatever the processes draw.
 
 ENTROPY_READS_AT_START :: 2 // Two reads of 32 bytes: 512 bits, as many as the values of rdseed in a seed.
 ENTROPY_READ_BYTES :: 32
@@ -34,7 +34,7 @@ FRESH_BYTES_REFUSALS_LIMIT :: 3 // Refused reads in a row after which this servi
 
 entropy_ring: ring.Ring
 entropy_ring_memory: system.Handle
-entropy_program: ^Started
+entropy_process: ^Started
 entropy_reads_asked: u32 // The reads that this service asked for: the tag of a read is its number.
 entropy_reads_answered: u32
 entropy_bytes_given: u64 // The bytes that the completions of the reads of the start carried, mixed or refused.
@@ -42,7 +42,7 @@ entropy_bytes_given: u64 // The bytes that the completions of the reads of the s
 // hash, not the bytes, and it stays for the reads of the fresh bytes.
 entropy_mixing: random.Device_Mixing
 // The device counts of the reads of the fresh bytes. The entropy report
-// keeps the reads of the start only, so that what a program shows of the
+// keeps the reads of the start only, so that what a process shows of the
 // seed of the system does not depend on the time of its start.
 fresh_bytes_counts: random.Entropy_Report
 fresh_bytes_deadline: u64 = system.WAIT_FOREVER // The time of the next read of the fresh bytes. WAIT_FOREVER: none, or a read in flight.
@@ -72,12 +72,12 @@ entropy_service_start :: proc "contextless" () {
 	opened: ring.Ring
 	if opened, status = system.ring_open(ring_memory); status != .Ok {
 		// reap takes the device back when the service stopped.
-		system.call(.Program_Stop, u64(driver.program), 0)
+		system.call(.Process_Stop, u64(driver.process), 0)
 		system.close(ring_memory)
 		system.log_in("devices", .Warning, "root: cannot open the entropy ring: status ", status, ": the random seed of the system has the sources of the processor only")
 		return
 	}
-	entropy_ring, entropy_ring_memory, entropy_program = opened, ring_memory, driver
+	entropy_ring, entropy_ring_memory, entropy_process = opened, ring_memory, driver
 	entropy_report.device_present = true
 	// The ring is new and empty: each command has a place.
 	for _ in 0 ..< ENTROPY_READS_AT_START {
@@ -89,7 +89,7 @@ entropy_service_start :: proc "contextless" () {
 
 // entropy_answers reads the completion of each read that this service
 // asked for, and no other one, and mixes the bytes of each one into the
-// generator of the programs (random.device_bytes_mix refuses a read that
+// generator of the processes (random.device_bytes_mix refuses a read that
 // adds nothing). After the last read of the start it writes the line of the
 // device. After a read of the fresh bytes it writes the pages
 // (fresh_bytes_refresh_end). Then it asks for the next read of the fresh
@@ -117,7 +117,7 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 			if at_start {
 				entropy_bytes_given += u64(count)
 			}
-			mixed = random.device_bytes_mix(&program_generator, &entropy_mixing, bytes[:count], counts) == .Mixed
+			mixed = random.device_bytes_mix(&process_generator, &entropy_mixing, bytes[:count], counts) == .Mixed
 			intrinsics.mem_zero_volatile(&bytes, size_of(bytes))
 		} else {
 			counts.device_reads_refused += 1
@@ -162,7 +162,7 @@ fresh_bytes_read_ask :: proc "contextless" () {
 }
 
 // fresh_bytes_refresh_end ends one read of the fresh bytes: after a mixed
-// read it writes the page of each program, and the first time one line;
+// read it writes the page of each process, and the first time one line;
 // after a refused read it writes one warning, and after
 // FRESH_BYTES_REFUSALS_LIMIT in a row it asks for no more reads. A line for
 // each refresh would fill the log.
@@ -170,7 +170,7 @@ fresh_bytes_refresh_end :: proc "contextless" (mixed: bool) {
 	if !mixed {
 		fresh_bytes_refusals_in_a_row += 1
 		if fresh_bytes_refusals_in_a_row >= FRESH_BYTES_REFUSALS_LIMIT {
-			system.log_in("devices", .Warning, "root: the entropy device gave ", u64(fresh_bytes_refusals_in_a_row), " refused reads in a row: no more fresh bytes for the running programs")
+			system.log_in("devices", .Warning, "root: the entropy device gave ", u64(fresh_bytes_refusals_in_a_row), " refused reads in a row: no more fresh bytes for the running processes")
 			fresh_bytes_stopped = true
 			fresh_bytes_deadline = system.WAIT_FOREVER
 			intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after this one.
@@ -179,10 +179,10 @@ fresh_bytes_refresh_end :: proc "contextless" (mixed: bool) {
 		system.log_in("devices", .Warning, "root: a read of the entropy device for the fresh bytes added nothing: the pages keep their bytes; refused reads in a row: ", u64(fresh_bytes_refusals_in_a_row))
 	} else {
 		fresh_bytes_refusals_in_a_row = 0
-		programs := fresh_bytes_write_all()
+		processes := fresh_bytes_write_all()
 		fresh_bytes_refreshes += 1
 		if fresh_bytes_refreshes == 1 {
-			system.log_in("devices", .Info, "root: the first fresh bytes: ", u64(ENTROPY_READ_BYTES), " bytes of the entropy device mixed into the random generator of the system, then ", u64(fresh_bytes.BYTES), " bytes of its stream in the fresh bytes page of each of ", programs, " programs; a read every ", u64(FRESH_BYTES_PERIOD_MILLISECONDS / 1000), " seconds after this one, with no line")
+			system.log_in("devices", .Info, "root: the first fresh bytes: ", u64(ENTROPY_READ_BYTES), " bytes of the entropy device mixed into the random generator of the system, then ", u64(fresh_bytes.BYTES), " bytes of its stream in the fresh bytes page of each of ", processes, " processes; a read every ", u64(FRESH_BYTES_PERIOD_MILLISECONDS / 1000), " seconds after this one, with no line")
 		}
 	}
 	fresh_bytes_deadline = system.time() + FRESH_BYTES_PERIOD_MILLISECONDS
@@ -191,19 +191,19 @@ fresh_bytes_refresh_end :: proc "contextless" (mixed: bool) {
 // entropy_service_end forgets the ring of an entropy service that stopped,
 // after it read the completions that the service wrote before its stop.
 entropy_service_end :: proc "contextless" (item: ^Started) {
-	if item != entropy_program || entropy_program == nil {
+	if item != entropy_process || entropy_process == nil {
 		return
 	}
 	entropy_answers(nil)
 	if entropy_reads_answered < ENTROPY_READS_AT_START {
 		system.log_in("devices", .Warning, "root: the entropy service stopped after ", u64(entropy_reads_answered), " of ", u64(ENTROPY_READS_AT_START), " reads: the random seed of the system has the bytes of those reads only")
 	} else if !fresh_bytes_stopped {
-		system.log_in("devices", .Warning, "root: the entropy service stopped: no more fresh bytes for the running programs")
+		system.log_in("devices", .Warning, "root: the entropy service stopped: no more fresh bytes for the running processes")
 	}
 	fresh_bytes_stopped = true
 	fresh_bytes_deadline = system.WAIT_FOREVER
 	intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing))
 	system.ring_close(&entropy_ring)
 	system.close(entropy_ring_memory)
-	entropy_ring_memory, entropy_program = 0, nil
+	entropy_ring_memory, entropy_process = 0, nil
 }

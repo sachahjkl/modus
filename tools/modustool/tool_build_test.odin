@@ -21,7 +21,7 @@ tool_root_only_from_the_place_of_the_binary :: proc(t: ^testing.T) {
 // The compile of the tool writes its binary and the list of its compiler
 // into files of the process, never at the place of the binary.
 @(test)
-tool_compile_command_writes_files_of_the_process :: proc(t: ^testing.T) {
+tool_compile_command_writes_files_of_the_host_process :: proc(t: ^testing.T) {
 	command := tool_compile_command_of(TOOL_BINARY + ".7.next", TOOL_BINARY + ".7." + DEPENDENCY_FILE_NAME)
 	base := TOOL_COMPILE_COMMAND
 	testing.expect(t, len(command) > len(base))

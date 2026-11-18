@@ -94,7 +94,7 @@ runs_cut_and_after :: proc(t: ^testing.T) {
 	testing.expect_value(t, after[1], Value_Run_In_Call{start = 15, length = 2, kind = u8(Value_Kind.Time)})
 }
 
-// The runs come from another program: each wrong table is refused whole.
+// The runs come from another process: each wrong table is refused whole.
 @(test)
 hostile_runs_are_refused :: proc(t: ^testing.T) {
 	past_the_text := [?]Value_Run_In_Call{{start = 8, length = 4, kind = u8(Value_Kind.Number)}}

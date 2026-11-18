@@ -53,7 +53,7 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 		{"A record (docs/ARCHITECTURE.md, \"Kernel events\", section 5a).", "docs/ARCHITECTURE.md", {"\"Kernel events\"", "section 5a"}, true, " (docs/ARCHITECTURE.md, \"Kernel events\", section 5a)"},
 		{"A count (docs/MODULE_CONTRACT.md, \"Did not fit, across calls\").", "docs/MODULE_CONTRACT.md", {"\"Did not fit, across calls\""}, true, " (docs/MODULE_CONTRACT.md, \"Did not fit, across calls\")"},
 		{"Only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).", "docs/CRYPTOGRAPHY.md", {}, true, ", docs/CRYPTOGRAPHY.md"},
-		{"Another program (property 19; docs/MODULE_CONTRACT.md, sections 4 and 5).", "docs/MODULE_CONTRACT.md", {"sections 4 and 5"}, true, "; docs/MODULE_CONTRACT.md, sections 4 and 5"},
+		{"Another process (property 19; docs/MODULE_CONTRACT.md, sections 4 and 5).", "docs/MODULE_CONTRACT.md", {"sections 4 and 5"}, true, "; docs/MODULE_CONTRACT.md, sections 4 and 5"},
 		{"The colors of docs/DESIGN.md: a name is dim.", "docs/DESIGN.md", {}, false, "docs/DESIGN.md"},
 		{"The speeds of docs/CRYPTOGRAPHY.md, section 6, with the cost.", "docs/CRYPTOGRAPHY.md", {"section 6"}, false, "docs/CRYPTOGRAPHY.md, section 6"},
 		{"The versions: docs/ARCHITECTURE.md, U5, \"Versions\".", "docs/ARCHITECTURE.md", {"U5", "\"Versions\""}, false, "docs/ARCHITECTURE.md, U5, \"Versions\""},

@@ -13,7 +13,7 @@ execute :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, orig
 }
 
 // draw_damage_on_surface draws the damage of a frame on the surface of a
-// program: each damage rectangle is painted with the background first, so a
+// process: each damage rectangle is painted with the background first, so a
 // record that the frame no longer has leaves no pixel, then the records
 // that touch it are drawn again. The compositor draws a panel over other
 // windows: it calls execute_in_rectangle, which paints only the records.
@@ -37,7 +37,7 @@ execute_in_rectangles :: proc "contextless" (table: ^Draw_Table, canvas: graphic
 
 // execute_in_rectangle draws the records that touch one rectangle of the
 // surface, cut to it. A color with alpha blends with the table of the text
-// state of the graphics package, which the program fills once at its start
+// state of the graphics package, which the process fills once at its start
 // (graphics.text_state_start; display.text_settings_load calls it).
 execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, rectangle: Rectangle, origin_x: int = 0, origin_y: int = 0) {
 	limit := intersection(rectangle, {-origin_x, -origin_y, canvas.width - origin_x, canvas.height - origin_y})
@@ -47,7 +47,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 	cut := limit
 	for index in 0 ..< table.record_count {
 		// One copy of each record, read through the border: a table can be
-		// in memory that another program writes during the call, and each
+		// in memory that another process writes during the call, and each
 		// check and each draw reads this copy.
 		record := draw_record.copy_once(&table.records[index])
 		primitive, problem := draw_record.read(record)

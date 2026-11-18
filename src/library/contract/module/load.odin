@@ -86,7 +86,7 @@ record :: proc "contextless" (file: []u8, kind: Table_Kind, index: u32, $T: type
 //
 // It does not check the slots, the imports or the descriptions: `bind` and
 // the readers of descriptions check what they read. A file from a store or
-// from another program is hostile input: call it first.
+// from another process is hostile input: call it first.
 //
 // ```odin
 // if module.validate(file) != .None {
@@ -228,8 +228,8 @@ rebase_location :: proc "contextless" (file: []u8, memory: []u8, memory_offset: 
 // ok is false for the index 0, an index that the file does not have, or a
 // code offset outside the module.
 //
-// Example: `module.export_address(file, op.PROGRAM_BASE, head.entry_export)`
-// gives the entry of a program.
+// Example: `module.export_address(file, op.PROCESS_BASE, head.entry_export)`
+// gives the entry of the module of a process.
 export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u32) -> (address: uintptr, ok: bool) {
 	if export_index == 0 {
 		return 0, false
@@ -247,14 +247,14 @@ export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u
 // the import names: a slot names an export by its index in that file.
 Bound_Import :: struct {
 	file:  []u8, // The file of the module that is loaded for the import.
-	base:  uintptr, // Its address in the program that runs it.
+	base:  uintptr, // Its address in the process that runs it.
 	named: []u8, // nil: `file` is the module that the import names.
 }
 
 // A replacement: where a module imports the module `from`, the loader loads
 // the module `to` (docs/MODULE_CONTRACT.md, "Replacement of an import").
 //
-// The party that starts a program gives the replacements; the loader checks
+// The party that starts a process gives the replacements; the loader checks
 // that each export that a slot uses has the same description in `to`
 // (`functions_compare`). 64 bytes. See [replacement](term:replacement).
 Replacement :: struct {

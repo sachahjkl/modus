@@ -74,7 +74,7 @@ characters_french_alt_graph := [TABLE_KEY_COUNT]rune {
 }
 
 // The accent of a dead key. It never leaves this package as a word: a
-// program reads the character of a key record.
+// process reads the character of a key record.
 Accent :: enum u8 {
 	None,
 	Circumflex,

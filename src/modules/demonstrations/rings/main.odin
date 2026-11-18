@@ -1,33 +1,33 @@
-// A demonstration of communication between programs: a ring is the one way
-// that programs communicate, and a program reaches only the rings that it
+// A demonstration of communication between processes: a ring is the one way
+// that processes communicate, and a process reaches only the rings that it
 // was given.
 //
-// Each square is a program with its own address space. Each line between two
+// Each square is a process with its own address space. Each line between two
 // squares is a ring: two pages of shared memory. A small colored square is a
 // record. A node takes a record from the ring before it, works on it for
 // some time, and puts it in the ring after it. No record goes through the
-// kernel: the kernel only wakes a program that waits.
+// kernel: the kernel only wakes a process that waits.
 //
-// This program starts the nodes and gives each one its rings. It maps the
+// This process starts the nodes and gives each one its rings. It maps the
 // same rings, so the picture is the real content of the queues.
 //
 //   left button on a node, or a: add a record
-//   right button on a node, or 1 to 6: stop the program, or start it again
+//   right button on a node, or 1 to 6: stop the process, or start it again
 //
 // A stopped node takes no record: the records wait in the ring before it.
 // A ring holds 32 records. When it is full, the node before keeps its
 // record and waits.
 //
 // **What it is for.** It makes the base interface of the kernel visible:
-// six isolated programs in a circle, each with four memory objects and no
+// six isolated processes in a circle, each with four memory objects and no
 // other handle. The picture is not a model: it is the content of the real
-// queues, which this program maps too. A stopped node shows that the others
+// queues, which this process maps too. A stopped node shows that the others
 // go on, and that its records wait for it in its ring.
 //
 // **Start**: `start("rings")` in the console, or the bar of the desktop. It
 // starts its six nodes from the boot image (the module `node`), each with
 // its own work time: 260, 420, 180, 700, 240 and 340 ms. Its budget has room
-// for seven programs: itself and the six nodes.
+// for seven processes: itself and the six nodes.
 //
 // **Grants**, as the root service gives them:
 //
@@ -35,7 +35,7 @@
 //
 // **What a reader sees**: the circle of nodes, the records in each ring, the
 // record that each node holds, and its work time. The log has "rings: ok, 6
-// programs, 6 rings, 5 records", "rings: node N stopped" or "started" after
+// processes, 6 rings, 5 records", "rings: node N stopped" or "started" after
 // a key, "rings: the key a adds a record: N records in all", "rings: node N
 // stopped alone" when the kernel stopped it, and
 // "rings: node N does not run: M records wait in the ring before it".
@@ -51,7 +51,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 // Six nodes.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4114, programs = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4114, processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 720
 HEIGHT :: 540
@@ -63,7 +63,7 @@ SHOWN_RECORDS :: 9 // Records of a ring that the picture shows as squares.
 
 
 Node :: struct {
-	program:        system.Handle, // 0: the program does not run.
+	process:        system.Handle, // 0: the process does not run.
 	after_memory:   system.Handle, // The ring from this node to the next one.
 	after:          ring.Ring,
 	control_memory: system.Handle,
@@ -85,7 +85,7 @@ centers := [relay.NODE_COUNT][2]int{{360, 84}, {540, 180}, {540, 356}, {360, 452
 work_times := [relay.NODE_COUNT]u64{260, 420, 180, 700, 240, 340}
 
 // series_color gives the color of a series number of a record. The number
-// comes from a node, another program: it is taken modulo the count of the
+// comes from a node, another process: it is taken modulo the count of the
 // series, never used as it is.
 series_color :: proc "contextless" (number: u64) -> graphics.Color {
 	return graphics.colors.series[number % graphics.SERIES_COLOR_COUNT]
@@ -96,7 +96,7 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(1)
 }
 
-// node_start starts the program of a node. The program receives the ring
+// node_start starts the process of a node. The process receives the ring
 // before it, the ring after it, its control ring and its state. A node that
 // starts again has the same rings: the records that waited are still there.
 node_start :: proc "contextless" (index: int) -> bool {
@@ -112,21 +112,21 @@ node_start :: proc "contextless" (index: int) -> bool {
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
 	status: system.Status
-	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
+	node.process, status = system.process_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
 	node.waiting_logged = false
 	return status == .Ok
 }
 
-// node_stop closes the handle of the program: the kernel stops it. The
-// record that the node had is lost with the program.
+// node_stop closes the handle of the process: the kernel stops it. The
+// record that the node had is lost with the process.
 node_stop :: proc "contextless" (index: int) {
-	system.close(nodes[index].program)
-	nodes[index].program = 0
+	system.close(nodes[index].process)
+	nodes[index].process = 0
 	nodes[index].state^ = {}
 }
 
 toggle :: proc "contextless" (index: int) {
-	if nodes[index].program != 0 {
+	if nodes[index].process != 0 {
 		node_stop(index)
 		system.log("rings: node ", u64(index + 1), " stopped")
 	} else if node_start(index) {
@@ -142,7 +142,7 @@ add :: proc "contextless" (index: int) {
 	}
 }
 
-// pending gives the records that wait in a queue. The other programs write
+// pending gives the records that wait in a queue. The other processes write
 // the two counters: the result is never more than the capacity.
 pending :: proc "contextless" (queue: ^ring.Queue) -> (first, count: u32) {
 	return queue.counters.read, ring.count(queue)
@@ -152,8 +152,8 @@ pending :: proc "contextless" (queue: ^ring.Queue) -> (first, count: u32) {
 // frame now and of the frame on the surface.
 window_memory: interface.Window_Memory(384, 2048)
 
-// The random generator of this program (src/library/support/random).
-program_generator: random.Generator
+// The random generator of this process (src/library/support/random).
+process_generator: random.Generator
 
 // The entry of rings: it makes the rings, starts the six nodes, puts five
 // records in the circle, then draws and answers keys and clicks for ever.
@@ -165,9 +165,9 @@ program_generator: random.Generator
 // rings, and waits 33 ms or until the next event.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The random generator of this program, from the seed that its starter
-	// gave: it gives the seed of each program that this one starts.
-	if !random.generator_from_context(&program_generator, ctx) {
+	// The random generator of this process, from the seed that its starter
+	// gave: it gives the seed of each process that this one starts.
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("rings: no random seed in the context")
 		system.stop(1)
 	}
@@ -206,7 +206,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for index in 0 ..< START_RECORDS {
 		add(index)
 	}
-	system.log("rings: ok, ", u64(relay.NODE_COUNT), " programs, ", u64(relay.NODE_COUNT), " rings, ", u64(START_RECORDS), " records")
+	system.log("rings: ok, ", u64(relay.NODE_COUNT), " processes, ", u64(relay.NODE_COUNT), " rings, ", u64(START_RECORDS), " records")
 
 	buttons: u32
 	for {
@@ -274,15 +274,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // What the pointer does on a square: a fact at the left of the action bar.
 POINTER_NOTE :: "click a square: left adds, right stops or starts"
 
-// The keys of the window. The keys 1 to 6 stop or start the program with
+// The keys of the window. The keys 1 to 6 stop or start the process with
 // that number: a key with an argument takes no press, and a click on its
 // square does the same.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
 	return {interface.action_bar_item("add a record", 2, "a"), interface.action_bar_item("stop or start", 1, "1-6")}
 }
-#assert(relay.NODE_COUNT == 6) // The face "1-6" names the keys of the programs.
+#assert(relay.NODE_COUNT == 6) // The face "1-6" names the keys of the processes.
 bar: interface.Action_Bar_State
 
 // key_run runs one key: a typed key, or the key of an item of the action
@@ -306,8 +306,8 @@ watch :: proc "contextless" () {
 		total += count + node.state.holding
 	}
 	for &node, index in nodes {
-		if node.program != 0 {
-			if state, _ := system.program_state(node.program); state == .Stopped {
+		if node.process != 0 {
+			if state, _ := system.process_state(node.process); state == .Stopped {
 				node_stop(index)
 				system.log("rings: node ", u64(index + 1), " stopped alone")
 			}
@@ -322,7 +322,7 @@ watch :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
-	interface.draw_text(table, 12, 8, "Each square is a program. Each line is a ring in shared memory.", graphics.colors.text)
+	interface.draw_text(table, 12, 8, "Each square is a process. Each line is a ring in shared memory.", graphics.colors.text)
 	// The band of the action bar, from edge to edge.
 	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
 	interface.draw_rectangle(table, 0, bar_y, WIDTH, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
@@ -362,11 +362,11 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 		// A node runs, is blocked by a full ring, or is stopped. A stopped
 		// node is there and cannot be used: its border is the color of what
 		// is not usable, which is not a text, so its word is the dim text.
-		border := graphics.colors.program
-		status_color := graphics.colors.program
+		border := graphics.colors.process
+		status_color := graphics.colors.process
 		status := "waits"
 		switch {
-		case node.program == 0:
+		case node.process == 0:
 			border, status_color, status = graphics.colors.not_usable, graphics.colors.dim, "stopped"
 		case state.blocked != 0:
 			border, status_color, status = graphics.colors.warning, graphics.colors.warning, "ring full"

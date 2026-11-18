@@ -15,7 +15,7 @@ source_folders_are_folders_of_the_repository :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, os.is_dir(SOURCE_FOLDER_LIBRARY), "%s is not a folder of the repository", SOURCE_FOLDER_LIBRARY)
 	// The files that the tool names by a path of their own.
-	for file in ([]string{RUNTIME_MEMORY, BOOT_PROGRAM_JUMP_SOURCE, RELEASE_NUMBER_SOURCE, CRYPTOGRAPHY_MANIFEST, CRYPTOGRAPHY_SYSTEM_FILES, FAULT_SOURCE_FILE, DEBUG_TARGET_SOURCE_FILE, SITE_SEARCH_MATCH_SOURCE, SITE_OPERATION_FILE, SITE_ERRORS_FILE, SITE_FIXED_ADDRESSES_FILE, SITE_SYSTEM_GRANTS_FILE, SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE, SITE_START_GRANT_FILE, FONT_OUTPUT, HALL_OF_FAME_CREDITS_FILE, HALL_OF_FAME_PROGRAM_FILE}) {
+	for file in ([]string{RUNTIME_MEMORY, BOOT_PROGRAM_JUMP_SOURCE, RELEASE_NUMBER_SOURCE, CRYPTOGRAPHY_MANIFEST, CRYPTOGRAPHY_SYSTEM_FILES, FAULT_SOURCE_FILE, DEBUG_TARGET_SOURCE_FILE, SITE_SEARCH_MATCH_SOURCE, SITE_OPERATION_FILE, SITE_ERRORS_FILE, SITE_FIXED_ADDRESSES_FILE, SITE_SYSTEM_GRANTS_FILE, SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE, SITE_START_GRANT_FILE, FONT_OUTPUT, HALL_OF_FAME_CREDITS_FILE, HALL_OF_FAME_MODULE_FILE}) {
 		testing.expectf(t, os.is_file(file), "%s is not a file of the repository", file)
 	}
 	// The folder of each module of the table, and of each host test.
@@ -73,10 +73,11 @@ the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
 // the folder of a group alone, a group whose name a longer folder starts
 // with. Then the table and the tree: each row that is not a kernel is in a
 // group, each folder of a group is a row, src/modules holds the groups and
-// nothing else, no two rows have one name, and each program has an entry.
+// nothing else, no two rows have one name, and each module marked with an entry has an
+// entry function.
 @(test)
 the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
-	for source in ([]string{"", SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_MODULES + "/root", SOURCE_FOLDER_MODULES + "/programs/root", SYSTEM_MODULE_SOURCES, SOURCE_FOLDER_MODULES + "/systems/root", "src/programs/root"}) {
+	for source in ([]string{"", SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_MODULES + "/root", SOURCE_FOLDER_MODULES + "/processes/root", SYSTEM_MODULE_SOURCES, SOURCE_FOLDER_MODULES + "/systems/root", "src/processes/root"}) {
 		_, found := module_group_of_source(source)
 		testing.expectf(t, !found, "%q is in no group", source)
 	}
@@ -97,8 +98,8 @@ the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
 		}
 		_, found := module_group_of_source(build.source)
 		testing.expectf(t, found, "the source %s of the module %s is in no module group", build.source, build.name)
-		if build.program {
-			testing.expectf(t, module_source_declares_entry(build.source), "the program %s has no entry function in %s", build.name, build.source)
+		if build.entry {
+			testing.expectf(t, module_source_declares_entry(build.source), "the module %s has no entry function in %s", build.name, build.source)
 		}
 	}
 	entries, error := os.read_all_directory_by_path(SOURCE_FOLDER_MODULES, context.temp_allocator)

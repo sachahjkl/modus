@@ -8,7 +8,7 @@
 // system"). One copy of each shift leaves one place for a fault of a shift.
 //
 // Each procedure takes a slice and the offset of the first byte. A slice
-// shorter than the offset and the size stops the program on the check of
+// shorter than the offset and the size stops the process on the check of
 // the bounds of the slice: the caller checks its lengths first, as each
 // reader of a header does.
 package byte_order

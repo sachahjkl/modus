@@ -159,9 +159,9 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 
 // peer_machine_socket_lend gives the number of a copy of the socket of the
 // machine that a child process inherits, for the `-netdev dgram` of QEMU.
-// The socket of the peer closes at each start of a program (CLOEXEC); the
+// The socket of the peer closes at each start of a host process (CLOEXEC); the
 // copy does not, so the caller closes it as soon as QEMU started
-// (peer_machine_socket_lent_close). A program that another thread of the
+// (peer_machine_socket_lent_close). A host process that another thread of the
 // tool starts in that time also inherits the copy; it holds the port of
 // this machine until it ends, and never reads it.
 peer_machine_socket_lend :: proc(peer: ^Peer) -> (descriptor: int, ok: bool) {

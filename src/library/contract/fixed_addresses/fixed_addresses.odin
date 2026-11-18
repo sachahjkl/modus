@@ -1,10 +1,10 @@
-// The fixed addresses of the mappings that the system gives a program: one
+// The fixed addresses of the mappings that the system gives a process: one
 // table of named ranges. The owner of each range (the contract that
 // describes what is mapped there) takes its address from here.
 //
-// One program can receive several of these mappings at one time: the root
-// service gives each program with a surface the settings page, the glyph
-// caches and the date page, and the same program can also have the files
+// One process can receive several of these mappings at one time: the root
+// service gives each process with a surface the settings page, the glyph
+// caches and the date page, and the same process can also have the files
 // of its modules, a storage file or the pointer themes. So no two ranges
 // overlap.
 //
@@ -16,17 +16,17 @@
 //
 // An address of the band has no other source than this table. No other
 // file computes an address from BAND_START or SLOT: `modustool check`
-// refuses a file of contract, support, programs or modules outside this
+// refuses a file of kernel, contract, support, private or modules outside this
 // folder that names them (tools/modustool/fixed_addresses_check.odin).
 //
-// A mapping that a program places by its own choice goes outside the
-// band, at OWN_CHOICE_START or after. The modules that a program loads
+// A mapping that a process places by its own choice goes outside the
+// band, at OWN_CHOICE_START or after. The modules that a process loads
 // end at MODULES_END or before: src/library/support/system (load.odin) refuses a
 // module that passes it.
 //
-// Example: the settings page of each program with a surface is at
+// Example: the settings page of each process with a surface is at
 // `SETTINGS_PAGE_ADDRESS`, 0x0000_3200_0000_0000: the slot 2 of the band.
-// A program reads it only when the bit `Settings_Page` of
+// A process reads it only when the bit `Settings_Page` of
 // `ranges_mapped(&ctx.values)` is set.
 //
 // See [fixed range](term:fixed-range) and [mapped ranges](term:mapped-ranges).
@@ -39,9 +39,9 @@ BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
 SLOT_COUNT :: 16 // The slots of the band: the most members of Fixed_Range.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
-// The first address of a mapping that a program places by its own choice.
+// The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
-// The end of the addresses where a program loads its modules, from
+// The end of the addresses where a process loads its modules, from
 // op.MODULE_BASE: the band starts there.
 MODULES_END :: BAND_START
 // The span of each range: one slot.
@@ -53,7 +53,7 @@ RANGE_SPAN :: SLOT
 //
 // A starter maps a range in its child before the child runs. For the
 // settings page, the glyph caches, the demand cache, the font outlines,
-// the date page, the debug image, the disk program page and the fresh
+// the date page, the debug image, the disk process page and the fresh
 // bytes page, it
 // also sets the bit of the range in the value 20 of the context of the
 // child (`range_mapped_add`). The child reads nothing at a range whose bit
@@ -61,7 +61,7 @@ RANGE_SPAN :: SLOT
 // first read, and the bit tells the child before it reads. The other
 // ranges come with their size in a value of the context.
 Fixed_Range :: enum u8 {
-	Module_Files, // The files of a module and of its imports, in the program that runs the module (modus:contract/isolated).
+	Module_Files, // The files of a module and of its imports, in the process that runs the module (modus:contract/isolated).
 	// A call host finds there, read-only, the module that it runs, its
 	// imports and the replacement records, as one list in the form of the
 	// boot image. The console or the root service maps them before the
@@ -73,14 +73,14 @@ Fixed_Range :: enum u8 {
 	// read-only, in the compositor, and gives the address and the size of
 	// each one in the values of its context.
 	Settings_Page, // The settings page (modus:contract/settings).
-	// One page, read-only, that the program `settings` writes and every
-	// program with a surface or a terminal reads: the value of each setting
-	// of the machine. The root service maps it. A program reads a change at
+	// One page, read-only, that the process `settings` writes and every
+	// process with a surface or a terminal reads: the value of each setting
+	// of the machine. The root service maps it. A process reads a change at
 	// its next read of the page, with no message.
 	Glyph_Cache, // The glyph caches of the text of the system (modus:contract/settings).
 	// The glyphs of the default font of the text, fitted to the grid of
 	// the pixels, drawn once at build time. The root service maps it,
-	// read-only, beside the settings page; each program draws text from it
+	// read-only, beside the settings page; each process draws text from it
 	// and draws no glyph itself.
 	Glyph_Cache_Without_Grid_Fit,
 	// The glyphs of the default font with no fit to the grid of the
@@ -90,16 +90,16 @@ Fixed_Range :: enum u8 {
 	// The glyphs of the emphasis weight of the default font. Mapped as the
 	// cache above.
 	Date_Page, // The date page (modus:contract/date).
-	// One page, read-only, that the program `date` writes from the
-	// real-time clock: each program reads the date of the day there with
+	// One page, read-only, that the process `date` writes from the
+	// real-time clock: each process reads the date of the day there with
 	// no call. The root service maps it.
 	Storage_File, // The file of the storage service (src/library/support/storage).
-	// The file of the program of the storage service, read-only, in a
-	// program that the root service connects to the storage service at its
-	// start: the program reads the descriptions of the exports there. The
+	// The file of the module of the storage service, read-only, in a
+	// process that the root service connects to the storage service at its
+	// start: the process reads the descriptions of the exports there. The
 	// root service maps it, and gives its size at the value 3 of the
 	// context.
-	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (modus:contract/isolated).
+	Module_Tables, // The tables of the parameters of one export, in the process that receives the call (modus:contract/isolated).
 	// A receiver maps the memory object of each table parameter there for
 	// the time of one call: the parameter n at `TABLE_ADDRESS` plus n
 	// times 16 GiB. The same addresses at each call cost no new page
@@ -110,13 +110,13 @@ Fixed_Range :: enum u8 {
 	Interface_Glyph_Cache_Bold, // The glyph cache of the interface font, bold weight.
 	// Mapped as the glyph caches above.
 	Debug_Image, // The debug image, read-only: the debug objects of the modules, by the hash of each module (modus:contract/debug_object).
-	// The root service maps it in a program that prints stop reports, as
+	// The root service maps it in a process that prints stop reports, as
 	// the console, and gives its size at the value 21 of the context. The
 	// report then names the procedure and the line of each frame.
-	Disk_Program_Page, // The disk program page (modus:contract/disk_program_page).
+	Disk_Process_Page, // The disk process page (modus:contract/disk_process_page).
 	// One page, read-only, that the root service writes: the nickname and
-	// the hash of each disk program that runs, by its program slot. The
-	// root service maps it in each program that it starts with the right
+	// the hash of each disk process that runs, by its process slot. The
+	// root service maps it in each process that it starts with the right
 	// Inspect of the machine, as the monitor.
 	Demand_Cache, // The demand cache, read-only (modus:contract/demand_cache).
 	// The glyphs of the fixed subsets past the glyph caches, which the
@@ -124,23 +124,23 @@ Fixed_Range :: enum u8 {
 	// glyph caches; the font service is its one writer.
 	Font_Outlines, // The font outlines, read-only (modus:contract/font_outlines).
 	// The font files of the system, one resource of the boot image: each
-	// program draws from them the glyphs past the glyph caches into its
+	// process draws from them the glyphs past the glyph caches into its
 	// private glyph cache. The root service maps it beside the glyph
 	// caches, and in the font service.
-	Fresh_Bytes_Page, // The fresh bytes page of the program, read-only (modus:contract/fresh_bytes).
+	Fresh_Bytes_Page, // The fresh bytes page of the process, read-only (modus:contract/fresh_bytes).
 	// The root service writes there, now and then, 32 bytes of its stream
-	// for this program alone, after a read of the entropy device; the
-	// random generator of the program mixes them into its key.
+	// for this process alone, after a read of the entropy device; the
+	// random generator of the process mixes them into its key.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
 // Fixed_Ranges: a set of ranges, one bit for each member. The value
-// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED of the context of a program is the
+// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED of the context of a process is the
 // set that its starter mapped. A bit past the last member has no meaning.
 Fixed_Ranges :: bit_set[Fixed_Range;u64]
 #assert(size_of(Fixed_Ranges) == size_of(u64))
 
-// ranges_mapped gives the ranges that the starter of a program mapped for it.
+// ranges_mapped gives the ranges that the starter of a process mapped for it.
 ranges_mapped :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> Fixed_Ranges {
 	return transmute(Fixed_Ranges)values[op.CONTEXT_VALUE_FIXED_RANGES_MAPPED]
 }
@@ -152,7 +152,7 @@ range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: 
 }
 
 // The band is after the addresses that the kernel chooses and the modules,
-// and inside the addresses of a program.
+// and inside the addresses of a process.
 #assert(BAND_START >= op.MODULE_BASE + SLOT)
 #assert(BAND_END <= op.USER_END)
 
@@ -167,7 +167,7 @@ DATE_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Date_Page)
 STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
 DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
-DISK_PROGRAM_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Program_Page)
+DISK_PROCESS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Process_Page)
 DEMAND_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Demand_Cache)
 FONT_OUTLINES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Font_Outlines)
 FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)

@@ -98,7 +98,7 @@ date_now :: proc "contextless" () -> u64 {
 	return known && milliseconds > 0 ? u64(milliseconds / 1000) : 0 // milliseconds_now gives no date before 1970.
 }
 
-date_page: ^date.Page // src/library/contract/date: the date page of this program.
+date_page: ^date.Page // src/library/contract/date: the date page of this process.
 
 slot :: #force_inline proc "contextless" (index: u64) -> []u8 {
 	return region[index * BLOCK_SIZE:][:BLOCK_SIZE]

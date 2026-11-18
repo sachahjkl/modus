@@ -4,7 +4,7 @@ package datagram
 import "core:testing"
 
 // The kind of a record of an endpoint ring and of the control ring comes
-// from another program: None, one past the last member and the largest
+// from another process: None, one past the last member and the largest
 // word are refused, and give None. Then each member but None comes back
 // from its word.
 @(test)
@@ -128,7 +128,7 @@ the_edges_of_the_address_and_the_port :: proc(t: ^testing.T) {
 }
 
 @(test)
-the_grants_of_the_programs_pass_through_the_word :: proc(t: ^testing.T) {
+the_grants_of_the_processes_pass_through_the_word :: proc(t: ^testing.T) {
 	grants := [?]Grant {
 		{address = 0x0A00_0202, port = 7}, // A client grant of UDP.
 		{address = 0x0A00_0264, port = 80, tcp = true}, // A client grant of TCP.

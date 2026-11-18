@@ -4,7 +4,7 @@
 
 A physical address is the number that the memory and the devices use for a byte of memory, before the page tables translate anything.
 
-A program sees only virtual addresses. A device sees only physical addresses: it reads and writes memory by itself, with no page table between. So only a device service needs one. It calls `Memory_Physical` with the machine handle and the right **Physical**, which the root service gives to device services only. Example: the block service gives its device the physical address of the data region of its client. A physical address is not a handle: a program that knows one cannot map it.
+A process sees only virtual addresses. A device sees only physical addresses: it reads and writes memory by itself, with no page table between. So only a device service needs one. It calls `Memory_Physical` with the machine handle and the right **Physical**, which the root service gives to device services only. Example: the block service gives its device the physical address of the data region of its client. A physical address is not a handle: a process that knows one cannot map it.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -24,7 +24,7 @@ Do not use: MMIO region, BAR mapping.
 
 A message interrupt is an interrupt that a device sends as a write of a value to an address of the interrupt controller of a processor (MSI-X).
 
-The old interrupt lines are few and shared; a message interrupt belongs to one device. The root service makes one with `Device_Create`, the kind `Message`, writes it in the table of the device, and gives the handle to the device service. When the device writes the value, the kernel counts it and wakes the threads of the holder. The service reads the count with `Interrupt_Read`, then reads its queues. A message interrupt is not a vector: a program never sees the vector.
+The old interrupt lines are few and shared; a message interrupt belongs to one device. The root service makes one with `Device_Create`, the kind `Message`, writes it in the table of the device, and gives the handle to the device service. When the device writes the value, the kernel counts it and wakes the threads of the holder. The service reads the count with `Interrupt_Read`, then reads its queues. A message interrupt is not a vector: a process never sees the vector.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -34,7 +34,7 @@ Do not use: MSI, vector.
 
 The IOMMU is the unit of the machine that translates each address that a device gives before the access reaches memory, through tables that the kernel writes.
 
-Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared with `Memory_Physical`. The kernel drives the units of Intel (VT-d) and of AMD (AMD-Vi), with one boot image for both. A machine with no IOMMU writes one line at its start and runs with no such isolation. The IOMMU is not the page table of a program: a program never sees it.
+Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared with `Memory_Physical`. The kernel drives the units of Intel (VT-d) and of AMD (AMD-Vi), with one boot image for both. A machine with no IOMMU writes one line at its start and runs with no such isolation. The IOMMU is not the page table of a process: a process never sees it.
 
 The design: `src/md/infrastructure/iommu.md`.
 
@@ -54,7 +54,7 @@ Do not use: DRHD, IOMMU unit.
 
 A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, at their device addresses.
 
-The kernel keeps one domain for each device that has a service: an entry for its requester on its remapping unit, and page tables of the declared pages. The first program that declares memory to the device owns the domain and pays for its tables. The device writes a page only while the service holds a handle with **Write**. A device with no service has an empty domain, which refuses each access. Example: the device of the data disk reaches its queue and the data region of the storage service only.
+The kernel keeps one domain for each device that has a service: an entry for its requester on its remapping unit, and page tables of the declared pages. The first process that declares memory to the device owns the domain and pays for its tables. The device writes a page only while the service holds a handle with **Write**. A device with no service has an empty domain, which refuses each access. Example: the device of the data disk reaches its queue and the data region of the storage service only.
 
 The design: `src/md/infrastructure/iommu.md`, "Mechanism in the kernel, policy outside".
 
@@ -84,7 +84,7 @@ Do not use: bus address, IOVA, DMA address.
 
 A device window is the run of device addresses where the IOMMU shows the pages of a memory object that is not contiguous, in their order.
 
-`Memory_Physical` from a device service gives an object its window, and gives each page its frame until the object ends. The slot of the object fixes the window, so it is the same in every device domain. A large object, an `Uncommitted` object, or an object for a unit with too few address bits gets no window. Example: a datagram region of 128 pages anywhere in memory is one run of 512 KiB for the network device. A device window is not a mapping of a program: no program reads through it.
+`Memory_Physical` from a device service gives an object its window, and gives each page its frame until the object ends. The slot of the object fixes the window, so it is the same in every device domain. A large object, an `Uncommitted` object, or an object for a unit with too few address bits gets no window. Example: a datagram region of 128 pages anywhere in memory is one run of 512 KiB for the network device. A device window is not a mapping of a process: no process reads through it.
 
 The design: `src/md/infrastructure/iommu.md`, "Device addresses".
 
@@ -94,7 +94,7 @@ Do not use: aperture.
 
 A reserved memory range is memory that the firmware keeps for a device, listed in the table DMAR or IVRS, which the device keeps reading and writing after the start.
 
-The firmware uses one, for example, to emulate a USB keyboard, or as the memory of an integrated graphics device. The kernel maps each range at its own address in a standing domain of each device that the range names, before translation is on, so the device keeps working. The domain of a service of that device maps the ranges too. `Device_Create` refuses a range that meets one, and no declaration maps it: no program gets it. A reserved memory range is not device memory: it is memory, not registers.
+The firmware uses one, for example, to emulate a USB keyboard, or as the memory of an integrated graphics device. The kernel maps each range at its own address in a standing domain of each device that the range names, before translation is on, so the device keeps working. The domain of a service of that device maps the ranges too. `Device_Create` refuses a range that meets one, and no declaration maps it: no process gets it. A reserved memory range is not device memory: it is memory, not registers.
 
 The design: `src/md/infrastructure/iommu.md`, "Reserved memory ranges".
 
@@ -104,7 +104,7 @@ Do not use: RMRR.
 
 A DMA fault is an access of a device to an address that its device domain does not map, which the IOMMU refuses.
 
-The unit records the requester, the page and the kind of access, and sends its fault event to the first processor. The kernel writes one line with the device, its service, the address and the count of faults of that device. After the first 4 faults of a device, it writes a line only at each power of two. A DMA fault stops no program, and the page does not change. It is not a page fault: no thread caused it. It is not a refused interrupt either, which has its own count.
+The unit records the requester, the page and the kind of access, and sends its fault event to the first processor. The kernel writes one line with the device, its service, the address and the count of faults of that device. After the first 4 faults of a device, it writes a line only at each power of two. A DMA fault stops no process, and the page does not change. It is not a page fault: no thread caused it. It is not a refused interrupt either, which has its own count.
 
 The design: `src/md/infrastructure/iommu.md`, "A DMA fault".
 
@@ -114,7 +114,7 @@ Do not use: IOMMU fault, DMAR fault.
 
 The queue of invalidations is a ring of descriptors in memory of the kernel through which the kernel tells a remapping unit to forget the entries that it keeps.
 
-A unit keeps the entries that it read. When the kernel clears or changes one, it writes descriptors that name the domain or the interrupt entry, then a wait descriptor, and waits until the unit writes the number of the wait. The unit then forgot each entry and drained the accesses in flight, so a page can become free. A unit that does not reach the wait in one second stops the machine. On a unit of AMD, the queue is a ring of commands. No program sees the queue.
+A unit keeps the entries that it read. When the kernel clears or changes one, it writes descriptors that name the domain or the interrupt entry, then a wait descriptor, and waits until the unit writes the number of the wait. The unit then forgot each entry and drained the accesses in flight, so a page can become free. A unit that does not reach the wait in one second stops the machine. On a unit of AMD, the queue is a ring of commands. No process sees the queue.
 
 The design: `src/md/infrastructure/iommu.md`, "The end of a grant".
 
@@ -154,7 +154,7 @@ Do not use: IR, IRTE, interrupt translation.
 
 The bus is the PCI bus of the machine: each device has a place on it (bus, device, function) and a configuration of 256 bytes or more.
 
-A program that can write the configuration of any device can make any device read or write any memory. So only the root service holds the ports of the configuration. It checks the device at each fixed place, enables it, and starts its device service with a read-only copy of the configuration, the device memory of its registers and one message interrupt. The kernel finds no device; with an IOMMU, it only reads the bus. The code of the bus is `src/library/support/pci`.
+A process that can write the configuration of any device can make any device read or write any memory. So only the root service holds the ports of the configuration. It checks the device at each fixed place, enables it, and starts its device service with a read-only copy of the configuration, the device memory of its registers and one message interrupt. The kernel finds no device; with an IOMMU, it only reads the bus. The code of the bus is `src/library/support/pci`.
 
 The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 
@@ -204,7 +204,7 @@ Do not use: sector, page (for a disk).
 
 A block service is the device service of one disk: it serves read, write and flush of blocks to one client through a block ring.
 
-A block service keeps the code that knows a disk device out of the kernel and out of the storage service. The first one is the program `block`, for a virtio block device. The client sends `Attach` with its data region, then reads, writes and flushes. The device moves the bytes with no copy and no kernel entry for each request. A write is on the disk only after a later `Flush`. A block service is not a block layer: it has no cache, no scheduler and no partition.
+A block service keeps the code that knows a disk device out of the kernel and out of the storage service. The first one is the process `block`, for a virtio block device. The client sends `Attach` with its data region, then reads, writes and flushes. The device moves the bytes with no copy and no kernel entry for each request. A write is on the disk only after a later `Flush`. A block service is not a block layer: it has no cache, no scheduler and no partition.
 
 The design: `src/library/contract/block`.
 
@@ -224,7 +224,7 @@ Do not use: I/O queue, submission queue.
 
 The data region is the memory object of the client of a block service where the device reads and writes the bytes of the blocks, with no copy.
 
-The device moves the bytes of a block to and from memory of the client, so no program copies them. The client makes the region `Contiguous` and gives it to the block service with `Attach`. A request names a place in the region in bytes, never an address, and the service checks that each byte is in the region: a client cannot make the device write outside its own memory. The data region is not a cache: the client decides what it holds. The frame region is the same idea for a frame service.
+The device moves the bytes of a block to and from memory of the client, so no process copies them. The client makes the region `Contiguous` and gives it to the block service with `Attach`. A request names a place in the region in bytes, never an address, and the service checks that each byte is in the region: a client cannot make the device write outside its own memory. The data region is not a cache: the client decides what it holds. The frame region is the same idea for a frame service.
 
 The design: `src/library/contract/block`.
 
@@ -232,9 +232,9 @@ Do not use: DMA buffer, bounce buffer.
 
 ### Data disk
 
-The data disk is the disk of the storage service: it holds the private stores of each program.
+The data disk is the disk of the storage service: it holds the private stores of each process.
 
-The data disk is the one disk whose content the system keeps. The root service starts its block service when the storage service starts, and gives the block ring to the storage service only. The storage service writes its own format on the whole disk. The modus tool makes a disk of 64 MiB for a run, and a new one for each machine test. The data disk is not a disk of the user: a program sees only its own private store.
+The data disk is the one disk whose content the system keeps. The root service starts its block service when the storage service starts, and gives the block ring to the storage service only. The storage service writes its own format on the whole disk. The modus tool makes a disk of 64 MiB for a run, and a new one for each machine test. The data disk is not a disk of the user: a process sees only its own private store.
 
 The design: `docs/STORAGE.md`, "3. The format on the disk".
 
@@ -242,9 +242,9 @@ Do not use: data drive, home disk.
 
 ### Disk of the measures
 
-The disk of the measures is a disk that holds no data that a program keeps: the program `disk` measures the block service on it.
+The disk of the measures is a disk that holds no data that a process keeps: the process `disk` measures the block service on it.
 
-A measure of the block service writes blocks, and a measure on the data disk destroys the stores. So the test machine has a second disk, and the root service gives its block ring to a test program only, such as `disk`. The program `disk` measures reads and writes with one request in flight and then with many, counts the kernel entries for each request, checks a pattern that it wrote, and shows the result. The storage service never uses this disk.
+A measure of the block service writes blocks, and a measure on the data disk destroys the stores. So the test machine has a second disk, and the root service gives its block ring to a test module only, such as `disk`. The process `disk` measures reads and writes with one request in flight and then with many, counts the kernel entries for each request, checks a pattern that it wrote, and shows the result. The storage service never uses this disk.
 
 The design: `src/modules/demonstrations/disk`.
 
@@ -254,7 +254,7 @@ Do not use: scratch disk, test disk.
 
 A network device is a device that sends and receives frames on a link.
 
-The test machine has one virtio network device, whose link goes to the peer of the modus tool or to the user network of QEMU. The root service starts its frame service when the first program that needs the network starts. The frame service is the only program that touches the device, and the network service is its only client: no other program can send a frame. A network device is not an interface with an address: the IPv4 address belongs to the network service.
+The test machine has one virtio network device, whose link goes to the peer of the modus tool or to the user network of QEMU. The root service starts its frame service when the first process that needs the network starts. The frame service is the only process that touches the device, and the network service is its only client: no other process can send a frame. A network device is not an interface with an address: the IPv4 address belongs to the network service.
 
 The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 
@@ -286,7 +286,7 @@ Do not use: MAC address, physical address (for this).
 
 A frame service is the device service of one network device: it sends and receives frames for one client through a frame ring, and it does not read a frame.
 
-The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the program `frame`, for a virtio network device. Its one client, the network service, sends `Attach` with its frame region, then `Send` for each frame and `Receive` for each place where a frame can arrive. The device reads and writes the frames with no copy, and drops a frame when no `Receive` waits. A frame service is not a network stack: it knows no protocol.
+The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the process `frame`, for a virtio network device. Its one client, the network service, sends `Attach` with its frame region, then `Send` for each frame and `Receive` for each place where a frame can arrive. The device reads and writes the frames with no copy, and drops a frame when no `Receive` waits. A frame service is not a network stack: it knows no protocol.
 
 The design: `src/library/contract/frame`.
 
@@ -306,7 +306,7 @@ Do not use: TX queue, RX queue, descriptor ring (for this).
 
 The frame region is the memory object of the client of a frame service where the device reads and writes the frames, with no copy.
 
-It is the data region of the frame contract: contiguous, and given to the service with `Attach`. A request names a place in the region in bytes, never an address; a byte outside it gives `Out_Of_Range`. The network service owns the frame region. It copies each datagram that arrives one time, from the frame region to the datagram region of a program, and writes only the headers of a datagram to send. A frame region is not a socket buffer: a program with an endpoint never sees it.
+It is the data region of the frame contract: contiguous, and given to the service with `Attach`. A request names a place in the region in bytes, never an address; a byte outside it gives `Out_Of_Range`. The network service owns the frame region. It copies each datagram that arrives one time, from the frame region to the datagram region of a process, and writes only the headers of a datagram to send. A frame region is not a socket buffer: a process with an endpoint never sees it.
 
 The design: `src/library/contract/frame`.
 

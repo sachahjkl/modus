@@ -88,7 +88,7 @@ site_properties_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, len(principles.properties[12].parts) == 1 && strings.has_prefix(principles.properties[12].parts[0].sentence, "A record that is all zero bytes"))
 	testing.expect(t, strings.has_prefix(principles.properties[14].sentence, "A process can contain several protection domains"))
 	testing.expect(t, strings.contains(principles.properties[15].sentence, "Many concepts of current systems have no place here"))
-	testing.expect(t, strings.contains(principles.properties[19].sentence, "Nothing is open to a program just because it runs"))
+	testing.expect(t, strings.contains(principles.properties[19].sentence, "Nothing is open to a process just because it runs"))
 }
 
 @(test)

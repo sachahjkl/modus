@@ -1,16 +1,16 @@
 // Exports that are wrong on purpose, for the tests of the callers
 // (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"). This module
 // has no entry: no service holds it, and `remote` cannot reach it. A
-// program loads it, or a call host runs it, and only a test does so.
+// process loads it, or a call host runs it, and only a test does so.
 //
 // **What it is for.** A caller must survive a callee that breaks the
-// rules. Each export breaks one rule of the call form, and the program
+// rules. Each export breaks one rule of the call form, and the process
 // `tables` checks what the caller sees:
 //
 // - keep and kept: a lent handle ends with its call, so a later use of it
 //   gets "no handle";
 // - hold and look: a mapping of a lent object ends with its call, so a
-//   later read through it faults in the program of the module, not in the
+//   later read through it faults in the process of the module, not in the
 //   caller;
 // - append_past_capacity: a write past the capacity of a table reaches the
 //   caller only in a direct call, where the two share one address space.
@@ -114,7 +114,7 @@ hold :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> 
 
 // look reads the first byte through the mapping that hold kept. After an
 // isolated call the caller revoked what it lent: the kernel removed the
-// mapping, and the program of this module stops on a page fault.
+// mapping, and the process of this module stops on a page fault.
 //
 // In a direct call nothing was revoked: the mapping is still there, and the result is the first byte. With no
 // earlier hold, the result is -1 with an error record: `Absent` of the mappings, for the call as a whole.

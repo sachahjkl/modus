@@ -1,20 +1,20 @@
 // The glyphs past the glyph cache (src/md/features/glyphs_on_demand.md):
 // for a character that no glyph cache holds, the font of its fallback
 // chain, its advance from that font file, and its glyph: from the demand
-// cache when the font service drew it there, else drawn by this program
+// cache when the font service drew it there, else drawn by this process
 // into its private glyph cache.
 //
-// A program opens it once with the font outlines and the demand cache that
+// A process opens it once with the font outlines and the demand cache that
 // its starter mapped (open). The shaper asks for an advance (advance), the
 // draw for a glyph (glyph), and each frame starts with frame_begin. The
-// state is one for each copy of this package: a program has its own, and
+// state is one for each copy of this package: a process has its own, and
 // the drawing module that it imports has its own. Both read the same
-// outlines, so the measure in the program and the draw in the module give
+// outlines, so the measure in the process and the draw in the module give
 // the same advances.
 //
 // The advance comes from the font file at each measure, never from a
 // cache: the measure and the draw of a frame agree whatever the cache
-// holds. The draw changes the private glyph cache: one thread of a program
+// holds. The draw changes the private glyph cache: one thread of a process
 // draws at a time, as for the blend tables of the graphics package.
 //
 // No table of this package holds an address: the drawing module compiles
@@ -74,7 +74,7 @@ Chain_Kind :: enum u8 {
 // A fallback face: the glyph cache that a glyph past it stands beside. A
 // glyph of a face has the form, the baseline and the scale of the glyphs
 // of that cache. None: a glyph cache that is not of a font of the outlines,
-// or a program with no outlines; its characters past the cache draw the
+// or a process with no outlines; its characters past the cache draw the
 // replacement glyph.
 Face :: enum u8 {
 	None,
@@ -169,7 +169,7 @@ default_chains := [Chain_Kind]Chain {
 Glyph_Source :: enum u8 {
 	Missing, // No font of the chain has the character, the character is no character of a text, or the renderer refused its outline: the replacement glyph.
 	Demand_Cache, // The words of the demand cache: the first font of the face, drawn by the font service.
-	Private_Cache, // The words of the private glyph cache of this program.
+	Private_Cache, // The words of the private glyph cache of this process.
 }
 
 // One font file of the outlines, opened.
@@ -276,7 +276,7 @@ face_of_cache :: proc "contextless" (cache: ^glyph_cache.Cache) -> Face {
 	return .None
 }
 
-// frame_begin starts a frame of the program: the order of use of the
+// frame_begin starts a frame of the process: the order of use of the
 // private glyph cache counts in frames, and the demand cache gives one
 // generation to each draw of the frame.
 frame_begin :: proc "contextless" () {

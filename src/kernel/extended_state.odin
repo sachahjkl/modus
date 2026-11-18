@@ -43,9 +43,9 @@ AVX_512_COMPONENTS :: Extended_State_Components{.Opmask, .Zmm_High_Halves, .Zmm_
 LEGACY_COMPONENTS :: Extended_State_Components{.X87, .Sse}
 LEGACY_AREA_SIZE :: op.EXTENDED_STATE_LEGACY_BYTES // What fxsave writes.
 
-CR4_OSFXSR :: 1 << 9 // The processor saves the SSE registers with fxsave, and programs can use them.
+CR4_OSFXSR :: 1 << 9 // The processor saves the SSE registers with fxsave, and processes can use them.
 CR4_OSXMMEXCPT :: 1 << 10 // A SIMD floating-point exception is vector 19, not an invalid opcode.
-CR4_OSXSAVE :: 1 << 18 // xsave, xrstor and xgetbv work, and CPUID says so to programs.
+CR4_OSXSAVE :: 1 << 18 // xsave, xrstor and xgetbv work, and CPUID says so to processes.
 
 // The offsets in the start state of a thread.
 X87_CONTROL_OFFSET :: 0
@@ -206,7 +206,7 @@ extended_state_start :: proc "contextless" (area: ^Extended_State_Area) {
 }
 
 // The areas of the proofs at boot. Only the first processor uses them,
-// once, before any program runs.
+// once, before any process runs.
 start_state_proof: [2]Extended_State_Area
 
 // Values that are not the init state, for the proof of the offsets.
@@ -217,7 +217,7 @@ PROOF_YMM0_HIGH :: 0xFEDC_BA98_7654_3210
 XMM0_OFFSET :: 160
 
 // extended_state_prove runs two proofs on the first processor, after its
-// setup and before any program runs. A failed proof stops the machine with
+// setup and before any process runs. A failed proof stops the machine with
 // a sentence; a restore that the processor refuses faults here, at boot.
 //
 // 1. The offsets: it restores an area with an x87 control word, an MXCSR,

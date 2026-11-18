@@ -4,7 +4,7 @@
 // reader gives the file and the line, and the command `site` stops: a table
 // never shows a part of a file that the reader did not understand.
 //
-// The readers read the text of the files, not the compiled program: the
+// The readers read the text of the files, not the compiled module: the
 // comments of a contract are its documentation, and the compiler drops them.
 // The reader of the table of the roles of the root service reads the tree
 // of the parser of Odin, and the comments from the lines that the tree
@@ -34,8 +34,8 @@ Site_Constant :: struct {
 	line:    int,
 }
 
-// One row of the table of the roles of the root service (`program_roles`
-// of src/modules/system/root/roles.odin): a program, its start grants and the
+// One row of the table of the roles of the root service (`process_roles`
+// of src/modules/system/root/roles.odin): a process, its start grants and the
 // other terms of its role. A page shows each grant as one value, never the
 // literal itself.
 Site_Role_Row :: struct {
@@ -410,7 +410,7 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 	previous_end := literal.open.line
 	for element in literal.elems {
 		row_literal, is_row := element.derived.(^ast.Comp_Lit)
-		wrong_row := fmt.tprintf("%s, line %d: a row of %s is a record {{name = \"<program>\", grants = {{.A, .B}}, terms = {{...}}}} with no type", file, element.pos.line, table)
+		wrong_row := fmt.tprintf("%s, line %d: a row of %s is a record {{name = \"<process>\", grants = {{.A, .B}}, terms = {{...}}}} with no type", file, element.pos.line, table)
 		if !is_row || row_literal.type != nil {
 			return nil, wrong_row
 		}

@@ -1,7 +1,7 @@
-// A developer tool: the memory and the execution of one program, live
+// A developer tool: the memory and the execution of one process, live
 // (docs/TOOLS.md).
 //
-// **What it is for.** A reader who wants to see how one program runs: where
+// **What it is for.** A reader who wants to see how one process runs: where
 // its memory is, which modules it holds, what its threads do now, and
 // where it stopped if it faulted. It shows that a
 // [developer tool](term:developer-tool) needs no special access: it reads
@@ -9,10 +9,10 @@
 // that any holder of the machine with **Inspect** can ask for, and it
 // changes nothing.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
-// `start("inspect")` in the console. The window has a list of the programs
+// **What a reader sees.** Start it from the start menu, or with
+// `start("inspect")` in the console. The window has a list of the processes
 // at the left. The input chooses one: Up and Down, a click, or letters that
-// filter the list. The window then shows, for that program:
+// filter the list. The window then shows, for that process:
 //
 // - its address space, as one band scaled by address and as a table: each
 //   mapping, its kind (module code, module data, thread area, device,
@@ -20,38 +20,38 @@
 // - its modules: the name in the boot image, the hash, the base, the size;
 // - its threads, with the state of the scheduler: the processor, the
 //   weight, the virtual time, the lag, the word wait;
-// - the [stop report](term:stop-report) of a program that stopped on a
+// - the [stop report](term:stop-report) of a process that stopped on a
 //   fault, each frame as its procedure and its source line when the
 //   [debug image](term:debug-image) names it, else as `module + offset`.
 //
 // A sample of the reports comes each 250 ms; a value that changed is drawn
 // in the color of the boot program for one sample. Space freezes the
-// sample. Tab shows the bytes of the memory of this program itself
-// (`hex.odin`). The log gets `inspect: ok, <count> programs; ...` at the
+// sample. Tab shows the bytes of the memory of this process itself
+// (`hex.odin`). The log gets `inspect: ok, <count> processes; ...` at the
 // start.
 //
 // **Its grants**: **Inspect** (the machine handle that reads the reports),
 // **Image** (the names of the modules and their exports), **Debug_Image**
 // (the names of the procedures and the source lines), and **Serve** (its
 // exports). Nothing more: it reads reports, it changes nothing, and it reads
-// no byte of another program.
+// no byte of another process.
 //
 // **Its exports** (`exports.odin`) give the same facts as tables, to a
 // caller that [acts for the principal](term:acts-for-the-principal):
-// `mappings`, `threads` and `modules`, each for one program by its name.
+// `mappings`, `threads` and `modules`, each for one process by its name.
 //
 // ```
 // connect("inspect")
 // inspect.threads("console")
 // ```
 //
-// **What it does not show.** The bytes of another program: no report gives
-// them, and the system has no right that reads them. A program is chosen by
+// **What it does not show.** The bytes of another process: no report gives
+// them, and the system has no right that reads them. A process is chosen by
 // its slot and its serial, not by its name, in the window; the exports
-// take a name, and of two programs with one name they give the one in the
+// take a name, and of two processes with one name they give the one in the
 // lowest slot. The
-// design is in docs/TOOLS.md, "The program `inspect`", and "What `inspect`
-// does not read: the bytes of another program".
+// design is in docs/TOOLS.md, "The process `inspect`", and "What `inspect`
+// does not read: the bytes of another process".
 package inspect
 
 import op "modus:contract/operation"
@@ -62,20 +62,20 @@ import "modus:support/system"
 SAMPLE_INTERVAL :: 250 // Milliseconds.
 KEY_TAB :: 0x0F
 FILTER_CAPACITY :: 24
-PROGRAM_SLOTS :: 64 // The program slots of the kernel (System_Report.program_slots).
+PROCESS_SLOTS :: 64 // The process slots of the kernel (System_Report.process_slots).
 
 Entry :: struct {
 	slot:           u64,
-	program_serial: u64, // The program in the slot: a new program in the slot has another serial.
+	process_serial: u64, // The process in the slot: a new process in the slot has another serial.
 	name:           [32]u8,
-	state:          op.Program_State,
+	state:          op.Process_State,
 }
 
 // One sample: the reports of the kernel at one time.
 Sample :: struct {
-	slot:         u64, // The program of the sample. 0: none.
-	program:      op.Program_Report,
-	mappings:     op.Program_Mapping_Report,
+	slot:         u64, // The process of the sample. 0: none.
+	process:      op.Process_Report,
+	mappings:     op.Process_Mapping_Report,
 	modules:      op.Module_Report,
 	threads:      op.Thread_Table_Report,
 	stop:         op.Stop_Report,
@@ -87,51 +87,51 @@ Sample :: struct {
 machine: system.Handle
 image: []u8
 debug_names: system.Debug_Names // The debug image and the verdicts of its objects. With no image, the frames are "module + offset".
-entries: [PROGRAM_SLOTS]Entry
+entries: [PROCESS_SLOTS]Entry
 entry_count: int
-shown: [PROGRAM_SLOTS]int // The indexes in entries that the filter keeps.
+shown: [PROCESS_SLOTS]int // The indexes in entries that the filter keeps.
 shown_count: int
 filter: [FILTER_CAPACITY]u8
 filter_count: int
-// The chosen program: its slot and its serial, not its name (two programs
+// The chosen process: its slot and its serial, not its name (two processes
 // can have one name). When it ends, nothing is chosen.
 selected_slot: u64
-selected_program_serial: u64
+selected_process_serial: u64
 fresh: Sample // The reports of a sample before the check of their serials.
-dropped_samples: u64 // Samples whose reports came from two programs of one slot.
+dropped_samples: u64 // Samples whose reports came from two processes of one slot.
 current, previous: Sample
 frozen: bool
 hex_view: bool
 samples: u64
-logged_slot: u64 // The program whose counts the log has: its slot and its serial.
-logged_program_serial: u64
+logged_slot: u64 // The process whose counts the log has: its slot and its serial.
+logged_process_serial: u64
 
 inspect_call :: proc "contextless" (kind: op.Inspect_Kind, index: u64, record: rawptr, size: int) -> bool {
 	_, status := system.call(.Inspect, u64(machine), u64(kind), index, u64(uintptr(record)), u64(size))
 	return status == .Ok
 }
 
-// slot_of gives the slot of the program with a name, or 0.
+// slot_of gives the slot of the process with a name, or 0.
 slot_of :: proc "contextless" (name: string) -> u64 {
-	for slot in 1 ..< u64(PROGRAM_SLOTS) {
-		report: op.Program_Report
-		if inspect_call(.Program, slot, &report, size_of(report)) && report.state != .None && system.name_of(report.name[:]) == name {
+	for slot in 1 ..< u64(PROCESS_SLOTS) {
+		report: op.Process_Report
+		if inspect_call(.Process, slot, &report, size_of(report)) && report.state != .None && system.name_of(report.name[:]) == name {
 			return slot
 		}
 	}
 	return 0
 }
 
-// list_read reads the programs of the machine, and keeps the ones that the
+// list_read reads the processes of the machine, and keeps the ones that the
 // filter keeps.
 list_read :: proc "contextless" () {
 	entry_count = 0
-	for slot in 1 ..< u64(PROGRAM_SLOTS) {
-		report: op.Program_Report
-		if !inspect_call(.Program, slot, &report, size_of(report)) || report.state == .None {
+	for slot in 1 ..< u64(PROCESS_SLOTS) {
+		report: op.Process_Report
+		if !inspect_call(.Process, slot, &report, size_of(report)) || report.state == .None {
 			continue
 		}
-		entries[entry_count] = {slot = slot, program_serial = report.program_serial, name = report.name, state = report.state}
+		entries[entry_count] = {slot = slot, process_serial = report.process_serial, name = report.name, state = report.state}
 		entry_count += 1
 	}
 	shown_count = 0
@@ -157,31 +157,31 @@ contains :: proc "contextless" (text, part: string) -> bool {
 	return false
 }
 
-// sample_take reads each report of the chosen program.
+// sample_take reads each report of the chosen process.
 sample_take :: proc "contextless" () {
 	start := system.nanoseconds()
 	before := system.kernel_entries()
 	list_read()
 	slot := u64(0)
 	for &entry in entries[:entry_count] {
-		if entry.slot == selected_slot && entry.program_serial == selected_program_serial {
+		if entry.slot == selected_slot && entry.process_serial == selected_process_serial {
 			slot = entry.slot
 		}
 	}
 	fresh = {slot = slot}
 	if slot != 0 {
-		inspect_call(.Program, slot, &fresh.program, size_of(fresh.program))
-		inspect_call(.Program_Mappings, slot, &fresh.mappings, size_of(fresh.mappings))
+		inspect_call(.Process, slot, &fresh.process, size_of(fresh.process))
+		inspect_call(.Process_Mappings, slot, &fresh.mappings, size_of(fresh.mappings))
 		inspect_call(.Modules, slot, &fresh.modules, size_of(fresh.modules))
 		inspect_call(.Threads, slot, &fresh.threads, size_of(fresh.threads))
 		inspect_call(.Stop, slot, &fresh.stop, size_of(fresh.stop))
-		// A new program in the slot between two reports: the sample mixes two
-		// programs, and the window keeps the sample before.
-		serial := selected_program_serial
-		if fresh.program.program_serial != serial || fresh.mappings.program_serial != serial || fresh.modules.program_serial != serial || fresh.threads.program_serial != serial || fresh.stop.program_serial != serial {
+		// A new process in the slot between two reports: the sample mixes two
+		// processes, and the window keeps the sample before.
+		serial := selected_process_serial
+		if fresh.process.process_serial != serial || fresh.mappings.process_serial != serial || fresh.modules.process_serial != serial || fresh.threads.process_serial != serial || fresh.stop.process_serial != serial {
 			dropped_samples += 1
 			if dropped_samples <= 4 {
-				system.log("inspect: a sample mixed two programs of slot ", slot, ": dropped, ", dropped_samples, " in all")
+				system.log("inspect: a sample mixed two processes of slot ", slot, ": dropped, ", dropped_samples, " in all")
 			}
 			current.time = system.time()
 			return
@@ -194,23 +194,23 @@ sample_take :: proc "contextless" () {
 	current.time = system.time()
 	samples += 1
 	frame_names_update()
-	if slot != 0 && (slot != logged_slot || selected_program_serial != logged_program_serial) {
-		logged_slot, logged_program_serial = slot, selected_program_serial
+	if slot != 0 && (slot != logged_slot || selected_process_serial != logged_process_serial) {
+		logged_slot, logged_process_serial = slot, selected_process_serial
 		sample_log()
 	}
 }
 
-// sample_log writes the counts of the chosen program on the log, one time
+// sample_log writes the counts of the chosen process on the log, one time
 // for each choice: the test compares them with the reports of monitor.
 sample_log :: proc "contextless" () {
-	name := system.name_of(current.program.name[:])
+	name := system.name_of(current.process.name[:])
 	present: u64
 	pages: u64
 	for &mapping in current.mappings.mappings[:current.mappings.count] {
 		pages += mapping.page_count
 		present += mapping.present
 	}
-	system.log("inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.program.mapped_pages, " mapped pages and ", current.program.thread_count, " threads")
+	system.log("inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.process.mapped_pages, " mapped pages and ", current.process.thread_count, " threads")
 	system.log("inspect: one sample of ", name, " took ", current.nanoseconds / 1000, " us and ", current.entries, " kernel entries")
 	if current.stop.code != 0 {
 		buffer: [512]u8
@@ -221,9 +221,9 @@ sample_log :: proc "contextless" () {
 }
 
 // address_write writes an address as "module + offset" when a module record
-// of the chosen program holds it, else as a number.
+// of the chosen process holds it, else as a number.
 address_write :: proc "contextless" (writer: ^system.Writer, address: u64, near := false) {
-	modules := current.modules.modules[:min(current.modules.count, op.PROGRAM_MODULE_CAPACITY)]
+	modules := current.modules.modules[:min(current.modules.count, op.PROCESS_MODULE_CAPACITY)]
 	index, offset := addresses.module_of(address, modules)
 	if index < 0 {
 		system.write_number(writer, address)
@@ -335,14 +335,14 @@ choose :: proc "contextless" (position: int) {
 		return
 	}
 	selected_slot = entries[shown[position]].slot
-	selected_program_serial = entries[shown[position]].program_serial
+	selected_process_serial = entries[shown[position]].process_serial
 	frozen = false
 	sample_take()
 }
 
 position_of_selected :: proc "contextless" () -> int {
 	for position in 0 ..< shown_count {
-		if entries[shown[position]].slot == selected_slot && entries[shown[position]].program_serial == selected_program_serial {
+		if entries[shown[position]].slot == selected_slot && entries[shown[position]].process_serial == selected_process_serial {
 			return position
 		}
 	}
@@ -357,7 +357,7 @@ key :: proc "contextless" (event: display.Event) {
 		choose(min(position_of_selected() + 1, shown_count - 1))
 	case event.code == KEY_TAB:
 		hex_view = !hex_view
-		system.log("inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.program.name[:]))
+		system.log("inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.process.name[:]))
 	case event.character == ' ':
 		frozen = !frozen
 		system.log("inspect: the sample is ", frozen ? "frozen" : "live")
@@ -366,7 +366,7 @@ key :: proc "contextless" (event: display.Event) {
 		filter_count = max(filter_count - 1, 0)
 		list_read()
 		if had == 1 {
-			system.log("inspect: the list shows all ", u64(shown_count), " programs")
+			system.log("inspect: the list shows all ", u64(shown_count), " processes")
 		}
 	case event.code == display.KEY_ENTER:
 		choose(0)
@@ -383,20 +383,20 @@ key :: proc "contextless" (event: display.Event) {
 }
 
 // entry opens the window of `inspect` and runs its loop: one sample of the
-// reports each 250 ms, until the program is stopped.
+// reports each 250 ms, until the process is stopped.
 //
 // **What it sets up**: a window of `WIDTH` by `HEIGHT` pixels; the machine
 // handle with **Inspect**; the boot image and the debug image, read-only;
 // the service ring of its exports; the hex view of its own memory. The first
-// program that it shows is `inspect` itself. It writes
-// `inspect: ok, <count> programs; up, down, letters: choose; ...` on the
+// process that it shows is `inspect` itself. It writes
+// `inspect: ok, <count> processes; up, down, letters: choose; ...` on the
 // log.
 //
 // **The loop.** It draws the window, then waits for an event of the window
 // or a call until the time of the next sample. A key or a click in the
-// list changes the chosen program and draws again at once. A call runs
+// list changes the chosen process and draws again at once. A call runs
 // between two samples. At the time of the sample it takes a new sample, or,
-// when Space froze the sample, it only reads the list of the programs
+// when Space froze the sample, it only reads the list of the processes
 // again.
 //
 // **The stop**: with no window, it stops with the code 1. Else it never
@@ -414,15 +414,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	debug_names = system.debug_names_of(ctx)
 	service, _ = system.service_open(ctx)
 	hex_start()
-	// The first program: this one, until the input chooses.
+	// The first process: this one, until the input chooses.
 	list_read()
 	for &item in entries[:entry_count] {
 		if system.name_of(item.name[:]) == "inspect" {
-			selected_slot, selected_program_serial = item.slot, item.program_serial
+			selected_slot, selected_process_serial = item.slot, item.process_serial
 		}
 	}
 	sample_take()
-	system.log("inspect: ok, ", u64(entry_count), " programs; up, down, letters: choose; space: freeze; tab: the bytes of its own memory")
+	system.log("inspect: ok, ", u64(entry_count), " processes; up, down, letters: choose; space: freeze; tab: the bytes of its own memory")
 	for {
 		draw(&window)
 		next := current.time + SAMPLE_INTERVAL
@@ -434,7 +434,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.service_run(&service)
 			changed := false
 			for event in display.next_event(&window) {
-				// The keys and the pointer of the window are the program's own:
+				// The keys and the pointer of the window are the process's own:
 				// the interface package draws, and takes no input here.
 				if event.kind == .Key && event.pressed {
 					key(event)

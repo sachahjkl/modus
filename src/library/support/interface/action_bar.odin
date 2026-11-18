@@ -6,7 +6,7 @@ import "modus:support/graphics"
 // The action bar (docs/INTERFACE.md, "4.4 The action bar"): the band at
 // the bottom of a window that names its keys. Each item is the keycaps of
 // one key combination, then the name of its action. A press on an item
-// gives the program the key of the item, so a press and the key run one
+// gives the process the key of the item, so a press and the key run one
 // piece of code. The items that do not fit go into a list behind a button
 // "more". Its look is in the design rules (docs/DESIGN.md, "The action
 // bar").
@@ -109,7 +109,7 @@ Action_Bar_Pointer :: struct {
 	press_x, press_y:           int,
 }
 
-// What a bar keeps between frames, in the memory of the program: one for
+// What a bar keeps between frames, in the memory of the process: one for
 // each bar.
 Action_Bar_State :: struct {
 	open:         bool, // The list of the button "more" is open.
@@ -140,7 +140,7 @@ Action_Bar_Result :: struct {
 
 // What one key did to a bar (action_bar_key).
 Action_Bar_Key_Outcome :: struct {
-	taken: bool, // The key belongs to the open list: the program does not act on it.
+	taken: bool, // The key belongs to the open list: the process does not act on it.
 	run:   Key_Press, // Enter on a chosen row: the key of its action.
 	ran:   bool,
 }
@@ -191,12 +191,12 @@ action_bar_face_count :: proc "contextless" (item: ^Action_Bar_Item) -> int {
 KEY_SPACE :: 0x39
 
 // action_bar_key_of gives the key that a press on an item gives its
-// program, from its faces: a modifier ("Shift", "Ctrl"), then one key: a
+// process, from its faces: a modifier ("Shift", "Ctrl"), then one key: a
 // name of a key ("Enter", "Tab", "Esc", "Backspace", "Delete", "Space",
 // "Home", "End", "Up", "Down", "Left", "Right", "Page Up", "Page Down"), or
 // one printable ASCII character, which gives the character with the code
 // 0: the code of a letter depends on the layout of the keyboard, so a
-// program compares the character. ok is false for an item whose faces
+// process compares the character. ok is false for an item whose faces
 // name no key: it takes no press.
 action_bar_key_of :: proc "contextless" (item: ^Action_Bar_Item) -> (press: Key_Press, ok: bool) {
 	count := action_bar_face_count(item)
@@ -215,7 +215,7 @@ action_bar_key_of :: proc "contextless" (item: ^Action_Bar_Item) -> (press: Key_
 	}
 	last := item.faces[count - 1]
 	// A key that gives a character has it too, as the keyboard layout
-	// gives it: a program that reads the character of Enter sees '\n'.
+	// gives it: a process that reads the character of Enter sees '\n'.
 	switch last {
 	case "Enter":
 		press.code, press.character = display.KEY_ENTER, '\n'
@@ -484,7 +484,7 @@ action_bar_close :: proc "contextless" (bar: ^Action_Bar_State) {
 // chooses the last row, the one next to the bar; Down the first; a move
 // stops at an end), Enter runs the chosen row and closes the list, and
 // Escape closes it; each of these is taken. Another key closes the list
-// and stays for the program. A program that reads its keys calls it for
+// and stays for the process. A process that reads its keys calls it for
 // each key before it acts on the key.
 action_bar_key :: proc "contextless" (bar: ^Action_Bar_State, press: Key_Press) -> (outcome: Action_Bar_Key_Outcome) {
 	if !bar.open {
@@ -729,7 +729,7 @@ action_bar :: proc "contextless" (frame: ^Frame, area: Area, items: []Action_Bar
 	return
 }
 
-// action_bar_wants_frame says if a program that draws only after a change
+// action_bar_wants_frame says if a process that draws only after a change
 // must build a frame for the pointer: the list is open, the bar holds the
 // press, the last frame drew a part under the pointer, or the pointer is
 // over the bar or went down on it.
@@ -745,7 +745,7 @@ action_bar_wants_frame :: proc "contextless" (bar: ^Action_Bar_State, input: ^In
 
 // action_bar_takes_pointer says if a press at a place belongs to the bar:
 // the list is open (a press anywhere closes it), the bar holds the press,
-// or the place is on the bar. A program that acts on a press itself does
+// or the place is on the bar. A process that acts on a press itself does
 // not act on such a press.
 action_bar_takes_pointer :: proc "contextless" (bar: ^Action_Bar_State, x, y: int) -> bool {
 	return bar.open || bar.held.kind != .None || area_contains(bar.area, x, y)

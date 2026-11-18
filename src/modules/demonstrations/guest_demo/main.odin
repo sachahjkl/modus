@@ -1,10 +1,10 @@
-// The first guest: a program that runs a few instructions of another system
+// The first guest: a process that runs a few instructions of another system
 // on the processor, in a guest, and receives what the guest does as records
 // (docs/ARCHITECTURE.md, "A guest").
 //
 // **What it is for.** It is the proof of the guest support of the kernel,
-// and the smallest program that uses it. The guest is a program that this
-// program made and never started: its addresses are the memory of the guest.
+// and the smallest process that uses it. The guest is a process that this
+// process made and never started: its addresses are the memory of the guest.
 // One page holds 16-bit code at the guest address 0x1000:
 //
 //     mov dx, 0x80
@@ -12,22 +12,22 @@
 //     out dx, al
 //     hlt
 //
-// The program runs the guest processor with `Guest_Run`. The `out` arrives
-// as an exit record `Port_Write` with the port and the value; the program
+// The process runs the guest processor with `Guest_Run`. The `out` arrives
+// as an exit record `Port_Write` with the port and the value; the process
 // moves the guest to the next instruction and runs it again; the `hlt`
-// arrives as an exit `Halt`. Then the program moves the guest to an `int1`
+// arrives as an exit `Halt`. Then the process moves the guest to an `int1`
 // after the `hlt`: the instruction arrives as an exit `Other` with the
 // exit code 0x88 (icebp), because the kernel lets no guest deliver its debug
 // exception to itself.
-// Then it checks that a guest takes no thread: `Program_Start` of the guest
+// Then it checks that a guest takes no thread: `Process_Start` of the guest
 // gives `Bad_State`.
 //
 // On a machine whose processors have no virtualization support that the
 // kernel uses, the first run gives `Bad_Operation` with the error kind
-// `Unsupported`, and the program says so: no guest runs there.
+// `Unsupported`, and the process says so: no guest runs there.
 //
 // **Start**: `start("guest_demo")` in the console. It needs no grant: its
-// own budget pays the guest program, its memory and its page tables.
+// own budget pays the guest process, its memory and its page tables.
 //
 // **What a reader sees**: no window. The log has "guest_demo: the guest
 // wrote 42 to the port 0x80, then halted after it: as it must", or the line
@@ -41,14 +41,14 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The program itself and its guest. The working memory holds what the
-// counted parts do not: the load of the program (its page tables, its
+// The process itself and its guest. The working memory holds what the
+// counted parts do not: the load of the process (its page tables, its
 // stack guard, the copy of its writable data), one page of guest memory,
 // the page tables of the guest and the two pages that the first run takes.
-// 180 pages, as the other small programs that hold no window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 2, threads = 1}
+// 180 pages, as the other small processes that hold no window.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 2, threads = 1}
 
-// The name of the guest program in the reports and on the log.
+// The name of the guest process in the reports and on the log.
 GUEST_NAME :: "guest_demo guest"
 // The guest physical address of the code: Memory_Map takes no page 0.
 CODE_ADDRESS :: 0x1000
@@ -56,7 +56,7 @@ CODE_ADDRESS :: 0x1000
 PORT :: 0x80
 VALUE :: 42
 // mov dx, 0x80 (ba 80 00); mov al, 42 (b0 2a); out dx, al (ee); hlt (f4);
-// then int1 (f1), which the program runs on its own after the hlt.
+// then int1 (f1), which the process runs on its own after the hlt.
 GUEST_CODE :: [?]u8{0xBA, 0x80, 0x00, 0xB0, 0x2A, 0xEE, 0xF4, 0xF1}
 HALT_ADDRESS :: CODE_ADDRESS + 6 // The address of hlt in the guest.
 DEBUG_ADDRESS :: CODE_ADDRESS + 7 // The address of int1 in the guest.
@@ -65,12 +65,12 @@ DEBUG_ADDRESS :: CODE_ADDRESS + 7 // The address of int1 in the guest.
 DEBUG_EXCEPTION_EXIT_CODE :: 0x88 // The exit of the instruction int1 (icebp).
 
 // The runs of the guest that an interrupt of the machine ends with nothing
-// to answer, before the program gives up: a count, not a time. A tick ends
+// to answer, before the process gives up: a count, not a time. A tick ends
 // at most one run, and the guest runs seven instructions.
 INTERRUPTED_RUNS_LIMIT :: 1000
 
 // fail writes the line of a failure, which starts with "guest_demo:
-// failed: ", and stops the program with the code 1.
+// failed: ", and stops the process with the code 1.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
 	system.log(..parts)
 	system.stop(1)
@@ -79,9 +79,9 @@ fail :: proc "contextless" (parts: ..system.Part) -> ! {
 @(export, link_name = "entry")
 entry :: proc "c" (_: ^system.Context) -> ! {
 	name := GUEST_NAME
-	created, create_status := system.call(.Program_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
+	created, create_status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
 	if create_status != .Ok {
-		fail("guest_demo: failed: Program_Create of the guest gave ", create_status)
+		fail("guest_demo: failed: Process_Create of the guest gave ", create_status)
 	}
 	guest := system.Handle(created[0])
 
@@ -171,10 +171,10 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	system.log("guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must")
 
 	// A guest has no kernel half in its page table: no thread runs on it.
-	if _, start_status := system.call(.Program_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {
-		fail("guest_demo: failed: Program_Start of the guest gave ", start_status, ", not Bad_State")
+	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {
+		fail("guest_demo: failed: Process_Start of the guest gave ", start_status, ", not Bad_State")
 	}
-	system.log("guest_demo: Program_Start of the guest gave Bad_State: as it must")
+	system.log("guest_demo: Process_Start of the guest gave Bad_State: as it must")
 	system.log("guest_demo: ok")
 	system.stop(0)
 }

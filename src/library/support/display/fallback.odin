@@ -8,12 +8,12 @@ import "modus:support/graphics"
 import "modus:support/system"
 
 // The glyphs past the glyph caches (src/md/features/glyphs_on_demand.md):
-// the side of a program. The starter maps the font outlines and the demand
+// the side of a process. The starter maps the font outlines and the demand
 // cache read-only beside the glyph caches; text_settings_load opens them,
-// and then each spacing and each draw of the program finds the fallback
+// and then each spacing and each draw of the process finds the fallback
 // face of its glyph cache with no other call. A frame starts with
 // text_frame_begin: interface.window_frame_begin and the drawing module
-// call it, and a program that draws text by hand calls it at its frame.
+// call it, and a process that draws text by hand calls it at its frame.
 
 // fallback_load opens the font outlines and the demand cache that the
 // starter mapped. The problem is Not_Mapped when the starter gave no
@@ -34,14 +34,14 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 	return {}, fallback_glyphs.open(&outlines, demand_base)
 }
 
-// text_frame_begin starts a frame of the text of the program: the order of
+// text_frame_begin starts a frame of the text of the process: the order of
 // use of its private glyph cache counts in frames, and the demand cache
 // gives one generation to the draws of the frame.
 text_frame_begin :: proc "contextless" () {
 	fallback_glyphs.frame_begin()
 }
 
-// Cell_Fallback: what the program draws for a character in a cell past the
+// Cell_Fallback: what the process draws for a character in a cell past the
 // glyph cache of cells, at scale 1.
 Cell_Fallback :: struct {
 	font:   fallback_glyphs.Outline_Font, // The font of the chain of the cells that has it; None: the replacement glyph.
@@ -50,8 +50,8 @@ Cell_Fallback :: struct {
 	inside: bool, // Its glyph starts at the left of its cell and is at most as wide as the cell.
 }
 
-// cell_fallback_of draws a character as a cell of the program draws it,
-// in the private glyph cache of the program, and says where it comes from:
+// cell_fallback_of draws a character as a cell of the process draws it,
+// in the private glyph cache of the process, and says where it comes from:
 // the terminal says it once on its log.
 cell_fallback_of :: proc "contextless" (character: rune) -> Cell_Fallback {
 	face := graphics.cell_face()

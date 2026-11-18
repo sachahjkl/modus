@@ -1,7 +1,7 @@
 // The pages of the modules (docs/SITE.md, "The reference tables"): an index,
 // and one page for each module of module_builds. A page gives the
 // documentation of the module, its exports as the console prints them, its
-// imports, and for a program what the root service gives it. Each fact is
+// imports, and for a module with an entry what the root service gives it. Each fact is
 // read from the source that the build reads: the list of the builds, the
 // source of the module (describe.odin), and the root service.
 package modustool
@@ -50,18 +50,18 @@ site_module_list :: proc(site: ^Site, b: ^strings.Builder, from_page: string, na
 	site_value_list(b, items[:])
 }
 
-// site_program_names_cell writes the names of a case of the root service,
+// site_process_names_cell writes the names of a case of the root service,
 // each a link to the page of its module.
-site_program_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []string) {
+site_process_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []string) {
 	strings.write_string(b, "<td>")
 	site_module_list(site, b, site_page_file(SITE_GRANTS_FOLDER), names)
 	strings.write_string(b, "</td>")
 }
 
-// site_role_row_of gives the row of the table of the roles of a program.
-// The site reads the table only when each program has its row
-// (program_roles_problems), so found is false only for a module that is no
-// program of the boot image.
+// site_role_row_of gives the row of the table of the roles of a process.
+// The site reads the table only when each process has its row
+// (process_roles_problems), so found is false only for a module that is no
+// process of the boot image.
 site_role_row_of :: proc(rows: []Site_Role_Row, name: string) -> (row: Site_Role_Row, found: bool) {
 	for candidate in rows {
 		if candidate.name == name {
@@ -97,7 +97,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		for item in reference.modules {
 			in_image += module_in_boot_image(item.build) ? 1 : 0
 		}
-		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module with an entry function that the root service starts; the others are modules that a program loads or calls. The source of each is in <code>" + SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a module with an entry is one that the root service starts as a process; the others are modules that a process loads or calls. The source of each is in <code>" + SOURCE_FOLDER_MODULES + "/</code>, in the folder of its group: <code>system</code>, <code>libraries</code>, <code>demonstrations</code> or <code>tests</code>. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
 		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
 		// One table for each group, in the order of the tree of the documentation.
 		for group in Site_Module_Group {
@@ -135,8 +135,8 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"")
 		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
-		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
-		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
+		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
+		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module, with a page for each: its documentation, its exports, its imports, and for a module with an entry its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
 	}
 	site_module_graph_page_add(site, entries, graph_inputs, graph_layout)
 
@@ -245,34 +245,34 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		}
 		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/modustool/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/modustool/describe.odin"))
 
-		// What the root service gives a program.
+		// What the root service gives a process.
 		sources := make([dynamic]string, context.temp_allocator)
 		append(&sources, SITE_MODULES_FILE, build.source)
-		if item.kind == "program" {
-			role, has_role := site_role_row_of(reference.program_roles, build.name)
+		if item.kind == "entry" {
+			role, has_role := site_role_row_of(reference.process_roles, build.name)
 			budget := description.budget
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
 			// The grants and the fields of the budget are lists of values: a
 			// grant leads to its row on the page of the grants.
 			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .List}, {"As the root service says", .Prose}})
-			// Only a program with a row of the table of the roles has a row on
-			// the page of the grants: the root service and a disk program
+			// Only a process with a row of the table of the roles has a row on
+			// the page of the grants: the root service and a disk process
 			// have none, so their cell names the grants with no link.
 			if has_role {
-				fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), site_slug(build.name))
+				fmt.sbprintf(&b, "<tr><td><a href=\"%s#processes-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), site_slug(build.name))
 			} else {
 				strings.write_string(&b, "<tr><td>Grants</td><td>")
 			}
 			site_grant_set_write(site, &b, item.page, role.grants, true)
 			strings.write_string(&b, "</td>")
-			site_comment_cell(site, &b, item.page, has_role ? role.comment : "No row: the kernel starts the root service, and a disk program has the role of its row in the disk grant table of its principal.")
+			site_comment_cell(site, &b, item.page, has_role ? role.comment : "No row: the kernel starts the root service, and a disk process has the role of its row in the disk grant table of its principal.")
 			strings.write_string(&b, "</tr>\n<tr><td>Other terms of its role</td>")
 			site_role_terms_cell(&b, role.terms)
 			strings.write_string(&b, "<td></td></tr>\n<tr><td>Budget that it asks for</td><td>")
 			// The parts that the source states, and the counted parts that
 			// the source alone gives: the threads and the window. The pages
 			// of the module and of its imports come from the files of a
-			// build, which the site does not read. A part of programs or of
+			// build, which the site does not read. A part of processes or of
 			// threads that the source does not state asks for the least
 			// budget of that part: its starter chooses that amount.
 			amounts := make([dynamic]string, context.temp_allocator)
@@ -282,7 +282,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 					name:  string,
 					value: u64,
 					least: bool, // 0 is the least budget of the part, not none.
-				}{{"working memory pages", counted.working_memory_pages, false}, {"pages of its threads", counted.thread_pages, false}, {"pages of the pictures of its window", counted.window_pages, false}, {"pages of the module and its imports", 0, false}, {"programs", counted.request.programs, true}, {"threads", counted.request.threads, true}}
+				}{{"working memory pages", counted.working_memory_pages, false}, {"pages of its threads", counted.thread_pages, false}, {"pages of the pictures of its window", counted.window_pages, false}, {"pages of the module and its imports", 0, false}, {"processes", counted.request.processes, true}, {"threads", counted.request.threads, true}}
 				for part in parts {
 					switch {
 					case part.name == "pages of the module and its imports":
@@ -290,7 +290,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 					case part.value == 0 && part.least:
 						append(&amounts, strings.concatenate({site_text_html(part.name), " the least"}, context.temp_allocator))
 					case:
-						// The pages are a size; the programs and the threads are counts.
+						// The pages are a size; the processes and the threads are counts.
 						kind := part.least ? value_kinds.Value_Kind.Number : value_kinds.Value_Kind.Size
 						append(&amounts, strings.concatenate({site_text_html(part.name), " ", site_value_html_with_icon(kind, fmt.tprintf("%d", part.value))}, context.temp_allocator))
 					}
@@ -303,11 +303,11 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: it asks for the least budget.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
-			fmt.sbprintf(&b, "<p class=\"source\">The role is read from <code>program_roles</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_ROLES_FILE), SITE_ROOT_ROLES_FILE)
+			fmt.sbprintf(&b, "<p class=\"source\">The role is read from <code>process_roles</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_ROLES_FILE), SITE_ROOT_ROLES_FILE)
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
-			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a program, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
+			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a process, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
 			append(&sources, SITE_ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"

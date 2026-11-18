@@ -1,17 +1,17 @@
 // A demonstration of several processors.
 //
-// First, the program asks the kernel what each processor runs, while four
+// First, the process asks the kernel what each processor runs, while four
 // of its threads compute: the kernel answers that all the processors run
-// threads of this one program at the same time.
+// threads of this one process at the same time.
 //
 // Then 1, 2 and 4 threads compute the same picture, one row at a time.
 // Each row has the tint of the thread that computed it. The panel shows
 // the time of each picture, and the load of each processor.
 //
-// The program needs the grant to inspect the machine.
+// The process needs the grant to inspect the machine.
 //
 // **What it is for.** It shows that the kernel runs the threads of one
-// program on several processors at one time, and what that gives on a job
+// process on several processors at one time, and what that gives on a job
 // that divides well. A lock guards the next row to compute: the panel
 // counts its waits, so a reader sees the cost of the shared state.
 //
@@ -28,12 +28,12 @@
 //
 // **What a reader sees**: the picture in the tints of the threads, the time
 // of each of the three pictures, the load of each processor and the waits
-// of the lock. The log has "processors: ok, N processors ran the program at
+// of the lock. The log has "processors: ok, N processors ran the process at
 // the same time" (or "at most N of M"), then once "processors: the picture
 // took A ms with 1 thread, B ms with 2 threads, C ms with 4 threads".
 //
 // **What it does not prove**: the times depend on the machine and on QEMU;
-// the program prints them as measures and asserts no speed-up.
+// the process prints them as measures and asserts no speed-up.
 package processors
 
 import "modus:support/display"
@@ -45,7 +45,7 @@ import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1112, programs = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1112, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 PICTURE_WIDTH :: 448
 PICTURE_HEIGHT :: 320
@@ -83,7 +83,7 @@ Worker :: struct {
 
 // What the kernel says of one processor.
 Processor :: struct {
-	name:      [32]u8, // The program that the processor runs.
+	name:      [32]u8, // The process that the processor runs.
 	busy_time: u64,
 	load:      u64, // Percent.
 }
@@ -102,7 +102,7 @@ window_memory: interface.Window_Memory(128, 1024)
 machine: system.Handle
 processor_count: u64
 processors: [PROCESSOR_ROWS]Processor
-together: u64 // The most processors that ran this program at one time.
+together: u64 // The most processors that ran this process at one time.
 spin_stop: u32
 times: [len(thread_counts)]u64 // The milliseconds of the last picture with thread_counts[n] threads.
 
@@ -130,7 +130,7 @@ spin :: proc "c" (parameter: rawptr) -> ! {
 }
 
 // processors_same asks the kernel how many processors run a thread of
-// this program now. The thread that asks is on one of them.
+// this process now. The thread that asks is on one of them.
 processors_same :: proc "contextless" () -> (count: u64) {
 	for index in 0 ..< processor_count {
 		report: op.Processor_Report
@@ -213,10 +213,10 @@ load_measure :: proc "contextless" (elapsed: u64) {
 		processor.load = min((report.busy_time - processor.busy_time) * 100 / max(elapsed, 1), 100)
 		processor.busy_time = report.busy_time
 		processor.name = {}
-		if report.program != 0 {
-			program: op.Program_Report
-			system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), report.program, u64(uintptr(&program)), size_of(program))
-			processor.name = program.name
+		if report.process != 0 {
+			process: op.Process_Report
+			system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), report.process, u64(uintptr(&process)), size_of(process))
+			processor.name = process.name
 		}
 	}
 }
@@ -258,9 +258,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	run_together()
 	if together == min(processor_count, WORKER_COUNT + 1) {
-		system.log("processors: ok, ", together, " processors ran the program at the same time")
+		system.log("processors: ok, ", together, " processors ran the process at the same time")
 	} else {
-		system.log("processors: at most ", together, " of ", processor_count, " processors ran the program at the same time")
+		system.log("processors: at most ", together, " of ", processor_count, " processors ran the process at the same time")
 	}
 
 	job.next = PICTURE_HEIGHT
@@ -333,7 +333,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		y += 8
 		after := interface.draw_unsigned(table, x, y, processor_count, graphics.colors.text)
 		after = interface.draw_text(table, after, y, " processors, at one time ", graphics.colors.text)
-		interface.draw_unsigned(table, after, y, together, graphics.colors.program)
+		interface.draw_unsigned(table, after, y, together, graphics.colors.process)
 		y += LINE + 4
 		for &processor, index in processors[:min(processor_count, PROCESSOR_ROWS)] {
 			interface.draw_unsigned(table, x, y, u64(index), graphics.colors.dim)
@@ -352,8 +352,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if times[index] != 0 {
 				after = interface.draw_unsigned(table, x + 72, y, times[index], color)
 				interface.draw_text(table, after, y, " ms", color)
-				// The time that the program took for one picture.
-				interface.draw_rectangle(table, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, graphics.colors.program)
+				// The time that the process took for one picture.
+				interface.draw_rectangle(table, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, graphics.colors.process)
 			}
 			y += LINE
 		}

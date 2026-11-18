@@ -4,7 +4,7 @@
 
 The sound service is the device service of the sound device: it plays the records of one timed stream, each at the time that it names, for one client through a stream ring.
 
-The first one is the program `sound`, for a virtio sound device. The root service starts it when the program with the start grant `Sound_Device` starts, and stops it with that program: one program plays at a time. The client sends `Attach` with its sample region, `Start`, then `Play` for each record. The service fills each period from the records and plays silence between them. It is not a mixer: it sums no two streams.
+The first one is the process `sound`, for a virtio sound device. The root service starts it when the process with the start grant `Sound_Device` starts, and stops it with that process: one process plays at a time. The client sends `Attach` with its sample region, `Start`, then `Play` for each record. The service fills each period from the records and plays silence between them. It is not a mixer: it sums no two streams.
 
 The design: `src/md/features/timed_stream.md`.
 
@@ -44,7 +44,7 @@ Do not use: sample (for this), tick.
 
 In the group Sound, a sample is the value of one channel at one frame: a signed 16-bit number in little endian.
 
-Two samples, left then right, make one frame of the one format. The program writes them in its sample region; no service changes them. It is not the sample of a developer tool in the group Network, which is one read of its reports.
+Two samples, left then right, make one frame of the one format. The process writes them in its sample region; no service changes them. It is not the sample of a developer tool in the group Network, which is one read of its reports.
 
 The design: `src/library/contract/timed_stream`.
 
@@ -64,7 +64,7 @@ Do not use: buffer (for this), fragment.
 
 The stream clock is the map of the sound service between the system clock and the frames of its device: the frame of its anchor plays at the time of its anchor.
 
-A program names the time of a record by the system clock (`system.nanoseconds()`), the clock of every program; the service maps it to the nearest frame. The anchor is set at `Start` and moves only at an underrun. A program never sees the clock of the device. The map corrects no drift of the device yet.
+A process names the time of a record by the system clock (`system.nanoseconds()`), the clock of every process; the service maps it to the nearest frame. The anchor is set at `Start` and moves only at an underrun. A process never sees the clock of the device. The map corrects no drift of the device yet.
 
 The design: `src/md/features/timed_stream.md`, "The stream clock".
 

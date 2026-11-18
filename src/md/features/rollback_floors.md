@@ -18,8 +18,8 @@ The guide is [`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "10. The T
 - **The refusal comes before the kernel.** A refused system must run no code of its own: not its kernel, not its root service.
 - **The refusal is the work of the old code.** The boot program of the old volume is the one that runs. The check works only because each boot program from this design on carries it.
 - **The boot program has no TPM driver** (property 17). It talks to the TPM through the TCG2 protocol of the firmware, as for the measure.
-- **"Only rises" must be the rule of the TPM**, not the rule of a program: a program of the old system would not keep it.
-- **Only code that the firmware verified may raise a floor.** Else a kernel or a program, of a system that a stolen key signed or of a compromised system, raises a floor to its limit and locks out every image.
+- **"Only rises" must be the rule of the TPM**, not the rule of a process: a process of the old system would not keep it.
+- **Only code that the firmware verified may raise a floor.** Else a kernel or a process, of a system that a stolen key signed or of a compromised system, raises a floor to its limit and locks out every image.
 - **The owner hierarchy has no authorization value** on the machines of the system ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)). So any code with the TPM can define, and remove, an index that the owner hierarchy defined. `TPMA_NV_POLICY_DELETE` needs the platform hierarchy, which the firmware keeps: the TPM refuses it for the owner (TPM 2.0 part 3, `TPM2_NV_DefineSpace`).
 - **No update path exists in the system.** The old system does not know the number of the next one.
 - **A principal must keep a way back** from a release whose fault is not a flaw of security.
@@ -51,7 +51,7 @@ The attributes of each index are fixed (`tpm2.FLOOR_ATTRIBUTES`):
 - `TPMA_NV_AUTHREAD` with an empty authorization value: the boot program reads it, and the boot program holds no secret;
 - `TPMA_NV_NO_DA`: a read is no try of a passphrase, so it never counts for the lockout of the TPM.
 
-**The policy of each index is `TPM2_PolicyPCR` of PCR 7 and PCR 11**: PCR 7 as it was at the definition, with Secure Boot on, and PCR 11 as it is before the measure, 32 zero bytes. PCR 7 holds the state of Secure Boot and the certificate that verified the boot program. So only a boot program that the certificate of the publisher verified, before it measures the system, satisfies the policy. After the measure, PCR 11 holds the hash of the description, and no kernel or program can raise a floor: not one of a system that a stolen key signed, not one of a compromised system. A system that a vendor certificate of `db` starts has another PCR 7, because the firmware measures into PCR 7 the certificate that verified the boot program. A machine with Secure Boot off has another PCR 7 too.
+**The policy of each index is `TPM2_PolicyPCR` of PCR 7 and PCR 11**: PCR 7 as it was at the definition, with Secure Boot on, and PCR 11 as it is before the measure, 32 zero bytes. PCR 7 holds the state of Secure Boot and the certificate that verified the boot program. So only a boot program that the certificate of the publisher verified, before it measures the system, satisfies the policy. After the measure, PCR 11 holds the hash of the description, and no kernel or process can raise a floor: not one of a system that a stolen key signed, not one of a compromised system. A system that a vendor certificate of `db` starts has another PCR 7, because the firmware measures into PCR 7 the certificate that verified the boot program. A machine with Secure Boot off has another PCR 7 too.
 
 ### The boot program reads, refuses, then raises
 
@@ -72,7 +72,7 @@ The trust record keeps the two numbers, the two floors that the boot program rea
 
 **Why an index that was never written is removed.** The boot program writes each floor that it defines at once. So an index with the area of a floor and no bit was planted by another system, or left by a start that stopped between the two commands. Its authorization value does not show in its area: a planted index can have one, and then, once written, each later read with the empty value fails. Its floor is 0 anyway, so its removal loses nothing. A written index with an authorization value cannot be planted: only the policy of this system writes it. The removal after a refused read covers it all the same.
 
-**What an attacker gains who starts an older signed volume.** The old boot program runs up to its check. Before the check, it reads only the bytes of its own volume, and the signature covers them. No kernel, no program and no measure of the older system run.
+**What an attacker gains who starts an older signed volume.** The old boot program runs up to its check. Before the check, it reads only the bytes of its own volume, and the signature covers them. No kernel, no process and no measure of the older system run.
 
 **Boot programs from before this design.** They have no check. None was ever built with the production firmware signing key, so the firmware of a machine with the certificate of the publisher starts only boot programs that read the floors (`resources/keys/README.md`).
 
@@ -92,15 +92,15 @@ The floor rises at the first start of a new system, after its checks and before 
 - **A change of PCR 7.** The policy names the value of PCR 7 at the definition. A change of `db`, or of `dbx`, or a firmware update that resets the variables, changes PCR 7. An update of `dbx` needs no principal at the machine: any system can apply one that a KEK of the firmware signed, and a KEK of a vendor signs such updates for every machine that holds it. At the next start each floor is foreign, so each older signed system passes; the first start with Secure Boot on then removes the floors and defines them at its own numbers. If that start is of an older system, its numbers become the floors.
 - **A machine with no TPM**, or whose firmware stopped using it, reads no floor and refuses nothing. Such a machine also opens no key sealed by the TPM.
 - **Secure Boot off**: PCR 7 differs, so each index looks foreign, and the floor is 0. The boot program changes no floor then. A boot program that nothing verified can skip the check anyway.
-- **Another software at the two handles.** The range of the owner is shared by all the software of the machine. The boot program removes any index at a handle of a floor that is not a floor that it can read, also the counter or the secret of another program that chose the same handle. Leaving such an index would leave the floor at 0 for good, as a planted index does.
+- **Another software at the two handles.** The range of the owner is shared by all the software of the machine. The boot program removes any index at a handle of a floor that is not a floor that it can read, also the counter or the secret of another process that chose the same handle. Leaving such an index would leave the floor at 0 for good, as a planted index does.
 
 ## Refused forms
 
 - **An index of the type counter (`TPM_NT_COUNTER`).** A counter cannot be set to a number: its first increment gives the largest value that any counter of the TPM ever had (TPM 2.0 part 1, "NV Counter Index"). A compare with a security version then needs a second index that keeps the base, and two indices that must change together. A bit field starts at 0 and needs no base. Its cost is 64 numbers for each floor.
-- **An ordinary index that the system writes with the number.** The TPM lets a writer with the policy write a lower number: "only rises" would be the rule of a program.
-- **A policy of PCR 7 alone, with the raise in the TPM service.** It was the first form. Nothing extends PCR 7 after the boot program, so each kernel and each program of any accepted system satisfies it: a system that a stolen key signed raises the version floor to 64, and the next key, with a lower security version, is then refused as "an older system". A compromised current system raises either floor to 64 and locks out every image until a clear. With PCR 11 before the measure in the policy, only the boot program raises.
+- **An ordinary index that the system writes with the number.** The TPM lets a writer with the policy write a lower number: "only rises" would be the rule of a process.
+- **A policy of PCR 7 alone, with the raise in the TPM service.** It was the first form. Nothing extends PCR 7 after the boot program, so each kernel and each process of any accepted system satisfies it: a system that a stolen key signed raises the version floor to 64, and the next key, with a lower security version, is then refused as "an older system". A compromised current system raises either floor to 64 and locks out every image until a clear. With PCR 11 before the measure in the policy, only the boot program raises.
 - **One version floor for all the keys.** A thief of the key n raises it to 64 with a description of its own, and blocks each later key. One version floor for each key number confines that to the stolen key.
-- **The check in the root service or in the TPM service.** The kernel and the first programs of the older system would run before the refusal.
+- **The check in the root service or in the TPM service.** The kernel and the first processes of the older system would run before the refusal.
 - **A raise after the whole start.** After the measure no code satisfies the policy, and a policy that code after the measure satisfies is the refused form above.
 - **A raise by a command of a principal.** A principal forgets it, and the old system stays usable.
 - **The security version raised at each release.** A principal could never go back from a release with a fault that is not a flaw.
@@ -129,6 +129,6 @@ Built: the security version in the header of the description (format 2); the key
 
 Left:
 
-- **A remote attestation of the measure** (`TPM2_Quote`): a roadmap entry. It needs an attestation key under the endorsement hierarchy, the certificate of the endorsement key, a nonce of the verifier, a protocol over the network, and a verifier program that holds the expected values: a feature of its own.
+- **A remote attestation of the measure** (`TPM2_Quote`): a roadmap entry. It needs an attestation key under the endorsement hierarchy, the certificate of the endorsement key, a nonce of the verifier, a protocol over the network, and a verifier process that holds the expected values: a feature of its own.
 - **The floors kept against code with the TPM:** an authorization value of the owner hierarchy. The roadmap entry says what it leaves open: a compromise of the code that holds that value, and a change of PCR 7.
 - **A seal of the machine key to a signed policy**, with `TPM2_PolicyNV` on the version floor: the roadmap entry "An update of the system that keeps the seal of the machine key".

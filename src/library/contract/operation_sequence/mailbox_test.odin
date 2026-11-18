@@ -29,7 +29,7 @@ the_objects_of_the_runner_do_not_meet :: proc(t: ^testing.T) {
 	for area in 0 ..< AREAS_MOST - 1 {
 		testing.expect(t, area_address(area) + (AREA_PAGES_MOST + 1) * operation.PAGE_SIZE <= area_address(area + 1), "an area and its page with no access meet the next area")
 	}
-	testing.expect(t, area_address(AREAS_MOST - 1) + AREA_ROOM <= operation.USER_END, "the last area passes the end of the addresses of a program")
+	testing.expect(t, area_address(AREAS_MOST - 1) + AREA_ROOM <= operation.USER_END, "the last area passes the end of the addresses of a process")
 }
 
 // A command that succeeds leaves the pattern: each word of the pattern is

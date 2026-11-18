@@ -14,49 +14,49 @@ main_scenario_waits_for_no_rate :: proc(t: ^testing.T) {
 	}
 }
 
-// The scenario of the measure run of a program starts it, waits for each
+// The scenario of the measure run of a process starts it, waits for each
 // line of its measures in the order of the table, then for its last line,
 // and stops the machine.
 @(test)
-measure_program_steps_wait_for_the_lines :: proc(t: ^testing.T) {
-	for program in measure_programs {
+measure_process_steps_wait_for_the_lines :: proc(t: ^testing.T) {
+	for process in measure_processes {
 		steps := make([dynamic]Step)
 		defer delete(steps)
-		measure_program_steps(program, &steps)
+		measure_process_steps(process, &steps)
 		launched, last_wait := -1, -1
 		for step, index in steps {
-			if step.kind == .Launch && step.text == program.name {
+			if step.kind == .Launch && step.text == process.name {
 				launched = index
 			}
-			if step.kind == .Wait && step.text == program.done {
+			if step.kind == .Wait && step.text == process.done {
 				last_wait = index
 			}
 		}
-		testing.expectf(t, launched >= 0 && last_wait > launched, "the scenario of %s starts it and waits for its last line", program.name)
+		testing.expectf(t, launched >= 0 && last_wait > launched, "the scenario of %s starts it and waits for its last line", process.name)
 		at := launched + 1
-		for line in program.lines {
+		for line in process.lines {
 			if line == "" {
 				continue
 			}
-			testing.expectf(t, at < last_wait && steps[at].kind == .Wait && steps[at].text == line, "the scenario of %s waits for %q after the start", program.name, line)
+			testing.expectf(t, at < last_wait && steps[at].kind == .Wait && steps[at].text == line, "the scenario of %s waits for %q after the start", process.name, line)
 			at += 1
 		}
 		testing.expect_value(t, at, last_wait)
 		testing.expect_value(t, steps[len(steps) - 1].text, "kernel: the machine stops with code 0")
 	}
-	_, found := measure_program_find("clock")
+	_, found := measure_process_find("clock")
 	testing.expect(t, found)
-	_, found = measure_program_find("life")
-	testing.expect(t, !found, "a program that measures nothing has no measure run")
+	_, found = measure_process_find("life")
+	testing.expect(t, !found, "a process that measures nothing has no measure run")
 }
 
-// The lines of a program in a log are the lines that hold its name and a
+// The lines of a process in a log are the lines that hold its name and a
 // colon.
 @(test)
-measure_program_lines_keeps_the_lines_of_the_program :: proc(t: ^testing.T) {
+measure_process_lines_keeps_the_lines_of_the_process :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
 	log := "[kernel] kernel: ok\n[clock] clock: the time page: 5 reads in one second\r\n[root] root: started clock\n[clock] clock: ok\n"
-	lines := measure_program_lines(log, "clock")
+	lines := measure_process_lines(log, "clock")
 	testing.expect_value(t, len(lines), 2)
 	if len(lines) == 2 {
 		testing.expect_value(t, lines[0], "[clock] clock: the time page: 5 reads in one second")

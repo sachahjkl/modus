@@ -5,7 +5,7 @@ import "modus:support/graphics"
 // The scroll bar (docs/INTERFACE.md, "4.1 The scroll bar"): the one
 // drawing of a scroll bar of the system. Its look is in the design rules
 // (docs/DESIGN.md, "The scroll bar"). Its sizes and its colors are the
-// table of src/library/support/graphics/scroll_bar.odin, which the site reads too. A program gives the range that it shows and
+// table of src/library/support/graphics/scroll_bar.odin, which the site reads too. A process gives the range that it shows and
 // takes the new first unit: the element holds the pointer on the arrow
 // buttons, on the track and on the thumb.
 
@@ -309,7 +309,7 @@ scroll_bar_parts_name :: proc "contextless" (frame: ^Frame, area: Area, directio
 	element_name_joined(frame, part_area(area, direction, geometry.length - geometry.arrow_length, geometry.arrow_length), name, vertical ? "arrow down" : "arrow right")
 }
 
-// scroll_bar_wants_frame says if a program that draws only after a change
+// scroll_bar_wants_frame says if a process that draws only after a change
 // must build a frame for the pointer: the pointer is over the bar, the
 // button went down on it, the bar holds the press, the last frame drew the
 // bar lit and the pointer left it, or the wheel turned with the pointer
@@ -362,8 +362,8 @@ scroll_bar_gradient_across :: proc "contextless" (table: ^Draw_Table, area: Area
 // scroll_bar_draw appends the records of a scroll bar: the track with its
 // border, the two arrow buttons, the thumb with its border, its inner line
 // and its grip. It takes no input: a bar that only shows a place (a list
-// whose owner is another program) is drawn with an empty look. colors nil
-// is the form of the appearance in force of the program.
+// whose owner is another process) is drawn with an empty look. colors nil
+// is the form of the appearance in force of the process.
 scroll_bar_draw :: proc "contextless" (table: ^Draw_Table, area: Area, direction: Scroll_Bar_Direction, geometry: Scroll_Bar_Geometry, look: Scroll_Bar_Look = {}, colors: ^graphics.Scroll_Bar_Colors = nil, element: u32 = 0) {
 	BORDER :: graphics.SCROLL_BAR_BORDER
 	// A copy of the colors: the table is read-only data of the package.

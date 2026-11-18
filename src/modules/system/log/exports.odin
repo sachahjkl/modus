@@ -9,23 +9,23 @@ import "base:intrinsics"
 
 // The log is also a service: records() gives the log records as a table of
 // records with typed fields, so that a reader checks the
-// program, the channel and the level of a record, not a line of text. The
+// process, the channel and the level of a record, not a line of text. The
 // serial port keeps the same records as lines: it works before any service
 // runs, and when the network does not.
 //
-// The records of the log are facts of all the programs, and a program sees
-// no other program: the exports give the whole log only to a caller that
+// The records of the log are facts of all the processes, and a process sees
+// no other process: the exports give the whole log only to a caller that
 // acts for the principal, and to each other caller its own records, by the
-// program slot and the program serial that the root service wrote in the
+// process slot and the process serial that the root service wrote in the
 // grant of its connection (modus:contract/log_scope). A starter also reads
-// the records of a child: it lends the program handle of the child, which
-// is what lets it see that child. This program holds the memory of the
+// the records of a child: it lends the process handle of the child, which
+// is what lets it see that child. This process holds the memory of the
 // log, so it makes the choice: a reader never maps that memory
 // (src/md/features/log_reader_scope.md). The whole log is the ring of that
-// memory. The records of one program, the own records of a caller or the
-// records of a lent child, come from the own log ring of that program,
+// memory. The records of one process, the own records of a caller or the
+// records of a lent child, come from the own log ring of that process,
 // which the kernel copies for the holder of that memory (Log_Read): the
-// records of other programs never push them out
+// records of other processes never push them out
 // (src/md/features/own_log_ring.md).
 
 // One row of the log: records(). A row has 256 bytes, the most that a
@@ -36,10 +36,10 @@ import "base:intrinsics"
 Record :: struct {
 	number:    i64, // The number of the log record, from 0.
 	time:      i64, // Microseconds since the start of the machine.
-	program:   [32]u8, // The name of the program, or "kernel".
-	slot:      i64, // The slot of the program. 0: the kernel.
+	process:   [32]u8, // The name of the process, or "kernel".
+	slot:      i64, // The slot of the process. 0: the kernel.
 	level:     [8]u8, // info, debug, warning or error.
-	channel:   [16]u8, // Empty: the program gave no channel.
+	channel:   [16]u8, // Empty: the process gave no channel.
 	lost:      i64, // The first row only: the log records after `after` that the kernel wrote over before this call read them.
 	continues: i64, // 1: the text goes on in the next row.
 	runs:      i64, // The count of the value runs of the text: value_runs() gives them.
@@ -75,10 +75,10 @@ log_memory: system.Handle // The memory of the log: the whole log, and the autho
 // at a time, on its one thread, so one copy serves each call.
 own_copy: [op.OWN_LOG_RECORD_CAPACITY]op.Log_Record
 
-// own_records_read copies the own log ring of the program of a scope from
+// own_records_read copies the own log ring of the process of a scope from
 // the own number `after` on: the records, the own records from `after` that
 // the ring no longer keeps, and the records of the ring from the first one
-// to the last one. A scope that names no program, and a program that has
+// to the last one. A scope that names no process, and a process that has
 // no ring now, give none.
 own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (copies: []op.Log_Record, lost: u64, total: u64) {
 	if !log_scope.reads_own_records(scope) {
@@ -86,7 +86,7 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 	}
 	// An own number has 32 bits: `after` counts modulo 2^32.
 	own_after := u64(u32(max(after, 0)))
-	results, status := system.call(.Log_Read, u64(log_memory), scope.program, scope.program_serial, own_after, u64(uintptr(&own_copy[0])), u64(len(own_copy)))
+	results, status := system.call(.Log_Read, u64(log_memory), scope.process, scope.process_serial, own_after, u64(uintptr(&own_copy[0])), u64(len(own_copy)))
 	if status != .Ok {
 		return nil, 0, 0
 	}
@@ -97,8 +97,8 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 // whole log, or the own number for a reader of its own records.
 row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record) {
 	text_count := min(int(record.text_count), len(record.text))
-	row^ = {number = number, time = i64(record.time), slot = i64(record.program)}
-	copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))
+	row^ = {number = number, time = i64(record.time), slot = i64(record.process)}
+	copy(row.process[:len(row.process) - 1], system.name_of(record.name[:]))
 	if record.level <= max(system.Log_Level) {
 		copy(row.level[:], level_names[record.level])
 	}
@@ -139,7 +139,7 @@ record_copy :: proc "contextless" (number: u64) -> (record: op.Log_Record, whole
 }
 
 // caller_scope gives the log scope of the caller of the export that runs.
-// With no connection (a call of this program itself), the whole log.
+// With no connection (a call of this process itself), the whole log.
 caller_scope :: proc "contextless" () -> log_scope.Scope {
 	caller := system.service_caller()
 	if caller == nil {
@@ -151,37 +151,37 @@ caller_scope :: proc "contextless" () -> log_scope.Scope {
 // The result of an export that fails: the error record says why.
 ERROR :: -1
 
-// The parameter of program_records and program_value_runs that holds the
-// lent program handle, from 1: the argument of their error records.
-LENT_PROGRAM_ARGUMENT :: 1
+// The parameter of process_records and process_value_runs that holds the
+// lent process handle, from 1: the argument of their error records.
+LENT_PROCESS_ARGUMENT :: 1
 
-// scope_of_lent_program gives the scope of a call that names a program by
-// the handle that its caller lent: the records of that program. The service
+// scope_of_lent_process gives the scope of a call that names a process by
+// the handle that its caller lent: the records of that process. The service
 // proved that the handle came through the call ring with the right Read,
 // but not its kind: a caller can lend any handle. ok is false, with the
-// error record, for a handle that names no program.
-scope_of_lent_program :: proc "contextless" (program: system.Handle, error: ^errors.Error_Record) -> (scope: log_scope.Scope, ok: bool) {
-	kind, _, _ := system.handle_state(program)
-	if kind != .Program {
-		errors.fail(error, ERROR, .Handle_Kind, .None, LENT_PROGRAM_ARGUMENT, i64(program), i64(op.Object_Kind.Program), i64(kind))
+// error record, for a handle that names no process.
+scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^errors.Error_Record) -> (scope: log_scope.Scope, ok: bool) {
+	kind, _, _ := system.handle_state(process)
+	if kind != .Process {
+		errors.fail(error, ERROR, .Handle_Kind, .None, LENT_PROCESS_ARGUMENT, i64(process), i64(op.Object_Kind.Process), i64(kind))
 		return {}, false
 	}
-	// The lent handle keeps the slot of the program for the whole call, so
-	// the slot and the serial name that program, also after it stopped.
-	results, status := system.call(.Program_State, u64(program))
+	// The lent handle keeps the slot of the process for the whole call, so
+	// the slot and the serial name that process, also after it stopped.
+	results, status := system.call(.Process_State, u64(process))
 	if status != .Ok {
-		errors.fail(error, ERROR, .Refused, .None, LENT_PROGRAM_ARGUMENT, 0, 0, i64(status))
+		errors.fail(error, ERROR, .Refused, .None, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
 		return {}, false
 	}
-	return log_scope.lent_program_scope(results[3], results[4]), true
+	return log_scope.lent_process_scope(results[3], results[4]), true
 }
 
-// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the program and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
+// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
 //
-// **What it is for.** A reader of the log checks the program, the channel
+// **What it is for.** A reader of the log checks the process, the channel
 // and the level of a record as fields, not by a search in a line of text.
 // The machine test reads the log this way, through the remote service. A
-// program reads its own records back, with their times, levels and value
+// process reads its own records back, with their times, levels and value
 // runs.
 //
 // **Parameter**: `after`, the number of the first record to give, from 0.
@@ -189,9 +189,9 @@ scope_of_lent_program :: proc "contextless" (program: system.Handle, error: ^err
 //
 // **A row** (`Record`): `number`, the number of the record in the whole
 // log, or for a reader of its own records its own number: the count of the
-// records of its program before it; `time`, microseconds since the start of the machine; `program`, its
-// name or `kernel`; `slot`, its program slot, 0 for the kernel; `level`,
-// `info`, `debug`, `warning` or `error`; `channel`, empty when the program
+// records of its process before it; `time`, microseconds since the start of the machine; `process`, its
+// name or `kernel`; `slot`, its process slot, 0 for the kernel; `level`,
+// `info`, `debug`, `warning` or `error`; `channel`, empty when the process
 // gave none; `lost`, in the first row only; `continues`, 1 when the text
 // goes on in the next row; `runs`, the count of its value runs; `text`, at
 // most 152 bytes.
@@ -203,55 +203,55 @@ scope_of_lent_program :: proc "contextless" (program: system.Handle, error: ^err
 // `lost` in the first row counts the records after `after` that the kernel
 // wrote over before the read, and the rows start after them. For a reader
 // of its own records, `after`, `number` and `lost` count its own records
-// only: no number or count of the records of other programs. Its rows come
-// from the own log ring of its program, which keeps its last 64 records and
+// only: no number or count of the records of other processes. Its rows come
+// from the own log ring of its process, which keeps its last 64 records and
 // which the records of others never fill
 // (src/md/features/own_log_ring.md). A reader whose records are all gone
 // receives no row, so no `lost` either.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection. A caller
 // that **acts for the principal** receives the whole log: the records are
-// facts of all the programs. Each other caller receives its
+// facts of all the processes. Each other caller receives its
 // [own records](term:own-records) only: the records that the kernel wrote
-// for its program, which the root service names in the grant of the
-// connection by its program slot and its program serial.
+// for its process, which the root service names in the grant of the
+// connection by its process slot and its process serial.
 //
 // ```
 // connect("log")
 // log.records(0)
-// where(log.records(0), "program", "console")
+// where(log.records(0), "process", "console")
 // ```
 @(export, link_name = "records")
 records :: proc "c" (after: i64, result: ^[]Record) -> i64 {
 	return records_in_scope(caller_scope(), after, result)
 }
 
-// program_records gives the log records of one program whose program handle the caller lends, from the own number `after` on, one row each, as records() gives its own records to a caller. A starter reads what its children wrote this way. The result is the count of the rows of that program from `after` to the last record.
+// process_records gives the log records of one process whose process handle the caller lends, from the own number `after` on, one row each, as records() gives its own records to a caller. A starter reads what its children wrote this way. The result is the count of the rows of that process from `after` to the last record.
 //
-// **What it is for.** A program that starts programs, such as a test,
+// **What it is for.** A process that starts processes, such as a test,
 // shows what each child wrote, with no right to read the whole log. The
 // handle that it received when it started the child is the proof that it
 // may see that child.
 //
-// **Parameters**: `program`, the program handle of the child, lent with the
+// **Parameters**: `process`, the process handle of the child, lent with the
 // right Read; `after`, the own number of the first record to give, from 0.
 //
 // **A row** (`Record`): as for `records`. `number` is the own number of the
-// record among the records of that program; `lost` in the first row counts
-// the records of that program after `after` that its own log ring no longer
+// record among the records of that process; `lost` in the first row counts
+// the records of that process after `after` that its own log ring no longer
 // keeps. The rows come from that ring, which keeps the last 64 records of
-// the program, also after its stop while a handle names it; the records of
-// other programs never fill it.
+// the process, also after its stop while a handle names it; the records of
+// other processes never fill it.
 //
 // **Grant**: the lent handle. Each caller with a connection to the log
-// service receives the records of the program of the handle only, also a
+// service receives the records of the process of the handle only, also a
 // caller that acts for the principal. The records of a grandchild need its
 // handle, which only the child holds and can give.
 //
-// **Errors**: `Handle_Kind` for a handle that names no program.
-@(export, link_name = "program_records")
-program_records :: proc "c" (program: system.Lent({.Read}), after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
-	scope, ok := scope_of_lent_program(program.handle, error)
+// **Errors**: `Handle_Kind` for a handle that names no process.
+@(export, link_name = "process_records")
+process_records :: proc "c" (process: system.Lent({.Read}), after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
+	scope, ok := scope_of_lent_process(process.handle, error)
 	if !ok {
 		return ERROR
 	}
@@ -259,12 +259,12 @@ program_records :: proc "c" (program: system.Lent({.Read}), after: i64, result: 
 }
 
 // records_in_scope gives the rows of records() for one scope: see records.
-// A scope of one program, its own records or a lent program, reads the own
-// log ring of that program: the records of other programs never push them
+// A scope of one process, its own records or a lent process, reads the own
+// log ring of that process: the records of other processes never push them
 // out (src/md/features/own_log_ring.md).
 records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Record) -> i64 {
 	if !scope.whole_log {
-		// The numbers and `lost` count the records of that program only,
+		// The numbers and `lost` count the records of that process only,
 		// so the reader learns no count of the records of others.
 		own, own_lost, own_total := own_records_read(scope, after)
 		own_count := min(len(own), len(result^))
@@ -333,20 +333,20 @@ value_runs :: proc "c" (after: i64, result: ^[]Value_Run) -> i64 {
 	return value_runs_in_scope(caller_scope(), after, result)
 }
 
-// program_value_runs gives the value runs of the log records of one program whose program handle the caller lends, from the own number `after` on, as value_runs() gives the runs of its own records. The result is the count of the runs of that program from `after` to the last record.
+// process_value_runs gives the value runs of the log records of one process whose process handle the caller lends, from the own number `after` on, as value_runs() gives the runs of its own records. The result is the count of the runs of that process from `after` to the last record.
 //
 // **What it is for.** A starter joins these rows to the rows of
-// `program_records` of the same child by `number`.
+// `process_records` of the same child by `number`.
 //
-// **Parameters**: `program`, the program handle, lent with the right Read;
-// `after`, as for `program_records`.
+// **Parameters**: `process`, the process handle, lent with the right Read;
+// `after`, as for `process_records`.
 //
-// **Grant**: the lent handle, as for `program_records`.
+// **Grant**: the lent handle, as for `process_records`.
 //
-// **Errors**: `Handle_Kind` for a handle that names no program.
-@(export, link_name = "program_value_runs")
-program_value_runs :: proc "c" (program: system.Lent({.Read}), after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
-	scope, ok := scope_of_lent_program(program.handle, error)
+// **Errors**: `Handle_Kind` for a handle that names no process.
+@(export, link_name = "process_value_runs")
+process_value_runs :: proc "c" (process: system.Lent({.Read}), after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
+	scope, ok := scope_of_lent_process(process.handle, error)
 	if !ok {
 		return ERROR
 	}
@@ -354,7 +354,7 @@ program_value_runs :: proc "c" (program: system.Lent({.Read}), after: i64, resul
 }
 
 // value_runs_in_scope gives the rows of value_runs() for one scope: see
-// value_runs. A scope of one program reads its own log ring, as
+// value_runs. A scope of one process reads its own log ring, as
 // records_in_scope does.
 value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Value_Run) -> i64 {
 	total := 0

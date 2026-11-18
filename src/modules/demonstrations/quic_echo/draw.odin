@@ -48,13 +48,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 	if weak_seed {
-		content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "NO KEY", "the random seed of this program is weaker than \"processor\"", graphics.colors.failed)
+		content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "NO KEY", "the random seed of this process is weaker than \"processor\"", graphics.colors.failed)
 		column := interface.column_of(content)
 		interface.label_value_line(&frame, interface.column_take(&column, LINE), "error", "Seed_Too_Weak: this server makes no key, and listens on nothing", graphics.colors.failed, 120)
 		interface.window_frame_end(&window_memory.drawing, &frame, window)
 		return
 	}
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE SERVER", "QUIC in this program, over a listen grant of UDP", graphics.colors.program)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE SERVER", "QUIC in this process, over a listen grant of UDP", graphics.colors.process)
 	column := interface.column_of(content)
 	key: [64]u8
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "public key", hex_text(key[:], public_key[:]), graphics.colors.text, 120)

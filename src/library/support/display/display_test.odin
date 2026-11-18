@@ -53,7 +53,7 @@ ring_words_of_the_compositor_refuse_a_word_that_names_no_member :: proc(t: ^test
 
 // The compositor writes the kind of each input record. A kind that names no
 // event is refused first: None, one past the last member, the largest kind.
-// A refused record gives the zero event, so nothing of it reaches a program.
+// A refused record gives the zero event, so nothing of it reaches a process.
 @(test)
 event_of_record_refuses_a_kind_that_names_no_event :: proc(t: ^testing.T) {
 	refused_kinds := [?]u32{u32(Event_Kind.None), u32(max(Event_Kind)) + 1, 1 << 31, max(u32)}
@@ -69,7 +69,7 @@ event_of_record_refuses_a_kind_that_names_no_event :: proc(t: ^testing.T) {
 }
 
 // The serial of a key reaches its event, the largest word too: it is a
-// number of the compositor that the program only names back. key_shown
+// number of the compositor that the process only names back. key_shown
 // keeps the newest serial: 0 and an older serial change nothing.
 @(test)
 key_serial_reaches_the_event_and_key_shown_keeps_the_newest :: proc(t: ^testing.T) {
@@ -135,7 +135,7 @@ event_of_record_refuses_a_character_past_the_last_code_point :: proc(t: ^testing
 }
 
 // A Resized whose size is 0, one past the limit, or the largest word, is
-// refused: the program never makes a surface of that size. The words that
+// refused: the process never makes a surface of that size. The words that
 // read as negative numbers are refused as the large words that they are.
 @(test)
 event_of_record_refuses_a_resize_out_of_its_range :: proc(t: ^testing.T) {

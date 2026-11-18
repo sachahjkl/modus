@@ -4,9 +4,9 @@
 
 A window shows facts. A fact that is drawn over another text, or that stops at the edge of a panel, is a fact that the reader does not have. This fault came back many times, each time in another window: a name of a module over the page beside it, a stack trace that stops in the middle of a path, the last line of a window under its edge.
 
-The cause was the same each time. A program placed a text at a fixed column and a fixed line, and the text was a value that the program does not choose: the name of a module, a path of a source, a sentence of an error record, a number.
+The cause was the same each time. A process placed a text at a fixed column and a fixed line, and the text was a value that the process does not choose: the name of a module, a path of a source, a sentence of an error record, a number.
 
-The purpose of this design is one rule and one implementation of it, in the interface package, so that a program has no reason to place such a text by hand.
+The purpose of this design is one rule and one implementation of it, in the interface package, so that a process has no reason to place such a text by hand.
 
 The guide: [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "The text in a box".
 
@@ -26,7 +26,7 @@ Three procedures of `src/library/support/interface/text.odin` hold the rule:
 - `text_wrapped_line_count` gives the count of the lines, so that a caller knows the height of a row before it draws it.
 - `draw_text_wrapped` draws the lines and gives the same count.
 
-Two elements use them, and take their height from a column: `label_value_lines`, a name and a value that each take the lines that they need; and `case_lines`, the row of a table of cases, which is the same row with a band and with both texts in the font of the cells. Four programs had the same table of cases, each with its own loop and its own fixed line: one element holds it now.
+Two elements use them, and take their height from a column: `label_value_lines`, a name and a value that each take the lines that they need; and `case_lines`, the row of a table of cases, which is the same row with a band and with both texts in the font of the cells. Four modules had the same table of cases, each with its own loop and its own fixed line: one element holds it now.
 
 **A window that does not draw with the package takes the rule alone.** `text_wrap_line` reads only the font of a text. For the font of the cells it needs no draw table, so a window that draws its pixels with `src/library/support/graphics` (`tables`, `server`, `log`, `pages`, the boot display) asks the package where each line ends and draws the line itself. The rule has one implementation; a window is not converted for it.
 
@@ -49,7 +49,7 @@ A column that holds values of a known longest form has the width of that form, a
 
 A row is never drawn in part: a row that does not fit whole is one of the rows that the last line counts.
 
-**The count is made when the data changes.** A program that knows when its texts change counts the lines there and keeps the counts: `errors` when a case runs, `inspect` when it reads the list of the programs, `manual` once for the boot image. The loop of a frame then reads the counts.
+**The count is made when the data changes.** A process that knows when its texts change counts the lines there and keeps the counts: `errors` when a case runs, `inspect` when it reads the list of the processes, `manual` once for the boot image. The loop of a frame then reads the counts.
 
 ## Refused forms
 

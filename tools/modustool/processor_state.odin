@@ -28,8 +28,8 @@ FIRMWARE_FLASH_END :: u64(0x1_0000_0000)
 // processor in real mode runs the firmware.
 FIRMWARE_LOW_COPY_START :: u64(0xE_0000)
 FIRMWARE_LOW_COPY_END :: u64(0x10_0000)
-// The largest privilege level of x86-64, the level of a program.
-PROGRAM_PRIVILEGE_LEVEL :: 3
+// The largest privilege level of x86-64, the level of a process.
+PROCESS_PRIVILEGE_LEVEL :: 3
 // The largest number of a processor that the reader takes: far more than
 // the processors of a test machine, and small enough for an int.
 LARGEST_PROCESSOR_NUMBER :: 1 << 16
@@ -185,7 +185,7 @@ processor_word_read :: proc(reading: ^Processor_Under_Read, word: string) -> Pro
 		if reading.has_privilege_level {
 			return .Repeated_Field
 		}
-		value, fault := decimal_word_read(word[len("CPL="):], PROGRAM_PRIVILEGE_LEVEL)
+		value, fault := decimal_word_read(word[len("CPL="):], PROCESS_PRIVILEGE_LEVEL)
 		if fault != .None {
 			return fault
 		}
@@ -419,7 +419,7 @@ Code_Place_Kind :: enum {
 	Kernel,
 	Firmware, // Its flash, or the copy of its end under 1 MiB.
 	Firmware_System_Management_Mode,
-	Program, // Privilege level 3.
+	Process, // Privilege level 3.
 	No_Known_Code,
 }
 
@@ -436,8 +436,8 @@ code_place_kind :: proc(state: Processor_State, known: Known_Code) -> Code_Place
 	case state.system_management_mode:
 		// System management memory is the firmware's alone.
 		return .Firmware_System_Management_Mode
-	case state.privilege_level == PROGRAM_PRIVILEGE_LEVEL:
-		return .Program
+	case state.privilege_level == PROCESS_PRIVILEGE_LEVEL:
+		return .Process
 	case address >= u64(info.KERNEL_BASE):
 		return .Kernel
 	case known.firmware_flash_start != 0 && address >= known.firmware_flash_start && address < FIRMWARE_FLASH_END:
@@ -477,8 +477,8 @@ processor_line :: proc(state: Processor_State, known: Known_Code) -> string {
 		strings.write_string(&builder, "the firmware")
 	case .Firmware_System_Management_Mode:
 		strings.write_string(&builder, "the firmware, in system management mode")
-	case .Program:
-		strings.write_string(&builder, "a program, at privilege level 3")
+	case .Process:
+		strings.write_string(&builder, "a process, at privilege level 3")
 	case .No_Known_Code:
 		strings.write_string(&builder, "no known code")
 	}

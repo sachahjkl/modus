@@ -1,10 +1,10 @@
-// QUIC version 1 in the program (docs/QUIC.md): the parts of RFC 9000 and
+// QUIC version 1 in the process (docs/QUIC.md): the parts of RFC 9000 and
 // RFC 9001 that protect and read packets. The library is pure code over
 // memory of the caller: it allocates nothing, makes no kernel call, and
 // gives each failure as an error record.
 //
 // Who uses it: the remote service (`src/modules/system/remote`, a server), the
-// program `quic_echo` and the modus tool (a client of the remote
+// process `quic_echo` and the modus tool (a client of the remote
 // service). The parts, by file:
 //
 // - `connection.odin`, `connection_receive.odin`, `connection_send.odin`:

@@ -4,11 +4,11 @@ import "base:intrinsics"
 import "kernel:debug_exception"
 import op "modus:contract/operation"
 
-// The breakpoints of a thread, and the read of the memory of a program
-// (docs/ARCHITECTURE.md, "The debugger of a program").
+// The breakpoints of a thread, and the read of the memory of a process
+// (docs/ARCHITECTURE.md, "The debugger of a process").
 //
 // A breakpoint is a debug register of the processor, not a byte written in
-// the code: the code of a module is shared by each program that maps it,
+// the code: the code of a module is shared by each process that maps it,
 // and a written byte would stop each of them. The processor has four
 // address registers (DR0 to DR3), one control register (DR7) that says
 // which are on and what each one stops on, and one status register (DR6)
@@ -16,7 +16,7 @@ import op "modus:contract/operation"
 //
 // The registers belong to a thread. Thread_Control writes the breakpoints
 // of a held thread into its thread record, after it checked each one
-// (op.thread_breakpoints_refusal): an address of a program, never of the
+// (op.thread_breakpoints_refusal): an address of a process, never of the
 // kernel; an execute breakpoint or a data breakpoint; the local enable
 // bits of the control register only. The processor that takes the thread
 // loads the registers, and the processor that leaves it clears the control
@@ -28,9 +28,9 @@ import op "modus:contract/operation"
 // processor record at each switch away (Processor.breakpoints_loaded).
 //
 // While a thread with breakpoints is in the kernel, its registers stay
-// loaded. An execute breakpoint is an address of a program, where the
+// loaded. An execute breakpoint is an address of a process, where the
 // kernel runs no instruction. A data breakpoint can be reached by a copy of
-// the kernel from or to the memory of the program (user_copy): that debug
+// the kernel from or to the memory of the process (user_copy): that debug
 // exception comes from the kernel, and the stub of the interrupts drops it
 // (interrupt_common in processor.asm). The copy goes on, and the debugger
 // does not see an access that the kernel made.
@@ -40,7 +40,7 @@ FLAG_TRAP :: u64(1) << 8
 FLAG_RESUME :: u64(1) << 16
 
 // debug_status_take reads the debug status of the processor after a debug
-// exception of a program, and clears it: the processor never clears the
+// exception of a process, and clears it: the processor never clears the
 // status itself, so an old bit would name a breakpoint that the next
 // exception did not reach. It gives the bits of the contract: the
 // breakpoints and the single step.
@@ -86,7 +86,7 @@ breakpoints_enabled :: proc "contextless" (thread: ^Thread) -> (enabled: u64) {
 }
 
 // thread_breakpoints_write gives a held thread a checked set of
-// breakpoints. The caller holds the program lock of the thread, and the
+// breakpoints. The caller holds the process lock of the thread, and the
 // thread is on no processor and in no queue: no processor loads the
 // registers while they change.
 thread_breakpoints_write :: proc "contextless" (thread: ^Thread, breakpoints: ^op.Thread_Breakpoints) {
@@ -98,14 +98,14 @@ thread_breakpoints_write :: proc "contextless" (thread: ^Thread, breakpoints: ^o
 }
 
 // debug_exception_is_dropped judges a debug exception of the current
-// thread of this processor, under the program lock of its program, and
+// thread of this processor, under the process lock of its process, and
 // writes the debug status of the contract in the frame of the thread
 // (its error code, which a fault record gives). The frame holds the bits
 // that the processor gave (debug_status_take).
 //
 // The status keeps a breakpoint only when the thread has it on now: the
 // processor can set the bit of an address register that is not on, and the
-// debugger of the program can have removed the breakpoints of a thread
+// debugger of the process can have removed the breakpoints of a thread
 // that ran (debug_handler_end), whose processor still holds them. Then the
 // control register of this processor is cleared here.
 //
@@ -115,7 +115,7 @@ thread_breakpoints_write :: proc "contextless" (thread: ^Thread, breakpoints: ^o
 // it ran (debug_exception.int1_given_again). The thread goes on. An execute
 // breakpoint that was removed does not come again: the control register is
 // clear.
-debug_exception_is_dropped :: proc "contextless" (program: ^Program, thread: ^Thread) -> bool {
+debug_exception_is_dropped :: proc "contextless" (process: ^Process, thread: ^Thread) -> bool {
 	cpu := processor_self()
 	given := thread.frame.error
 	status := given & (op.DEBUG_STATUS_STEP | breakpoints_enabled(thread))
@@ -125,13 +125,13 @@ debug_exception_is_dropped :: proc "contextless" (program: ^Program, thread: ^Th
 	// KVM with SVM before Linux 7.3 gives a cut int1 again as a fault at
 	// the int1 itself, with no status; the thread then runs it again and
 	// gets its true trap. The bytes are read only for an exception with no
-	// status, under the program lock that the caller holds; each one by
+	// status, under the process lock that the caller holds; each one by
 	// itself, so the byte before can be on another page.
-	if given == 0 && debug_exception.int1_given_again(given, program_byte_read(program, thread.frame.rip), program_byte_before(program, thread.frame.rip)) {
+	if given == 0 && debug_exception.int1_given_again(given, process_byte_read(process, thread.frame.rip), process_byte_before(process, thread.frame.rip)) {
 		thread.frame.error = 0
 		return true
 	}
-	if status & op.DEBUG_STATUS_STEP != 0 && thread.debugger_step && program.debug_handler == 0 {
+	if status & op.DEBUG_STATUS_STEP != 0 && thread.debugger_step && process.debug_handler == 0 {
 		thread.debugger_step = false
 		thread.frame.rflags &~= FLAG_TRAP
 		status &~= op.DEBUG_STATUS_STEP
@@ -140,26 +140,26 @@ debug_exception_is_dropped :: proc "contextless" (program: ^Program, thread: ^Th
 	return given != 0 && status == 0
 }
 
-// program_byte_read gives a byte of a program, for
+// process_byte_read gives a byte of a process, for
 // debug_exception.int1_given_again. It reads through the direct map under
-// the program lock that the caller holds (program_page_physical): no read
-// faults, and a byte of a page that the program cannot read now, or of
+// the process lock that the caller holds (process_page_physical): no read
+// faults, and a byte of a page that the process cannot read now, or of
 // device memory, is not readable.
-program_byte_read :: proc "contextless" (program: ^Program, address: u64) -> debug_exception.Program_Byte {
-	physical := program_page_physical(program, address)
+process_byte_read :: proc "contextless" (process: ^Process, address: u64) -> debug_exception.Process_Byte {
+	physical := process_page_physical(process, address)
 	if physical == 0 {
 		return {}
 	}
 	return {value = direct(physical, u8)^, readable = true}
 }
 
-// program_byte_before gives the byte before an address of a program. The
+// process_byte_before gives the byte before an address of a process. The
 // address 0 has none: not readable.
-program_byte_before :: proc "contextless" (program: ^Program, address: u64) -> debug_exception.Program_Byte {
+process_byte_before :: proc "contextless" (process: ^Process, address: u64) -> debug_exception.Process_Byte {
 	if address == 0 {
 		return {}
 	}
-	return program_byte_read(program, address - 1)
+	return process_byte_read(process, address - 1)
 }
 
 // breakpoint_resume_flag_set sets the resume flag of a thread that goes on
@@ -167,7 +167,7 @@ program_byte_before :: proc "contextless" (program: ^Program, address: u64) -> d
 // processor then runs that instruction once with no debug exception, and
 // clears the flag. Without it the thread reaches the same breakpoint again
 // with no end. The thread is on no processor, or it is the current thread
-// of this processor in the kernel; the caller holds its program lock.
+// of this processor in the kernel; the caller holds its process lock.
 breakpoint_resume_flag_set :: proc "contextless" (thread: ^Thread) {
 	if thread.frame.vector != VECTOR_DEBUG || !intrinsics.atomic_load(&thread.has_breakpoints) {
 		return
@@ -181,10 +181,10 @@ breakpoint_resume_flag_set :: proc "contextless" (thread: ^Thread) {
 }
 
 // thread_stops_release takes a count of stops from the stop count of a
-// thread: the stops that the debugger of its program made, at the end of
+// thread: the stops that the debugger of its process made, at the end of
 // the debugging. At 0, a thread that is Ready and on no processor enters
 // the queue of its home, as after the last Resume. The caller holds the
-// program lock of the thread.
+// process lock of the thread.
 thread_stops_release :: proc "contextless" (thread: ^Thread, count: u32) {
 	home := run_lock(thread)
 	left := thread.control_stops - min(count, thread.control_stops)
@@ -200,29 +200,29 @@ thread_stops_release :: proc "contextless" (thread: ^Thread, count: u32) {
 	}
 }
 
-// program_memory_read copies bytes of the memory of a program into memory
-// of the calling program, and gives the count that it copied. The caller
-// holds the program lock of the program that is read, so its page table
-// and its mappings do not change under the copy, and the program lock of
-// the calling program, with the destination checked (user_range): for two
-// programs, the control lock first, as for each path that holds two
-// program locks. The page table of this processor is the one of the
-// calling program.
+// process_memory_read copies bytes of the memory of a process into memory
+// of the calling process, and gives the count that it copied. The caller
+// holds the process lock of the process that is read, so its page table
+// and its mappings do not change under the copy, and the process lock of
+// the calling process, with the destination checked (user_range): for two
+// processes, the control lock first, as for each path that holds two
+// process locks. The page table of this processor is the one of the
+// calling process.
 //
 // The source is read through the direct map, page by page: the kernel
-// never loads the page table of the program that is read. A page is read
-// only if the program maps it, can read it, and it has a frame: a read
-// gives no frame to a page, so it changes nothing of the program and
+// never loads the page table of the process that is read. A page is read
+// only if the process maps it, can read it, and it has a frame: a read
+// gives no frame to a page, so it changes nothing of the process and
 // spends none of its budget. The copy stops before the first page that is
 // not so. A range that is not whole below USER_END copies nothing: no
 // address of the kernel is ever read.
-program_memory_read :: proc "contextless" (program: ^Program, source: u64, destination: u64, count: u64) -> (copied: u64) {
+process_memory_read :: proc "contextless" (process: ^Process, source: u64, destination: u64, count: u64) -> (copied: u64) {
 	if source >= USER_END || count > USER_END - source {
 		return 0
 	}
 	for copied < count {
 		address := source + copied
-		physical := program_page_physical(program, address)
+		physical := process_page_physical(process, address)
 		if physical == 0 {
 			break
 		}
@@ -233,17 +233,17 @@ program_memory_read :: proc "contextless" (program: ^Program, source: u64, desti
 	return copied
 }
 
-// program_page_physical gives the physical address of a byte of a program
-// that the program can read now, or 0: no mapping, no frame yet, no
+// process_page_physical gives the physical address of a byte of a process
+// that the process can read now, or 0: no mapping, no frame yet, no
 // access, or device memory. Device memory is not memory of the direct map,
 // and a read of the registers of a device can change the device. The
-// caller holds the program lock.
-program_page_physical :: proc "contextless" (program: ^Program, address: u64) -> u64 {
-	mapping := mapping_at(program, address)
-	if mapping == nil || program.table == 0 || regions[mapping.region].device {
+// caller holds the process lock.
+process_page_physical :: proc "contextless" (process: ^Process, address: u64) -> u64 {
+	mapping := mapping_at(process, address)
+	if mapping == nil || process.table == 0 || regions[mapping.region].device {
 		return 0
 	}
-	entry := page_entry(program.table, address)
+	entry := page_entry(process.table, address)
 	if entry == nil || entry^ & (PAGE_PRESENT | PAGE_USER) != PAGE_PRESENT | PAGE_USER {
 		return 0
 	}

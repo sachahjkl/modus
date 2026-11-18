@@ -46,7 +46,7 @@ DEBUG_IMAGE_LIMIT :: 32 << 20
 // kernel. The kernel takes its page frames from the `Free` ranges only.
 Memory_Kind :: enum u32 {
 	Reserved = 0, // Not usable: firmware, devices, holes.
-	Free     = 1, // Memory that the kernel can give to programs.
+	Free     = 1, // Memory that the kernel can give to processes.
 	Boot     = 2, // In use by what the boot program loaded: this record, the kernel, the boot image, page tables.
 }
 
@@ -91,7 +91,7 @@ Boot_Info :: struct {
 	kernel_size:        u64, // The bytes of the kernel module in memory: its `memory_size`.
 	kernel_file:        u64, // The kernel module file.
 	kernel_file_size:   u64, // The bytes of the kernel module file.
-	boot_image:         u64, // The boot image: the modules of the first programs.
+	boot_image:         u64, // The boot image: the modules of the first processes.
 	boot_image_size:    u64, // The bytes of the boot image.
 	framebuffer:        Framebuffer, // The screen. `format` None: no screen.
 	acpi_root:          u64, // The root record of the ACPI tables of the firmware ("RSD PTR "). 0: none.
@@ -157,7 +157,7 @@ Floor_State :: enum u64 {
 
 // floor_state_of_word is the border of a floor state of the trust record
 // (Boot_Trust.key_floor_state, version_floor_state): the member, or false
-// for a word that names no state. The record reaches a program through the
+// for a word that names no state. The record reaches a process through the
 // boot report of the kernel, so its reader never casts the word.
 floor_state_of_word :: proc "contextless" (word: u64) -> (state: Floor_State, ok: bool) {
 	for member in Floor_State {
@@ -237,8 +237,8 @@ Self_Test :: enum u64 {
 	Write_Code       = 2, // Write to the code of the kernel.
 	Write_Code_View  = 3, // Write to the code of the kernel through the direct map.
 	Execute_Data     = 4, // Execute the data of the kernel.
-	Read_Program     = 5, // Read the memory of a program, outside a copy.
-	Execute_Program  = 6, // Execute the code of a program.
+	Read_Process     = 5, // Read the memory of a process, outside a copy.
+	Execute_Process  = 6, // Execute the code of a process.
 	Register_Refused = 7, // Write an address that is not canonical to a register in a register trial.
 }
 
@@ -268,7 +268,7 @@ physical_slice :: #force_inline proc "contextless" (address: u64, count: u64, $T
 	return ([^]T)(DIRECT_MAP_BASE + uintptr(address))[:count]
 }
 
-// The boot image: the module files that the first program needs, and the
+// The boot image: the module files that the first process needs, and the
 // resources (files that are not modules: the pointer theme files), in one
 // block.
 //

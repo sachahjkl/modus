@@ -14,7 +14,7 @@ import "modus:support/kind_icons"
 import "modus:support/line_editor"
 
 @(private = "file")
-PROGRAMS := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "sample", "clock"}
+MODULE_NAMES := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "sample", "clock"}
 
 // A panel and its list, in one allocation: the panel is its first field.
 @(private = "file")
@@ -36,12 +36,12 @@ panel_free :: proc(panel: ^Panel) {
 	free((^Panel_Memory)(panel))
 }
 
-// A panel with the programs above and the windows console (in front) and
+// A panel with the modules above and the windows console (in front) and
 // plasma.
 @(private = "file")
 panel_of_test :: proc(panel: ^Panel) {
 	panel.pressed_row = NO_ROW
-	entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}, {title = "plasma", number = 7}})
+	entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}, {title = "plasma", number = 7}})
 }
 
 @(private = "file")
@@ -62,8 +62,8 @@ row_text :: proc(panel: ^Panel, row: int) -> string {
 		return "[recent]"
 	case .Heading_Windows:
 		return "[windows]"
-	case .Heading_Programs:
-		return "[programs]"
+	case .Heading_Modules:
+		return "[modules]"
 	case .Entry:
 		entry := &panel.list.entries[item.entry]
 		parts := [?]string{entry_name(entry), " (", kind_words(entry.kind), ")"}
@@ -144,21 +144,21 @@ the_state_after_each_action :: proc(t: ^testing.T) {
 	}
 }
 
-// The entries of the two sources: the windows, the programs, the closes;
+// The entries of the two sources: the windows, the modules, the closes;
 // the mark of each one says one fact.
 @(test)
 entries_of_the_two_sources :: proc(t: ^testing.T) {
 	panel := panel_make()
 	defer panel_free(panel)
 	panel_of_test(panel)
-	testing.expect_value(t, panel.list.entry_count, 2 + len(PROGRAMS) + 2)
+	testing.expect_value(t, panel.list.entry_count, 2 + len(MODULE_NAMES) + 2)
 	testing.expect_value(t, entry_name(&panel.list.entries[0]), "console")
 	testing.expect_value(t, panel.list.entries[0].kind, Entry_Kind.Window)
 	testing.expect_value(t, panel.list.entries[0].mark, Entry_Mark.Has_Focus)
 	testing.expect_value(t, panel.list.entries[0].number, 3)
 	testing.expect_value(t, panel.list.entries[1].mark, Entry_Mark.Window)
 	for &entry in panel.list.entries[:panel.list.entry_count] {
-		if entry.kind != .Program {
+		if entry.kind != .Module {
 			continue
 		}
 		has_window := entry_name(&entry) == "console" || entry_name(&entry) == "plasma"
@@ -191,7 +191,7 @@ a_name_too_long_is_not_listed :: proc(t: ^testing.T) {
 }
 
 // One ranked list over the two kinds: with equal scores a window comes
-// before the program of the same name, and the close comes last.
+// before the module of the same name, and the close comes last.
 @(test)
 one_ranked_list_over_the_kinds :: proc(t: ^testing.T) {
 	panel := panel_make()
@@ -201,7 +201,7 @@ one_ranked_list_over_the_kinds :: proc(t: ^testing.T) {
 	testing.expect_value(t, panel.list.row_count, 3)
 	testing.expect_value(t, panel.list.matched_count, 3)
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
-	testing.expect_value(t, row_text(panel, 1), "plasma (program)")
+	testing.expect_value(t, row_text(panel, 1), "plasma (module)")
 	testing.expect_value(t, row_text(panel, 2), "close plasma (close a window)")
 	testing.expect_value(t, panel.choice, 0)
 	// The matched characters of each name: the places that the row marks.
@@ -230,27 +230,27 @@ a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
 	defer panel_free(panel)
 	panel_of_test(panel)
 	for &entry in panel.list.entries[:panel.list.entry_count] {
-		if entry.kind == .Program && (entry_name(&entry) == "paint" || entry_name(&entry) == "sample") {
+		if entry.kind == .Module && (entry_name(&entry) == "paint" || entry_name(&entry) == "sample") {
 			recent_note(panel, &entry)
 		}
 	}
 	panel_of_test(panel)
 	// "p": each name that starts with p has one score; the recent one first,
-	// then the window, then the programs in the order of their table.
+	// then the window, then the modules in the order of their table.
 	type_text(panel, "p")
-	testing.expect_value(t, row_text(panel, 0), "paint (program)")
+	testing.expect_value(t, row_text(panel, 0), "paint (module)")
 	testing.expect_value(t, row_text(panel, 1), "plasma (window)")
-	testing.expect_value(t, row_text(panel, 2), "pages (program)")
-	testing.expect_value(t, row_text(panel, 3), "plasma (program)")
+	testing.expect_value(t, row_text(panel, 2), "pages (module)")
+	testing.expect_value(t, row_text(panel, 3), "plasma (module)")
 	// "pl": plasma holds it at its start, sample in its middle. sample is
 	// the newest choice, and still comes after each plasma.
 	type_text(panel, "l")
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
-	testing.expect_value(t, row_text(panel, 1), "plasma (program)")
-	testing.expect_value(t, row_text(panel, 2), "sample (program)")
+	testing.expect_value(t, row_text(panel, 1), "plasma (module)")
+	testing.expect_value(t, row_text(panel, 2), "sample (module)")
 }
 
-// With no typed part: the windows, the front one first, then the programs
+// With no typed part: the windows, the front one first, then the modules
 // in the order of their table, each group under its heading. No recent
 // choice: no group "recent". The closes show only for a typed part.
 @(test)
@@ -258,35 +258,35 @@ the_first_open_shows_groups :: proc(t: ^testing.T) {
 	panel := panel_make()
 	defer panel_free(panel)
 	panel_of_test(panel)
-	testing.expect_value(t, panel.list.row_count, 1 + 2 + 1 + len(PROGRAMS))
+	testing.expect_value(t, panel.list.row_count, 1 + 2 + 1 + len(MODULE_NAMES))
 	testing.expect_value(t, row_text(panel, 0), "[windows]")
 	testing.expect_value(t, row_text(panel, 1), "console (window)")
 	testing.expect_value(t, row_text(panel, 2), "plasma (window)")
-	testing.expect_value(t, row_text(panel, 3), "[programs]")
-	testing.expect_value(t, row_text(panel, 4), "boot (program)")
+	testing.expect_value(t, row_text(panel, 3), "[modules]")
+	testing.expect_value(t, row_text(panel, 4), "boot (module)")
 	testing.expect_value(t, panel.choice, 1)
-	testing.expect_value(t, panel.list.matched_count, 2 + len(PROGRAMS))
+	testing.expect_value(t, panel.list.matched_count, 2 + len(MODULE_NAMES))
 	for row in panel.list.rows[:panel.list.row_count] {
 		testing.expect(t, row.kind != .Entry || panel.list.entries[row.entry].kind != .Close_Window)
 	}
 	// After a choice: the group "recent" is first, the newest choice first.
-	recent_note(panel, &panel.list.entries[2 + 5]) // plasma, the program.
+	recent_note(panel, &panel.list.entries[2 + 5]) // plasma, the module.
 	recent_note(panel, &panel.list.entries[1]) // plasma, the window.
 	panel_of_test(panel)
 	testing.expect_value(t, row_text(panel, 0), "[recent]")
 	testing.expect_value(t, row_text(panel, 1), "plasma (window)")
-	testing.expect_value(t, row_text(panel, 2), "plasma (program)")
+	testing.expect_value(t, row_text(panel, 2), "plasma (module)")
 	testing.expect_value(t, row_text(panel, 3), "[windows]")
 	testing.expect_value(t, panel.choice, 1)
 }
 
-// With no window, the list starts with the programs.
+// With no window, the list starts with the modules.
 @(test)
 no_window_no_group :: proc(t: ^testing.T) {
 	panel := panel_make()
 	defer panel_free(panel)
-	entries_collect(panel, PROGRAMS[:], nil)
-	testing.expect_value(t, row_text(panel, 0), "[programs]")
+	entries_collect(panel, MODULE_NAMES[:], nil)
+	testing.expect_value(t, row_text(panel, 0), "[modules]")
 	testing.expect_value(t, panel.choice, 1)
 	entries_collect(panel, nil, nil)
 	testing.expect_value(t, panel.list.row_count, 0)
@@ -310,7 +310,7 @@ the_choice_wraps_and_skips_headings :: proc(t: ^testing.T) {
 	testing.expect_value(t, panel.choice, 1)
 	// The first entry is chosen: its heading shows over it.
 	testing.expect_value(t, panel.first_row, 0)
-	// Down from the last window: over the heading of the programs.
+	// Down from the last window: over the heading of the modules.
 	testing.expect(t, choice_move(panel, .Next))
 	testing.expect_value(t, panel.choice, 2)
 	testing.expect(t, choice_move(panel, .Next))
@@ -348,8 +348,8 @@ a_page_does_not_wrap :: proc(t: ^testing.T) {
 	testing.expect(t, !choice_move(panel, .Page_Before))
 	// A page that lands on a heading takes the entry after it.
 	panel.choice = 1
-	entries_collect(panel, PROGRAMS[:], {{title = "a"}, {title = "b"}, {title = "c"}, {title = "d"}, {title = "e"}, {title = "f"}, {title = "g"}, {title = "h"}, {title = "i"}, {title = "j"}, {title = "k"}})
-	testing.expect_value(t, panel.list.rows[1 + PAGE_ROWS].kind, Row_Kind.Heading_Programs)
+	entries_collect(panel, MODULE_NAMES[:], {{title = "a"}, {title = "b"}, {title = "c"}, {title = "d"}, {title = "e"}, {title = "f"}, {title = "g"}, {title = "h"}, {title = "i"}, {title = "j"}, {title = "k"}})
+	testing.expect_value(t, panel.list.rows[1 + PAGE_ROWS].kind, Row_Kind.Heading_Modules)
 	testing.expect(t, choice_move(panel, .Page_After))
 	testing.expect_value(t, panel.choice, 2 + PAGE_ROWS)
 }
@@ -408,19 +408,19 @@ the_remembered_choices :: proc(t: ^testing.T) {
 		recent_note(panel, &panel.list.entries[1 + index])
 	}
 	testing.expect_value(t, panel.recent_count, RECENT_CAPACITY)
-	testing.expect_value(t, recent_age(panel, .Program, names[len(names) - 1]), 1)
-	testing.expect_value(t, recent_age(panel, .Program, names[0]), 0)
-	testing.expect_value(t, recent_age(panel, .Program, names[4]), RECENT_CAPACITY)
+	testing.expect_value(t, recent_age(panel, .Module, names[len(names) - 1]), 1)
+	testing.expect_value(t, recent_age(panel, .Module, names[0]), 0)
+	testing.expect_value(t, recent_age(panel, .Module, names[4]), RECENT_CAPACITY)
 	// The oldest one, chosen again, is the newest; each other is one older.
 	recent_note(panel, &panel.list.entries[1 + 4])
-	testing.expect_value(t, recent_age(panel, .Program, names[4]), 1)
-	testing.expect_value(t, recent_age(panel, .Program, names[len(names) - 1]), 2)
+	testing.expect_value(t, recent_age(panel, .Module, names[4]), 1)
+	testing.expect_value(t, recent_age(panel, .Module, names[len(names) - 1]), 2)
 	testing.expect_value(t, panel.recent_count, RECENT_CAPACITY)
-	// A kind is a part of the choice: the window w is not the program w.
+	// A kind is a part of the choice: the window w is not the module w.
 	testing.expect_value(t, recent_age(panel, .Window, names[4]), 0)
 	recent_note(panel, &panel.list.entries[panel.list.entry_count - 1]) // close w
 	testing.expect_value(t, recent_age(panel, .Close_Window, "close w"), 0)
-	testing.expect_value(t, recent_age(panel, .Program, names[4]), 1)
+	testing.expect_value(t, recent_age(panel, .Module, names[4]), 1)
 }
 
 // A panel that asks for a second Enter goes back to the search when its
@@ -431,10 +431,10 @@ new_entries_end_the_question :: proc(t: ^testing.T) {
 	defer panel_free(panel)
 	panel_of_test(panel)
 	panel.state = .Confirm
-	entries_collect(panel, PROGRAMS[:], nil)
+	entries_collect(panel, MODULE_NAMES[:], nil)
 	testing.expect_value(t, panel.state, State.Search)
 	panel.state = .Closed
-	entries_collect(panel, PROGRAMS[:], nil)
+	entries_collect(panel, MODULE_NAMES[:], nil)
 	testing.expect_value(t, panel.state, State.Closed)
 }
 
@@ -685,8 +685,8 @@ the_icon_of_each_entry :: proc(t: ^testing.T) {
 	}
 	expected := [?]Expected {
 		{.Window, "console", window_icon, graphics.colors.title}, // It has the focus.
-		{.Program, "console", module_icon, module_color}, // It has a window.
-		{.Program, "plasma", module_icon, icon_color_quiet()}, // It has no window.
+		{.Module, "console", module_icon, module_color}, // It has a window.
+		{.Module, "plasma", module_icon, icon_color_quiet()}, // It has no window.
 		{.Close_Window, "close console", stop_icon, icon_color_of_stop()},
 		{.Command, "memory", command_icon, command_color},
 		{.Command, "stop", command_icon, icon_color_quiet()}, // It needs arguments: the panel asks nothing yet.
@@ -725,7 +725,7 @@ the_icon_of_each_entry :: proc(t: ^testing.T) {
 	icon, color = entry_icon(&export_with_parameters, false)
 	testing.expect(t, icon == export_icon && color == icon_color_quiet())
 	// The candidates of a field of a form.
-	icon, color = candidate_icon(.Program)
+	icon, color = candidate_icon(.Process)
 	testing.expect(t, icon == module_icon && color == module_color)
 	icon, color = candidate_icon(.Module)
 	testing.expect(t, icon == module_icon && color == module_color)
@@ -792,9 +792,9 @@ each_row_shows_the_icon_of_its_entry :: proc(t: ^testing.T) {
 		}
 		return
 	}
-	// The groups: windows and programs, with and without a window.
+	// The groups: windows and modules, with and without a window.
 	rows_checked += check(t, screen, panel, x, y, "no typed part")
-	// One ranked list of windows, programs and the close of a window.
+	// One ranked list of windows, modules and the close of a window.
 	type_text(panel, "pla")
 	rows_checked += check(t, screen, panel, x, y, "pla")
 	// The row that asks for a second Enter.
@@ -808,7 +808,7 @@ each_row_shows_the_icon_of_its_entry :: proc(t: ^testing.T) {
 
 // What the rows say: the chosen row is filled with the chosen blue and
 // has the hint of its kind; the row that asks for a second Enter is in the
-// color of "stop a program" and says the act in full.
+// color of "stop a process" and says the act in full.
 @(test)
 the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	panel := panel_make()
@@ -848,13 +848,13 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	testing.expect(t, has_text(&screen.table, "1 of 14"))
 	testing.expect(t, has_text(&screen.table, "entries"))
 	testing.expect(t, has_text(&screen.table, NOTE_NO_PROVIDER))
-	testing.expect(t, has_text(&screen.table, "Stops the program plasma: its window closes. Asks for a second Enter."))
+	testing.expect(t, has_text(&screen.table, "Stops the process plasma: its window closes. Asks for a second Enter."))
 	panel.state = state_after(panel.state, key_action(panel.state, .Enter), chosen_of(panel))
 	testing.expect_value(t, panel.state, State.Confirm)
 	panel_build(screen, panel)
 	color, found = row_fill(&screen.table, x, y)
 	testing.expect(t, found)
-	testing.expect_value(t, color, graphics.Color(graphics.colors.stop_program))
+	testing.expect_value(t, color, graphics.Color(graphics.colors.stop_process))
 	testing.expect(t, has_text(&screen.table, "stop plasma: its window closes"))
 	testing.expect(t, has_text(&screen.table, KEYS_OF_CONFIRM))
 	testing.expect(t, !has_text(&screen.table, "close plasma"))
@@ -871,9 +871,9 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	testing.expect(t, has_text(&screen.table, PLACEHOLDER))
 	testing.expect(t, has_text(&screen.table, HEADING_WINDOWS))
-	testing.expect(t, has_text(&screen.table, HEADING_PROGRAMS))
+	testing.expect(t, has_text(&screen.table, HEADING_MODULES))
 	testing.expect(t, has_text(&screen.table, "enter: to the front"))
-	testing.expect(t, has_text(&screen.table, "The window of the program console. It has the focus."))
+	testing.expect(t, has_text(&screen.table, "The window of the process console. It has the focus."))
 }
 
 // A panel drawn in the damage of its difference with the panel before is
@@ -944,8 +944,8 @@ Given :: struct {
 @(private = "file")
 GIVEN := [?]Given {
 	{name = "memory", signature = "memory() -> Record", about = "memory and kernel counters", result = .Record},
-	{name = "programs", signature = "programs() -> Table", about = "the programs that run", result = .Table},
-	{name = "stop", signature = "stop(Text)", about = "stop a program, by name", parameters = 1, destroys = true},
+	{name = "processes", signature = "processes() -> Table", about = "the processes that run", result = .Table},
+	{name = "stop", signature = "stop(Text)", about = "stop a process, by name", parameters = 1, destroys = true},
 	{name = "shutdown", signature = "shutdown()", about = "stop the machine", destroys = true},
 }
 
@@ -980,7 +980,7 @@ table_make :: proc(given: []Given) -> []u8 {
 
 @(private = "file")
 collect_with_table :: proc(panel: ^Panel, table: []u8) -> palette_table.Problem {
-	problem, _ := list_collect(panel.list, nil, PROGRAMS[:], {{title = "console", number = 3, focus = true}}, table)
+	problem, _ := list_collect(panel.list, nil, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table)
 	list_build(panel)
 	return problem
 }
@@ -997,7 +997,7 @@ the_entries_of_a_provider :: proc(t: ^testing.T) {
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
 	testing.expect_value(t, panel.list.provider, Provider_State.Ready)
 	testing.expect_value(t, panel.list.snapshot.generation, 6)
-	testing.expect_value(t, panel.list.entry_count, 1 + len(PROGRAMS) + 1 + len(GIVEN))
+	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + len(GIVEN))
 	// With no typed part the commands do not show.
 	for row in panel.list.rows[:panel.list.row_count] {
 		testing.expect(t, row.kind != .Entry || !entry_of_provider(&panel.list.entries[row.entry]))
@@ -1045,7 +1045,7 @@ the_entries_of_a_provider :: proc(t: ^testing.T) {
 	testing.expect(t, has(&screen.table, WORDS_OF_RUNNING) && has(&screen.table, KEYS_OF_RUNNING))
 }
 
-// A table that fails a check gives a list with the programs and the
+// A table that fails a check gives a list with the modules and the
 // windows only, and its problem: each malformed table is refused.
 @(test)
 a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
@@ -1086,7 +1086,7 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		problem := collect_with_table(panel, table)
 		testing.expectf(t, problem == damage.problem, "damage %d: %v, not %v", number, problem, damage.problem)
 		testing.expect_value(t, panel.list.provider, Provider_State.Refused)
-		testing.expect_value(t, panel.list.entry_count, 1 + len(PROGRAMS) + 1)
+		testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1)
 		testing.expect_value(t, panel.list.snapshot.entry_count, 0)
 	}
 	// A memory smaller than a table is no table.
@@ -1227,12 +1227,12 @@ running_and_result :: proc(t: ^testing.T) {
 
 @(private = "file")
 FORMS := [?]Given {
-	{name = "revoke", signature = "revoke(name: Text, grant: Text) -> Integer", about = "end a grant of a program that runs", parameters = 2, result = .Integer, destroys = true, kinds = {.Text, .Text}, names = {"name", "grant"}},
+	{name = "revoke", signature = "revoke(name: Text, grant: Text) -> Integer", about = "end a grant of a process that runs", parameters = 2, result = .Integer, destroys = true, kinds = {.Text, .Text}, names = {"name", "grant"}},
 	{name = "repeat", signature = "repeat(Text, Integer) -> Text", about = "a text, several times", parameters = 2, result = .Text, kinds = {.Text, .Integer}},
 	{name = "where", signature = "where(Table, Text, Text) -> Table", about = "the rows of a table", parameters = 3, result = .Table, kinds = {.Table, .Text}},
 	{name = "set font to vector", signature = "set font to vector", about = "setting(\"font\", \"vector\")", setting = true, value = 0},
 	{name = "set font to spleen", signature = "set font to spleen", about = "setting(\"font\", \"spleen\")", setting = true, value = 1},
-	{name = "start", signature = "start(Text)", about = "start a program", parameters = 1, kinds = {.Text, .None}},
+	{name = "start", signature = "start(Text)", about = "start a process", parameters = 1, kinds = {.Text, .None}},
 }
 
 // The form of an entry: its fields from the record of the provider, the
@@ -1375,7 +1375,7 @@ the_candidates_of_a_field :: proc(t: ^testing.T) {
 		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
 		candidate.length = u8(copy(candidate.name[:], name))
 	}
-	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Program))
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Process))
 	testing.expect_value(t, form.shown_count, 4)
 	testing.expect_value(t, form.candidate_choice, 0)
 	form_field_edit(panel, .Character, 'p')
@@ -1421,7 +1421,7 @@ the_prefixes :: proc(t: ^testing.T) {
 		typed: string,
 		kinds: bit_set[Entry_Kind],
 	}
-	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window}}, {":", {.Setting}}, {"?", {.Program}}, {">re", {.Command}}, {"?pla", {.Program}}}
+	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window}}, {":", {.Setting}}, {"?", {.Module}}, {">re", {.Command}}, {"?pla", {.Module}}}
 	for item in cases {
 		line_editor.line_clear(&panel.line)
 		type_text(panel, item.typed)
@@ -1441,10 +1441,10 @@ the_prefixes :: proc(t: ^testing.T) {
 	type_text(panel, ">rev")
 	testing.expect_value(t, row_text(panel, 0), "revoke (command)")
 	testing.expect_value(t, panel.list.rows[0].places, line_editor.Match_Places{0, 1, 2})
-	// With the prefix of the manual, a program is sent to the provider.
+	// With the prefix of the manual, a module is sent to the provider.
 	line_editor.line_clear(&panel.line)
 	type_text(panel, "?pla")
-	testing.expect_value(t, row_text(panel, 0), "plasma (program)")
+	testing.expect_value(t, row_text(panel, 0), "plasma (module)")
 	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
 	// The settings: the value in use says so.
 	line_editor.line_clear(&panel.line)
@@ -1461,7 +1461,7 @@ the_prefixes :: proc(t: ^testing.T) {
 @(test)
 a_signature_is_cut_at_a_parameter :: proc(t: ^testing.T) {
 	buffer: [160]u8
-	whole := "(name: Text, grant: Text, count: Integer) -> Table(Program)"
+	whole := "(name: Text, grant: Text, count: Integer) -> Table(Process)"
 	testing.expect_value(t, signature_fit(whole, len(whole), buffer[:]), whole)
 	testing.expect_value(t, signature_fit(whole, len(whole) - 1, buffer[:]), "(name: Text, grant: Text, ...)")
 	testing.expect_value(t, signature_fit(whole, 30, buffer[:]), "(name: Text, grant: Text, ...)")
@@ -1484,32 +1484,32 @@ the_choice_follows_its_entry :: proc(t: ^testing.T) {
 	panel_of_test(panel)
 	panel_open(panel)
 	type_text(panel, "pla")
-	// plasma (window), plasma (program), close plasma. The input goes
-	// down to the program.
+	// plasma (window), plasma (module), close plasma. The input goes
+	// down to the module.
 	testing.expect(t, choice_move(panel, .Next))
-	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
-	// The window of plasma closes behind the panel: the program is now
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (module)")
+	// The window of plasma closes behind the panel: the module is now
 	// the first row, and it is still the chosen entry.
-	adoption := entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}})
+	adoption := entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}})
 	testing.expect_value(t, adoption, Adoption.Kept)
 	testing.expect_value(t, panel.choice, 0)
-	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (module)")
 	testing.expect(t, !panel.choice_undrawn)
 	// The same list again: nothing changes, and the owner draws nothing.
-	testing.expect_value(t, entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}}), Adoption.Same)
+	testing.expect_value(t, entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}), Adoption.Same)
 	testing.expect_value(t, panel.choice, 0)
-	// A window appears: the chosen program goes down one row, and stays
+	// A window appears: the chosen module goes down one row, and stays
 	// chosen there. This is the fault that the rule ends: Enter must not
 	// run the row that took the place of the chosen one.
-	adoption = entries_collect(panel, PROGRAMS[:], {{title = "plasma", number = 7, focus = true}, {title = "console", number = 3}})
+	adoption = entries_collect(panel, MODULE_NAMES[:], {{title = "plasma", number = 7, focus = true}, {title = "console", number = 3}})
 	testing.expect_value(t, adoption, Adoption.Kept)
 	testing.expect_value(t, panel.choice, 1)
-	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (module)")
 	testing.expect_value(t, entry_name(chosen_entry(panel)), "plasma")
-	testing.expect_value(t, chosen_entry(panel).kind, Entry_Kind.Program)
+	testing.expect_value(t, chosen_entry(panel).kind, Entry_Kind.Module)
 	// The chosen entry leaves the list: the first entry is chosen, and the
 	// panel waits for a frame before an action that runs an entry.
-	adoption = entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}})
+	adoption = entries_collect(panel, MODULE_NAMES[:5], {{title = "plasma", number = 7, focus = true}})
 	testing.expect_value(t, adoption, Adoption.Moved)
 	testing.expect_value(t, panel.choice, 0)
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
@@ -1533,11 +1533,11 @@ the_choice_follows_its_entry :: proc(t: ^testing.T) {
 	type_text(panel, "close")
 	testing.expect_value(t, row_text(panel, panel.choice), "close plasma (close a window)")
 	panel.state = .Confirm
-	adoption = entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}, {title = "plasma", number = 7}})
+	adoption = entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}, {title = "plasma", number = 7}})
 	testing.expect_value(t, adoption, Adoption.Kept)
 	testing.expect_value(t, panel.state, State.Confirm)
 	testing.expect_value(t, row_text(panel, panel.choice), "close plasma (close a window)")
-	adoption = entries_collect(panel, PROGRAMS[:], {{title = "console", number = 3, focus = true}})
+	adoption = entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}})
 	testing.expect_value(t, adoption, Adoption.Moved)
 	testing.expect_value(t, panel.state, State.Search)
 	testing.expect_value(t, row_text(panel, panel.choice), "close console (close a window)")
@@ -1563,7 +1563,7 @@ first_entry_row :: proc(panel: ^Panel) -> int {
 }
 
 // A panel whose choice a list just moved, with no frame since: the typed
-// part is "pla", the chosen program left the list, and the first entry,
+// part is "pla", the chosen module left the list, and the first entry,
 // the window of plasma, is chosen and not drawn.
 @(private = "file")
 panel_with_a_moved_choice :: proc(t: ^testing.T, panel: ^Panel) {
@@ -1571,8 +1571,8 @@ panel_with_a_moved_choice :: proc(t: ^testing.T, panel: ^Panel) {
 	panel_open(panel)
 	type_text(panel, "pla")
 	testing.expect(t, choice_move(panel, .Next))
-	testing.expect_value(t, row_text(panel, panel.choice), "plasma (program)")
-	testing.expect_value(t, entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Moved)
+	testing.expect_value(t, row_text(panel, panel.choice), "plasma (module)")
+	testing.expect_value(t, entries_collect(panel, MODULE_NAMES[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Moved)
 	testing.expect(t, panel.choice_undrawn)
 }
 
@@ -1625,17 +1625,17 @@ a_text_that_comes_back_still_chooses_the_first_entry :: proc(t: ^testing.T) {
 	testing.expect_value(t, typed_text(panel), "pla")
 	testing.expect(t, !panel.choice_undrawn)
 	testing.expect(t, panel.typed_since_list)
-	adoption := entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}})
+	adoption := entries_collect(panel, MODULE_NAMES[:5], {{title = "plasma", number = 7, focus = true}})
 	testing.expect_value(t, adoption, Adoption.Kept)
 	testing.expect_value(t, panel.choice, first_entry_row(panel))
 	testing.expect(t, !panel.choice_undrawn)
 	testing.expect(t, !panel.typed_since_list)
-	testing.expect_value(t, entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Same)
+	testing.expect_value(t, entries_collect(panel, MODULE_NAMES[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Same)
 	// With no key, a choice that the arrow moved stays through an equal
 	// list.
 	testing.expect(t, choice_move(panel, .Next))
 	chosen := panel.choice
-	testing.expect_value(t, entries_collect(panel, PROGRAMS[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Same)
+	testing.expect_value(t, entries_collect(panel, MODULE_NAMES[:5], {{title = "plasma", number = 7, focus = true}}), Adoption.Same)
 	testing.expect_value(t, panel.choice, chosen)
 }
 
@@ -1669,7 +1669,7 @@ tab_waits_for_the_candidates :: proc(t: ^testing.T) {
 	}
 	// The answer: the wait ends, and Tab takes the candidate that the
 	// typed text chose.
-	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Program))
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Process))
 	testing.expect(t, !form.candidates_pending)
 	testing.expect_value(t, form_tab(form), Tab_Effect.Takes)
 	testing.expect_value(t, candidate_name(form, form.candidate_choice), "plasma")
@@ -1767,7 +1767,7 @@ the_scroll_bar_moves_the_view_and_the_choice :: proc(t: ^testing.T) {
 	defer panel_free(panel)
 	panel_of_test(panel)
 	panel_open(panel)
-	// Two headings, two windows and ten programs: two rows more than the panel shows.
+	// Two headings, two windows and ten modules: two rows more than the panel shows.
 	testing.expect_value(t, panel.list.row_count, LIST_ROWS + 2)
 	x, y := panel_place(1024)
 	area, shown := scroll_bar_area(panel, x, y)
@@ -1989,9 +1989,9 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 		row_texts_set(&entries[6 + index], "shade", "shade", value)
 	}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
-	// One window, its close, the programs, the command, two rows, and the
+	// One window, its close, the modules, the command, two rows, and the
 	// seven shades one by one.
-	testing.expect_value(t, panel.list.entry_count, 1 + len(PROGRAMS) + 1 + 1 + 2 + 7)
+	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + 2 + 7)
 	panel.state = .Search
 	panel.settings_in_use[0] = 1 // The machine uses Spleen.
 	type_text(panel, ":font")
@@ -2252,7 +2252,7 @@ a_press_on_a_button_of_a_field :: proc(t: ^testing.T) {
 	testing.expect_value(t, form_button_at(panel, &screen.table, x, y, first.x + 2, first.y + 2), NO_ROW)
 }
 
-// The act names of a window are checked as values of another program, and
+// The act names of a window are checked as values of another process, and
 // go to takes the window in front of the others that names the act.
 @(test)
 the_match_of_an_act_name :: proc(t: ^testing.T) {

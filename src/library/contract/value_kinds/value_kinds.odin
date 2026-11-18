@@ -2,7 +2,7 @@
 // text: which bytes of a text are a number, a size, a time or a module.
 //
 // One enumeration of kinds for the system and for the site of the system:
-// the site writes each kind with its class and its icon, a program draws it
+// the site writes each kind with its class and its icon, a process draws it
 // in its color, and both take the color from one table of the design rules
 // (src/library/support/graphics/value_colors.odin). A writer states the kind of each
 // part that it writes: no text is classified by its look.
@@ -23,13 +23,13 @@ Value_Kind :: enum u8 {
 	Size      = 2, // A size in bytes, pages or blocks.
 	Time      = 3, // A duration, a date or a time.
 	Handle    = 4, // A handle number, or the index of a handle in a context.
-	Value     = 5, // A plain value of the context of a program: not a handle.
-	Grant     = 6, // A grant of a program.
+	Value     = 5, // A plain value of the context of a process: not a handle.
+	Grant     = 6, // A grant of a process.
 	Status    = 7, // A status, an error kind or the state of a property.
 	Type      = 8, // A type of the contract or of a module.
 	Operation = 9, // A kernel operation.
 	Command   = 10, // A command of the console.
-	Module    = 11, // A module or a program.
+	Module    = 11, // A module or a process.
 	File      = 12, // A file of the sources.
 	Guide     = 13, // A guide of the documentation.
 	Term      = 14, // A term of the glossary.
@@ -93,7 +93,7 @@ Value_Run :: struct {
 // A value run of a text that is longer than one record: the text of one Log
 // operation (at most 4096 bytes), or the text that the kernel writes for
 // itself. The kernel cuts these runs at the bounds of the records. The kind
-// is a byte, not a member: a program writes the runs, and the kernel takes
+// is a byte, not a member: a process writes the runs, and the kernel takes
 // each byte through value_runs_check before it keeps them.
 Value_Run_In_Call :: struct {
 	start:    u16, // The first byte of the value in the text of the call.
@@ -314,7 +314,7 @@ Hash :: struct {
 	bytes: []u8, // The bytes of the hash, or of its head.
 }
 
-// The name of a program or of a module, as it is. The kind is Module.
+// The name of a process or of a module, as it is. The kind is Module.
 Module_Name :: struct {
 	name: string, // The name.
 }
@@ -383,7 +383,7 @@ value_runs_after :: proc "contextless" (runs: []Value_Run_In_Call, count: int, f
 
 // value_runs_check says if the runs fit a text of `length` bytes: each run
 // inside the text, after the run before it, with at least one byte and a
-// kind that exists and is not None. The runs come from another program: the
+// kind that exists and is not None. The runs come from another process: the
 // kernel checks them once, in its own copy, before it uses them.
 value_runs_check :: proc "contextless" (runs: []Value_Run_In_Call, length: int) -> bool {
 	end := 0

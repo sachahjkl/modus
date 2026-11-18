@@ -17,13 +17,13 @@ import "core:time"
 import "modus:support/sentence"
 
 // The call from the host (docs/MODULE_CONTRACT.md, section 4, "A call from
-// the host"): `modustool call "monitor.programs()"` calls an export of a
+// the host"): `modustool call "monitor.processes()"` calls an export of a
 // service in the machine, and prints its typed result.
 //
 // The tool reads the description of the export in the module file of the
 // service (build/modules/<service>.module), checks each argument against
 // it, and writes the argument record with isolated.encode, as a caller
-// program does. It gives the call request to the peer on a Unix socket
+// process does. It gives the call request to the peer on a Unix socket
 // that only its user reaches (Call_Socket_Request, peer_remote.odin,
 // call_socket_linux.odin); the QUIC
 // client of the peer carries it on one stream of its connection to the
@@ -151,7 +151,7 @@ call_parse :: proc(call_text: string) -> (service, export: string, arguments: [d
 	open := strings.index_byte(text, '(')
 	dot := strings.index_byte(text, '.')
 	if dot <= 0 || open < dot + 2 || !strings.has_suffix(text, ")") {
-		return "", "", nil, "a call is service.export(arguments), for example monitor.programs()"
+		return "", "", nil, "a call is service.export(arguments), for example monitor.processes()"
 	}
 	service, export = text[:dot], text[dot + 1:open]
 	rest := strings.trim_space(text[open + 1:len(text) - 1])
@@ -960,7 +960,7 @@ run_call :: proc(args: []string) -> int {
 	}
 	key_bytes, key_ok := hex.decode(transmute([]u8)key_text, context.temp_allocator)
 	if len(args) != 2 || !key_ok || len(key_bytes) != 32 {
-		fmt.eprintln("modustool: call <the public key of remote, 64 hexadecimal digits, from its window> \"service.export(arguments)\", for example call 3f2a...9c \"monitor.programs()\"")
+		fmt.eprintln("modustool: call <the public key of remote, 64 hexadecimal digits, from its window> \"service.export(arguments)\", for example call 3f2a...9c \"monitor.processes()\"")
 		return EXIT_USAGE
 	}
 	key: [32]u8

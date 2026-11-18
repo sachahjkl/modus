@@ -1,23 +1,23 @@
 // A demonstration of paging as a tool of the system (paging, second part).
 //
-// Pages on first use: a memory object takes no page frame until a program
+// Pages on first use: a memory object takes no page frame until a process
 // uses a page; the budget pays at creation, so an access never fails. The
-// shared code of a module: programs that run one module map one memory
+// shared code of a module: processes that run one module map one memory
 // object for its code; a write to it is a page fault. The window shows each
 // case and the answer of the kernel, and the measures.
 //
-// The program needs the grant to inspect the machine (it reads the page
-// table of its own half), and the boot image (it starts the program `twin`).
+// The process needs the grant to inspect the machine (it reads the page
+// table of its own half), and the boot image (it starts the process `twin`).
 //
 // **What it is for.** It shows two uses of paging that the system relies
 // on. A [page on first use](term:page-on-first-use) costs its frame only
-// when a program touches it, and the budget pays at creation, so no access
+// when a process touches it, and the budget pays at creation, so no access
 // fails for lack of memory. [Shared code](term:shared-code) lets several
-// programs that run one module map one memory object for its code, read
-// only: the code is in memory once, and a program that writes to it faults
+// processes that run one module map one memory object for its code, read
+// only: the code is in memory once, and a process that writes to it faults
 // alone.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("frames")` in the console. The window has one row for each case,
 // with the answer of the kernel, then the measures. Its lines in the log:
 // the time to create and map 8192 pages with each frame now and with
@@ -26,7 +26,7 @@
 // and the pages that 4 twins cost each way (`frames: 4 twins: ...`).
 //
 // **Its grants**: **Inspect**, to read the page table of its own half, and
-// **Image**, to start the program `twin` from the boot image. Its budget
+// **Image**, to start the process `twin` from the boot image. Its budget
 // holds 12288 pages: 8192 pages at a time, and 5 twins.
 //
 // **What it does not prove.** The times are measures of the host of the
@@ -43,7 +43,7 @@ import "modus:support/system"
 import "modus:support/twins"
 
 // 8192 pages at a time, and five twins.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11446, programs = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11446, processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -59,12 +59,12 @@ HEIGHT :: 409
 #assert(HEIGHT == 12 + 4 * LINE + CASE_CAPACITY * LINE + LINE / 2 + MEASURE_LINES * LINE + 12)
 
 LARGE_PAGES :: 8192
-SMALL_BUDGET :: 100 // The pages of a budget that this program makes for one case.
+SMALL_BUDGET :: 100 // The pages of a budget that this process makes for one case.
 TWIN_COUNT :: 4
-TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}
+TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, processes = 1, threads = 1, processor = 100_000, log_records = 10}
 
 
-// One case: what the program did, and what the kernel answered.
+// One case: what the process did, and what the kernel answered.
 Case :: struct {
 	text:   string,
 	buffer: [48]u8,
@@ -98,7 +98,7 @@ nanoseconds :: proc "contextless" (cycles: u64) -> u64 {
 	return cycles * 1000 / max(boot.cycle_frequency / 1_000_000, 1)
 }
 
-// present_in gives the pages of a range of this program that have a page
+// present_in gives the pages of a range of this process that have a page
 // frame, as the kernel reads them in the page table.
 present_in :: proc "contextless" (address: rawptr, pages: u64) -> (count: u64) {
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 1, u64(uintptr(&half)), size_of(half))
@@ -114,10 +114,10 @@ present_in :: proc "contextless" (address: rawptr, pages: u64) -> (count: u64) {
 	return count
 }
 
-// report_of gives the report of the program that runs with this name.
-report_of :: proc "contextless" (name: string) -> (report: op.Program_Report, found: bool) {
+// report_of gives the report of the process that runs with this name.
+report_of :: proc "contextless" (name: string) -> (report: op.Process_Report, found: bool) {
 	for slot in 1 ..< u64(64) {
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&report)), size_of(report))
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 		if report.state != .None && report.state != .Stopped && system.name_of(report.name[:]) == name {
 			return report, true
 		}
@@ -132,16 +132,16 @@ twin_start :: proc "contextless" (name: string, mode: twins.Twin_Mode, table: ^s
 	if page != 0 {
 		grants[twins.GRANT_PAGE] = {page, {.Read, .Write}}
 	}
-	return system.program_start(system.image_find(image, "twin"), name, grants, random.values_with_seed(&program_generator, values), TWIN_AMOUNTS, nil, table)
+	return system.process_start(system.image_find(image, "twin"), name, grants, random.values_with_seed(&process_generator, values), TWIN_AMOUNTS, nil, table)
 }
 
-// stop_code waits until a program stops, and gives its code. The bound only
+// stop_code waits until a process stops, and gives its code. The bound only
 // ends a hang.
-stop_code :: proc "contextless" (program: system.Handle) -> (code: u32, stopped: bool) {
+stop_code :: proc "contextless" (process: system.Handle) -> (code: u32, stopped: bool) {
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		wait := system.wait_begin()
-		state, stop := system.program_state(program)
+		state, stop := system.process_state(process)
 		if state == .Stopped {
 			return stop, true
 		}
@@ -154,11 +154,11 @@ TWIN_NAMES := [TWIN_COUNT]string{"twin 1", "twin 2", "twin 3", "twin 4"}
 
 // twins_start starts TWIN_COUNT twins that wait. paid is the pages that
 // their budgets paid; cycles is the time of one start.
-twins_start :: proc "contextless" (programs: ^[TWIN_COUNT]system.Handle, table: ^system.Prepared_Modules) -> (paid: u64, cycles: u64, ok: bool) {
+twins_start :: proc "contextless" (processes: ^[TWIN_COUNT]system.Handle, table: ^system.Prepared_Modules) -> (paid: u64, cycles: u64, ok: bool) {
 	start := intrinsics.read_cycle_counter()
-	for &program, index in programs {
+	for &process, index in processes {
 		status: system.Status
-		if program, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
+		if process, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
 			system.log("frames: cannot start a twin: status ", u64(status))
 			return 0, 0, false
 		}
@@ -217,7 +217,7 @@ first_use_cases :: proc "contextless" () {
 	count := SMALL_BUDGET - op.memory_list_pages(SMALL_BUDGET)
 	memory, _ = system.memory_create(count, budget)
 	left, _ := system.budget_read(budget)
-	address, _ = system.memory_map(memory) // This program pays for the page tables.
+	address, _ = system.memory_map(memory) // This process pays for the page tables.
 	if address != nil {
 		for &page in ([^][system.PAGE_SIZE]u8)(address)[:count] {
 			intrinsics.volatile_store(&page[0], 3)
@@ -228,7 +228,7 @@ first_use_cases :: proc "contextless" () {
 	system.memory_unmap(address)
 	system.close(memory)
 
-	// One page that two programs use: neither touched it before.
+	// One page that two processes use: neither touched it before.
 	page, _ := system.memory_create(1)
 	address, _ = system.memory_map(page)
 	word := (^u32)(address)
@@ -237,23 +237,23 @@ first_use_cases :: proc "contextless" () {
 	for status == .Ok && intrinsics.volatile_load(word) == 0 && system.time() < deadline {
 		system.word_wait(word, 0, deadline)
 	}
-	note("a twin writes a page that no one used", intrinsics.volatile_load(word) == twins.WORD, "this program reads it")
+	note("a twin writes a page that no one used", intrinsics.volatile_load(word) == twins.WORD, "this process reads it")
 	system.close(twin)
 	system.memory_unmap(address)
 	system.close(page)
 }
 
 shared_code_cases :: proc "contextless" () {
-	programs: [TWIN_COUNT]system.Handle
+	processes: [TWIN_COUNT]system.Handle
 	// Each twin with its own copy of the module: its budget pays for it.
-	own_paid, own_cycles, own_ok := twins_start(&programs, nil)
-	for program in programs {
-		system.close(program)
+	own_paid, own_cycles, own_ok := twins_start(&processes, nil)
+	for process in processes {
+		system.close(process)
 	}
 	note("4 twins, each with a copy of the module", own_ok, own_paid, " pages")
 
-	// The twins with the shared code: this program pays for it, one time.
-	shared_paid, shared_cycles, shared_ok := twins_start(&programs, &prepared)
+	// The twins with the shared code: this process pays for it, one time.
+	shared_paid, shared_cycles, shared_ok := twins_start(&processes, &prepared)
 	// A prepared module has two parts: its code, and its part that is
 	// fixed after the load. Each part is a memory object.
 	shared_pages: u64
@@ -272,30 +272,30 @@ shared_code_cases :: proc "contextless" () {
 	system.close(writer)
 	note("a twin writes to its shared code", stopped && stop == op.STOP_CODE_FAULT + 14, "stopped: page fault")
 	running := 0
-	for program in programs {
-		if state, _ := system.program_state(program); state != .Stopped && state != .None {
+	for process in processes {
+		if state, _ := system.process_state(process); state != .Stopped && state != .None {
 			running += 1
 		}
 	}
 	note("the 4 other twins", running == TWIN_COUNT, "they still run")
-	for program in programs {
-		system.close(program)
+	for process in processes {
+		system.close(process)
 	}
 	system.log("frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", shared_pages, " pages of the module, once)")
 }
 
-// The random generator of this program (src/library/support/random).
-program_generator: random.Generator
+// The random generator of this process (src/library/support/random).
+process_generator: random.Generator
 
 // entry runs each case and each measure once, writes the lines of the
-// measures, then keeps the window open until the program is stopped. With
+// measures, then keeps the window open until the process is stopped. With
 // no random seed (it gives the seed of each twin) or no window, it stops
 // with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The random generator of this program, from the seed that its starter
-	// gave: it gives the seed of each program that this one starts.
-	if !random.generator_from_context(&program_generator, ctx) {
+	// The random generator of this process, from the seed that its starter
+	// gave: it gives the seed of each process that this one starts.
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("frames: no random seed in the context")
 		system.stop(1)
 	}
@@ -330,19 +330,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// Each line is a line of a table: its text 3 pixels under its top.
 		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
 		interface.cell_text(&frame, interface.column_take(&column, LINE), "a page gets its frame at its first use; the budget paid at creation.", graphics.colors.dim)
-		interface.cell_text(&frame, interface.column_take(&column, LINE), "programs of one module map one memory object for its code.", graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "processes of one module map one memory object for its code.", graphics.colors.dim)
 		interface.column_take(&column, LINE / 2)
 		sizes := [2]interface.Size{interface.pixels(ANSWER_X - 12), interface.share()}
 		cells: [2]interface.Area
 		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
-		interface.cell_text(&frame, cells[0], "the program does", graphics.colors.dim)
+		interface.cell_text(&frame, cells[0], "the process does", graphics.colors.dim)
 		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
 		for item, index in cases[:case_count] {
 			row := interface.column_take(&column, LINE)
 			interface.table_band(&frame, {row.x - 6, row.y, row.width + 12, row.height}, index)
 			interface.row_split(row, sizes[:], cells[:])
 			interface.cell_text(&frame, cells[0], item.text, graphics.colors.text)
-			interface.cell_text(&frame, cells[1], item.right ? item.answer : "another answer", item.right ? graphics.colors.program : graphics.colors.failed)
+			interface.cell_text(&frame, cells[1], item.right ? item.answer : "another answer", item.right ? graphics.colors.process : graphics.colors.failed)
 		}
 		interface.column_take(&column, LINE / 2)
 		line: [96]u8

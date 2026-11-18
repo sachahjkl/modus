@@ -34,7 +34,7 @@ SOURCE_FOLDERS_GONE :: [?]string{"src/programs"}
 Module_Group :: enum {
 	System, // The root service, the services, the desktop, the tools of a principal.
 	Libraries, // The modules that export functions and have no entry, which other modules import.
-	Demonstrations, // The programs that each show a property to a principal.
+	Demonstrations, // The demonstration modules, which each show a property to a principal.
 	Tests, // The test modules, which only a machine test starts or imports.
 }
 
@@ -86,8 +86,8 @@ PRIVATE_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_PRIVATE + "/"
 
 // The one flag of the compiler for the library. Each command of the tool
 // that runs the compiler gives it, the compile of the kernel too: flake.nix
-// gives the same flag when it builds this tool, and a program outside the
-// repository gives it with the path of this folder. With one library the
+// gives the same flag when it builds this tool, and the build of a module
+// outside the repository gives it with the path of this folder. With one library the
 // compiler accepts an import of a support package in the kernel, so the
 // tool refuses it before the first compiler starts
 // (library_imports_check.odin).

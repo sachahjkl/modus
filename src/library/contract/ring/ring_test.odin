@@ -8,7 +8,7 @@ import "core:thread"
 import "core:time"
 
 // The bound of a stall of the cases with two threads or more: the hang
-// bound of the checks of a program (docs/TOOLS.md, "The bounds of the
+// bound of the checks of a process (docs/TOOLS.md, "The bounds of the
 // tests"). A contract package imports no support package, so its value is
 // written here. A case ends when no record moved for this long: a lost
 // record or a lost turn, never a slow host.

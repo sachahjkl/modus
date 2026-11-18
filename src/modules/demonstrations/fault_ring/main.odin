@@ -1,15 +1,15 @@
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"), case by case.
 //
-// **What it is for.** A fault does not have to end a program. With a
+// **What it is for.** A fault does not have to end a process. With a
 // [fault handler](term:fault-handler) and a [fault ring](term:fault-ring),
-// a program repairs its own faults (a page that it commits on first use,
+// a process repairs its own faults (a page that it commits on first use,
 // a stack that grows, a debugger that steps a thread) with no code in the
-// kernel that knows its policy. This program checks each rule of that
+// kernel that knows its policy. This process checks each rule of that
 // mechanism, and of the [thread control](term:thread-control) that a
-// handler uses, against a real fault: 36 cases, each in a child program,
-// each with a result that the program checks.
+// handler uses, against a real fault: 36 cases, each in a child process,
+// each with a result that the process checks.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("fault_ring")` in the console. The window has one row for each
 // case, which turns right or wrong as its child stops. The log has one
 // line for each child: `fault_ring: <case>: the child stopped with the
@@ -18,7 +18,7 @@
 // cases of 36`. Case 3 shows the time of one repaired fault, as a measure.
 //
 // **Why each case runs in a child.** Several cases end in a stop of the
-// program: a fault of the handler, a full ring, a handler that ends. A
+// process: a fault of the handler, a full ring, a handler that ends. A
 // child is this same module, started from the boot image with a role in
 // the value `VALUE_ROLE` of its context. When a child stops, the parent
 // reads its stop code and its [stop report](term:stop-report), and checks
@@ -38,13 +38,13 @@
 //
 // **How the mechanism works:**
 //
-// A program names one of its threads as its fault handler, with the fault
+// A process names one of its threads as its fault handler, with the fault
 // kinds that it takes. A fault of such a kind of another thread then does
-// not stop the program: the kernel writes a record in the ring of the
+// not stop the process: the kernel writes a record in the ring of the
 // handler, and the thread waits; the handler repairs with the operations of
 // the virtual memory and answers. Each case of this
-// program runs in a child program (this module, with a role), so that a
-// case that stops its program stops only that child:
+// process runs in a child process (this module, with a role), so that a
+// case that stops its process stops only that child:
 //
 //   1. to 4. One child repairs: a read of a page that is not committed (the
 //      handler commits the page and writes a value in it; the thread reads
@@ -53,19 +53,19 @@
 //      fault is measured), and an answer with a wrong serial (refused).
 //   5. The handler answers Stop: the stop report is the one of a fault with
 //      no handler.
-//   6. A fault of the handler itself: not delivered, the program stops.
+//   6. A fault of the handler itself: not delivered, the process stops.
 //   7. A full ring: 17 threads fault, the handler reads none; the 17th fault
-//      stops the program, and the kernel counts it.
-//   8. The program stops while a thread waits: its budget gets back every
+//      stops the process, and the kernel counts it.
+//   8. The process stops while a thread waits: its budget gets back every
 //      page and every thread.
-//   9. The handler ends while a thread waits: the program stops with the
+//   9. The handler ends while a thread waits: the process stops with the
 //      code of a fault that no thread can answer.
 //  10. A thread with the entry of an earlier word wait still in the table of
 //      words faults, and the page of that word is decommitted while it
 //      waits: it still waits, with one record, and one answer resumes it.
 //  11. A new handler while a thread waits: the ring with its record ends,
-//      and the program stops with the same code as in case 9.
-//  12. An answer from another program (this parent), with the thread number
+//      and the process stops with the same code as in case 9.
+//  12. An answer from another process (this parent), with the thread number
 //      and the serial of the record of the child: refused.
 //  13. 10 000 faults, each answered at once by a handler that spins on
 //      another processor, while the faulting thread can still be on its way
@@ -75,17 +75,17 @@
 //  15. An invalid opcode (ud2): the same, with its kind.
 //  16. A breakpoint (int3), a trap: Resume lets the thread go on after it.
 //  17. A divide error with a handler of page faults only: no record, and the
-//      program stops as with no handler.
+//      process stops as with no handler.
 //  18. A privileged instruction (cli): a protection fault, as in 14.
 //  19. The kinds never delivered: Fault_Handler_Set refuses them; a divide
-//      error of the handler itself stops the program.
+//      error of the handler itself stops the process.
 //
 // The control of a thread (docs/ARCHITECTURE.md, "The control of a
 // thread"), cases 20 to 27 in one child:
 //  20. A stop of a thread that spins: its instruction address is inside its
 //      loop, and the loop does not turn while it is stopped.
 //  21. A write of a register (r12) that the thread then publishes.
-//  22. Writes of a frame that a program cannot hold (the code selector of
+//  22. Writes of a frame that a process cannot hold (the code selector of
 //      the kernel, the I/O privilege level, interrupts off, an instruction
 //      address that is not canonical): each refused, and the thread runs
 //      after its Resume.
@@ -102,7 +102,7 @@
 //  27. A divide error whose handler adds the length of the div to the
 //      instruction address and writes rax: Resume, refused before the
 //      write, is accepted after it, and the thread goes on.
-//  28. In its own child: no call names a thread of another program without
+//  28. In its own child: no call names a thread of another process without
 //      a handle; the thread of the parent keeps running.
 // The entries to the gates and the debug trap (cases 29 to 35, one child
 // whose handler takes Debug, Breakpoint and General_Protection; case 36 in
@@ -115,7 +115,7 @@
 //      until the popfq that clears it.
 //  33. mov ss, then syscall, with the trap flag: on the processor of the
 //      test, the machine goes on, and each record is a debug trap of this
-//      program, in its code. It does not show that the processor gave no
+//      process, in its code. It does not show that the processor gave no
 //      trap at the first instruction of the kernel entry: the kernel drops
 //      such a trap there.
 //  34. mov ss, then int3, with the trap flag: one breakpoint record, and
@@ -145,7 +145,7 @@ import "modus:support/system"
 // One child at a time: 512 pages and 20 threads (17 that fault in a full
 // ring, its main thread and its handler); one thread of its own that spins
 // while a child tries to name it.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2385, programs = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2385, processes = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.
@@ -157,12 +157,12 @@ PAGE :: system.PAGE_SIZE
 
 // The value of the context that gives the role of a child: ROLE_TAG in the
 // high half, the role in the low half. The root service writes the values 0
-// to 2 for a program with grants (value 0: the size of the boot image), and
-// other values for some programs: a value without the tag is the parent.
+// to 2 for a process with grants (value 0: the size of the boot image), and
+// other values for some processes: a value without the tag is the parent.
 VALUE_ROLE :: 5
 ROLE_TAG :: u64(0x4641_554C_0000_0000) // "FAUL"
 
-// role_of gives the role that the starter of this program wrote. A value
+// role_of gives the role that the starter of this process wrote. A value
 // without the tag is the parent: the root service writes other values at
 // that place. A value with the tag whose role word names no role is
 // refused (ok false), never read as the parent.
@@ -235,7 +235,7 @@ address_of :: #force_inline proc "contextless" (label: ^u8) -> u64 {
 }
 
 // control runs one Thread_Control: a thread handle, or 0 and the number of
-// a thread of this program.
+// a thread of this process.
 control :: proc "contextless" (handle: system.Handle, number: u64, command: op.Thread_Control_Command, address: rawptr = nil, size: u64 = 0) -> (results: [7]u64, status: system.Status) {
 	return system.call(.Thread_Control, u64(handle), number, u64(command), u64(uintptr(address)), size)
 }
@@ -352,11 +352,11 @@ cases := [36]Case {
 	{name = "the handler answers stop", role = .Answer_Stop},
 	{name = "a fault of the handler itself", role = .Handler_Fault},
 	{name = "a full ring", role = .Full_Ring},
-	{name = "the program stops while a thread waits", role = .Stop_While_Waiting},
+	{name = "the process stops while a thread waits", role = .Stop_While_Waiting},
 	{name = "the handler ends while a thread waits", role = .Handler_Ends},
 	{name = "a word wait, a fault, a decommit of the word", role = .Word_Leftover},
 	{name = "a new handler while a thread waits", role = .Handler_Changed},
-	{name = "an answer from another program", role = .Foreign_Answer},
+	{name = "an answer from another process", role = .Foreign_Answer},
 	{name = "10 000 answers given at once", role = .Early_Answer},
 	{name = "a divide error, answered stop", role = .Divide_Error},
 	{name = "an invalid opcode, answered stop", role = .Invalid_Opcode},
@@ -366,13 +366,13 @@ cases := [36]Case {
 	{name = "the kinds never delivered", role = .Kinds_Never_Delivered},
 	{name = "a stop of a thread that spins", role = .Controls, bit = 0x01},
 	{name = "a write of a register", role = .Controls, bit = 0x02},
-	{name = "a frame that a program cannot hold", role = .Controls, bit = 0x04},
+	{name = "a frame that a process cannot hold", role = .Controls, bit = 0x04},
 	{name = "an extended state that faults", role = .Controls, bit = 0x08},
 	{name = "a stop of a thread that waits", role = .Controls, bit = 0x10},
 	{name = "two stops, two resumes", role = .Controls, bit = 0x20},
 	{name = "the rights of a thread handle", role = .Controls, bit = 0x40},
 	{name = "a divide error skipped by its handler", role = .Controls, bit = 0x80},
-	{name = "the thread of another program", role = .Foreign_Thread, bit = 0x01},
+	{name = "the thread of another process", role = .Foreign_Thread, bit = 0x01},
 	{name = "int 3 in two bytes", role = .Debug_Entries, bit = 0x01},
 	{name = "int 14", role = .Debug_Entries, bit = 0x02},
 	{name = "int1", role = .Debug_Entries, bit = 0x04},
@@ -383,7 +383,7 @@ cases := [36]Case {
 	{name = "mov ss, then int1, with the trap flag", role = .Debug_Frame_Lost},
 }
 
-program_generator: random.Generator
+process_generator: random.Generator
 image: []u8
 log_handle: system.Handle
 
@@ -408,7 +408,7 @@ shared_page :: #force_inline proc "contextless" () -> ^Shared_Page {
 }
 
 // handler_start starts the handler thread of a child and waits until it is
-// the fault handler of the program.
+// the fault handler of the process.
 handler_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !) {
 	if _, status := system.thread_start(entry, nil); status != .Ok {
 		system.stop(20)
@@ -606,7 +606,7 @@ leftover_handler :: proc "c" (_: rawptr) -> ! {
 	handler_become()
 	record, _ := system.fault_record_next()
 	// The kernel ends the wait of each thread with a word in a page that
-	// leaves the program. The faulting thread still has the entry of its
+	// leaves the process. The faulting thread still has the entry of its
 	// word wait: it must not wake.
 	ranges := [1]op.Page_Range{{first = 0, page_count = 1}}
 	if _, status := system.memory_decommit(word_memory, ranges[:]); status != .Ok {
@@ -645,7 +645,7 @@ child_word_leftover :: proc "contextless" () -> ! {
 	// end no wait, and leave no entry in the table of words.
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		states, _ := system.call(.Thread_State, u64(waiter.handle))
-		if op.Program_State(states[0]) == .Waiting {
+		if op.Process_State(states[0]) == .Waiting {
 			break
 		}
 		system.sleep(system.time() + 1)
@@ -692,7 +692,7 @@ foreign_handler :: proc "c" (_: rawptr) -> ! {
 	if system.fault_answer(record, .Resume) == .Ok && wait_for(&resumed_threads) {
 		bits |= 4
 	}
-	system.log("fault_ring: an answer from another program: the parent answered for the thread ", record.thread, " and the serial ", record.serial, ": ", intrinsics.atomic_load(&shared_page().foreign_refused) == 1 ? string("refused with Bad_State") : string("not refused"), "; the thread still waited, and the answer of its own program resumed it", bits == FOREIGN_ALL ? string(": as it must") : string(": WRONG"))
+	system.log("fault_ring: an answer from another process: the parent answered for the thread ", record.thread, " and the serial ", record.serial, ": ", intrinsics.atomic_load(&shared_page().foreign_refused) == 1 ? string("refused with Bad_State") : string("not refused"), "; the thread still waited, and the answer of its own process resumed it", bits == FOREIGN_ALL ? string(": as it must") : string(": WRONG"))
 	system.stop(FOREIGN_CODE | bits)
 }
 
@@ -827,7 +827,7 @@ divide_by_zero :: proc "contextless" () {
 	_, _ = divide_in_registers(1000, 0, intrinsics.volatile_load(&zero_divisor))
 }
 
-// cli is privileged for a program (its I/O privilege level is 0): the
+// cli is privileged for a process (its I/O privilege level is 0): the
 // processor gives a protection fault with the error code 0.
 interrupts_off :: asm() [#volatile, #clobber memory, #clobber %flags] {
 	cli
@@ -860,7 +860,7 @@ child_breakpoint :: proc "contextless" () -> ! {
 // Case 19. Each argument with a vector that the kernel never delivers is
 // refused, and so are kinds with the end of the delivery. Then this thread
 // becomes the handler of divide errors: its own divide error is not
-// delivered, and the program stops as with no handler.
+// delivered, and the process stops as with no handler.
 child_kinds_never_delivered :: proc "contextless" () -> ! {
 	refused: u64
 	vectors := NEVER_DELIVERED_VECTORS
@@ -949,7 +949,7 @@ control_waiter :: proc "c" (_: rawptr) -> ! {
 // the registers are those of the fault; the handler then moves the
 // instruction address past the div, writes the result in rax, and Resume
 // is accepted. The faulting thread is named by its number: it is a thread
-// of this program.
+// of this process.
 divide_handler :: proc "c" (_: rawptr) -> ! {
 	if system.fault_handler_set(kinds = {.Divide_Error}) != .Ok {
 		system.stop(21)
@@ -1011,7 +1011,7 @@ child_controls :: proc "contextless" () -> ! {
 	}
 	system.log("fault_ring: a write of a register: the thread published ", system.Hex(intrinsics.atomic_load(&control_cells.value)), " from r12 after its Resume", right ? string(": as it must") : string(": WRONG"))
 
-	// 22. Frames that a program cannot hold: each refused, nothing changed.
+	// 22. Frames that a process cannot hold: each refused, nothing changed.
 	control(spinner.handle, 0, .Stop)
 	control(spinner.handle, 0, .Read_Registers, &registers, size_of(registers))
 	hostile := [4]op.Thread_Registers{registers, registers, registers, registers}
@@ -1034,7 +1034,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x04
 	}
-	system.log("fault_ring: a frame that a program cannot hold: ", refused, " writes of ", u64(len(hostile)), " refused with Bad_Operation (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); ", ran ? string("the thread ran after its Resume") : string("the thread did not run after its Resume"), right ? string(": as it must") : string(": WRONG"))
+	system.log("fault_ring: a frame that a process cannot hold: ", refused, " writes of ", u64(len(hostile)), " refused with Bad_Operation (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); ", ran ? string("the thread ran after its Resume") : string("the thread did not run after its Resume"), right ? string(": as it must") : string(": WRONG"))
 
 	// 23. Extended states that the processor refuses.
 	control(spinner.handle, 0, .Stop)
@@ -1078,7 +1078,7 @@ child_controls :: proc "contextless" () -> ! {
 	}
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		waiting, _ := system.call(.Thread_State, u64(waiter.handle))
-		if op.Program_State(waiting[0]) == .Waiting {
+		if op.Process_State(waiting[0]) == .Waiting {
 			break
 		}
 		system.sleep(system.time() + 1)
@@ -1088,7 +1088,7 @@ child_controls :: proc "contextless" () -> ! {
 	woke := system.word_wake(&waiter_word)
 	system.sleep(system.time() + 20)
 	held, _ := system.call(.Thread_State, u64(waiter.handle))
-	did_not_run := intrinsics.atomic_load(&waiter_runs) == 0 && op.Program_State(held[0]) == .Ready && held[1] == 1
+	did_not_run := intrinsics.atomic_load(&waiter_runs) == 0 && op.Process_State(held[0]) == .Ready && held[1] == 1
 	control(waiter.handle, 0, .Resume)
 	ran_after := wait_for(&waiter_runs)
 	right = woke == 1 && did_not_run && ran_after
@@ -1151,7 +1151,7 @@ child_controls :: proc "contextless" () -> ! {
 	system.stop(CONTROLS_CODE | bits)
 }
 
-// Case 28. This program has its thread 0 alone: each other number names no
+// Case 28. This process has its thread 0 alone: each other number names no
 // thread, and the number of a handle of the parent names nothing here.
 child_foreign_thread :: proc "contextless" () -> ! {
 	tried, refused: u64
@@ -1165,7 +1165,7 @@ child_foreign_thread :: proc "contextless" () -> ! {
 	if _, status := control(system.Handle(intrinsics.volatile_load(&shared_page().parent_thread_handle)), 0, .Stop); status == .Bad_Handle {
 		refused += 1
 	}
-	system.log("fault_ring: the thread of another program: ", refused, " calls of ", tried, " refused; no number and no handle of this program names it", refused == tried ? string(": as it must") : string(": WRONG"))
+	system.log("fault_ring: the thread of another process: ", refused, " calls of ", tried, " refused; no number and no handle of this process names it", refused == tried ? string(": as it must") : string(": WRONG"))
 	system.stop(FOREIGN_THREAD_CODE | (refused == tried ? u32(FOREIGN_THREAD_ALL) : u32(0)))
 }
 
@@ -1281,7 +1281,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x10
 	}
-	entry_line("mov ss, then syscall, with the trap flag", "on this processor the machine went on, and each record is a debug trap of this program, in its code", right)
+	entry_line("mov ss, then syscall, with the trap flag", "on this processor the machine went on, and each record is a debug trap of this process, in its code", right)
 
 	// 34. mov ss, then int3, with the trap flag.
 	start = intrinsics.atomic_load(&entry_record_count)
@@ -1302,7 +1302,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x20
 	}
-	entry_line("mov ss, then int3, with the trap flag", "on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this program, in its code", right)
+	entry_line("mov ss, then int3, with the trap flag", "on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this process, in its code", right)
 
 	// 35. Two int1 in a row: the trap of the first is at an address that
 	// holds an int1, which the kernel must not drop.
@@ -1323,7 +1323,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 }
 
 // Case 36, in its own child: on a processor that gives the held trap at the
-// first instruction of the stub of int1, the kernel stops this program, and
+// first instruction of the stub of int1, the kernel stops this process, and
 // the child stops before its own stop below.
 child_debug_frame_lost :: proc "contextless" () -> ! {
 	handler_start(entries_handler)
@@ -1441,11 +1441,11 @@ child :: proc "contextless" (role: Role) -> ! {
 	case .Debug_Frame_Lost:
 		child_debug_frame_lost()
 	}
-	system.stop(30) // Not reached: each case above stops its program.
+	system.stop(30) // Not reached: each case above stops its process.
 }
 
 // child_run starts the child of a role, waits for its stop, and gives its
-// stop code and stop report. The budget of this program, before the start
+// stop code and stop report. The budget of this process, before the start
 // and after the end of the child, says if the child left anything behind.
 // ran is false when a call failed: the call, its status and the budget are
 // on the log, and the case is wrong; a failed call is never read as a stop.
@@ -1470,12 +1470,12 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = ROLE_TAG | u64(role)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, mappings[:], nil, {image = image}, &error)
+	process, status := system.process_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&process_generator, values), {pages = CHILD_PAGES, processes = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, mappings[:], nil, {image = image}, &error)
 	if status != .Ok {
 		buffer: [512]u8
 		lines := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&lines, &error)
-		system.log("fault_ring: ", name, ": program_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this program can give pages ", before.pages, ", programs ", before.programs, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
+		system.log("fault_ring: ", name, ": process_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", before.pages, ", processes ", before.processes, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
 		return
 	}
 	intrinsics.volatile_store(&in_parent.parent_thread_handle, u64(parent_thread_handle))
@@ -1490,17 +1490,17 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	overall_deadline := started + system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS
 	progress_seen: u64
 	for now := started; now < stall_deadline && now < overall_deadline; now = system.time() {
-		results, status = system.call(.Program_State, u64(program))
+		results, status = system.call(.Process_State, u64(process))
 		if status != .Ok {
-			system.log("fault_ring: ", name, ": Program_State failed: ", op.STATUS_NAMES[status])
-			system.close(program)
+			system.log("fault_ring: ", name, ": Process_State failed: ", op.STATUS_NAMES[status])
+			system.close(process)
 			return
 		}
-		if op.Program_State(results[0]) == .Stopped {
+		if op.Process_State(results[0]) == .Stopped {
 			stopped = true
 			break
 		}
-		// Case 12: the answer of another program, with the two values of
+		// Case 12: the answer of another process, with the two values of
 		// the record of the child.
 		if role == .Foreign_Answer && intrinsics.atomic_load(&in_parent.waiting) == 1 && intrinsics.atomic_load(&in_parent.foreign_refused) == 0 {
 			record := op.Fault_Record{thread = intrinsics.volatile_load(&in_parent.waiting_thread), serial = intrinsics.volatile_load(&in_parent.waiting_serial)}
@@ -1529,26 +1529,26 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 		case:
 			system.log("fault_ring: ", name, ": the child did not stop: no progress for ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
 		}
-		system.close(program)
+		system.close(process)
 		return
 	}
 	code = u32(results[1])
-	if _, status = system.call(.Program_State, u64(program), u64(uintptr(&report))); status != .Ok {
-		system.log("fault_ring: ", name, ": Program_State with the stop report failed: ", op.STATUS_NAMES[status])
-		system.close(program)
+	if _, status = system.call(.Process_State, u64(process), u64(uintptr(&report))); status != .Ok {
+		system.log("fault_ring: ", name, ": Process_State with the stop report failed: ", op.STATUS_NAMES[status])
+		system.close(process)
 		return
 	}
-	system.close(program)
+	system.close(process)
 	// The budget of a child returns when its last processor left it: wait
 	// for it. The bound only ends a hang: a loaded host can take long.
 	left_behind = true
 	after: system.Budget_Amounts
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; left_behind && system.time() < deadline; {
 		after, _ = system.budget_read()
-		// The start also made page tables of this program for its views of
+		// The start also made page tables of this process for its views of
 		// the module of the child (src/library/support/system, module_prepare and
 		// segment_copy); each unmap of a view gave them back.
-		left_behind = after.pages != before.pages || after.threads != before.threads || after.programs != before.programs
+		left_behind = after.pages != before.pages || after.threads != before.threads || after.processes != before.processes
 		if left_behind {
 			system.sleep(system.time() + 10)
 		}
@@ -1556,9 +1556,9 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	if left_behind {
 		// The numbers tell a slow release from a leak, and which amount it
 		// is: the next read comes after the line.
-		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms: pages ", before.pages, " expected, ", after.pages, " after; threads ", before.threads, ", ", after.threads, "; programs ", before.programs, ", ", after.programs)
+		system.log("fault_ring: ", name, ": the budget of this process did not get back every page, thread and process of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms: pages ", before.pages, " expected, ", after.pages, " after; threads ", before.threads, ", ", after.threads, "; processes ", before.processes, ", ", after.processes)
 		later, _ := system.budget_read()
-		system.log("fault_ring: ", name, ": after the line: pages ", later.pages, ", threads ", later.threads, ", programs ", later.programs)
+		system.log("fault_ring: ", name, ": after the line: pages ", later.pages, ", threads ", later.threads, ", processes ", later.processes)
 	}
 	page = in_parent^
 	ran = true
@@ -1568,7 +1568,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a fault of a thread becomes a record for a handler thread of the program, in place of a stop", graphics.colors.kernel)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a fault of a thread becomes a record for a handler thread of the process, in place of a stop", graphics.colors.kernel)
 	// Two columns of rows: the cases do not fit in one window height.
 	half := (content.width - COLUMN_GAP) / 2
 	columns := [2]interface.Column {
@@ -1581,7 +1581,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		color: graphics.Color = graphics.colors.dim
 		if item.ran {
 			value = item.right ? "as it must" : "WRONG: see the log"
-			color = item.right ? graphics.colors.program : graphics.colors.failed
+			color = item.right ? graphics.colors.process : graphics.colors.failed
 			if item.value_length > 0 {
 				value = string(item.value[:item.value_length])
 			}
@@ -1633,7 +1633,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		child(role)
 	}
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("fault_ring: no random seed in the context")
 		system.stop(1)
 	}
@@ -1715,7 +1715,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("fault_ring: the control of a thread: the child stopped with the code ", system.Hex(u64(code)), code == CONTROLS_CODE | CONTROLS_ALL && !left ? string(": as it must") : string(": WRONG"))
 	draw(&window)
 
-	// Case 28: a thread of this program that spins, which the child cannot
+	// Case 28: a thread of this process that spins, which the child cannot
 	// name.
 	foreign_case := &cases[FOREIGN_THREAD_ROW]
 	parent_spinner, spinner_started := system.thread_start(spin_and_publish, &parent_cells, 4)
@@ -1754,7 +1754,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	lost_case.right = ran && (records_in_code || stopped_by_the_kernel) && !left
 	outcome := "neither outcome"
 	if records_in_code {
-		outcome = "the int1 and the trap came to the program as debug records in its code"
+		outcome = "the int1 and the trap came to the process as debug records in its code"
 	} else if stopped_by_the_kernel {
 		outcome = "the trap came at the stub of int1, and the kernel stopped the child with the code of a debug exception and the instruction address 0"
 	}
@@ -1768,7 +1768,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if right == len(cases) {
-		system.log("fault_ring: ok, ", u64(len(cases)), " cases: each fault was repaired, or stopped its program with the report of today, each control of a thread held, and each child gave back every page and every thread")
+		system.log("fault_ring: ok, ", u64(len(cases)), " cases: each fault was repaired, or stopped its process with the report of today, each control of a thread held, and each child gave back every page and every thread")
 	} else {
 		system.log("fault_ring: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
 	}

@@ -102,7 +102,7 @@ similarity_lowest_score_of :: proc(template: Similarity_Template) -> f64 {
 similarity_data_flow_is_not_renaming :: proc(t: ^testing.T) {
 	first := similarity_test_procedure("first_copy", extra = "\n\tfirst_copy_value := limit\n\tsecond_copy_value := first_copy_value\n\ttotal += second_copy_value")
 	second := similarity_test_procedure("second_copy", extra = "\n\tfirst_copy_value := limit\n\tsecond_copy_value := limit\n\ttotal += second_copy_value")
-	sources := []Similarity_Source{{path = "src/programs/copies/main.odin", text = similarity_test_file("copies", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/copies/main.odin", text = similarity_test_file("copies", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -127,7 +127,7 @@ similarity_data_flow_is_not_renaming :: proc(t: ^testing.T) {
 similarity_one_literal_is_one_blank :: proc(t: ^testing.T) {
 	first := similarity_test_procedure("first_limit", extra = "\n\ttotal += 1000")
 	second := similarity_test_procedure("second_limit", extra = "\n\ttotal += 2000")
-	sources := []Similarity_Source{{path = "src/programs/limits/main.odin", text = similarity_test_file("limits", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/limits/main.odin", text = similarity_test_file("limits", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -171,7 +171,7 @@ similarity_one_type_is_one_blank :: proc(t: ^testing.T) {
 	first, _ = strings.replace_all(first, "{name}", "sum_u32", context.temp_allocator)
 	second, _ := strings.replace_all(SIMILARITY_TEST_TYPED, "{type}", "u64", context.temp_allocator)
 	second, _ = strings.replace_all(second, "{name}", "sum_u64", context.temp_allocator)
-	sources := []Similarity_Source{{path = "src/programs/types/main.odin", text = similarity_test_file("types", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/types/main.odin", text = similarity_test_file("types", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -192,7 +192,7 @@ similarity_one_type_is_one_blank :: proc(t: ^testing.T) {
 similarity_same_pair_is_one_blank :: proc(t: ^testing.T) {
 	first := similarity_test_procedure("first_step", extra = "\n\ttotal += 7\n\tcount += 7")
 	second := similarity_test_procedure("second_step", extra = "\n\ttotal += 9\n\tcount += 9")
-	sources := []Similarity_Source{{path = "src/programs/steps/main.odin", text = similarity_test_file("steps", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/steps/main.odin", text = similarity_test_file("steps", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -226,7 +226,7 @@ similarity_boolean_return_is_equal :: proc(t: ^testing.T) {
 	first, _ = strings.replace_all(first, "{name}", "first_check", context.temp_allocator)
 	second, _ := strings.replace_all(SIMILARITY_TEST_BOOLEAN, "{end}", "return limit < total", context.temp_allocator)
 	second, _ = strings.replace_all(second, "{name}", "second_check", context.temp_allocator)
-	sources := []Similarity_Source{{path = "src/programs/checks/main.odin", text = similarity_test_file("checks", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/checks/main.odin", text = similarity_test_file("checks", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -246,7 +246,7 @@ similarity_boolean_return_is_equal :: proc(t: ^testing.T) {
 similarity_multiplication_keeps_its_order :: proc(t: ^testing.T) {
 	first := similarity_test_procedure("first_product", extra = "\n\ttotal += value_left * value_right")
 	second := similarity_test_procedure("second_product", extra = "\n\ttotal += value_right * value_left")
-	sources := []Similarity_Source{{path = "src/programs/products/main.odin", text = similarity_test_file("products", strings.concatenate({"value_left := 3\nvalue_right := 5\n", first, second}, context.temp_allocator))}}
+	sources := []Similarity_Source{{path = "src/processes/products/main.odin", text = similarity_test_file("products", strings.concatenate({"value_left := 3\nvalue_right := 5\n", first, second}, context.temp_allocator))}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -261,7 +261,7 @@ similarity_multiplication_keeps_its_order :: proc(t: ^testing.T) {
 similarity_repeated_expression :: proc(t: ^testing.T) {
 	expression := "clamp_value(first_value * 3 + second_value, 0, first_value + second_value + 7)"
 	body := strings.concatenate({"spread :: proc(first_value, second_value: int) -> int {\n\tfirst_result := ", expression, "\n\tsecond_result := ", expression, " * 2\n\tthird_result := 1 + ", expression, "\n\tfourth_result := ", expression, " - 4\n\tfifth_result := ", expression, " / 3\n\treturn first_result + second_result + third_result + fourth_result + fifth_result\n}\n"}, context.temp_allocator)
-	sources := []Similarity_Source{{path = "src/programs/spread/main.odin", text = similarity_test_file("spread", body)}}
+	sources := []Similarity_Source{{path = "src/processes/spread/main.odin", text = similarity_test_file("spread", body)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Expression)
@@ -302,7 +302,7 @@ similarity_test_run_sources :: proc(inside: string) -> []Similarity_Source {
 	first := strings.concatenate({"first_user :: proc(base: int) -> int {\n", run, "\treturn total + base\n}\n"}, context.temp_allocator)
 	second := strings.concatenate({"second_user :: proc(base: int, extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, run, SIMILARITY_TEST_OTHER_WORK, "\treturn total - extra\n}\n"}, context.temp_allocator)
 	sources := make([]Similarity_Source, 1, context.temp_allocator)
-	sources[0] = {path = "src/programs/runs/main.odin", text = similarity_test_file("runs", first, second)}
+	sources[0] = {path = "src/processes/runs/main.odin", text = similarity_test_file("runs", first, second)}
 	return sources
 }
 
@@ -359,7 +359,7 @@ similarity_kernel_and_support_are_kept_apart :: proc(t: ^testing.T) {
 similarity_field_name_is_not_a_parameter :: proc(t: ^testing.T) {
 	first := similarity_test_procedure("first_field", extra = "\n\ttotal += shared_record.count")
 	second := similarity_test_procedure("second_field", extra = "\n\ttotal += shared_record.length")
-	sources := []Similarity_Source{{path = "src/programs/fields/main.odin", text = similarity_test_file("fields", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/fields/main.odin", text = similarity_test_file("fields", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -382,7 +382,7 @@ similarity_field_name_is_not_a_parameter :: proc(t: ^testing.T) {
 similarity_added_statement_score :: proc(t: ^testing.T) {
 	first := similarity_test_procedure("shorter")
 	second := similarity_test_procedure("longer", extra = "\n\tcount = limit")
-	sources := []Similarity_Source{{path = "src/programs/added/main.odin", text = similarity_test_file("added", first, second)}}
+	sources := []Similarity_Source{{path = "src/processes/added/main.odin", text = similarity_test_file("added", first, second)}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	families := similarity_test_families(analysis, .Procedure)
@@ -404,7 +404,7 @@ similarity_added_statement_score :: proc(t: ^testing.T) {
 // of the procedures holds them, and the report shows the procedures only.
 @(test)
 similarity_held_family_is_not_reported :: proc(t: ^testing.T) {
-	sources := []Similarity_Source{{path = "src/programs/held/main.odin", text = similarity_test_file("held", similarity_test_procedure("first_held"), similarity_test_procedure("second_held", {"sum", "number", "item", "items", "bound"}))}}
+	sources := []Similarity_Source{{path = "src/processes/held/main.odin", text = similarity_test_file("held", similarity_test_procedure("first_held"), similarity_test_procedure("second_held", {"sum", "number", "item", "items", "bound"}))}}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	testing.expect(t, analysis.measures.families_held >= 1, "a family of runs is held")
@@ -426,7 +426,7 @@ similarity_greedy_selection_counts_shared_nodes_once :: proc(t: ^testing.T) {
 	equal := strings.concatenate({"proc(base: int) -> int {\n", run, "\treturn total + base\n}\n"}, context.temp_allocator)
 	third := strings.concatenate({"third_user :: proc(base: int, extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, run, SIMILARITY_TEST_OTHER_WORK, "\treturn total - extra\n}\n"}, context.temp_allocator)
 	text := similarity_test_file("greedy", strings.concatenate({"first_user :: ", equal}, context.temp_allocator), strings.concatenate({"second_user :: ", equal}, context.temp_allocator), third)
-	analysis := similarity_analyse([]Similarity_Source{{path = "src/programs/greedy/main.odin", text = text}}, "", context.temp_allocator)
+	analysis := similarity_analyse([]Similarity_Source{{path = "src/processes/greedy/main.odin", text = text}}, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	ranked := 0
 	saved: i64 = 0
@@ -503,7 +503,7 @@ similarity_near_filter_drops_no_pair :: proc(t: ^testing.T) {
 		similarity_test_procedure("with_two", extra = "\n\ttotal += 7\n\tcount += 7"),
 		strings.concatenate({"other_work :: proc(extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, SIMILARITY_TEST_OTHER_WORK, "\treturn first_other\n}\n"}, context.temp_allocator),
 	}
-	analysis := similarity_analysis_make([]Similarity_Source{{path = "src/programs/filter/main.odin", text = similarity_test_file("filter", ..bodies[:])}}, context.temp_allocator)
+	analysis := similarity_analysis_make([]Similarity_Source{{path = "src/processes/filter/main.odin", text = similarity_test_file("filter", ..bodies[:])}}, context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
 	similarity_add_procedure_pieces(analysis)
 	near := make([dynamic]i32, context.temp_allocator)
@@ -535,7 +535,7 @@ similarity_output_is_reproducible :: proc(t: ^testing.T) {
 	sources := []Similarity_Source {
 		{path = "src/library/support/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"), similarity_test_procedure("first_limit", extra = "\n\ttotal += 1000"))},
 		{path = "src/library/support/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum", {"sum", "number", "item", "items", "bound"}), similarity_test_procedure("second_limit", extra = "\n\ttotal += 2000"))},
-		{path = "src/programs/runs/main.odin", text = similarity_test_run_sources("total = 1000")[0].text},
+		{path = "src/processes/runs/main.odin", text = similarity_test_run_sources("total = 1000")[0].text},
 	}
 	outputs: [2][3]string
 	for &output in outputs {

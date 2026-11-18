@@ -20,8 +20,8 @@ site_graph_test_inputs :: proc() -> []Site_Graph_Input {
 	inputs := make([]Site_Graph_Input, 5, context.temp_allocator)
 	inputs[0] = {name = "base", kind = .No_Entry, size = 1000}
 	inputs[1] = {name = "middle", kind = .No_Entry, size = 4000, imports = site_graph_test_names("base")}
-	inputs[2] = {name = "top", kind = .Program, size = 8000, imports = site_graph_test_names("middle", "base")}
-	inputs[3] = {name = "alone", kind = .Program, size = 0}
+	inputs[2] = {name = "top", kind = .Entry, size = 8000, imports = site_graph_test_names("middle", "base")}
+	inputs[3] = {name = "alone", kind = .Entry, size = 0}
 	inputs[4] = {name = "kernel_like", kind = .Kernel, size = 16000}
 	return inputs
 }
@@ -78,7 +78,7 @@ site_graph_layout_rules :: proc(t: ^testing.T) {
 	testing.expect_value(t, layout.band_count, 2)
 	// The band is under the layers, the kernel first.
 	testing.expect(t, layout.nodes[3].y > layout.nodes[2].y && layout.band_top > layout.nodes[1].y)
-	testing.expect(t, layout.nodes[4].row == 0 && layout.nodes[3].row == 1, "the band is by kind: the kernel before the programs")
+	testing.expect(t, layout.nodes[4].row == 0 && layout.nodes[3].row == 1, "the band is by kind: the kernel before the modules with an entry")
 	// A bar follows the bytes; a module of no known size has the least bar.
 	testing.expect_value(t, layout.nodes[4].bar_width, SITE_GRAPH_BAR_MOST)
 	testing.expect_value(t, layout.nodes[3].bar_width, SITE_GRAPH_BAR_LEAST)
@@ -106,8 +106,8 @@ site_graph_layout_orders_by_the_imports :: proc(t: ^testing.T) {
 	inputs := make([]Site_Graph_Input, 4, context.temp_allocator)
 	inputs[0] = {name = "first", kind = .No_Entry, size = 10}
 	inputs[1] = {name = "second", kind = .No_Entry, size = 10}
-	inputs[2] = {name = "uses_second", kind = .Program, size = 10, imports = {"second"}}
-	inputs[3] = {name = "uses_first", kind = .Program, size = 10, imports = {"first"}}
+	inputs[2] = {name = "uses_second", kind = .Entry, size = 10, imports = {"second"}}
+	inputs[3] = {name = "uses_first", kind = .Entry, size = 10, imports = {"first"}}
 	layout, problem := site_graph_layout(inputs, 1)
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, layout.nodes[3].row, 0)

@@ -11,7 +11,7 @@ import "modus:support/graphics"
 // system: the same glyph cache, the same blend.
 
 CANDIDATE_LINES := [?]string {
-	"> print(monitor.programs())   31 programs, 4 processors, 1 204 pages",
+	"> print(monitor.processes())   31 processes, 4 processors, 1 204 pages",
 	"compositor     12.4 ms    2 418 pages   runs   0x4F3A..9C21",
 	"KERNEL ENTRIES  Boot_Report.stages   ok: {fill} [rings] gi Rb 0O 1lI",
 }
@@ -64,7 +64,7 @@ candidates_picture_write :: proc() -> bool {
 			graphics.text(canvas, x + 16, line_y, line, color)
 			line_y += 16
 		}
-		graphics.text_scaled(canvas, x + 16, line_y + 8, "EEVDF fair 1.5x", graphics.DARK_PROGRAM, 2)
+		graphics.text_scaled(canvas, x + 16, line_y + 8, "EEVDF fair 1.5x", graphics.DARK_PROCESS, 2)
 		graphics.text_scaled(canvas, x + 16, line_y + 48, "12 345", graphics.DARK_TEXT, 3)
 		graphics.text(canvas, x + 176, line_y + 72, "wakes in one second", graphics.DARK_DIM)
 	}

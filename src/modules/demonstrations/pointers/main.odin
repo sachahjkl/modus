@@ -3,7 +3,7 @@
 // each of its forms (the light form on a light track), its hot spot marked,
 // its frames, and the theme with its license and its attribution.
 //
-// The program has the boot image, read-only. It finds the pointer theme
+// The process has the boot image, read-only. It finds the pointer theme
 // files in the resource table, checks the hash of each one against its
 // entry (the identity of a file is the hash of its content), validates it
 // with the validation of the compositor,
@@ -11,7 +11,7 @@
 // system first, changes the theme. The window
 // is built with the interface package; the pointer pictures are drawn into
 // the canvas directly, inside the area of each tile, because the package
-// has no record of a picture of pixels. Over a tile, the program asks the
+// has no record of a picture of pixels. Over a tile, the process asks the
 // compositor for the shape of the tile (display.pointer_shape_set): the
 // pointer over this surface shows it.
 //
@@ -50,7 +50,7 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The pointer themes that it checks.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1616, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1616, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 976
 HEIGHT :: 704
@@ -63,7 +63,7 @@ PICTURE_TOP :: 56 // The pictures, in a tile, under two lines of the name and a 
 NAME_LIMIT :: (TILE_WIDTH - 16) / 8 // The characters of a line of a tile.
 THEME_CAPACITY :: 4
 
-// A theme file of the boot image that the program checked.
+// A theme file of the boot image that the process checked.
 Theme :: struct {
 	resource:   string,
 	file:       []u8,
@@ -82,7 +82,7 @@ table_text: [16384]u8
 table: interface.Draw_Table
 state: interface.Interface_State
 input: interface.Input
-asked_shape := pointer_pictures.Pointer_Shape.Arrow // The last shape that this program asked for.
+asked_shape := pointer_pictures.Pointer_Shape.Arrow // The last shape that this process asked for.
 tile_under_pointer := -1
 
 // The area of the tile of the shape at a place of the shape table.
@@ -236,7 +236,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 		}
 	}
 	builder = {}
-	interface.text_put(&builder, "the lines in amber cross at the hot spot; over a tile, this program asks the compositor for its shape")
+	interface.text_put(&builder, "the lines in amber cross at the hot spot; over a tile, this process asks the compositor for its shape")
 	interface.draw_text(frame.table, 16, HEIGHT - 24, interface.text_of(&builder), graphics.colors.dim)
 	return under
 }

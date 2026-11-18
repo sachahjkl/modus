@@ -53,7 +53,7 @@ TEST_TPM_KEY_DISK :: BUILD_FOLDER + "/test_tpm_key_disk.img"
 // The disk of machine 5: the store of `unlock` with the record of machine 4,
 // one byte of its creation ticket changed.
 TEST_TPM_KEY_CHANGED_TICKET_DISK :: BUILD_FOLDER + "/test_tpm_key_changed_ticket_disk.img"
-// The store of `unlock`: a store of principal 0 has the name of its program.
+// The store of `unlock`: a store of principal 0 has the name of its process.
 UNLOCK_STORE :: "unlock"
 TEST_OUTPUT_TPM_KEY :: BUILD_FOLDER + "/test_output_tpm_key_%d.txt"
 // The state of the software TPM that the ten machines share.
@@ -141,7 +141,7 @@ scenario_tpm_key_seal := [?]Step {
 	// The line of Enter, in order: the table before it fails the step.
 	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: the disk grant table of principal 0 is written"},
 	{kind = .Wait, text = "unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down"},
-	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 	// A second key is refused: it would replace the key of the table.
 	{kind = .Front, text = "console"},
@@ -153,7 +153,7 @@ scenario_tpm_key_seal := [?]Step {
 scenario_tpm_key_same_system := [?]Step {
 	{kind = .Wait, text = "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal", any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only", any_order = true},
-	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
@@ -171,7 +171,7 @@ scenario_tpm_key_recovery := [?]Step {
 	{kind = .Wait, text = "unlock: the recovery key is wrong: the copy of the machine key does not open, the disk grants of principal 0 stay absent (1 in all)"},
 	{kind = .Type, text = SCREEN_TEXT_MARK},
 	{kind = .Wait, text = "unlock: the recovery key opens the machine key; the root service receives the key of the disk grant table only"},
-	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 }
 
 // The other system with Secure Boot on: after the recovery, the key is
@@ -294,7 +294,7 @@ scenario_tpm_principal_create := [?]Step {
 	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: principal 1 \"alice\" is recorded"},
 	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 }
 
@@ -322,7 +322,7 @@ scenario_tpm_principal_same_system := [?]Step {
 	// counts no failure at the start of the next one.
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -341,7 +341,7 @@ tpm_principal_recovery_and_new_passphrase := [?]Step {
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
 	// The file of before the new seal is a version: unlock erases it.
 	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -381,7 +381,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 	// A console of the session acts for alice: the console of the machine
 	// cannot ask for a change.
@@ -468,7 +468,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (1 in all)", fails_on = TPM_SHUTDOWN_LINE},
 	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -506,7 +506,7 @@ scenario_tpm_principal_old_recovery_key := [?]Step {
 	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -575,7 +575,7 @@ scenario_tpm_machine_passphrase_set := [?]Step {
 	// The line of Enter, in order: the table before it fails the step.
 	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: the disk grant table of principal 0 is written"},
 	{kind = .Wait, text = "unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock"},
-	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 }
 
@@ -603,7 +603,7 @@ scenario_tpm_machine_passphrase_same_system := [?]Step {
 	// counts no failure at the start of the next one.
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the machine key to the machine passphrase: the system is the system of the seal; the root service receives the key of the disk grant table only", any_order = true},
-	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -619,7 +619,7 @@ scenario_tpm_machine_passphrase_other_system := [?]Step {
 	{kind = .Wait, text = "unlock: the recovery key is wrong: the copy of the machine key does not open, the disk grants of principal 0 stay absent (1 in all)"},
 	{kind = .Type, text = SCREEN_TEXT_MARK},
 	{kind = .Wait, text = "unlock: the recovery key opens the machine key; the root service receives the key of the disk grant table only"},
-	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "unlock: the machine key waits for a new machine passphrase: the TPM seals it again to it and to the system that runs", any_order = true},
 	{kind = .Type, text = NEW_MACHINE_PASSPHRASE},
 	{kind = .Type, text = NEW_MACHINE_PASSPHRASE},
@@ -651,7 +651,7 @@ scenario_tpm_machine_passphrase_after_the_new_seal := [?]Step {
 	{kind = .Wait, text = "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal, and the authorization value is right", any_order = true},
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the machine key to the machine passphrase: the system is the system of the seal; the root service receives the key of the disk grant table only", any_order = true},
-	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -715,17 +715,17 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 	// The first byte of the digest of the ticket: after its tag, its
 	// hierarchy and the size of the digest.
 	changed[principals.MACHINE_TPM_OFFSET_TICKET + 8] ~= 0x01
-	disk := Program_Disk {
+	disk := Module_Disk {
 		image = make([]u8, DATA_DISK_SIZE),
 		next  = 2,
 	}
 	defer delete(disk.image)
 	root := new(format.Root, context.temp_allocator)
 	root.magic = format.ROOT_MAGIC
-	root.generation = PROGRAM_DISK_GENERATION
+	root.generation = MODULE_DISK_GENERATION
 	root.disk_blocks = u64(DATA_DISK_SIZE) / format.BLOCK_SIZE
-	files := [1]Program_File{{name = principals.MACHINE_OBJECT, bytes = changed}}
-	root.stores[0] = program_store_put(&disk, UNLOCK_STORE, files[:], DATA_DISK_SIZE) or_return
+	files := [1]Module_File{{name = principals.MACHINE_OBJECT, bytes = changed}}
+	root.stores[0] = module_files_store_put(&disk, UNLOCK_STORE, files[:], DATA_DISK_SIZE) or_return
 	root.check = format.root_check(root)
 	copy(disk.image[:format.BLOCK_SIZE], ([^]u8)(root)[:format.BLOCK_SIZE])
 	if err := os.write_entire_file(TEST_TPM_KEY_CHANGED_TICKET_DISK, disk.image); err != nil {
@@ -950,7 +950,7 @@ tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, 
 // TPM of a part: the tool sends it the commands that another system on the
 // machine can send.
 Tpm_Alone :: struct {
-	tpm:        Tpm_Process,
+	tpm:        Tpm_Host_Process,
 	connection: linux.Fd, // The Unix socket of the commands, in the folder of the output.
 }
 
@@ -971,12 +971,12 @@ tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alo
 	control := strings.concatenate({"type=unixio,path=", folder, TPM_ALONE_CONTROL_SOCKET}, context.temp_allocator)
 	// not-need-init and startup-clear: swtpm starts the TPM itself, as the
 	// firmware of a machine does, with no QEMU.
-	process, start_error := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--server", server, "--ctrl", control, "--flags", "not-need-init,startup-clear", "--log", log}, stdout = os.stderr, stderr = os.stderr})
+	host_process, start_error := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--server", server, "--ctrl", control, "--flags", "not-need-init,startup-clear", "--log", log}, stdout = os.stderr, stderr = os.stderr})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", start_error)
 		return {}, false
 	}
-	alone.tpm = Tpm_Process{process = process, started = true, folder = strings.clone(folder)}
+	alone.tpm = Tpm_Host_Process{host_process = host_process, started = true, folder = strings.clone(folder)}
 
 	// Wait until swtpm takes a connection.
 	start := time.tick_now()

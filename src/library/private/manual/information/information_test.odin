@@ -201,24 +201,24 @@ rows_with_a_replacement :: proc(t: ^testing.T) {
 	testing.expect_value(t, field(replacement_rows[0].to[:]), "fixed")
 }
 
-// The edges of the programs that run, from module records as a loader
-// writes them: a program whose module imports library directly; a program
-// where a replacement gave fixed in place of library; a program that holds
+// The edges of the processes that run, from module records as a loader
+// writes them: a process whose module imports library directly; a process
+// where a replacement gave fixed in place of library; a process that holds
 // library by its name and fixed through the replacement; and a record of a
 // module that the catalog does not have.
 @(test)
-edges_of_a_program :: proc(t: ^testing.T) {
+edges_of_a_process :: proc(t: ^testing.T) {
 	library := module_file("a library", {}, false)
 	fixed := module_file("a library with a correction", {}, false)
 	user := module_file("a user of the library", blake3.hash(library), true)
 	catalog := Catalog{image = image_of({"library", "fixed", "user"}, {library, fixed, user})}
 
-	// No replacement: user is the module of the program, library its import.
+	// No replacement: user is the module of the process, library its import.
 	direct := [2]op.Module_Record{{size = 4096, hash = blake3.hash(user)}, {size = 4096, hash = blake3.hash(library)}}
 	rows: [8]Edge
-	count := program_edges(catalog, "user", 3, direct[:], rows[:], 0)
+	count := process_edges(catalog, "user", 3, direct[:], rows[:], 0)
 	testing.expect_value(t, count, 2)
-	testing.expect_value(t, field(rows[0].program[:]), "user")
+	testing.expect_value(t, field(rows[0].process[:]), "user")
 	testing.expect_value(t, rows[0].slot, 3)
 	testing.expect_value(t, field(rows[0].module[:]), "user")
 	testing.expect_value(t, field(rows[0].imported_by[:]), "")
@@ -230,7 +230,7 @@ edges_of_a_program :: proc(t: ^testing.T) {
 
 	// A replacement: fixed runs in place of library, and user imports it.
 	replaced := [2]op.Module_Record{{size = 4096, hash = blake3.hash(user)}, {size = 4096, hash = blake3.hash(fixed), replaces = blake3.hash(library)}}
-	count = program_edges(catalog, "user", 4, replaced[:], rows[:], 0)
+	count = process_edges(catalog, "user", 4, replaced[:], rows[:], 0)
 	testing.expect_value(t, count, 2)
 	testing.expect_value(t, field(rows[1].module[:]), "fixed")
 	testing.expect_value(t, field(rows[1].imported_by[:]), "user")
@@ -239,7 +239,7 @@ edges_of_a_program :: proc(t: ^testing.T) {
 	// library loaded by its name next to its replacement: the import of user
 	// goes to fixed, and library has no importer.
 	both := [3]op.Module_Record{{size = 4096, hash = blake3.hash(user)}, {size = 4096, hash = blake3.hash(fixed), replaces = blake3.hash(library)}, {size = 4096, hash = blake3.hash(library)}}
-	count = program_edges(catalog, "console", 5, both[:], rows[:], 0)
+	count = process_edges(catalog, "console", 5, both[:], rows[:], 0)
 	testing.expect_value(t, count, 3)
 	testing.expect_value(t, field(rows[1].module[:]), "fixed")
 	testing.expect_value(t, field(rows[1].imported_by[:]), "user")
@@ -250,12 +250,12 @@ edges_of_a_program :: proc(t: ^testing.T) {
 	// record of size 0 is no module. The count is the full count.
 	unknown_hash := blake3.hash(transmute([]u8)string("a module of no catalog"))
 	unknown := [2]op.Module_Record{{size = 4096, hash = unknown_hash}, {}}
-	count = program_edges(catalog, "stranger", 6, unknown[:], rows[:1], 0)
+	count = process_edges(catalog, "stranger", 6, unknown[:], rows[:1], 0)
 	testing.expect_value(t, count, 1)
 	digits: [64]u8
 	hash_text(unknown_hash, &digits)
 	testing.expect_value(t, field(rows[0].module[:]), string(digits[:16]))
-	testing.expect_value(t, program_edges(catalog, "user", 3, direct[:], rows[:0], 0), 2)
+	testing.expect_value(t, process_edges(catalog, "user", 3, direct[:], rows[:0], 0), 2)
 }
 
 // A malformed module gives a problem with its place: the table, the
@@ -355,7 +355,7 @@ random_damage :: proc(t: ^testing.T) {
 		described(catalog, "byte", export_rows[:])
 		handles(catalog, .Read, export_rows[:])
 		edge_rows: [4]Edge
-		program_edges(catalog, "user", 1, records[:], edge_rows[:], 0)
+		process_edges(catalog, "user", 1, records[:], edge_rows[:], 0)
 		problems += int(check(damaged).kind != .None)
 	}
 	testing.expect(t, problems > 1000, "the damage must break rules often")
@@ -364,7 +364,7 @@ random_damage :: proc(t: ^testing.T) {
 // A column into a buffer that cannot hold it ends: a buffer of no byte, a
 // buffer shorter than the text, and a buffer that holds the text and not
 // its spaces. Each gives what fits and counts the rest as dropped. The
-// overview of the program `manual` looped for ever here when its built
+// overview of the process `manual` looped for ever here when its built
 // lines were full. Then a column that fits, last.
 @(test)
 a_column_into_a_full_buffer_ends :: proc(t: ^testing.T) {

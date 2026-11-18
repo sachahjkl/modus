@@ -4,7 +4,7 @@ package quic
 // `Connection` records in memory of the caller, and the choice of the record
 // of each datagram that arrives.
 //
-// One program serves many clients on one UDP port. The server of this file
+// One process serves many clients on one UDP port. The server of this file
 // reads the header of each datagram, finds the record that it belongs to, or
 // decides if a new client gets a record. Most of it is defence: a datagram can
 // carry any source address, so the server spends no memory and little work on
@@ -142,7 +142,7 @@ Server_Record :: struct {
 	in_use:     bool, // The place holds a client. false: the place is free, and its `Connection` has no meaning.
 	remote:     Remote, // The address and the port of the client: the server sends to it, and takes the datagrams of the record only from it.
 	started_at: u64, // When the record was taken, in microseconds.
-	generation: u64, // A new value each time that the record is taken, never 0: the caller tells two clients of one place apart. A program ties its own state of a place to it, so a new client never takes the state of the client before.
+	generation: u64, // A new value each time that the record is taken, never 0: the caller tells two clients of one place apart. A process ties its own state of a place to it, so a new client never takes the state of the client before.
 	// The caller confirmed that the network service validated the remote (the
 	// command Validate gave 1). Until then each datagram of a record whose address
 	// is validated asks the caller to validate the remote: a Validate that came
@@ -153,7 +153,7 @@ Server_Record :: struct {
 
 // What the server counts: the work that a flood costs is visible.
 //
-// Each counter only grows, from `server_init`. A program logs them or shows
+// Each counter only grows, from `server_init`. A process logs them or shows
 // them, and a test reads them to prove which rule dropped a datagram.
 Server_Counters :: struct {
 	accepted:                     u64, // Records taken: an Initial with a valid token that passed each limit and opened.
@@ -220,7 +220,7 @@ Server_Work :: enum u8 {
 // the budgets and the counters.
 //
 // The record has about 40 KiB, mostly the table of address budgets: it goes in
-// the global memory of the program or in a mapping, never on a stack. The
+// the global memory of the process or in a mapping, never on a stack. The
 // connection records, the server records and the stream records are tables of
 // the caller, which `server_init` ties to it. One thread uses a server at a
 // time. A caller reads `connections`, `records` and `counters`, and writes no
@@ -231,7 +231,7 @@ Server :: struct {
 	streams:            []Stream, // The stream records of every connection: memory of the caller, `streams_per_connection` for each connection, in the order of the connections.
 	streams_per_connection: int, // The stream records of one connection: the streams that one client has open at one time.
 	configuration:      Connection_Configuration, // The configuration of each connection, with the role of a server: it holds the private key of the server for the life of the server.
-	cryptography:       ^Cryptography, // The cryptography module of the program: each connection uses it too.
+	cryptography:       ^Cryptography, // The cryptography module of the process: each connection uses it too.
 	generator:          ^random.Generator, // The random generator of the thread: the key of the tokens, the identifier of each Retry and the identifiers of the connections come from it.
 	limits:             Server_Limits, // The limits and the budgets that `server_init` got.
 	counters:           Server_Counters, // What the server counted since `server_init`.
@@ -263,7 +263,7 @@ Server :: struct {
 // - `configuration`: the configuration of each connection: the Ed25519 private
 //   key of the server, its application protocol, its least seed strength, its
 //   idle timeout. The server copies it and sets the role.
-// - `cryptography`, `generator`: the cryptography module of the program and
+// - `cryptography`, `generator`: the cryptography module of the process and
 //   the random generator of the thread. The server keeps both pointers.
 // - `limits`: the limits and the budgets, for example `SERVER_LIMITS_DEFAULT`.
 // - `error`: the error record that a failure writes.
@@ -888,7 +888,7 @@ server_time_passes :: proc "contextless" (server: ^Server, now: u64) {
 // **Result**: the count of remotes written.
 //
 // A record ends after its closing or draining time, so its last datagram went
-// before. A program reads what it wants of an ended connection (why it ended,
+// before. A process reads what it wants of an ended connection (why it ended,
 // its counts) before this call: after it the place can go to a new client.
 server_sweep :: proc "contextless" (server: ^Server, released: []Remote) -> int {
 	count := 0

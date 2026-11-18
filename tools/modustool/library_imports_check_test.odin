@@ -150,7 +150,7 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 	// A kernel part: the kernel itself ("kernel:" alone, "kernel:."), a path
 	// with a part "." or ".." are refused in each form, a kernel part in each form outside the
 	// kernel, and the last case, a kernel part in the kernel and its tests.
-	for path in ([]string{KERNEL_IMPORT_START, KERNEL_IMPORT_START + ".", KERNEL_IMPORT_START + "./iommu", KERNEL_IMPORT_START + "iommu/.", CONTRACT_IMPORT_START + "./ring", KERNEL_IMPORT_START + "../programs/clock", KERNEL_IMPORT_START + "iommu/../../programs"}) {
+	for path in ([]string{KERNEL_IMPORT_START, KERNEL_IMPORT_START + ".", KERNEL_IMPORT_START + "./iommu", KERNEL_IMPORT_START + "iommu/.", CONTRACT_IMPORT_START + "./ring", KERNEL_IMPORT_START + "../processes/clock", KERNEL_IMPORT_START + "iommu/../../processes"}) {
 		for form in ([]Library_Source_Form{kernel_source, kernel_test, contract_source, contract_test, system_source, system_test, copied_source}) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is refused in %v", path, form)
 		}
@@ -235,7 +235,7 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
 	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/device.odin", "package ring\n\nimport \"" + part + "\"\n")
 	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/itself.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/around.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "../programs/clock\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/around.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "../processes/clock\"\n")
 	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/here.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + ".\"\n")
 	// A host test outside the kernel reaches a kernel part by a relative
 	// path, which the compiler accepts there: once to a part, once to the

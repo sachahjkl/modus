@@ -4,7 +4,7 @@
 
 The text encoding is the one form of a text in every contract of the system: UTF-8 with no control character, and a length in bytes.
 
-Each record that two parties share holds its text in this form: a line of the log, the name of an object of a store, a `Text` of the module contract. A party checks a text from another party at its border with `text_encoding.text_valid`, and cuts a text only after a whole character (`complete_characters`). A capacity of a field is a count of bytes, not of characters. An identifier of the system (a module, an export, a setting, a program) stays in the visible characters of ASCII, so that it has one form only.
+Each record that two parties share holds its text in this form: a line of the log, the name of an object of a store, a `Text` of the module contract. A party checks a text from another party at its border with `text_encoding.text_valid`, and cuts a text only after a whole character (`complete_characters`). A capacity of a field is a count of bytes, not of characters. An identifier of the system (a module, an export, a setting, a process) stays in the visible characters of ASCII, so that it has one form only.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -44,7 +44,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The modus tool subsets each font file at the build and draws its characters into a glyph cache; a program draws a character past the cache from the font outlines of the boot image. The system has three fonts: Paper Mono, the monospace font of the cells; B612, the interface font; and Spleen 8x16, a bitmap font, the fallback with no valid glyph cache. A font here is one file of one weight: Paper Mono SemiBold is a font of its own, with its own cache.
+The modus tool subsets each font file at the build and draws its characters into a glyph cache; a process draws a character past the cache from the font outlines of the boot image. The system has three fonts: Paper Mono, the monospace font of the cells; B612, the interface font; and Spleen 8x16, a bitmap font, the fallback with no valid glyph cache. A font here is one file of one weight: Paper Mono SemiBold is a font of its own, with its own cache.
 
 The design: `docs/FONTS.md`, "6. The font file".
 
@@ -104,7 +104,7 @@ Do not use: hinting (alone), autohint.
 
 A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126, each character U+00A0 to U+00FF and the euro sign at each scale of the grid.
 
-It moves all the work of a font out of the programs: the modus tool builds it, and the boot image holds it as a resource. The root service checks its hash once, and maps it read-only at a fixed range in each program with a surface. A program validates it once, then each draw reads the words of a glyph with no other check. No program writes it. It is not an atlas of a GPU and not a cache that fills on demand.
+It moves all the work of a font out of the processes: the modus tool builds it, and the boot image holds it as a resource. The root service checks its hash once, and maps it read-only at a fixed range in each process with a surface. A process validates it once, then each draw reads the words of a glyph with no other check. No process writes it. It is not an atlas of a GPU and not a cache that fills on demand.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -142,9 +142,9 @@ Do not use: proportional font cache.
 
 ### Font service
 
-The font service is the program `glyphs`: it draws the fixed subsets past the glyph caches into the demand cache at its start, then ends.
+The font service is the process `glyphs`: it draws the fixed subsets past the glyph caches into the demand cache at its start, then ends.
 
-It reads the font outlines of the boot image and draws each character of the subset of each demand face, in a fixed order, so the demand cache holds the same entries whatever the programs draw. Then it writes on the log what each fallback chain lacks, and ends with the code 0. The root service starts it with the demand cache with Write. Nothing goes from a program to it, and a program never waits for it: a program draws each glyph that the demand cache does not hold itself.
+It reads the font outlines of the boot image and draws each character of the subset of each demand face, in a fixed order, so the demand cache holds the same entries whatever the processes draw. Then it writes on the log what each fallback chain lacks, and ends with the code 0. The root service starts it with the demand cache with Write. Nothing goes from a process to it, and a process never waits for it: a process draws each glyph that the demand cache does not hold itself.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -152,9 +152,9 @@ Do not use: font server, rasterizer service, glyph daemon.
 
 ### Demand cache
 
-The demand cache is the memory where the font service writes the glyphs of the fixed subsets past the glyph caches, and which each program that gets the glyph caches maps read-only.
+The demand cache is the memory where the font service writes the glyphs of the fixed subsets past the glyph caches, and which each process that gets the glyph caches maps read-only.
 
-It holds a header with a generation, a hash table by face and code point, and words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its key, then the generation; an entry never changes after that. A program copies and checks each entry before it draws a word of it. Its entries do not depend on what the programs draw, so it tells no program what another draws. It is not a glyph cache: it changes while a program reads it.
+It holds a header with a generation, a hash table by face and code point, and words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its key, then the generation; an entry never changes after that. A process copies and checks each entry before it draws a word of it. Its entries do not depend on what the processes draw, so it tells no process what another draws. It is not a glyph cache: it changes while a process reads it.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -162,9 +162,9 @@ Do not use: atlas, shared glyph cache, dynamic cache.
 
 ### Font outlines
 
-The font outlines are one resource of the boot image that holds the font files of the system, from which each program draws the glyphs past its glyph caches.
+The font outlines are one resource of the boot image that holds the font files of the system, from which each process draws the glyphs past its glyph caches.
 
-The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the glyph caches. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each program that gets the glyph caches, and in the font service. A program validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
+The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the glyph caches. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches, and in the font service. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
 
 The design: `src/md/features/glyphs_on_demand.md`, "Layer 0: the outlines, shared and read-only".
 
@@ -184,7 +184,7 @@ Do not use: font stack, font fallback list.
 
 A fallback face is a glyph cache of the system that a glyph past it stands beside: B612 Regular, B612 Bold, Paper Mono with and without the grid fit, and Paper Mono SemiBold.
 
-A glyph past the cache has the form, the baseline and the scale of the glyphs of that cache: a glyph of a face of cells stays in its cell, and a glyph of the interface is the box of its ink at a subpixel position. A program finds the face of a glyph cache by the hash of its font file and its flags (`fallback_glyphs.face_of_cache`). Each face has its fallback chain. A fallback face is not a demand face, which names a fixed subset of the demand cache.
+A glyph past the cache has the form, the baseline and the scale of the glyphs of that cache: a glyph of a face of cells stays in its cell, and a glyph of the interface is the box of its ink at a subpixel position. A process finds the face of a glyph cache by the hash of its font file and its flags (`fallback_glyphs.face_of_cache`). Each face has its fallback chain. A fallback face is not a demand face, which names a fixed subset of the demand cache.
 
 The design: `src/md/features/glyphs_on_demand.md`, "The fallback face".
 
@@ -192,9 +192,9 @@ Do not use: font face (for this), font slot.
 
 ### Private glyph cache
 
-The private glyph cache is the memory where a program keeps the glyphs past the glyph caches that it drew itself, which no other program reads.
+The private glyph cache is the memory where a process keeps the glyphs past the glyph caches that it drew itself, which no other process reads.
 
-A glyph is drawn at its first use and kept; a new glyph that finds no room evicts the glyphs used the longest time ago, counted in frames of the program. The budget of the program pays for it. A program that draws through the drawing module has two: the one of the module and its own. It holds no advance: that comes from the font file. It is not the demand cache: it is not shared, so its content and its evictions tell no program what another draws.
+A glyph is drawn at its first use and kept; a new glyph that finds no room evicts the glyphs used the longest time ago, counted in frames of the process. The budget of the process pays for it. A process that draws through the drawing module has two: the one of the module and its own. It holds no advance: that comes from the font file. It is not the demand cache: it is not shared, so its content and its evictions tell no process what another draws.
 
 The design: `src/md/features/glyphs_on_demand.md`, "Layer 2: the private glyph cache".
 
@@ -212,9 +212,9 @@ Do not use: font slot, font index.
 
 ### Setting
 
-A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard, the appearance or the time zone.
+A setting is one choice of the principal of the machine that each process follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard, the appearance or the time zone.
 
-Each setting is one value of the settings page, with 0 as its default: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`, `appearance`, and `time_zone`, a fixed offset from UTC. The program `settings` is the one writer: its window, `settings.set(name, value)` and `settings.get(name)`. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run, and the values survive a stop in the private store of `settings`. A setting is not a configuration file of one program, and the scheduling strategy is not a setting.
+Each setting is one value of the settings page, with 0 as its default: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`, `appearance`, and `time_zone`, a fixed offset from UTC. The process `settings` is the one writer: its window, `settings.set(name, value)` and `settings.get(name)`. A caller that does not act for the principal gets `No_Grant`. A change takes effect while processes run, and the values survive a stop in the private store of `settings`. A setting is not a configuration file of one process, and the scheduling strategy is not a setting.
 
 The design: `docs/FONTS.md`, "7. The setting".
 
@@ -242,9 +242,9 @@ Do not use: Option, level-3 shift, compose key (for this).
 
 ### Settings page
 
-The settings page is the one page of memory that holds the current value of each setting, which each program with a surface reads.
+The settings page is the one page of memory that holds the current value of each setting, which each process with a surface reads.
 
-The root service creates the page. The program `settings` receives it with Write; each program with a surface, each terminal and the compositor map it read-only at the fixed range `Settings_Page`. The page holds the choices and the appearance in force only: no address, no size and no hash of a glyph cache, so its writer cannot point a program at memory that it controls. A reader reads again while the change count is odd. It is not a registry and not a file: a record in the store of `settings` survives a stop.
+The root service creates the page. The process `settings` receives it with Write; each process with a surface, each terminal and the compositor map it read-only at the fixed range `Settings_Page`. The page holds the choices and the appearance in force only: no address, no size and no hash of a glyph cache, so its writer cannot point a process at memory that it controls. A reader reads again while the change count is odd. It is not a registry and not a file: a record in the store of `settings` survives a stop.
 
 The design: `docs/FONTS.md`, "7. The setting".
 
@@ -262,9 +262,9 @@ Do not use: theme (for this: a pointer theme is a set of pointer pictures), dark
 
 ### Appearance in force
 
-The appearance in force is the appearance, dark or light, that each program draws now.
+The appearance in force is the appearance, dark or light, that each process draws now.
 
-It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/support/appearance` computes from the date page. The program `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A program reads it at each frame through `src/library/support/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
+It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/support/appearance` computes from the date page. The process `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A process reads it at each frame through `src/library/support/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
 
 The design: `src/md/features/appearance.md`.
 
@@ -274,7 +274,7 @@ Do not use: current theme, active mode.
 
 A color token is a named color of the design rules that has one value in each appearance: a surface, a concept or a part of the desktop.
 
-`graphics.Color_Tokens` holds each token; `graphics.colors` holds their values in the appearance in force of a program, so a drawer writes `graphics.colors.text` and draws the text of the dark or of the light appearance. The `DARK_` constants of the package are the values of the dark appearance, for constant tables and for what is always dark (the boot display, the mark). White, black and the ink of a text on white are not tokens: they are the same in both appearances.
+`graphics.Color_Tokens` holds each token; `graphics.colors` holds their values in the appearance in force of a process, so a drawer writes `graphics.colors.text` and draws the text of the dark or of the light appearance. The `DARK_` constants of the package are the values of the dark appearance, for constant tables and for what is always dark (the boot display, the mark). White, black and the ink of a text on white are not tokens: they are the same in both appearances.
 
 The design: `src/md/features/appearance.md`, and `src/library/support/graphics/rules.odin`.
 
@@ -286,7 +286,7 @@ A series color is one of eight color tokens that tell apart the members of one s
 
 A member takes the series color of its number (`graphics.colors.series[number]`), and a ninth member takes the first color again. The threads of `processors` and the records of `rings` are series. A series color is never the only sign: a number or a word names the member. A record of `rings` carries its series number, not its color, so that it keeps its member when the appearance changes. A series color is not a concept: a thread of a series is not the kernel because it is blue.
 
-The design: `src/md/features/appearance.md`, "The colors of the programs".
+The design: `src/md/features/appearance.md`, "The colors of the processes".
 
 Do not use: identity color, tint, palette, hue (for this).
 
@@ -296,7 +296,7 @@ The warning color is the color token of a state that asks for attention and is n
 
 A record of the log of the level Warning and a ring of `rings` that is full have it (`graphics.colors.warning`). It is a yellow apart from the orange of the boot program, so that "starts" and "take care" are two colors; a failure has the color `failed`. A warning color is never the only sign: the level or a word says the state.
 
-The design: `src/md/features/appearance.md`, "The colors of the programs".
+The design: `src/md/features/appearance.md`, "The colors of the processes".
 
 Do not use: caution color, alert color.
 
@@ -324,7 +324,7 @@ Do not use: fixed-width font (for this), terminal font.
 
 The interface font is the proportional font of the titles, the labels, the buttons, the menus and the bar: B612.
 
-B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A program uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places with a proportional cache. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
+B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A process uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places with a proportional cache. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 
@@ -374,7 +374,7 @@ Do not use: kerning pair (for this).
 
 A font feature is a named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters.
 
-Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators). A feature leads to one or more lookups, and each lookup changes glyphs. The system uses one feature, `zero` of Paper Mono, and only at the build: the tool reads it with `vector_font.single_substitution` and draws its glyph for the character `0` in the subset. The subset holds no `GSUB`, and no program reads features at run time.
+Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators). A feature leads to one or more lookups, and each lookup changes glyphs. The system uses one feature, `zero` of Paper Mono, and only at the build: the tool reads it with `vector_font.single_substitution` and draws its glyph for the character `0` in the subset. The subset holds no `GSUB`, and no process reads features at run time.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
@@ -462,9 +462,9 @@ Do not use: span (for this), slice.
 
 ### Boot pass
 
-The boot pass is the start of the program `settings` that the root service makes at the start of the machine, with no window, to put the kept settings on the settings page.
+The boot pass is the start of the process `settings` that the root service makes at the start of the machine, with no window, to put the kept settings on the settings page.
 
-The settings survive a stop as one record (`Kept_Settings`) in the private store of `settings`. The root service cannot read the store itself, so it starts `settings` with the value 1 at `VALUE_BOOT_PASS` of its context. The program reads the record, writes the page, wakes the compositor and stops. A record of another version, or none, gives the defaults. Until the boot pass ends, the boot display and the first frames use the defaults; then each window draws again.
+The settings survive a stop as one record (`Kept_Settings`) in the private store of `settings`. The root service cannot read the store itself, so it starts `settings` with the value 1 at `VALUE_BOOT_PASS` of its context. The process reads the record, writes the page, wakes the compositor and stops. A record of another version, or none, gives the defaults. Until the boot pass ends, the boot display and the first frames use the defaults; then each window draws again.
 
 The design: `docs/FONTS.md`, "7. The setting".
 
@@ -472,9 +472,9 @@ Do not use: init script, startup hook.
 
 ### Blend table
 
-A blend table is the results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a program.
+A blend table is the results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a process.
 
-The blend of a partial pixel costs two squares and a square root for each channel. For one text color over one background color, each channel of the result depends on its coverage only: 3 x 256 values. A program keeps a few such tables (`graphics.Blend_Tables`), and fills a value on first use with the formula of the reference blend. A row of a glyph whose two end pixels have one color uses the table of that color. The result is the same bytes as the reference blend.
+The blend of a partial pixel costs two squares and a square root for each channel. For one text color over one background color, each channel of the result depends on its coverage only: 3 x 256 values. A process keeps a few such tables (`graphics.Blend_Tables`), and fills a value on first use with the formula of the reference blend. A row of a glyph whose two end pixels have one color uses the table of that color. The result is the same bytes as the reference blend.
 
 The design: `docs/FONTS.md`, "Where the time goes, and the fast blend".
 
@@ -502,7 +502,7 @@ Do not use: run (alone), token, inline.
 
 ### Link page
 
-A link page is a page of the program `manual` for the target of a link that no module describes: a term of the glossary, a heading of a guide, or a declaration of the sources.
+A link page is a page of the process `manual` for the target of a link that no module describes: a term of the glossary, a heading of a guide, or a declaration of the sources.
 
 The documentation of a module links terms, headings of the guides and declarations of the support packages, but the manual reads only the boot image. So the build writes the page of each such target that the modules of the image link, in the resource `manual_pages`. The page of a term is its name, its short definition and its explanation; the page of a heading is its text and its subheadings; the page of a declaration comes from its source. A link page is not a copy of the site: it holds no picture.
 

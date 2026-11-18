@@ -190,7 +190,7 @@ a_value_out_of_its_setting :: proc(t: ^testing.T) {
 
 // A glyph cache whose range the starter did not state as mapped is not
 // read: each cache gives Not_Mapped with no bit, even with the bits of the
-// other ranges set. A set bit makes the program read the fixed address,
+// other ranges set. A set bit makes the process read the fixed address,
 // which is not mapped in a host test: that path is tested on the machine.
 @(test)
 a_glyph_cache_that_is_not_mapped :: proc(t: ^testing.T) {

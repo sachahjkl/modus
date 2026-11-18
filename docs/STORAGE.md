@@ -1,16 +1,16 @@
 # Storage
 
-This guide gives the model of the stored data of the system: what a program, a package and a principal keep, and how a program reaches only what it was granted. It also gives the format on the disk, the interface of the storage service, the limits, and the order of construction. Each part says if it is **built** or **not built**.
+This guide gives the model of the stored data of the system: what a process, a package and a principal keep, and how a process reaches only what it was granted. It also gives the format on the disk, the interface of the storage service, the limits, and the order of construction. Each part says if it is **built** or **not built**.
 
 The terms are in `glossary/storage.md`. The versions and the date are in `ARCHITECTURE.md`, "U5. Storage service", and `ARCHITECTURE.md`, "The date".
 
 ## About this guide
 
-**The idea in plain words.** A program never sees a disk, a path or a folder that other programs share. It holds a connection to its own store, granted by the root service with a limit of blocks. In it, it keeps objects (bytes) and trees (named entries that hold objects and other trees). Each change is a commit that a loss of power cannot cut in half, and each commit keeps the state before it as a version, so no program needs a save action or an undo file. To give a part of its data to another program, a program shares one tree, read-only or not, and can revoke the share.
+**The idea in plain words.** A process never sees a disk, a path or a folder that other processes share. It holds a connection to its own store, granted by the root service with a limit of blocks. In it, it keeps objects (bytes) and trees (named entries that hold objects and other trees). Each change is a commit that a loss of power cannot cut in half, and each commit keeps the state before it as a version, so no process needs a save action or an undo file. To give a part of its data to another process, a process shares one tree, read-only or not, and can revoke the share.
 
-**For whom.** A reader who writes a program that keeps data, a reader who wants to know what another program can reach of it, and a reader who changes the storage service.
+**For whom.** A reader who writes a process that keeps data, a reader who wants to know what another process can reach of it, and a reader who changes the storage service.
 
-**Read before.** `PROPERTIES.md`, "8. No global, mutable, shared file system" and "9. A storage engine with one private store per program". `PRINCIPALS.md`, "6. The store of a principal", for the names of the stores.
+**Read before.** `PROPERTIES.md`, "8. No global, mutable, shared file system" and "9. A storage engine with one private store per process". `PRINCIPALS.md`, "6. The store of a principal", for the names of the stores.
 
 **The map of this guide.**
 
@@ -23,7 +23,7 @@ The terms are in `glossary/storage.md`. The versions and the date are in `ARCHIT
 | "5. Not built: the next steps" | The order of the next capabilities |
 | "6. The tests" | What the host tests and the machine tests check |
 
-**An example.** The console holds its line history in the store `console.history`, with a limit of 4 blocks: `storage.usage()` gives the counts of a store, and from a program that acts for the principal, `place = storage.open_store("console.history")` then `storage.versions(place, "line_history")` lists the earlier states of the object. The picture shows the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes.
+**An example.** The console holds its line history in the store `console.history`, with a limit of 4 blocks: `storage.usage()` gives the counts of a store, and from a process that acts for the principal, `place = storage.open_store("console.history")` then `storage.versions(place, "line_history")` lists the earlier states of the object. The picture shows the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes.
 
 ![The storage service: the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes](screenshots/storage.png)
 
@@ -57,7 +57,7 @@ What the model removes as a concept:
 
 - **The system description is a package.** The system is the tree that holds the trees of its parts.
 - **To install is to grant.** A principal adds the tree of a provider to its own tree, and grants it.
-- **A folder is a tree.** The system has no other kind of folder, and no path that a program can name from nothing.
+- **A folder is a tree.** The system has no other kind of folder, and no path that a process can name from nothing.
 - **The boot image is a transport, not a concept.** It carries the objects that the machine needs before the storage service runs, one after the other. An image for a machine with no disk is the same transport with every object. An object can come by any channel: its hash proves it.
 - **A package has no format of its own.** It is a signed tree with six facts beside its entries:
   1. its stable identity: the key of its signer and a name;
@@ -96,7 +96,7 @@ What these rules forbid, so that nobody adds it later:
 ### 1.3 Where the model does not hold as it was first stated
 
 - **The hash of a tree is not fixed by its entries alone.** A tree on the disk is a B+ tree of nodes, and the form of a B+ tree depends on the order of the changes. Two trees with the same entries can have two different forms. Rule: the hash of a tree is defined on its entries in the order of their names, not on its nodes; a tree that a build writes whole (a system, a package) is written in that one form. A tree in a store that changes has no hash until it is sealed. Not built: no tree has a hash today.
-- **A writable handle on a part of a store is a place, not a hash.** A tree never changes, so a handle on a tree is read only by nature. To let another program change a part of a store, the handle names the store and the names of the path from the root of the store to that part. Such a handle reaches what is under that path. If a program with a wider handle renames a tree above the path, the handle names what is at the path now: the handle follows the names, not the bytes.
+- **A writable handle on a part of a store is a place, not a hash.** A tree never changes, so a handle on a tree is read only by nature. To let another process change a part of a store, the handle names the store and the names of the path from the root of the store to that part. Such a handle reaches what is under that path. If a process with a wider handle renames a tree above the path, the handle names what is at the path now: the handle follows the names, not the bytes.
 - **The versions are still kept for each named object, not for the store.** In the model, the versions of a named object are found in the history of its store. The first step keeps the versions of each object of a tree, as the store keeps them now; the history of a store is a later step (section 5).
 
 ## 2. What exists, and how it maps on the model
@@ -105,15 +105,15 @@ The model of section 1 is the direction; the service of today builds a part of i
 
 | What the system had first | In the model | State |
 |---|---|---|
-| A private store as one table of 39 named objects (the first format; not read any more) | A store of one program: it names one tree, with trees inside it | Built: section 3 |
+| A private store as one table of 39 named objects (the first format; not read any more) | A store of one process: it names one tree, with trees inside it | Built: section 3 |
 | The name of an object (1 to 39 bytes, the first format) | A name of an entry of a tree (1 to 64 bytes) | Built |
 | An object of a store, as a list of blocks | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept, and a commit finds the current object of the store with the same hash (section 4.7) |
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
 | The system description (a signed list of hashes) | The tree of the system, signed by the principal that signs the system | Not built |
-| The boot image | The transport of the first objects | Built in part: the first module of a disk program is an object of the store `programs`, which the root service starts when its bytes have the hash that the principal named (`MODULE_CONTRACT.md`, "A program from a disk"). The image is still the source of each other module and of each import |
+| The boot image | The transport of the first objects | Built in part: the first module of a disk process is an object of the store `module_files`, which the root service starts when its bytes have the hash that the principal named (`MODULE_CONTRACT.md`, "A module from a disk"). The image is still the source of each other module and of each import |
 | The resources of the boot image (pointer themes, glyph caches) that the root service gives | Objects of the tree of the system, granted by handle | Not built |
-| The hash of a module (P11) | The name of an object | The same BLAKE3 hash. A module file of a disk program is in the store `programs`; its reader computes the hash on the bytes, because the hash of an object with a hole is not the BLAKE3 hash of its bytes (section 4.6) |
-| A grant of the root service: the store of a connection and its limit | A handle on the store of a program, with its budget of blocks | Built: the connection is the handle |
+| The hash of a module (P11) | The name of an object | The same BLAKE3 hash. A module file of a disk process is in the store `module_files`; its reader computes the hash on the bytes, because the hash of an object with a hole is not the BLAKE3 hash of its bytes (section 4.6) |
+| A grant of the root service: the store of a connection and its limit | A handle on the store of a process, with its budget of blocks | Built: the connection is the handle |
 
 ## 3. The format on the disk
 
@@ -127,7 +127,7 @@ The format is the contract `src/library/contract/store`, `STORAGE4`. A disk of `
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
 - **Node**: a node of the B+ tree of one tree. A leaf holds up to 24 records of a name (64 bytes) and its entry (104 bytes); a branch up to 50 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
 - **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6). It starts with the mark "BLOB".
-- **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the program `disk` one of 1 MiB.
+- **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the process `disk` one of 1 MiB.
 - **Version index, version leaf**: the versions of an object, as before; a version names the root of the block tree of its state.
 
 A pointer is a block number and a check. The check of a block of data is the first 8 bytes of its value (section 4.6); the check of each other block is the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
@@ -146,7 +146,7 @@ An entry is 104 bytes (`Entry` of `src/library/contract/store`):
 | Pointer | the root of its block tree: an object node, or its one block of data when it has one block; none when each of its bytes is zero | its root node; none when it is empty |
 | Versions | its version index | none |
 
-A name is one step: it has no separator, and it never names the tree above. So a name that a program looks up under a place never reaches a node outside it.
+A name is one step: it has no separator, and it never names the tree above. So a name that a process looks up under a place never reaches a node outside it.
 
 In a branch, the name of the record 0 is a bound that the search never reads. It can be larger than the name of the record 1: a smaller name that goes into the child 0 splits it, and the new separator goes to the record 1. So the order of a branch is checked from its record 1.
 
@@ -198,7 +198,7 @@ The limit: a device that answers the read from the cache that lost the write pas
 
 ## 4. The interface of the service
 
-Built. A program reaches its data only through the exports of the storage service, over the connection that the root service gave it. Each export names an entry by a place and a name, never by a path: a program can reach what is under its connection and nothing above it. Each change is one commit, so it is on the disk when the call returns, and the state before it is kept as a version.
+Built. A process reaches its data only through the exports of the storage service, over the connection that the root service gave it. Each export names an entry by a place and a name, never by a path: a process can reach what is under its connection and nothing above it. Each change is one commit, so it is on the disk when the call returns, and the state before it is kept as a version.
 
 An example, in the console of the machine test, whose store has a limit of 3 blocks:
 
@@ -235,13 +235,13 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `list(place, after, rows, names)` | A page of the entries after the name `after`, in the order of the names: a table of rows (the place of the name in `names`, its count of bytes, the kind, the size, the generation) and the bytes of the names. A tree of a million entries is never given whole |
 | `rename(place, name, to_place, to_name)` | Moves an entry, in one commit, inside one store. Refused when `to_name` exists, or when a tree moves into itself |
 | `remove(place, name)` | Removes an object, or a tree and all under it (section 4.4) |
-| `share(place, read_only)` | A new connection whose root is the tree of the place: two handles (its call ring and its call region) for the caller, to give to another program |
+| `share(place, read_only)` | A new connection whose root is the tree of the place: two handles (its call ring and its call region) for the caller, to give to another process |
 | `unshare(share)` | Ends a connection that `share` made |
 | `usage()` | The counts of the store of the connection; through a share of a tree, the counts of that tree only (section 4.3) |
 | `stores()` | A first line with the generation of the disk, its blocks in use, and the commits, the commits refused by their read back, the commits whose root write or read failed on the device (for the next open to decide), the blocks written and the blocks read back with the time of those reads since the start of the service (section 3.3: a measure of the cost of the commit read back). Then one line for each store that the caller is allowed to name (section 4.2): its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. A caller that does not act for a principal gets the error record `No_Grant`, unit `Acts_For_Principal` (-10) |
 | `open_store(store)` | A place on the root of another store, for a caller that may name that store (section 4.2). Such a place reads, restores and clones; `write`, `add`, `remove`, `rename` and `share` refuse it |
 | `versions`, `version`, `restore`, `clone`, `compare` | As before, on an object `name` under a place; no argument names a store |
-| `erase_versions(place, name)` | Ends each version of the object, and writes zero bytes over each block that no other state names (section 4.8). A program with the grant `Versions_Erase`, on its own store, only |
+| `erase_versions(place, name)` | Ends each version of the object, and writes zero bytes over each block that no other state names (section 4.8). A process with the grant `Versions_Erase`, on its own store, only |
 
 ### 4.2 No way up
 
@@ -253,7 +253,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 
 - A connection that `share` made with `read_only` refuses each change (No_Grant, unit Changes).
 - A share of a tree sees the counts of its tree only. `usage()` through it gives the objects, the trees and the versions under the tree, and its blocks: the nodes of its trees, the blocks of the current state of each object (a block that two states share counted once for each), and the index and the leaves of the versions of each object. It gives the limit of the store, and no removal. The count is a walk of the tree: one read of each node, of the root of each object and of each version index, at most 4096 reads for one call; a larger tree, or a tree with a wrong block, gives `USAGE_NOT_COUNTED` (-1). A count of the whole store would tell the holder what the rest of the store holds (section 4.7).
-- `unshare` revokes the two handles of the connection: the kernel ends each holding that came from them, in each program (`Handle_Revoke`), and the service frees the connection and its places. A call on it gives Gone.
+- `unshare` revokes the two handles of the connection: the kernel ends each holding that came from them, in each process (`Handle_Revoke`), and the service frees the connection and its places. A call on it gives Gone.
 - When the grant of the store of a connection ends (the root service revokes it, or the connection closes), each connection that it shared ends too, at its next call.
 
 ### 4.4 The removal of a tree
@@ -266,7 +266,7 @@ The limit of blocks of a store holds as before: it counts the nodes of its trees
 
 ### 4.6 Large objects
 
-Built. An object can be far larger than one call: its bytes are a tree of blocks, and a program changes a few blocks of it and commits, with no copy of the rest. A part of zero bytes costs no block. The cost of a commit follows the blocks that it changed, never the size of the object.
+Built. An object can be far larger than one call: its bytes are a tree of blocks, and a process changes a few blocks of it and commits, with no copy of the rest. A part of zero bytes costs no block. The cost of a commit follows the blocks that it changed, never the size of the object.
 
 #### The block tree
 
@@ -287,7 +287,7 @@ The reason: BLAKE3 puts the place of each chunk in its compression, so zero byte
 
 The hash is still a function of the bytes only: a block of zero bytes is always a hole, so two objects with the same bytes have the same hash. The size is in the hash: the last chunk carries its length and its place.
 
-The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The root service reads the bytes of the module file of a disk program and computes the BLAKE3 hash on them: it does not read the hash of the entry, so a disk program is named by the hash of its file. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
+The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The root service reads the bytes of the module file of a disk process and computes the BLAKE3 hash on them: it does not read the hash of the entry, so a disk process is named by the hash of its file. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
 
 #### Ranges
 
@@ -298,7 +298,7 @@ A connection changes an object by ranges in two steps:
 
 A pending change starts from the state of the object at the first pending change. Another change of the object before the commit (a write, a restore, a remove, a rename, or a commit of another connection) comes first: the commit is refused (Absent, unit Pending, found 1), and the pending changes are dropped. A loss of power before the commit loses the pending changes and nothing else: the disk has the last commit. The end of a connection drops its pending changes.
 
-This is the grouping of property 9: a program sends each change when it happens, and says which changes are one step. A whole write is the same mechanism: one call that cuts or extends the object to the size of its data, changes each of its blocks, and commits. A block that keeps its bytes keeps its block: its value is the value of the old block.
+This is the grouping of property 9: a process sends each change when it happens, and says which changes are one step. A whole write is the same mechanism: one call that cuts or extends the object to the size of its data, changes each of its blocks, and commits. A block that keeps its bytes keeps its block: its value is the value of the old block.
 
 #### The cost of a commit
 
@@ -333,15 +333,15 @@ Built. Two entries of one store with the same bytes name one block tree: the byt
 - **The hash index.** The service keeps, in its memory, the root of the current state of each object of each store, found by the hash of that state. The open of the disk makes the index from the entries, with the reference counts. A commit changes it after its root is on the disk. Nothing of it is on the disk, so a loss of power leaves nothing of it to repair.
 - **A commit looks up the hash first.** A write, a commit of ranges, a restore and a clone compute the hash of the new state before they write a block. When the store has a current object with that hash and that size, the new entry names its root: one more name of that block, as for a clone. No block of the object is written, and `commit` gives 0 blocks of the block tree written.
 - **Each candidate is confirmed.** The hash of an entry comes from the disk. Before an entry names a root, the service computes the hash of that state again from its block tree, read and checked: the object nodes on the path of its last block and the last block. A root that the service knows as damaged, or whose path fails its check, is never named. The other blocks of the state were checked by the open or by the commit that wrote them: a block that goes wrong later damages each entry that names it, as for a clone. A root whose blocks give another hash takes the key of that hash; one lookup confirms at most 4 roots.
-- **The cost is bounded.** The first slot of a hash comes from a key that the service draws at each start, one hash has at most one slot, and a search reads at most 32 slots. A program that chooses its bytes, or a disk that another party wrote, cannot make a long run of slots.
+- **The cost is bounded.** The first slot of a hash comes from a key that the service draws at each start, one hash has at most one slot, and a search reads at most 32 slots. A process that chooses its bytes, or a disk that another party wrote, cannot make a long run of slots.
 - **A change of one name copies.** The change is copy on write, as for any state: the new state copies the nodes on the paths that it changes, and the other entry keeps its root. A removal of one name takes one name of the root; the other entry keeps the blocks.
 - **One store only.** A block is named from one store, and the limit of a store counts its own blocks. Two stores with the same bytes keep two copies (section 1.2, the secrecy).
-- **A share of a tree.** A count of the whole store would tell the holder of a share whether the rest of the store holds bytes: a write that takes no block, or a removal that frees none. So `usage()` through a share of a tree gives the counts of its own tree only (section 4.3), a commit looks up a hash only when the connection of the caller reaches the whole store (the program of the store, or a share of its root), and while the store has a writable share of a tree open, no commit of the store looks up a hash and each root that a commit adds is hidden: never a candidate, after `unshare` too. What is left, for a writable share only: the limit of the store counts the blocks of the whole store, so a holder that writes until its write is refused with `Over_Limit` measures the room left in the store, and can learn from it whether its removal freed blocks or whether a write of the maker took any. Each measure costs it writes up to the limit. A read-only share has no channel.
+- **A share of a tree.** A count of the whole store would tell the holder of a share whether the rest of the store holds bytes: a write that takes no block, or a removal that frees none. So `usage()` through a share of a tree gives the counts of its own tree only (section 4.3), a commit looks up a hash only when the connection of the caller reaches the whole store (the process of the store, or a share of its root), and while the store has a writable share of a tree open, no commit of the store looks up a hash and each root that a commit adds is hidden: never a candidate, after `unshare` too. What is left, for a writable share only: the limit of the store counts the blocks of the whole store, so a holder that writes until its write is refused with `Over_Limit` measures the room left in the store, and can learn from it whether its removal freed blocks or whether a write of the maker took any. Each measure costs it writes up to the limit. A read-only share has no channel.
 - **The versions are not in the index.** A version keeps no hash; it shares its blocks with the state that follows it already. A restore of a version whose bytes another entry holds names the root of that entry.
 
 The cost of a commit: a few slots of the index in memory, and for each candidate the read of the path of its last block, through the cache. A found root saves each write of the block tree. The index takes 10 MiB of the memory of the service.
 
-The count of the current objects of a store (`current_blocks`) counts a block that two names share two times, as for a clone; the blocks in use of the store (`usage().blocks`) count it one time. Example: the program `ranges` writes an object of 1 MiB under two names, and the store holds 261 blocks for both: 256 blocks of data, 4 object nodes of level 1 and the root.
+The count of the current objects of a store (`current_blocks`) counts a block that two names share two times, as for a clone; the blocks in use of the store (`usage().blocks`) count it one time. Example: the process `ranges` writes an object of 1 MiB under two names, and the store holds 261 blocks for both: 256 blocks of data, 4 object nodes of level 1 and the root.
 
 The open counts the roots of current objects whose store has another root with the same hash and the same size (a commit while a writable share of a tree was open, or a root that was damaged at the commit): the tool checks that each image of a loss of power has none.
 
@@ -362,9 +362,9 @@ The row of the export gives the generation of the last root, the versions ended,
 storage: the versions of principal in the store unlock are erased: 1 version ended, 5 blocks written with zeros, 0 blocks kept that another state names, generation 412
 ```
 
-- **Who may call it.** A program with the grant to erase versions (the start grant `Versions_Erase`; today `unlock` only), through its own connection, on its own store. Another program gets `No_Grant`, unit `Versions_Erase`. A share, a place of another store (`open_store`) and a connection that reads only are refused with `No_Grant`. Versions protect the principal against a fault of the program that writes an object, so a program does not end them by itself (`PROPERTIES.md`, "Persistence: no save action, and versions for all programs").
+- **Who may call it.** A process with the grant to erase versions (the start grant `Versions_Erase`; today `unlock` only), through its own connection, on its own store. Another process gets `No_Grant`, unit `Versions_Erase`. A share, a place of another store (`open_store`) and a connection that reads only are refused with `No_Grant`. Versions protect the principal against a fault of the process that writes an object, so a process does not end them by itself (`PROPERTIES.md`, "Persistence: no save action, and versions for all processes").
 - **A loss of power.** Before the root of step 1, the open finds the versions, and no block holds zeros. After it, the open finds no version. No root that the open can take names a block of zeros. A loss during step 4 leaves old bytes in free blocks.
-- **A shared block keeps its bytes.** A block that the current version, another entry or a clone still names is not written: its bytes are the bytes of a state that stays, and the row counts it. The hash index shares a block only between objects of one store with the same bytes (section 4.7). A program that acts for the principal of a store can clone or restore a version before the erase; the erase then keeps that block.
+- **A shared block keeps its bytes.** A block that the current version, another entry or a clone still names is not written: its bytes are the bytes of a state that stays, and the row counts it. The hash index shares a block only between objects of one store with the same bytes (section 4.7). A process that acts for the principal of a store can clone or restore a version before the erase; the erase then keeps that block.
 - **Damaged versions.** A version index or a leaf with a wrong check, and a state with a wrong block, are ended with no zeros: their blocks keep their bytes. The row counts them, and the service writes a warning.
 - **A failed or dropped write.** When the second root or a write of zeros fails, or the disk does not keep it, the versions are already ended: the old bytes stay in free blocks, the log says it, and a later erase finds no version to end.
 - **An object with no version.** No commit: the row gives 0 versions, and the disk does not change.
@@ -377,7 +377,7 @@ Each step is one tested capability on a system that works.
 1. **Large objects and ranges.** Built (section 4.6), but the disk past 1 GiB: an object can hold 4 TiB, and the disk has 262144 blocks.
 2. **The history of a store.** A version is a tree that a store named; the versions of an object are found in it. The thinning applies to the history of the store. The versions of each object go.
 3. **Objects by their hash.** Built in part: the hash index of section 4.7 finds the current object of a store by its hash, so an object that two entries name is kept one time. Not built: the hash of a tree on its entries (section 1.3).
-4. **The first objects from storage.** Built for one case: a principal starts a program whose module file is in the store `programs`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A program from a disk"). An import of such a program comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`glossary/code.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
+4. **The first objects from storage.** Built for one case: a principal starts a process whose module file is in the store `module_files`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A module from a disk"). An import of such a process comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`glossary/code.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
 5. **Packages.** A signed tree with its six facts; the store of the data of an application, attached to the identity of the package.
 6. **Encryption for a principal.**
 7. **The network as a channel.** An object comes from a peer; its hash proves it.

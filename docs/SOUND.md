@@ -1,31 +1,31 @@
 # Sound
 
-This guide says how a program plays sound: the timed stream that it writes, the sound service that plays it, what the service refuses, and how the test proves the time of a sound.
+This guide says how a process plays sound: the timed stream that it writes, the sound service that plays it, what the service refuses, and how the test proves the time of a sound.
 
 The terms are in `glossary/devices.md`: timed stream; and in `glossary/sound.md`: sound service, stream ring, sample region, frame, sample, period, stream clock, underrun. The design is `src/md/features/timed_stream.md`.
 
-**The idea in plain words.** A program writes its samples in memory of its own, then sends records to the sound service through a ring: "play these frames at this time". The time is the clock of the system, which every program reads; the program never sees the clock of the device. The service puts each frame at its time, plays silence between the records, and says when each record played. A record that comes too late plays nothing and is refused, with the earliest time that it could take.
+**The idea in plain words.** A process writes its samples in memory of its own, then sends records to the sound service through a ring: "play these frames at this time". The time is the clock of the system, which every process reads; the process never sees the clock of the device. The service puts each frame at its time, plays silence between the records, and says when each record played. A record that comes too late plays nothing and is refused, with the earliest time that it could take.
 
-**For whom.** A reader who writes a program that plays sound, and a reader who must know how exact the time of a sound is.
+**For whom.** A reader who writes a process that plays sound, and a reader who must know how exact the time of a sound is.
 
 **Read before.** `ARCHITECTURE.md`, "U4. Device services".
 
-**The map of this guide.** Section 1: what a program does. Section 2: what the service refuses. Section 3: the time, the latency and an underrun. Section 4: the test. Section 5: what is not built.
+**The map of this guide.** Section 1: what a process does. Section 2: what the service refuses. Section 3: the time, the latency and an underrun. Section 4: the test. Section 5: what is not built.
 
-## 1. What a program does
+## 1. What a process does
 
-A program that plays sound has the start grant `Sound_Device`. The root service then starts the sound service `sound` for the sound device of the machine, and gives the program the stream ring in its context, at `timed_stream.GRANT_RING`. One program plays at a time.
+A process that plays sound has the start grant `Sound_Device`. The root service then starts the sound service `sound` for the sound device of the machine, and gives the process the stream ring in its context, at `timed_stream.GRANT_RING`. One process plays at a time.
 
-1. **The samples.** The program makes a memory object from its own budget, the sample region, and writes its frames there. A frame is one sample of each channel: 4 bytes, the left sample first, each a signed 16-bit number in little endian, at 48000 frames in one second (`Format.Signed_16_Stereo_48000`).
+1. **The samples.** The process makes a memory object from its own budget, the sample region, and writes its frames there. A frame is one sample of each channel: 4 bytes, the left sample first, each a signed 16-bit number in little endian, at 48000 frames in one second (`Format.Signed_16_Stereo_48000`).
 2. **`Attach`.** It gives the region to the sound service through the stream ring with the right Read only (`system.give`), and sends `Attach` with the handle that the give returned. The service never writes the region, and the device never reads it.
 3. **`Start`.** The stream starts, and the device plays silence. The completion gives the time of the frame 0 of the stream, the latency that the service holds in nanoseconds, and the format.
 4. **`Play`.** Each record names the time of its first frame (`system.nanoseconds()`), its format, its count of frames, and the place of its first frame in the region in bytes. The completion comes when the device took the period that holds its last frame: the time at which its first frame plays by the stream clock, that frame of the stream, and the count of the underruns since `Start`. The device plays the frames after it takes them, with a delay of its own.
 
-The program keeps the samples of a record unchanged until its completion: the service copies them when it fills the period that holds them, as late as it can.
+The process keeps the samples of a record unchanged until its completion: the service copies them when it fills the period that holds them, as late as it can.
 
 The records of a stream are in the order of their time and do not overlap. The service plays silence between two records, and before the first one.
 
-The ring has 32 places. The service takes a command only when the ring of the completions has a place for it and for each record that waits: a program that sends more waits for room, and no record is dropped.
+The ring has 32 places. The service takes a command only when the ring of the completions has a place for it and for each record that waits: a process that sends more waits for room, and no record is dropped.
 
 ## 2. What the service refuses
 
@@ -44,7 +44,7 @@ A record that cannot play gets a status and an error record, and no frame of it 
 
 A refused `Attach` closes the handle that came through the ring: the service keeps only the handle of the one region that it took.
 
-A late record is refused whole: the service does not play its end, and does not move it to the earliest time. A program that wants a sound now asks for the earliest time, which the completion of `Late` gives.
+A late record is refused whole: the service does not play its end, and does not move it to the earliest time. A process that wants a sound now asks for the earliest time, which the completion of `Late` gives.
 
 ## 3. The time, the latency and an underrun
 
@@ -56,19 +56,19 @@ A late record is refused whole: the service does not play its end, and does not 
 
 **A device that takes the periods too fast.** When the frames given end more than 120 ms after now, the device took the periods faster than their time. The service holds the next period until its time, counts the hold, and writes one line at the first one.
 
-**The clock of the device.** The service does not correct a drift of the clock of the device against the clock of the system. On the test machine both come from the clock of the host. The stream gives no clock finer than `system.nanoseconds()`, which each program reads.
+**The clock of the device.** The service does not correct a drift of the clock of the device against the clock of the system. On the test machine both come from the clock of the host. The stream gives no clock finer than `system.nanoseconds()`, which each process reads.
 
-**A device that does not answer.** The service waits for an answer of the control queue for 60 s, the hang bound of a program, then stops with a line; at `Start`, it first answers `Device_Error`. A device that ends the periods out of order stops it too.
+**A device that does not answer.** The service waits for an answer of the control queue for 60 s, the hang bound of a process, then stops with a line; at `Start`, it first answers `Device_Error`. A device that ends the periods out of order stops it too.
 
 ## 4. The test
 
-`modustool test sound` starts a machine with the sound device `virtio-sound-pci`, whose output goes to a wave file beside the log of the machine (`-audiodev wav`), at 48000 frames in one second and 2 channels. The console starts the program `tone`:
+`modustool test sound` starts a machine with the sound device `virtio-sound-pci`, whose output goes to a wave file beside the log of the machine (`-audiodev wav`), at 48000 frames in one second and 2 channels. The console starts the process `tone`:
 
 - `tone` makes a sample region of 24 pages, writes 500 ms of a tone of 440 Hz, and asks for it at 500 ms after the frame 0.
 - It lends the region a second time and sends `Attach` again, and sends a `Start` with a value: both are refused.
 - It sends six records that the service must refuse, and checks the status, the kind, the unit and the value number of each: over the tone, at the frame 0, 20 s ahead, an unknown format, 480 001 frames, and two frames past the end of the region.
 - It checks that the tone played at the frame of its time: the frame 24 000.
-- A second `start("tone")` is refused while the first one runs, with the line "root: cannot start tone: the sound device plays for another program; one program plays at a time".
+- A second `start("tone")` is refused while the first one runs, with the line "root: cannot start tone: the sound device plays for another process; one process plays at a time".
 
 After the machine, the tool reads the wave file. It finds the tone by its first frame that is not silence, and measures it as a span to its last frame that is not silence: a frame of 0 at a crossing is a frame of the tone. A run of silence inside the tone longer than one period of the tone (109 frames) is silence that the device wrote, and is not counted, so silence before the tone or inside it does not change the check:
 
@@ -83,7 +83,7 @@ Host tests: the border of a record (`src/library/contract/timed_stream`) refuses
 
 ## 5. What is not built
 
-- **Mixing.** One program plays at a time. Two programs need a sound service of the class between them and the device service, which sums the frames of each period.
+- **Mixing.** One process plays at a time. Two processes need a sound service of the class between them and the device service, which sums the frames of each period.
 - **Capture.** A microphone is a device queue behind a grant, with a visible indicator while in use (`PROPERTIES.md`, "20. No ambient access: the other holes to close").
 - **A second format.** One more member of `Format`, and its conversion in the service.
 - **The drift of the device clock.** The service will measure the rate of the device from the times of the completions, and change its map.

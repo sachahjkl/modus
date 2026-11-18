@@ -336,9 +336,9 @@ Do not use: idle animation, clip, tween.
 
 ### Order of play
 
-The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the program `heron`: each animation plays once in a round, in an order of chance.
+The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the process `heron`: each animation plays once in a round, in an order of chance.
 
-The place that plays keeps a memory of the animations that were played, and chooses the next one among the others, each with the same chance. When the memory holds every animation, a new round starts, and the animation played last is left out of its first choice, so no animation follows itself. The rule is one procedure, `mark.next_animation`: the program `heron` calls it, and the modus tool runs it to check the script of the site. On the site the memory lasts for the visit of the tab.
+The place that plays keeps a memory of the animations that were played, and chooses the next one among the others, each with the same chance. When the memory holds every animation, a new round starts, and the animation played last is left out of its first choice, so no animation follows itself. The rule is one procedure, `mark.next_animation`: the process `heron` calls it, and the modus tool runs it to check the script of the site. On the site the memory lasts for the visit of the tab.
 
 The design: `docs/SITE.md`, "The rhythm of the animations".
 
@@ -348,7 +348,7 @@ Do not use: playlist, shuffle, random choice.
 
 The still share is the part of the time, over a long play, that the heron does not move where its animations play: 40 %.
 
-It holds on the home of the site and in the program `heron` (`mark.STILL_SHARE_PERCENT`). The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
+It holds on the home of the site and in the process `heron` (`mark.STILL_SHARE_PERCENT`). The still time between two animations is chosen by chance around a mean, and the mean follows from the still share and from the times of the animations: the mean time of an animation, times the still share, over the moving share. With 15 animations of 1.29 s on average, the mean still time is 858 ms, and a still time is 429 to 1287 ms. A change of an animation changes the still times, not the share.
 
 The design: `docs/SITE.md`, "The rhythm of the animations".
 
@@ -358,7 +358,7 @@ Do not use: idle ratio, duty cycle, pause.
 
 A move of the heron is the list of the forms and of the places that the heron takes during an animation of the mark, each in whole cells.
 
-An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The water stays in its place. A move is a list of keys in `src/library/support/mark` (`move_keys`): a time, a form of the heron and a place in whole cells. The heron is never between two cells, and no picture of it changes its size. The home of the site and the program `heron` play the same keys.
+An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The water stays in its place. A move is a list of keys in `src/library/support/mark` (`move_keys`): a time, a form of the heron and a place in whole cells. The heron is never between two cells, and no picture of it changes its size. The home of the site and the process `heron` play the same keys.
 
 The design: `docs/DESIGN.md`, "The moves".
 
@@ -378,7 +378,7 @@ Do not use: scaled frame, deformation, sampled frame.
 
 A move on the grid is a move of the heron in which each cell stays a square of one size at a place of the grid.
 
-It is the way of the system to draw a squash, a stretch and a travel. On the grid the heron takes a form of the heron, and a travel is a count of whole cells. It is not a filter over a scaled picture: the forms and the places are cells from the start. The other way, the free move, is in the program `heron` only, to compare: its cells are stretched to rectangles, at any pixel. Example: in the run of the dash the heron is 32 by 20 cells.
+It is the way of the system to draw a squash, a stretch and a travel. On the grid the heron takes a form of the heron, and a travel is a count of whole cells. It is not a filter over a scaled picture: the forms and the places are cells from the start. The other way, the free move, is in the process `heron` only, to compare: its cells are stretched to rectangles, at any pixel. Example: in the run of the dash the heron is 32 by 20 cells.
 
 The design: `docs/DESIGN.md`, "The moves".
 
@@ -436,7 +436,7 @@ Do not use: GIF, animated logo, sprite animation.
 
 ### Hall of fame
 
-The hall of fame is the program `hall_of_fame`: one card for each person whose work inspired the system, with the name of the person and one line on what they made.
+The hall of fame is the process `hall_of_fame`: one card for each person whose work inspired the system, with the name of the person and one line on what they made.
 
 A card shows a portrait when a picture of the person has a license that lets the repository hold it with a credit, and then the credit of the picture under it. Each other card shows the name and the line alone, with no picture and no initials. A person is in it for work that the system learned from, not for fame. The arrows, Home, End and the pointer choose a card.
 
@@ -446,9 +446,9 @@ Do not use: temple, wall of fame, credits screen.
 
 ### Portrait credit
 
-A portrait credit is the author and the license of one portrait of the hall of fame, which the program shows under the portrait.
+A portrait credit is the author and the license of one portrait of the hall of fame, which the process shows under the portrait.
 
-`resources/hall_of_fame/CREDITS.md` holds the source, the author and the license of each picture; the program shows the author and the license, and the page of the licenses of the site shows one row for each picture. A host test of the modus tool checks that the program has the credit of each row.
+`resources/hall_of_fame/CREDITS.md` holds the source, the author and the license of each picture; the process shows the author and the license, and the page of the licenses of the site shows one row for each picture. A host test of the modus tool checks that the process has the credit of each row.
 
 The design: `src/md/features/hall_of_fame.md`.
 
@@ -490,7 +490,7 @@ Do not use: docs landing page, portal, hub.
 
 The gallery is the page of the site, at `/gallery/`, that shows every picture of the screen of the gallery table, in groups, each with its caption and the link to its guide.
 
-A reader who wants to see the system finds each picture there: the desktop, the console, the programs, the developer tools, the fonts, the network, the storage and the boot. A picture on the page is a thumbnail, and its link opens the picture at its full size. It is a button of the bar, and the home links to it. It is not a list that a developer keeps by hand beside the pictures: the page is generated from the gallery table, which is checked against the folder of the pictures.
+A reader who wants to see the system finds each picture there: the desktop, the console, the processes, the developer tools, the fonts, the network, the storage and the boot. A picture on the page is a thumbnail, and its link opens the picture at its full size. It is a button of the bar, and the home links to it. It is not a list that a developer keeps by hand beside the pictures: the page is generated from the gallery table, which is checked against the folder of the pictures.
 
 The design: `docs/SITE.md`, "The page of the gallery".
 
@@ -532,7 +532,7 @@ Do not use: boot chart, start diagram.
 
 A measure chart is a chart of the home of the site whose bars are the numbers of one line of a log that have one unit, on one scale from zero.
 
-It exists by the rule "a chart or nothing": the home shows a measure only as such a chart, and each other measure is a row of the page of the measured numbers. The tool draws the chart only when the line holds every number of the chart, in its unit. Example: the kernel entries in one second with 1, 2 and 4 programs are three bars.
+It exists by the rule "a chart or nothing": the home shows a measure only as such a chart, and each other measure is a row of the page of the measured numbers. The tool draws the chart only when the line holds every number of the chart, in its unit. Example: the kernel entries in one second with 1, 2 and 4 processes are three bars.
 
 It is not the chart of what the search finds, whose segments are counts of entries of the index.
 
@@ -576,7 +576,7 @@ Do not use: article, tutorial (for this).
 
 A reference table is a page of the site that the tool generates from the code or the files that define a thing: what exists in this build, each row with a link to its source line.
 
-The tables: the kernel operations, the context of a program, the error kinds, the grants of the root service, the fixed ranges, the commands of the console and of the tool, the types, the licenses, the numbers, the modules and the module graph. Each one reads one form of its source file; when a file loses that form, the command stops with the file and the line. A row with an id is a symbol.
+The tables: the kernel operations, the context of a process, the error kinds, the grants of the root service, the fixed ranges, the commands of the console and of the tool, the types, the licenses, the numbers, the modules and the module graph. Each one reads one form of its source file; when a file loses that form, the command stops with the file and the line. A row with an id is a symbol.
 
 The design: `docs/SITE.md`, "The reference tables".
 
@@ -584,9 +584,9 @@ Do not use: API docs, listing.
 
 ### Module page
 
-A module page is the reference page of the site for one module of the build: its documentation, its exports, its imports and, for a program, its grants and its budget.
+A module page is the reference page of the site for one module of the build: its documentation, its exports, its imports and, for a process, its grants and its budget.
 
-The page `docs/reference/modules/<name>/` gives the documentation of the module (the comment before `package` in its source), its identity card, its source folder, its size in the boot image, its imports and the modules that import it, a figure of its neighbours in the module graph, and each export as a symbol with its signature as the console prints it. For a program it lists the grants and the budget that the root service gives it. The pages come from the same reader as the build: no module needs to be built.
+The page `docs/reference/modules/<name>/` gives the documentation of the module (the comment before `package` in its source), its identity card, its source folder, its size in the boot image, its imports and the modules that import it, a figure of its neighbours in the module graph, and each export as a symbol with its signature as the console prints it. For a process it lists the grants and the budget that the root service gives it. The pages come from the same reader as the build: no module needs to be built.
 
 The design: `docs/SITE.md`, "The module pages".
 
@@ -606,7 +606,7 @@ Do not use: progress page, "what runs today".
 
 The site address is the absolute address where a host serves the site, in the form `https://<host>/<path>`.
 
-`SITE_ADDRESS` holds it (`https://modus.froment.software/`), and `modustool site --address` sets another for one run. Some parts of a page must be absolute to be right for the program that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
+`SITE_ADDRESS` holds it (`https://modus.froment.software/`), and `modustool site --address` sets another for one run. Some parts of a page must be absolute to be right for the process that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
 
 The design: `docs/SITE.md`, "What other sites read".
 
@@ -696,7 +696,7 @@ Do not use: docs theme, sidebar layout.
 
 The documentation tree is the list of the documentation pages of the docs, generated from the pages that exist, at the left of each documentation page.
 
-Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Programs, Modules) and the status. It is one `nav` on each page, in the site menu on a narrow screen. Tree lines show its levels.
+Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Modules with an entry, Modules with no entry) and the status. It is one `nav` on each page, in the site menu on a narrow screen. Tree lines show its levels.
 
 The design: `docs/SITE.md`, "The two layouts".
 
@@ -906,6 +906,16 @@ The design: `src/md/infrastructure/full_check.md`; `docs/TOOLS.md`, "What each t
 
 Do not use: CI run, test suite, full test.
 
+### Host process
+
+A host process is a process of the host system that the tool starts and waits for: a compiler, QEMU, the TPM emulator, a child of the fuzzer or the build of one boot volume.
+
+It is not a process of this system, and the system never sees it. The tool runs the host processes of a build or of the host tests in one pool, at most one for each processor of the host. In the code of the tool, each name of a host process holds the words `host_process`, as `Build_Host_Process_Pool` and `Tpm_Host_Process` do.
+
+The design: `docs/TOOLS.md`, "The host tests of the check".
+
+Do not use: subprocess, job.
+
 ### Incremental build
 
 An incremental build is a build that keeps each output of an earlier build whose inputs are the same, and builds only the others.
@@ -994,9 +1004,9 @@ Do not use: benchmark history, performance log, trend file.
 
 ### Measure run
 
-A measure run is a machine whose boot image holds the resource `measure_run`, in which each program measures its rates over a duration.
+A measure run is a machine whose boot image holds the resource `measure_run`, in which each process measures its rates over a duration.
 
-In a test, a program runs its checks by a count of work and writes no rate. In a measure run, the root service says so in the context of each program; the program reads it with `system.measure_run()`, runs the same work for a fixed duration, and writes its rates. Only the boot image differs from the test: it has one resource more. `modustool measure` starts a measure run; `modustool test` never does. It is not the measure build, a build of the kernel with no check.
+In a test, a process runs its checks by a count of work and writes no rate. In a measure run, the root service says so in the context of each process; the process reads it with `system.measure_run()`, runs the same work for a fixed duration, and writes its rates. Only the boot image differs from the test: it has one resource more. `modustool measure` starts a measure run; `modustool test` never does. It is not the measure build, a build of the kernel with no check.
 
 The design: `docs/TOOLS.md`, "A check by count, a measure by time".
 
@@ -1004,9 +1014,9 @@ Do not use: benchmark mode, benchmark run, performance mode.
 
 ### Settled screen
 
-A settled screen is a screen that shows the last picture of each window: each program sent the picture of its last change, and the compositor drew each picture that it received.
+A settled screen is a screen that shows the last picture of each window: each process sent the picture of its last change, and the compositor drew each picture that it received.
 
-The machine test takes a picture only of a settled screen. When it can call the compositor, it reads the state of the programs before and after it reads the windows and the screen: a program that waited in the two reads, with the same count of kernel entries, did not run between them. When it cannot call, it takes pictures until two in a row are the same. A window that draws with no end is left out. It is not a fixed time before a picture.
+The machine test takes a picture only of a settled screen. When it can call the compositor, it reads the state of the processes before and after it reads the windows and the screen: a process that waited in the two reads, with the same count of kernel entries, did not run between them. When it cannot call, it takes pictures until two in a row are the same. A window that draws with no end is left out. It is not a fixed time before a picture.
 
 The design: `docs/TOOLS.md`, "When the tool takes a picture".
 
@@ -1014,9 +1024,9 @@ Do not use: idle screen, stable frame, quiescent.
 
 ### Due picture
 
-A due picture is a picture that a program owes its window: a change waits for it while the program waits on its clock or for the compositor.
+A due picture is a picture that a process owes its window: a change waits for it while the process waits on its clock or for the compositor.
 
-A program that paces its pictures, such as a terminal, says it before such a wait with the record `Picture_Due` (`display.picture_due_set`), and its next `Present` ends it. The compositor gives it as `due` in `compositor.windows()`, and the screen is not a settled screen while a window has one. The terminal decides it at the start of each turn of its loop, so a record that came while it drew its last picture is a due picture too. It is not a picture that the compositor has and did not draw yet: that is `waits`.
+A process that paces its pictures, such as a terminal, says it before such a wait with the record `Picture_Due` (`display.picture_due_set`), and its next `Present` ends it. The compositor gives it as `due` in `compositor.windows()`, and the screen is not a settled screen while a window has one. The terminal decides it at the start of each turn of its loop, so a record that came while it drew its last picture is a due picture too. It is not a picture that the compositor has and did not draw yet: that is `waits`.
 
 The design: `src/md/features/terminal_due_picture.md`.
 
@@ -1026,7 +1036,7 @@ Do not use: pending frame, redraw flag, frame request.
 
 The hang bound is the one time in a test: it ends a test that waits for ever, and checks nothing about speed.
 
-A test checks a condition. A time in it has one role, to end a hang, so it is generous and the same for each wait: `HANG_BOUND` for a step of a machine test, and `system.TEST_HANG_BOUND_MILLISECONDS` for the checks of a program, so that the program reports its own hang before the tool ends the machine. A bound of its own needs a named constant with its reason. It is not a timeout that a test asserts: no test fails because the host is slow.
+A test checks a condition. A time in it has one role, to end a hang, so it is generous and the same for each wait: `HANG_BOUND` for a step of a machine test, and `system.TEST_HANG_BOUND_MILLISECONDS` for the checks of a process, so that the process reports its own hang before the tool ends the machine. A bound of its own needs a named constant with its reason. It is not a timeout that a test asserts: no test fails because the host is slow.
 
 The design: `docs/TOOLS.md`, "The bounds of the tests".
 
@@ -1114,7 +1124,7 @@ Do not use: crash (for every finding), bug report.
 
 ### Operation sequence
 
-An operation sequence is the fuzz input of the kernel operations: a list of sequence steps whose arguments follow the forms of `OPERATIONS`, which a child program runs in a test machine.
+An operation sequence is the fuzz input of the kernel operations: a list of sequence steps whose arguments follow the forms of `OPERATIONS`, which a child process runs in a test machine.
 
 Its format is the contract package `operation_sequence`: a header, the sequence areas, the sequence steps, and the content of the areas. A handle argument names a start handle or the result of an earlier sequence step by its place, so the sequence does not depend on the values of the handles of one run. The tool builds sequences from choices with a generator, and `check` reads them. The test part `operation_sequences` runs the seed sequences on the kernel that ships, and `modustool fuzz replay operations <file>` runs one.
 
@@ -1124,9 +1134,9 @@ Do not use: syscall program, call trace.
 
 ### Runner
 
-The runner is the program `operation_sequence_runner`, which runs one operation sequence: one new runner for each sequence, with the budget of that sequence.
+The runner is the process `operation_sequence_runner`, which runs one operation sequence: one new runner for each sequence, with the budget of that sequence.
 
-The program `operation_fuzzing` starts it with its start handles, the copy of the sequence and its sequence areas. It writes each sequence step as a command record, then what the kernel answered: the completion and the table of error details. It then stops itself. It is not a fuzz target, which is a procedure of the tool.
+The process `operation_fuzzing` starts it with its start handles, the copy of the sequence and its sequence areas. It writes each sequence step as a command record, then what the kernel answered: the completion and the table of error details. It then stops itself. It is not a fuzz target, which is a procedure of the tool.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
@@ -1134,9 +1144,9 @@ Do not use: executor, harness (for this).
 
 ### Mailbox
 
-A mailbox is memory that the tool and a program that it tests share, through which the tool gives each fuzz input and reads its outcome.
+A mailbox is memory that the tool and a process that it tests share, through which the tool gives each fuzz input and reads its outcome.
 
-On the host, it is a file that the tool and its fuzz child map. In the machine of the operation sequences, it is a contiguous memory object of the program `operation_fuzzing`, which the tool reads and writes through the memory file of QEMU at the physical address that the log gives. Each side copies what the other wrote, then checks it.
+On the host, it is a file that the tool and its fuzz child map. In the machine of the operation sequences, it is a contiguous memory object of the process `operation_fuzzing`, which the tool reads and writes through the memory file of QEMU at the physical address that the log gives. Each side copies what the other wrote, then checks it.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
@@ -1146,7 +1156,7 @@ Do not use: shared buffer, queue (for this).
 
 A machine life is the operation sequences that one test machine runs, in their order, from its boot to its end.
 
-`modustool fuzz operations` ends a machine life after 1024 sequences or at a fault of the kernel, then boots a new machine. A fault that needs the state of earlier sequences shows only with them, so the tool keeps the life with the fuzz finding, and its minimization removes sequences of the life before it removes steps. It is not a test part, which can hold several machines, and not the lifetime of a program.
+`modustool fuzz operations` ends a machine life after 1024 sequences or at a fault of the kernel, then boots a new machine. A fault that needs the state of earlier sequences shows only with them, so the tool keeps the life with the fuzz finding, and its minimization removes sequences of the life before it removes steps. It is not a test part, which can hold several machines, and not the lifetime of a process.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
@@ -1184,19 +1194,19 @@ Do not use: buffer (for this), region (for this).
 
 ### Counted kernel
 
-The counted kernel is the test kernel `kernel_edge_counters`: the sources of the kernel built with an edge counter at each edge, which counts only for a counted program.
+The counted kernel is the test kernel `kernel_edge_counters`: the sources of the kernel built with an edge counter at each edge, which counts only for a counted process.
 
-The tool reads its counters through the memory file of the test machine, and no program of the system reads them. The release refuses it by its hash, by its signature and by its bytes. A finding on it is confirmed on the kernel that ships, which has no counter. It is planned work of `ROADMAP.md`. It is not the measure build, and not the test build of the kernel checks, which every kernel of the tests has.
+The tool reads its counters through the memory file of the test machine, and no process of the system reads them. The release refuses it by its hash, by its signature and by its bytes. A finding on it is confirmed on the kernel that ships, which has no counter. It is planned work of `ROADMAP.md`. It is not the measure build, and not the test build of the kernel checks, which every kernel of the tests has.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
 Do not use: instrumented kernel, coverage kernel.
 
-### Counted program
+### Counted process
 
-A counted program is a program whose commands and exceptions the counted kernel counts: the runner of the operation sequences, by its name, and each program that a counted program creates.
+A counted process is a process whose commands and exceptions the counted kernel counts: the runner of the operation sequences, by its name, and each process that a counted process creates.
 
-The counters then say which kernel code one operation sequence reached, and not what the tick, the scheduler or another program did. The kernel that ships has no counted program. It is planned work of `ROADMAP.md`.
+The counters then say which kernel code one operation sequence reached, and not what the tick, the scheduler or another process did. The kernel that ships has no counted process. It is planned work of `ROADMAP.md`.
 
 The design: `src/md/infrastructure/kernel_fuzzing.md`.
 

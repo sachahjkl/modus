@@ -582,7 +582,7 @@ frames_process :: proc "contextless" (connection: ^Connection, level: Encryption
 //   this side sends no challenge.
 // - **CONNECTION_CLOSE**, of the transport or of the application: the
 //   connection goes to the draining state, with the code and the first bytes of
-//   the reason phrase kept for the program.
+//   the reason phrase kept for the process.
 // - **HANDSHAKE_DONE**: a client confirms the handshake and discards the
 //   Handshake space. To a server it is PROTOCOL_VIOLATION.
 //

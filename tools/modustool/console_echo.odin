@@ -21,7 +21,7 @@ import "core:time"
 //
 // - The console is in front: the last step that changed the front window
 //   was the step Front of the console. A step Launch, Move, Close, Click
-//   or Drag, the key of the palette, and a line that starts a program
+//   or Drag, the key of the palette, and a line that starts a process
 //   make the front window unknown, and the tool then waits for no echo.
 // - No line can still run: a step Wait passed since the step Type before.
 //   The console enters a line only after the line before it ended, so a
@@ -32,7 +32,7 @@ import "core:time"
 CONSOLE_TITLE :: "console"
 CONSOLE_ECHO_START :: "[console] > "
 PALETTE_KEY :: "meta_l" // The key super: it opens the palette, and the keys then go to it.
-// The texts of the log lines of a lost record, in the programs of the path
+// The texts of the log lines of a lost record, in the processes of the path
 // of a key: the failure message of an echo shows each such line.
 loss_line_marks := [?]string{" is lost", " are lost", " were lost", "input: the input ring is full"}
 
@@ -72,7 +72,7 @@ console_echo_note_step :: proc(echo: ^Console_Echo, step: Step) {
 		if echo.console_in_front {
 			echo.line_can_run = true
 		}
-		// The window of a program that the line starts comes to the front.
+		// The window of a process that the line starts comes to the front.
 		if strings.contains(step.text, "start(") {
 			echo.console_in_front = false
 		}
@@ -90,7 +90,7 @@ console_echo_wanted :: proc(echo: ^Console_Echo, text: string) -> bool {
 
 // console_echo_end gives the place in the log after the echo of a line,
 // searched from a place, or -1. The echo is the whole line of the log
-// after its program: "> 4" is not the echo of "> 41".
+// after its process: "> 4" is not the echo of "> 41".
 console_echo_end :: proc(log: string, from: int, line: string) -> int {
 	place := clamp(from, 0, len(log))
 	for {

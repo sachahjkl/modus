@@ -2,9 +2,9 @@
 
 ### Network service
 
-The network service is the one client of the frame service: it gives each program with a network grant one endpoint, and it checks each datagram and segment against that grant.
+The network service is the one client of the frame service: it gives each process with a network grant one endpoint, and it checks each datagram and segment against that grant.
 
-The device of the first machine has one pair of queues, so one program reads its frames: the network service. It enforces the grant of each program: no program has ambient access to the network. It speaks Ethernet, ARP, IPv4 and ICMP echo. For UDP and TCP it checks the ports and the lengths of each header and keeps no state of a connection. The root service starts it with the first program that has a network grant. It is not a network stack: it has no sockets, no retransmission and no routing table.
+The device of the first machine has one pair of queues, so one process reads its frames: the network service. It enforces the grant of each process: no process has ambient access to the network. It speaks Ethernet, ARP, IPv4 and ICMP echo. For UDP and TCP it checks the ports and the lengths of each header and keeps no state of a connection. The root service starts it with the first process that has a network grant. It is not a network stack: it has no sockets, no retransmission and no routing table.
 
 The design: `docs/NETWORK.md`, "The parts".
 
@@ -12,9 +12,9 @@ Do not use: network stack, TCP/IP stack, netd, network daemon.
 
 ### Data path
 
-The data path is the code that reads or writes the bytes of the data that a program sends or receives through a device.
+The data path is the code that reads or writes the bytes of the data that a process sends or receives through a device.
 
-The term asks one question: does this code touch the bytes? The kernel is off the data path: no kernel entry carries data. One read or one write of each byte by one program is a pass: a copy is a pass, and so is a checksum. Example: the network service makes one pass on receive, the copy into the datagram region, and none over the data on send. The data path is not the control path of a packet, which reads only the headers.
+The term asks one question: does this code touch the bytes? The kernel is off the data path: no kernel entry carries data. One read or one write of each byte by one process is a pass: a copy is a pass, and so is a checksum. Example: the network service makes one pass on receive, the copy into the datagram region, and none over the data on send. The data path is not the control path of a packet, which reads only the headers.
 
 The design: `docs/NETWORK.md`, "The path of a datagram and of a segment".
 
@@ -24,7 +24,7 @@ Do not use: fast path, hot path (for this).
 
 The control path of a packet is the code that reads the headers of a datagram or a segment and decides where it goes, and that reads no byte of its data.
 
-A packet, in this term only, is the IPv4 packet that a frame carries: one datagram or one segment with its headers. When programs share one device, one program must read the ports of each packet, find the endpoint and check the grant. That work costs code and no pass over the data. Example: the network service is on the control path of each datagram and segment. It is not the data path, and not the control plane of the kernel, which runs no code for a packet.
+A packet, in this term only, is the IPv4 packet that a frame carries: one datagram or one segment with its headers. When processes share one device, one process must read the ports of each packet, find the endpoint and check the grant. That work costs code and no pass over the data. Example: the network service is on the control path of each datagram and segment. It is not the data path, and not the control plane of the kernel, which runs no code for a packet.
 
 The design: `docs/NETWORK.md`, "The path of a datagram and of a segment".
 
@@ -32,9 +32,9 @@ Do not use: slow path, packet path.
 
 ### Endpoint
 
-An endpoint is what a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
+An endpoint is what a process holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
 
-An endpoint replaces the socket of other systems, but the program does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Not_Granted`, and what another remote sends never reaches the program. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A program has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
+An endpoint replaces the socket of other systems, but the process does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Not_Granted`, and what another remote sends never reaches the process. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A process has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
 
 The design: `src/library/contract/datagram`.
 
@@ -42,9 +42,9 @@ Do not use: socket, port (for this), connection (for this).
 
 ### Datagram
 
-A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes of data at most, what a program sends and receives through a datagram endpoint.
+A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes of data at most, what a process sends and receives through a datagram endpoint.
 
-1472 bytes is the data of one Ethernet frame after the IPv4 and UDP headers, so a datagram is never a fragment. The program writes the whole datagram in a place of its datagram region, with the header and its checksum (`network.udp_header_write`), and sends it with `Send`. The network service checks the ports in its own copy of the header, and the device reads the rest from the place. Example: QUIC is a library in the program over datagrams. A datagram is not a frame and not a segment.
+1472 bytes is the data of one Ethernet frame after the IPv4 and UDP headers, so a datagram is never a fragment. The process writes the whole datagram in a place of its datagram region, with the header and its checksum (`network.udp_header_write`), and sends it with `Send`. The network service checks the ports in its own copy of the header, and the device reads the rest from the place. Example: QUIC is a library in the process over datagrams. A datagram is not a frame and not a segment.
 
 The design: `src/library/contract/datagram`.
 
@@ -64,7 +64,7 @@ Do not use: peer (for this), destination, host.
 
 A UDP port is the 16-bit number of UDP that names one endpoint at an address.
 
-The network service finds the endpoint of a datagram that arrives by its destination port. With a client grant, the network service gives the local port, and the command `Info` returns it. The program writes that port as the source port of each datagram, and the network service refuses another one. A listen grant names its port: the remote service listens on the UDP port 7100. A UDP port is not the Ports object of the kernel, and not a TCP port: one number names two different ports in UDP and in TCP.
+The network service finds the endpoint of a datagram that arrives by its destination port. With a client grant, the network service gives the local port, and the command `Info` returns it. The process writes that port as the source port of each datagram, and the network service refuses another one. A listen grant names its port: the remote service listens on the UDP port 7100. A UDP port is not the Ports object of the kernel, and not a TCP port: one number names two different ports in UDP and in TCP.
 
 The design: `src/library/contract/datagram`.
 
@@ -74,7 +74,7 @@ Do not use: port (alone), socket number.
 
 A TCP port is the 16-bit number of TCP that names one end of a connection at an address.
 
-The network service reads the TCP ports of each segment to find the endpoint and check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one. The program writes the ports in its header, and the network service checks the local port of each segment that leaves in its own copy of the header. Example: `server` has the listen grant of the TCP port 80. A TCP port is not the Ports object of the kernel, and not a UDP port.
+The network service reads the TCP ports of each segment to find the endpoint and check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one. The process writes the ports in its header, and the network service checks the local port of each segment that leaves in its own copy of the header. Example: `server` has the listen grant of the TCP port 80. A TCP port is not the Ports object of the kernel, and not a UDP port.
 
 The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
@@ -82,9 +82,9 @@ Do not use: port (alone), socket number.
 
 ### Segment
 
-A segment is one TCP segment: its header, its options and its data, 1480 bytes at most, what a program sends and receives through a segment endpoint.
+A segment is one TCP segment: its header, its options and its data, 1480 bytes at most, what a process sends and receives through a segment endpoint.
 
-1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is never a fragment. The TCP library of the program writes each segment in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service checks the ports and writes the IPv4 header. For a segment that arrives, the TCP library checks the checksum and drops a wrong one. A segment is not a datagram and not a packet: the program sees no IPv4 header.
+1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is never a fragment. The TCP library of the process writes each segment in a place of the datagram region, with its checksum, and the process sends it with `Send`. The network service checks the ports and writes the IPv4 header. For a segment that arrives, the TCP library checks the checksum and drops a wrong one. A segment is not a datagram and not a packet: the process sees no IPv4 header.
 
 The design: `docs/NETWORK.md`, "The segment endpoint".
 
@@ -92,9 +92,9 @@ Do not use: packet, TCP packet, message.
 
 ### Segment endpoint
 
-A segment endpoint is an endpoint whose grant has the protocol TCP: the program writes and reads whole segments, and the network service keeps no state of a connection.
+A segment endpoint is an endpoint whose grant has the protocol TCP: the process writes and reads whole segments, and the network service keeps no state of a connection.
 
-A segment endpoint puts TCP in the program: each connection is in its own memory. The ring, the region, the commands and the error records are those of a datagram endpoint; only the grant differs, with TCP ports, and a block of them for a client grant. The program drives it with the TCP library: `tcp.step` takes the segments that arrived and writes the segments to send. Example: `server` has one. A segment endpoint is not a TCP socket: it is not one connection, and it does not accept or connect.
+A segment endpoint puts TCP in the process: each connection is in its own memory. The ring, the region, the commands and the error records are those of a datagram endpoint; only the grant differs, with TCP ports, and a block of them for a client grant. The process drives it with the TCP library: `tcp.step` takes the segments that arrived and writes the segments to send. Example: `server` has one. A segment endpoint is not a TCP socket: it is not one connection, and it does not accept or connect.
 
 The design: `docs/NETWORK.md`, "The segment endpoint".
 
@@ -104,7 +104,7 @@ Do not use: TCP socket, listening socket.
 
 A client grant is the grant of an endpoint that reaches one remote: one remote address and one remote port.
 
-A client grant lets a program reach exactly one server. The network service refuses a request to another remote with `Not_Granted`, and drops what another remote sends. With a datagram endpoint, the program gets one local UDP port. With a segment endpoint, it gets a block of 64 local TCP ports, because a closed connection stays in TIME-WAIT. Example: `fetch` has a TCP client grant of 10.0.2.100 port 80. A client grant is not a rule of a firewall: it is the only remote that the endpoint can name.
+A client grant lets a process reach exactly one server. The network service refuses a request to another remote with `Not_Granted`, and drops what another remote sends. With a datagram endpoint, the process gets one local UDP port. With a segment endpoint, it gets a block of 64 local TCP ports, because a closed connection stays in TIME-WAIT. Example: `fetch` has a TCP client grant of 10.0.2.100 port 80. A client grant is not a rule of a firewall: it is the only remote that the endpoint can name.
 
 The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
@@ -114,7 +114,7 @@ Do not use: outbound rule, connect permission.
 
 A listen grant is the grant of an endpoint that receives on one local TCP or UDP port that the root service names, from any remote, and answers only the admitted remotes.
 
-A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. With a listen grant, the program answers, but it does not reach: a send to a remote that is not admitted fails with `Not_Granted`. A UDP listen grant can also name one remote address. Examples: `server` on the TCP port 80; `remote` on the UDP port 7100, for the address 10.0.2.2 only. A listen grant is not a listening socket: it accepts nothing.
+A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. With a listen grant, the process answers, but it does not reach: a send to a remote that is not admitted fails with `Not_Granted`. A UDP listen grant can also name one remote address. Examples: `server` on the TCP port 80; `remote` on the UDP port 7100, for the address 10.0.2.2 only. A listen grant is not a listening socket: it accepts nothing.
 
 The design: `docs/NETWORK.md`, "The listen grant of UDP".
 
@@ -122,9 +122,9 @@ Do not use: listening socket, bind permission, server socket.
 
 ### Admitted remote
 
-An admitted remote is a remote that came to the port of a listen grant, and that the program can therefore answer.
+An admitted remote is a remote that came to the port of a listen grant, and that the process can therefore answer.
 
-A remote becomes admitted when it sends a SYN to the TCP port of a listen grant, or a datagram of 1200 bytes at least to its UDP port, while a `Receive` of the endpoint waits. The program releases one with `Release` when its connection ended, and a place with no traffic for 120 s serves again. The table of admitted remotes is the one state of TCP in the network service. An admitted remote is not an entry of connection tracking: it is one address and one port.
+A remote becomes admitted when it sends a SYN to the TCP port of a listen grant, or a datagram of 1200 bytes at least to its UDP port, while a `Receive` of the endpoint waits. The process releases one with `Release` when its connection ended, and a place with no traffic for 120 s serves again. The table of admitted remotes is the one state of TCP in the network service. An admitted remote is not an entry of connection tracking: it is one address and one port.
 
 The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
@@ -132,9 +132,9 @@ Do not use: connection tracking entry, conntrack, NAT entry.
 
 ### Connection
 
-In the group Network, a connection is the state of one TCP connection in the program that owns it: one record of fixed size of the TCP library, `tcp.Connection`.
+In the group Network, a connection is the state of one TCP connection in the process that owns it: one record of fixed size of the TCP library, `tcp.Connection`.
 
-TCP is a library in the program, so the state of each connection is in the memory of the program. The record holds the state, the sequence numbers, the windows, the timers and the counts. The program reads each field with no call; `server` draws them. The records are the rows of a connection table: `tcp.connect` opens one actively, and a SYN to the listen port opens one at the next `tcp.step`. A TCP connection is not the connection of the group Communication, and not a socket: no handle names it.
+TCP is a library in the process, so the state of each connection is in the memory of the process. The record holds the state, the sequence numbers, the windows, the timers and the counts. The process reads each field with no call; `server` draws them. The records are the rows of a connection table: `tcp.connect` opens one actively, and a SYN to the listen port opens one at the next `tcp.step`. A TCP connection is not the connection of the group Communication, and not a socket: no handle names it.
 
 The design: `docs/NETWORK.md`, "The TCP library".
 
@@ -144,7 +144,7 @@ Do not use: socket, TCB (in this system), session.
 
 A web page is an object of the private store of `server` that `server` serves by its name, at the target `/name`.
 
-`server` shows that a program reaches only what it was granted: its pages come from its own private store, not from a shared folder. The principal changes them from the console through the exports of `server`, such as `server.put` and `server.remove`. `server` reads its pages into its memory at its start, so a request never waits for the storage service. PUT and DELETE over HTTP are refused, because the network is not authenticated. A web page is not a file of a web root: it has no path and no folder.
+`server` shows that a process reaches only what it was granted: its pages come from its own private store, not from a shared folder. The principal changes them from the console through the exports of `server`, such as `server.put` and `server.remove`. `server` reads its pages into its memory at its start, so a request never waits for the storage service. PUT and DELETE over HTTP are refused, because the network is not authenticated. A web page is not a file of a web root: it has no path and no folder.
 
 The design: `docs/NETWORK.md`, "The HTTP server".
 
@@ -162,7 +162,7 @@ Do not use: access log line, hit.
 
 ### Connection table
 
-A connection table is the connection records of one program, the memory of their buffers, and what is common to them: the local address, the listen port, the block of local ports and the secret of the initial sequence numbers.
+A connection table is the connection records of one process, the memory of their buffers, and what is common to them: the local address, the listen port, the block of local ports and the secret of the initial sequence numbers.
 
 The TCP library allocates nothing: the caller gives the table (`tcp.Table`) with its records and one block of memory for all the buffers. One call, `tcp.step`, works on the whole table: it takes the segments that arrived, runs the timers, writes the segments to send, and gives the next deadline. The table also counts what no connection took, such as the SYNs refused. Example: `server` serves one table of 48 connections from one thread. A connection table is not a pool of sockets in a kernel.
 
@@ -172,7 +172,7 @@ Do not use: socket table, connection pool.
 
 ### Datagram ring
 
-The datagram ring is the ring between a program and the network service for one endpoint.
+The datagram ring is the ring between a process and the network service for one endpoint.
 
 Its commands, in `src/library/contract/datagram`:
 
@@ -189,9 +189,9 @@ Do not use: socket, channel.
 
 ### Datagram region
 
-The datagram region is the memory of an endpoint, 512 KiB, where the program writes the data to send and the network service writes the data that arrives.
+The datagram region is the memory of an endpoint, 512 KiB, where the process writes the data to send and the network service writes the data that arrives.
 
-The root service makes the region and gives it to the program and to the network service. A program does not give a region of its own: if it did, a revocation of that memory stops the network service on a page fault. A request names a place in bytes; a byte outside gives `Out_Of_Range`. The device reads the data to send from the region, a read region of the frame service, and the `Send` completes when the device read it. A datagram region is not a socket buffer of a kernel.
+The root service makes the region and gives it to the process and to the network service. A process does not give a region of its own: if it did, a revocation of that memory stops the network service on a page fault. A request names a place in bytes; a byte outside gives `Out_Of_Range`. The device reads the data to send from the region, a read region of the frame service, and the `Send` completes when the device read it. A datagram region is not a socket buffer of a kernel.
 
 The design: `docs/NETWORK.md`, "The send with no copy".
 
@@ -201,7 +201,7 @@ Do not use: socket buffer, send buffer, receive buffer.
 
 A neighbor is an address of the link and its hardware address, which the network service learned from an answer to its own ARP request.
 
-A frame needs the hardware address of the next machine on the link. The network service asks it by ARP and keeps the answer in a table of neighbors. It learns only an address that one of its own requests asked, so an ARP frame that nobody asked for changes nothing. When the table is full, the answer replaces the oldest entry that no waiting request uses. A program asks for a new resolution with the command `Resolve`. A neighbor is not an entry of a cache that each ARP frame of the link can change.
+A frame needs the hardware address of the next machine on the link. The network service asks it by ARP and keeps the answer in a table of neighbors. It learns only an address that one of its own requests asked, so an ARP frame that nobody asked for changes nothing. When the table is full, the answer replaces the oldest entry that no waiting request uses. A process asks for a new resolution with the command `Resolve`. A neighbor is not an entry of a cache that each ARP frame of the link can change.
 
 The design: `src/library/support/network`.
 
@@ -241,7 +241,7 @@ Do not use: build machine (for this), remote (for this).
 
 ### Remote service
 
-The remote service is the program `remote`: a QUIC server that takes each call of the host on a call stream, makes it as an isolated call of an export of a service, and writes the call answer on the same stream.
+The remote service is the process `remote`: a QUIC server that takes each call of the host on a call stream, makes it as an isolated call of an export of a service, and writes the call answer on the same stream.
 
 The remote service lets the modus tool on the host call an export of a running service, for tests and for the console of the developer. It has a UDP listen grant on the port 7100 that admits the address of the host only. It makes an Ed25519 key at its start and logs it, and the tool pins that key. A call acts for the principal that allowed the key of the client. The remote service is not a debug agent: it calls only exports.
 
@@ -301,9 +301,9 @@ Do not use: response, reply.
 
 ### Developer tool
 
-A developer tool is a program that shows how the system runs: what a program holds in memory and how its threads run; it reads reports of the kernel with a grant and changes nothing.
+A developer tool is a process that shows how the system runs: what a process holds in memory and how its threads run; it reads reports of the kernel with a grant and changes nothing.
 
-A developer tool makes the state of the kernel visible with no debugger attached. Each tool reads reports with the operation `Inspect`, with the machine handle and the right **Inspect**. Examples: `monitor` shows the counts of each program, `scheduler` the run queues, and `inspect` the address space and the threads of one program. Each tool also serves its facts as exports, so the console reads them as tables, such as `monitor.programs()`. A developer tool is not a debugger: it does not stop a thread or read the bytes of another program.
+A developer tool makes the state of the kernel visible with no debugger attached. Each tool reads reports with the operation `Inspect`, with the machine handle and the right **Inspect**. Examples: `monitor` shows the counts of each process, `scheduler` the run queues, and `inspect` the address space and the threads of one process. Each tool also serves its facts as exports, so the console reads them as tables, such as `monitor.processes()`. A developer tool is not a debugger: it does not stop a thread or read the bytes of another process.
 
 The design: `docs/TOOLS.md`, "What each tool reads".
 
@@ -313,9 +313,9 @@ Do not use: debugger (for this), profiler, task manager.
 
 A sample is one read of all the reports that a developer tool shows, at one time.
 
-A developer tool reads several reports, and the system runs between two reads. A sample groups them so that the window shows one state. `inspect` takes a sample each 250 ms, and shows the time and the kernel entries of one sample, so the cost of the tool is visible. A sample whose reports come from two programs of one slot is dropped. A value that changed since the last sample has another color. A sample is not a snapshot of the store, and not a frame of the screen.
+A developer tool reads several reports, and the system runs between two reads. A sample groups them so that the window shows one state. `inspect` takes a sample each 250 ms, and shows the time and the kernel entries of one sample, so the cost of the tool is visible. A sample whose reports come from two processes of one slot is dropped. A value that changed since the last sample has another color. A sample is not a snapshot of the store, and not a frame of the screen.
 
-The design: `docs/TOOLS.md`, "The program `inspect`".
+The design: `docs/TOOLS.md`, "The process `inspect`".
 
 Do not use: snapshot (for this), poll, frame (for this).
 
@@ -323,11 +323,11 @@ Do not use: snapshot (for this), poll, frame (for this).
 
 A folded gap is the part of the band of an address space between two mappings that has no mapping: the band draws it with a fixed width and lines at an angle.
 
-On a scale by address, the small mappings of a program would be invisible lines. `inspect` folds each gap, so each mapping keeps a readable width. The element `draw_folded_gap` of the interface package draws it as a rectangle and two lines: it is no kind of draw record.
+On a scale by address, the small mappings of a process would be invisible lines. `inspect` folds each gap, so each mapping keeps a readable width. The element `draw_folded_gap` of the interface package draws it as a rectangle and two lines: it is no kind of draw record.
 
 A folded gap is not an ellipsis of a text: it is a part of a drawn band, and its width says nothing of its size.
 
-The design: `docs/TOOLS.md`, "The program `inspect`", and `docs/DESIGN.md`, "2. Forms".
+The design: `docs/TOOLS.md`, "The process `inspect`", and `docs/DESIGN.md`, "2. Forms".
 
 Do not use: ellipsis, break.
 

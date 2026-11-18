@@ -60,7 +60,7 @@ OPERATION_KERNEL_HEX_DIGITS :: 16
 // the tool can wait for, so the bound is the end of the look, and a line
 // past it is lost with the life.
 OPERATION_LOG_DRAIN_BOUND :: 1 * time.Second
-// The byte that replaces the first byte of a protected program name in a
+// The byte that replaces the first byte of a protected process name in a
 // generated sequence.
 OPERATION_PROTECTED_NAME_CHANGE :: '_'
 // The module of the root service.
@@ -130,7 +130,7 @@ Operation_Fault_Kind :: enum u8 {
 	None,      // The sequence ran, and each oracle held.
 	Stop,      // The machine stopped: QEMU ended.
 	Hang,      // The runner did not end its sequence within the hang bound, or the end line of the sequence did not come.
-	Isolation, // operation_fuzzing or the root service stopped: a sequence reached a program whose handle it did not hold.
+	Isolation, // operation_fuzzing or the root service stopped: a sequence reached a process whose handle it did not hold.
 	Mailbox,   // The mailbox counts what the tool did not write: a sequence changed the memory of operation_fuzzing.
 	Oracle,    // An oracle of the results broke.
 	Tool,      // An error of the tool, never a fault of the kernel: the run ends with an error and keeps no finding.
@@ -216,7 +216,7 @@ OPERATION_REPORT_CUT_LINE :: "kernel: the line above is cut"
 
 // operation_report_line gives the last line of the log that the kernel
 // wrote for itself, which is the report of a stop: the kernel writes no
-// line after it. A line of a program starts with its name in brackets.
+// line after it. A line of a process starts with its name in brackets.
 operation_report_line :: proc(log: string) -> string {
 	rest := log
 	report := ""
@@ -332,7 +332,7 @@ operation_oracle_signature :: proc(finding: Operation_Finding, sequence: ^operat
 	return fmt.tprintf("oracle %v: the outcome %v", finding.oracle, outcome)
 }
 
-// The programs that a sequence must never reach. The generator never names
+// The processes that a sequence must never reach. The generator never names
 // a child with one of these names, so the line of a fault of a child is
 // never the line of a fault of isolation.
 @(rodata)
@@ -340,7 +340,7 @@ operation_protected_names := [?]string{OPERATION_FUZZING_MODULE, OPERATION_ROOT_
 
 // The starts of the lines of the kernel when one of them stops.
 @(rodata)
-operation_isolation_marks := [?]string{"kernel: program " + OPERATION_FUZZING_MODULE + " stopped", "kernel: program " + OPERATION_ROOT_MODULE + " stopped"}
+operation_isolation_marks := [?]string{"kernel: process " + OPERATION_FUZZING_MODULE + " stopped", "kernel: process " + OPERATION_ROOT_MODULE + " stopped"}
 
 // operation_isolation_line gives the first line of the log that starts
 // with a mark of operation_isolation_marks, or "".
@@ -371,14 +371,14 @@ operation_isolation_fault :: proc(line, log: string) -> Operation_Fault {
 	return {kind = .Isolation, signature = fmt.tprintf("isolation: %s", operation_numbers_removed(line)), text = line, log = log}
 }
 
-// The start of each line of the program operation_fuzzing on the log.
+// The start of each line of the process operation_fuzzing on the log.
 OPERATION_SERVICE_LINE_START :: "[" + OPERATION_FUZZING_MODULE + "] "
 
 // operation_end_line_through gives the bytes of a text up to the end of the
 // end line of the sequence `number`, which the service writes after each
 // sequence (operation_sequence.SEQUENCE_END_LINE_START). The line must
 // start a line and end with its number, so the line of the sequence 1 is
-// not the line of the sequence 12, and a program that quotes it in its
+// not the line of the sequence 12, and a process that quotes it in its
 // own line is not taken. found is false while the whole line has not come.
 operation_end_line_through :: proc(text: string, number: u64) -> (through: int, found: bool) {
 	line := fmt.tprintf("%s%s%d%s", OPERATION_SERVICE_LINE_START, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END)
@@ -897,19 +897,19 @@ operation_parameter_place :: proc(chosen: operation.Operation, name: string) -> 
 }
 
 // operation_protected_names_changed changes the first byte of each name of
-// a Program_Create that is the name of a protected program, in the content
+// a Process_Create that is the name of a protected process, in the content
 // of the area that the step names: a child with that name would make the
 // line of its fault the line of a fault of isolation. The rule reads only
 // the sequence, so a seed still gives one sequence. A name that is not in
 // the content of its area, or whose length is not a plain value, stays.
 operation_protected_names_changed :: proc(sequence: ^operation_sequence.Sequence) -> (changed: int) {
-	name_place := operation_parameter_place(.Program_Create, "name")
-	length_place := operation_parameter_place(.Program_Create, "name_length")
+	name_place := operation_parameter_place(.Process_Create, "name")
+	length_place := operation_parameter_place(.Process_Create, "name_length")
 	if name_place < 0 || length_place < 0 {
 		return 0
 	}
 	for &item in sequence.steps[:sequence.step_count] {
-		if item.operation != u32(operation.Operation.Program_Create) {
+		if item.operation != u32(operation.Operation.Process_Create) {
 			continue
 		}
 		name, length := item.arguments[name_place], item.arguments[length_place]
@@ -936,7 +936,7 @@ operation_protected_names_changed :: proc(sequence: ^operation_sequence.Sequence
 // from the random state, then builds it with the generator of the fuzz
 // target operation_sequence_generated, which a host test and that target
 // check: each sequence that it builds is one that check accepts. It then
-// changes each protected program name.
+// changes each protected process name.
 operation_sequence_generate_random :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence) {
 	operation_sequence_generate_random_written(random, sequence, nil)
 }
@@ -1064,10 +1064,10 @@ operation_log_new_lines :: proc(path: string, scanned: ^i64) -> string {
 // The machine of the commands, behind Operation_Machine. After a life with
 // no fault, `results` holds the answers of its last sequence.
 Operation_Qemu :: struct {
-	part:          Test_Part_Run, // Its data disk, which no program of the image drives.
+	part:          Test_Part_Run, // Its data disk, which no process of the image drives.
 	peer:          Peer,
 	peer_started:  bool,
-	process:       os.Process,
+	host_process:       os.Process,
 	monitor_read:  ^os.File,
 	monitor_write: ^os.File,
 	mailbox:       Operation_Mailbox,
@@ -1102,7 +1102,7 @@ operation_stop_fault :: proc(state: ^Operation_Qemu, exit_code: int) -> Operatio
 @(private = "file")
 operation_machine_stopped :: proc(state: ^Operation_Qemu) -> (fault: Operation_Fault, stopped: bool) {
 	// A wait of 0 does not block: Timeout says that QEMU runs.
-	if ended, wait_error := os.process_wait(state.process, 0); wait_error == nil && ended.exited {
+	if ended, wait_error := os.process_wait(state.host_process, 0); wait_error == nil && ended.exited {
 		return operation_stop_fault(state, ended.exit_code), true
 	}
 	return {}, false
@@ -1145,7 +1145,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 		fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_error)
 		return false
 	}
-	process, start_error := os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
+	host_process, start_error := os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
 	// QEMU has its copy of the socket of the peer now.
 	peer_machine_socket_lent_close(&state.peer)
 	if start_error != nil {
@@ -1154,7 +1154,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 		fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_error)
 		return false
 	}
-	state.process = process
+	state.host_process = host_process
 	state.monitor_read, state.monitor_write = monitor_read, monitor_write
 	state.running, state.exited, state.mailbox_open, state.log_scanned = true, false, false, 0
 	for started := time.tick_now(); time.tick_since(started) < BOOT_HANG_BOUND; {
@@ -1168,7 +1168,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 			state.mailbox, state.mailbox_open = mailbox, true
 			return true
 		}
-		if ended, wait_error := os.process_wait(process, 0); wait_error == nil && ended.exited {
+		if ended, wait_error := os.process_wait(host_process, 0); wait_error == nil && ended.exited {
 			state.exited = true
 			fmt.eprintfln("modustool: fuzz operations: QEMU ended with the status %d before the line \"%s\"; the log is %s", ended.exit_code, OPERATION_MAILBOX_LINE, OPERATION_FUZZING_OUTPUT)
 			operation_machine_end(state)
@@ -1183,7 +1183,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 
 // operation_machine_execute runs one sequence and reads its fault: the
 // stop of QEMU, a stall, a broken mailbox, then, after the end line of the
-// sequence, the stop of a program that no sequence reaches in the lines of
+// sequence, the stop of a process that no sequence reaches in the lines of
 // this sequence only, then the oracles of the results. Each line of the
 // kernel that this sequence caused comes before its end line, and each line
 // of an earlier sequence came before the end line of that one, so a fault
@@ -1191,7 +1191,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 @(private = "file")
 operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Sequence, bytes: []u8) -> Operation_Fault {
 	state := (^Operation_Qemu)(data)
-	end, ended, problem := operation_execute_watched(&state.mailbox, bytes, state.header, state.results, &state.process)
+	end, ended, problem := operation_execute_watched(&state.mailbox, bytes, state.header, state.results, &state.host_process)
 	switch end {
 	case .Counted:
 	case .Machine_Ended:
@@ -1271,10 +1271,10 @@ operation_machine_end :: proc(data: rawptr) {
 	}
 	if !state.exited {
 		_, _ = os.write_string(state.monitor_write, "quit\n")
-		ended, wait_error := os.process_wait(state.process, HANG_BOUND)
+		ended, wait_error := os.process_wait(state.host_process, HANG_BOUND)
 		if wait_error != nil || !ended.exited {
-			_ = os.process_kill(state.process)
-			_, _ = os.process_wait(state.process)
+			_ = os.process_kill(state.host_process)
+			_, _ = os.process_wait(state.host_process)
 		}
 		state.exited = true
 	}

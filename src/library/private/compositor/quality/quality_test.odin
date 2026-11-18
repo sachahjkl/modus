@@ -132,7 +132,7 @@ a_full_table_loses_the_oldest_key_that_is_not_shown :: proc(t: ^testing.T) {
 	testing.expect_value(t, keys_flipped(&full, 6, &flipped), KEY_CAPACITY - 1)
 }
 
-// A window that closed leaves no key: the program that takes its place in
+// A window that closed leaves no key: the process that takes its place in
 // the client table ties only its own keys, and not an old serial.
 @(test)
 a_reused_window_ties_only_its_own_keys :: proc(t: ^testing.T) {
@@ -141,7 +141,7 @@ a_reused_window_ties_only_its_own_keys :: proc(t: ^testing.T) {
 	old := key_sent(&table, 3, 10, 10)
 	window_gone(&table, 3)
 	testing.expect_value(t, key_shown(&table, 3, old, old), 0)
-	// The new program of place 3 got no key yet: the old serial is past it.
+	// The new process of place 3 got no key yet: the old serial is past it.
 	testing.expect_value(t, key_shown(&table, 3, old, 0), 0)
 	fresh := key_sent(&table, 3, 20, 20)
 	testing.expect_value(t, key_shown(&table, 3, fresh, fresh), 1)

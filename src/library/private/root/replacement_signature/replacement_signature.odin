@@ -1,5 +1,5 @@
 // The signature of a replacement row, and the decision of the root
-// service on a replacement that a program asks for (docs/MODULE_CONTRACT.md,
+// service on a replacement that a process asks for (docs/MODULE_CONTRACT.md,
 // "Who may replace a module").
 //
 // The root service compiles it in: it imports no module. The tool signs

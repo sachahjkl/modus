@@ -26,7 +26,7 @@
 // a byte. Each other code point is a character of a text, whether a font
 // draws it or not.
 //
-// The kernel and the programs share this package: the kernel checks the
+// The kernel and the processes share this package: the kernel checks the
 // text of a line of the log with it, and the palette table, the store and
 // the cut mark use it.
 package text_encoding
@@ -188,7 +188,7 @@ complete_characters :: proc "contextless" (bytes: []u8) -> int {
 
 // identifier_valid says if a name is an identifier of the system: one or
 // more visible characters of ASCII, 33 to 126. An identifier (a module, a
-// program, a setting, a value of a setting, an act name) is matched byte
+// process, a setting, a value of a setting, an act name) is matched byte
 // for byte against what a principal types in each layout, so it has one
 // form only: é is one code point or an e with a combining accent, two
 // forms of one name (src/md/data/text_encoding.md, "The chosen form").

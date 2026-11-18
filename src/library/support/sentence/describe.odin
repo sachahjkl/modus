@@ -3,7 +3,7 @@ package sentence
 import module "modus:contract/module"
 import op "modus:contract/operation"
 
-// The text of a description: what a program shows to a reader about the
+// The text of a description: what a process shows to a reader about the
 // types of an export (module.Function).
 
 // The name of each right, as `op.Right` names it.
@@ -31,7 +31,7 @@ right_names := [op.Right]string {
 object_names := [op.Object_Kind]string {
 	.None      = "no object",
 	.Memory    = "Memory",
-	.Program   = "Program",
+	.Process   = "Process",
 	.Interrupt = "Interrupt",
 	.Ports     = "Ports",
 	.Machine   = "Machine",

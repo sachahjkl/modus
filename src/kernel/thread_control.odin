@@ -7,20 +7,20 @@ import op "modus:contract/operation"
 // The control of a thread (docs/ARCHITECTURE.md, "The control of a
 // thread"): Thread_Control stops a thread, reads and writes its registers
 // and its extended state, and resumes it. A debugger, a garbage collector,
-// a sampling profiler and the program that runs a guest use it.
+// a sampling profiler and the process that runs a guest use it.
 //
-// The debugger of a program names a thread of that program by its number,
-// with its program handle that has the right Debug, for each command but
+// The debugger of a process names a thread of that process by its number,
+// with its process handle that has the right Debug, for each command but
 // the two of the schedule (docs/ARCHITECTURE.md, "The debugger of a
-// program"). The stops that it makes are counted apart (Thread.debug_stops),
+// process"). The stops that it makes are counted apart (Thread.debug_stops),
 // so that the end of the debugging takes them back.
 //
 // Through a handle, a stop, a resume and a read need the right Inspect, a
 // write the right Write (op.thread_control_rights). A write lets its holder
-// choose the code that the program runs; a hold and a read do not, so a
+// choose the code that the process runs; a hold and a read do not, so a
 // profiler or a collector that only reads gets no write. Control, the right
 // to end the thread, gives neither: a handle given only so that another
-// program can end a thread does not become a grant to debug it.
+// process can end a thread does not become a grant to debug it.
 //
 // The stop is a count, not a state: two holders that each stop the thread
 // each resume it, and the thread runs again only after the last Resume. The
@@ -40,18 +40,18 @@ import op "modus:contract/operation"
 // the frame from its last kernel entry, the extended state from the save of
 // schedule. So they are read and written only while the thread is held:
 // its count is above 0, or it waits for an answer of the fault ring. Both
-// last at least while the program lock of the thread is held: the count
+// last at least while the process lock of the thread is held: the count
 // goes down and fault_waits ends only under it.
 //
 // A write is checked whole before anything changes: the frame must be one
-// that the return to a program takes (op.thread_registers_refusal), the
+// that the return to a process takes (op.thread_registers_refusal), the
 // extended state one that xrstor or fxrstor takes
 // (op.extended_state_refusal). So no write makes the kernel fault at the
 // return or at the restore of the thread.
 //
 // The schedule of a thread (its weight and its request, op.Thread_Schedule)
 // is read and written with no hold: a share changes while the thread runs
-// (docs/SCHEDULING.md, "The schedule of a live thread"). A program writes
+// (docs/SCHEDULING.md, "The schedule of a live thread"). A process writes
 // the schedule of its own threads; through a thread handle a read needs
 // Inspect and a write Control, because a holder that can end a thread can
 // also give it a smaller share. These writes only lower the weight and
@@ -68,14 +68,14 @@ import op "modus:contract/operation"
 // the full weight at first. Only a write through the machine handle sets
 // them, and a new thread gets the new-thread weight limit of the thread
 // that creates it as its two limits, with a weight up to it. So a
-// weight that the holder of Schedule lowered stays lowered: the program
+// weight that the holder of Schedule lowered stays lowered: the process
 // of the thread cannot write it back, and cannot leave the limit by a new
 // thread.
 //
 // The placement of a thread (the processors that can run it,
 // op.Thread_Placement) is read and written by the same three callers with
 // the same rights, and with no hold (docs/SCHEDULING.md, "The placement of
-// a thread"). A program, and the holder of a thread handle, only narrow
+// a thread"). A process, and the holder of a thread handle, only narrow
 // the set; the machine handle writes any set and the limit of the set,
 // which a new thread gets from the thread that creates it.
 //
@@ -84,11 +84,11 @@ import op "modus:contract/operation"
 // only, a stop with no handle (thread_counters.odin).
 
 // thread_control runs the operation Thread_Control. The caller holds the
-// program lock of the program of the calling thread, and the control lock
+// process lock of the process of the calling thread, and the control lock
 // when the operation asked for it.
 thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
-	caller_program_index := threads[caller_index].program
-	caller_program := &programs[caller_program_index]
+	caller_process_index := threads[caller_index].process
+	caller_process := &processes[caller_process_index]
 	// The record of the operation starts with no refusal (command_run).
 	cpu := processor_self()
 	operation := &cpu.operation
@@ -96,30 +96,30 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	if !command_known || command == .None {
 		return .Bad_Operation
 	}
-	if op.thread_control_names_a_program(command) {
-		return program_schedule_control(caller_program, command, v, results)
+	if op.thread_control_names_a_process(command) {
+		return process_schedule_control(caller_process, command, v, results)
 	}
 	if op.thread_control_counts_the_caller(command) {
-		return thread_counters_control(caller_index, caller_program, command, v, results)
+		return thread_counters_control(caller_index, caller_process, command, v, results)
 	}
 	target_index: u32
-	owner := caller_program_index
+	owner := caller_process_index
 	by_machine := false // The machine handle names the thread: a write sets its weight limit, or the limit of its placement.
-	by_debugger := false // The program handle with Debug names the thread: the caller is the debugger of its program.
+	by_debugger := false // The process handle with Debug names the thread: the caller is the debugger of its process.
 	if v[0] == 0 {
-		// A breakpoint is written only by the debugger of the program of
-		// the thread, through its program handle.
+		// A breakpoint is written only by the debugger of the process of
+		// the thread, through its process handle.
 		if op.thread_control_needs_the_debugger(command) {
 			return .Bad_Handle
 		}
-		// A thread of this program, by its number: under the program lock,
-		// which the caller holds, no thread of this program starts or ends.
-		target_index = thread_of_number(caller_program_index, v[1])
+		// A thread of this process, by its number: under the process lock,
+		// which the caller holds, no thread of this process starts or ends.
+		target_index = thread_of_number(caller_process_index, v[1])
 		if target_index == 0 {
 			return .Bad_State
 		}
 	} else {
-		named := handle_find(caller_program, v[0], .None) or_return
+		named := handle_find(caller_process, v[0], .None) or_return
 		machine_rights, by_machine_number := op.thread_control_machine_rights(command)
 		if named.kind == .Machine && by_machine_number {
 			// The machine handle names any thread, for the schedule and
@@ -144,10 +144,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			if threads[target_index].serial != serial {
 				return .Bad_State // The thread of that number ended, and the place serves another one.
 			}
-			owner = threads[target_index].program
-		} else if named.kind == .Program && op.thread_control_takes_debug_handle(command) {
-			// The debugger of a program names a thread of it by its
-			// number. Two program locks: the control lock first.
+			owner = threads[target_index].process
+		} else if named.kind == .Process && op.thread_control_takes_debug_handle(command) {
+			// The debugger of a process names a thread of it by its
+			// number. Two process locks: the control lock first.
 			if .Debug not_in named.rights {
 				return .No_Right
 			}
@@ -155,44 +155,44 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			by_debugger = true
 			owner = named.object
 		} else {
-			// A thread handle writes no breakpoint: a program, and the
+			// A thread handle writes no breakpoint: a process, and the
 			// holder of a handle of one of its threads, get no way to put
 			// a debug exception where the kernel copies its memory.
 			if op.thread_control_needs_the_debugger(command) {
 				return .Bad_Handle
 			}
-			// The right of the command: a handle that a program gave so
+			// The right of the command: a handle that a process gave so
 			// that another one can end a thread (Control) does not let it
 			// hold the thread or write its registers.
-			slot := handle_find(caller_program, v[0], .Thread, op.thread_control_rights(command)) or_return
+			slot := handle_find(caller_process, v[0], .Thread, op.thread_control_rights(command)) or_return
 			target_index = slot.object
-			// A thread of another program: its program lock, which the
-			// lock order allows only with the control lock. The program of
+			// A thread of another process: its process lock, which the
+			// lock order allows only with the control lock. The process of
 			// a thread changes only under the control lock (thread_finish).
-			if intrinsics.atomic_load(&threads[target_index].program) != caller_program_index {
+			if intrinsics.atomic_load(&threads[target_index].process) != caller_process_index {
 				require_control() or_return
-				owner = threads[target_index].program
+				owner = threads[target_index].process
 			}
 		}
 	}
 	if owner == 0 {
 		return .Bad_State // The thread ended.
 	}
-	// The lock of the program of the caller is held already: then this
-	// takes nothing (program_lock).
-	taken := program_lock(owner)
-	defer program_unlock(owner, taken)
-	if programs[owner].state == .Stopped || programs[owner].state == .None {
+	// The lock of the process of the caller is held already: then this
+	// takes nothing (process_lock).
+	taken := process_lock(owner)
+	defer process_unlock(owner, taken)
+	if processes[owner].state == .Stopped || processes[owner].state == .None {
 		return .Bad_State
 	}
 	if by_debugger {
 		// The right Debug alone names no thread: the caller first made one
-		// of its threads the debug handler of the program, so that the end
-		// of that handler gives the program back what these commands take.
-		if !debugger_is(owner, caller_program_index) {
+		// of its threads the debug handler of the process, so that the end
+		// of that handler gives the process back what these commands take.
+		if !debugger_is(owner, caller_process_index) {
 			return .Bad_State
 		}
-		// Under the program lock of the program, no thread of it starts
+		// Under the process lock of the process, no thread of it starts
 		// or ends.
 		target_index = thread_of_number(owner, v[1])
 		if target_index == 0 {
@@ -200,7 +200,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		}
 	}
 	thread := &threads[target_index]
-	if thread.program != owner {
+	if thread.process != owner {
 		return .Bad_State
 	}
 	switch command {
@@ -214,7 +214,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		return status
 	case .Resume:
 		// Each side takes back only its own stops. The debugger: the
-		// stops that it made. The program and the holder of a thread
+		// stops that it made. The process and the holder of a thread
 		// handle: the stops that are not of the debugger. So the count of
 		// the debugger is never above the stop count, and the end of the
 		// debugging takes back the stops of the debugger and no others.
@@ -232,7 +232,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	case .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State:
 		size := command == .Read_Registers || command == .Write_Registers ? u64(size_of(op.Thread_Registers)) : extended_state_size
 		writes_to_the_caller := command == .Read_Registers || command == .Read_Extended_State
-		if v[4] < size || !user_range(caller_program, v[3], size, writes_to_the_caller) {
+		if v[4] < size || !user_range(caller_process, v[3], size, writes_to_the_caller) {
 			return .Bad_Address
 		}
 		if target_index == caller_index || !thread_held_off_processor(thread) {
@@ -279,7 +279,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		// only while the thread is held, so that no processor loads them
 		// while they change.
 		size := u64(size_of(op.Thread_Breakpoints))
-		if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Breakpoints) {
+		if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Breakpoints) {
 			return .Bad_Address
 		}
 		if target_index == caller_index || !thread_held_off_processor(thread) {
@@ -303,8 +303,8 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		}
 		results[0] = size
 		return .Ok
-	case .Read_Program_Schedule, .Write_Program_Schedule:
-		// They name a program, not a thread: program_schedule_control runs
+	case .Read_Process_Schedule, .Write_Process_Schedule:
+		// They name a process, not a thread: process_schedule_control runs
 		// them before a thread is named.
 		return .Bad_Operation
 	case .Start_Counters, .Read_Counters, .Stop_Counters:
@@ -312,17 +312,17 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		// before a thread is named.
 		return .Bad_Operation
 	case .Read_Memory:
-		// The bytes of the program of the thread (breakpoints.odin). The
-		// thread is not held: the memory of a program changes while its
-		// other threads run in any case. The program lock of that program
+		// The bytes of the process of the thread (breakpoints.odin). The
+		// thread is not held: the memory of a process changes while its
+		// other threads run in any case. The process lock of that process
 		// is held here, and the one of the caller.
 		if v[4] > op.THREAD_MEMORY_READ_LIMIT {
 			return .Bad_Operation
 		}
-		if !user_range(caller_program, v[3], v[4], true) {
+		if !user_range(caller_process, v[3], v[4], true) {
 			return .Bad_Address
 		}
-		copied := program_memory_read(&programs[owner], v[5], v[3], v[4])
+		copied := process_memory_read(&processes[owner], v[5], v[3], v[4])
 		if copied == 0 && v[4] != 0 {
 			return .Bad_Address
 		}
@@ -330,7 +330,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		return .Ok
 	case .Read_Schedule, .Write_Schedule:
 		size := u64(size_of(op.Thread_Schedule))
-		if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Schedule) {
+		if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Schedule) {
 			return .Bad_Address
 		}
 		// One copy in the memory of the kernel: the values that the check
@@ -376,7 +376,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		return .Ok
 	case .Read_Placement, .Write_Placement:
 		size := u64(size_of(op.Thread_Placement))
-		if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Placement) {
+		if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Placement) {
 			return .Bad_Address
 		}
 		// One copy in the memory of the kernel: the sets that the check
@@ -407,19 +407,19 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	return .Bad_Operation
 }
 
-// program_schedule_control runs the two commands of the schedule of a
-// program (op.Program_Schedule). Only the machine handle with Schedule and
-// Inspect names a program: its holder already orders every thread, and a
-// read of any program is a report of the machine. `number` is the slot of
-// the program and its serial (op.program_slot_and_serial). The write holds
-// the control lock and the program lock of the program: a creation by a
-// thread of that program holds the control lock too, so it comes wholly
+// process_schedule_control runs the two commands of the schedule of a
+// process (op.Process_Schedule). Only the machine handle with Schedule and
+// Inspect names a process: its holder already orders every thread, and a
+// read of any process is a report of the machine. `number` is the slot of
+// the process and its serial (op.process_slot_and_serial). The write holds
+// the control lock and the process lock of the process: a creation by a
+// thread of that process holds the control lock too, so it comes wholly
 // before the write or wholly after it (creation_weight_limit).
-program_schedule_control :: proc "contextless" (caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
+process_schedule_control :: proc "contextless" (caller_process: ^Process, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if v[0] == 0 {
 		return .Bad_Handle
 	}
-	named := handle_find(caller_program, v[0], .None) or_return
+	named := handle_find(caller_process, v[0], .None) or_return
 	if named.kind != .Machine {
 		return .Bad_Handle
 	}
@@ -427,40 +427,40 @@ program_schedule_control :: proc "contextless" (caller_program: ^Program, comman
 	if !(machine_rights <= named.rights) {
 		return .No_Right
 	}
-	size := u64(size_of(op.Program_Schedule))
-	if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Program_Schedule) {
+	size := u64(size_of(op.Process_Schedule))
+	if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Process_Schedule) {
 		return .Bad_Address
 	}
 	slot, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
-	if slot == 0 || slot >= PROGRAM_CAPACITY {
+	if slot == 0 || slot >= PROCESS_CAPACITY {
 		return .Bad_State
 	}
-	// A slot serves a new program only under the control lock
-	// (program_create): with it the serial names one program until the
+	// A slot serves a new process only under the control lock
+	// (process_create): with it the serial names one process until the
 	// operation ends.
 	require_control() or_return
 	index := u32(slot)
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
-	program := &programs[index]
-	if program.serial != serial || program.state == .None || program.state == .Stopped {
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
+	process := &processes[index]
+	if process.serial != serial || process.state == .None || process.state == .Stopped {
 		return .Bad_State
 	}
 	// One copy in the memory of the kernel: the value that the check
-	// accepts is the value that the program gets.
-	schedule: op.Program_Schedule
-	if command == .Read_Program_Schedule {
-		schedule.new_thread_weight_limit = program_new_thread_weight_limit(program)
+	// accepts is the value that the process gets.
+	schedule: op.Process_Schedule
+	if command == .Read_Process_Schedule {
+		schedule.new_thread_weight_limit = process_new_thread_weight_limit(process)
 		user_copy(rawptr(uintptr(v[3])), &schedule, size)
 	} else {
 		user_copy(&schedule, rawptr(uintptr(v[3])), size)
-		after, refusal := op.program_schedule_after_write(schedule)
+		after, refusal := op.process_schedule_after_write(schedule)
 		if refusal != .None {
 			operation := &processor_self().operation
 			operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
 			return .Bad_Operation
 		}
-		intrinsics.atomic_store(&program.new_thread_weight_limit, after.new_thread_weight_limit)
+		intrinsics.atomic_store(&process.new_thread_weight_limit, after.new_thread_weight_limit)
 	}
 	results[0] = size
 	return .Ok
@@ -483,7 +483,7 @@ thread_schedule_ends :: #force_inline proc "contextless" (thread: ^Thread) -> bo
 
 // thread_schedule_read gives the weight, the request and the two weight
 // limits of a thread, all of one moment: they change together under the
-// run lock of its home. The caller holds the program lock of the thread.
+// run lock of its home. The caller holds the process lock of the thread.
 thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Thread_Schedule, status: Operation_Outcome) {
 	home := run_lock(thread)
 	defer run_unlock(home)
@@ -496,15 +496,15 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Th
 // thread_schedule_write gives a thread a weight and a request, in any state
 // of the thread: in the queue of its home, on a processor, in a wait, or
 // held by a stop. The caller checked each value against the most of the
-// contract. The caller holds the program lock of the thread, so the thread
+// contract. The caller holds the process lock of the thread, so the thread
 // does not end its life in the table and its place serves no new thread.
 //
-// by_machine false: the program of the thread, or the holder of a thread
+// by_machine false: the process of the thread, or the holder of a thread
 // handle, writes. Such a write only lowers: a weight above the weight that
 // the thread has now, or a request above its request, is refused
 // (Bad_Operation, with the part and the value that the thread has), and
 // nothing changes. 0 keeps the value that the thread has. The weight limit
-// of the record is not read. A program chooses the moment of its writes;
+// of the record is not read. A process chooses the moment of its writes;
 // with one direction only, no sequence of them gets back what a write
 // gave up.
 //
@@ -567,7 +567,7 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 
 // thread_placement_read gives the set of processors of a thread and the
 // limit of that set, both of one moment: they change together under the
-// run lock of its home. The caller holds the program lock of the thread.
+// run lock of its home. The caller holds the process lock of the thread.
 thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.Thread_Placement, status: Operation_Outcome) {
 	home := run_lock(thread)
 	defer run_unlock(home)
@@ -580,14 +580,14 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 // thread_placement_write gives a thread a set of processors, in any state
 // of the thread: in the queue of its home, on a processor, in a wait, or
 // held by a stop (docs/SCHEDULING.md, "The placement of a thread"). The
-// caller holds the program lock of the thread, so the thread does not end
+// caller holds the process lock of the thread, so the thread does not end
 // its life in the table, its place serves no new thread, and no other
 // write of its placement runs: the placement that this procedure reads
 // before it takes a run lock is the one that it finds under the lock.
 //
-// by_machine false: the program of the thread, or the holder of a thread
+// by_machine false: the process of the thread, or the holder of a thread
 // handle, writes. Such a write only narrows (op.thread_placement_after_write):
-// a program chooses the moment of its writes, and with one direction one
+// a process chooses the moment of its writes, and with one direction one
 // thread commands fewer moves than the machine has processors. by_machine
 // true: the holder of the machine writes any set and the limit.
 //
@@ -614,7 +614,7 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 //
 // The write ends the turn of no other thread, and sends no interrupt to a
 // processor that runs a thread: the thread that runs there when an
-// interrupt arrives can be a thread of another program, which would pay
+// interrupt arrives can be a thread of another process, which would pay
 // for it. It wakes only an idle processor, for a thread that it left in a
 // list (below). When the calling
 // thread wrote its own set and its processor is not in it, its own turn
@@ -624,7 +624,7 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 // home makes the processors look at that list (kick): an idle processor
 // that the set has now takes the thread. Without it that processor stays
 // idle until another wake, because the end of a turn wakes no processor.
-// Only the holder of the machine widens a set, so no program commands
+// Only the holder of the machine widens a set, so no process commands
 // these wakes.
 //
 // A pick by another processor can change the home between the read of the
@@ -709,14 +709,14 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 	return .Ok, .None, 0
 }
 
-// thread_of_number gives the live thread of a program with a number, or 0.
-// The caller holds the program lock.
-thread_of_number :: proc "contextless" (program_index: u32, number: u64) -> u32 {
+// thread_of_number gives the live thread of a process with a number, or 0.
+// The caller holds the process lock.
+thread_of_number :: proc "contextless" (process_index: u32, number: u64) -> u32 {
 	if number >= op.THREAD_CAPACITY {
 		return 0
 	}
 	for &thread, slot in threads[1:] {
-		if thread.program == program_index && u64(thread.number) == number && thread.state != .None && thread.state != .Stopped && !thread.finished {
+		if thread.process == process_index && u64(thread.number) == number && thread.state != .None && thread.state != .Stopped && !thread.finished {
 			return u32(slot + 1)
 		}
 	}
@@ -741,7 +741,7 @@ thread_control_stop :: proc "contextless" (index: u32, results: ^[7]u64) -> Oper
 		// It leaves the list as a thread that starts to wait: its strategy
 		// keeps its position, and the Resume places it as a woken thread.
 		// Zero values here would forgive what the thread owes: a Stop and a
-		// Resume by another thread of its program would put it before
+		// Resume by another thread of its process would put it before
 		// threads that waited longer.
 		strategy_leaves_list(&run_queues[home], home, thread)
 		queue_remove(thread)
@@ -786,15 +786,15 @@ thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64) 
 
 // thread_held_off_processor says if a thread is held, and waits until no
 // processor runs it when it waits for an answer of the fault ring. The
-// caller holds the program lock of the thread: the hold lasts while it is
+// caller holds the process lock of the thread: the hold lasts while it is
 // held.
 //
 // A thread that waits for an answer can still be on its way out of its
 // processor: its record is published before it leaves. That way takes no
-// program lock and no control lock (fault_deliver returned; then
+// process lock and no control lock (fault_deliver returned; then
 // kernel_interrupt and schedule up to the store of `processor`), so the
 // wait here ends. A thread held only by its stop count and still on a
-// processor can be inside an operation that waits for the program lock
+// processor can be inside an operation that waits for the process lock
 // that the caller holds: no wait for it; Stop already waited for it, so a
 // thread still there is one that another Stop holds now, and the caller
 // gets Bad_State.
@@ -845,5 +845,5 @@ thread_frame_write :: proc "contextless" (thread: ^Thread, registers: ^op.Thread
 
 #assert(op.THREAD_CODE_SELECTOR == SELECTOR_USER_CODE)
 #assert(op.THREAD_STACK_SELECTOR == SELECTOR_USER_DATA)
-#assert(op.THREAD_FLAGS_ALLOWED == RETURN_FLAGS_OF_A_PROGRAM | USER_FLAGS)
+#assert(op.THREAD_FLAGS_ALLOWED == RETURN_FLAGS_OF_A_PROCESS | USER_FLAGS)
 #assert(op.THREAD_FLAGS_REQUIRED == USER_FLAGS)

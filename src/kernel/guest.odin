@@ -4,12 +4,12 @@ import "base:intrinsics"
 import op "modus:contract/operation"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): a
-// program whose page table is the nested page table of a guest processor,
+// process whose page table is the nested page table of a guest processor,
 // and the operation Guest_Run that runs that processor on the calling
 // thread. This is the AMD form (SVM): the control block of the processor
 // (the VMCB) and the instructions vmrun, vmload and vmsave (guest_enter in
 // processor.asm). The kernel holds the mechanism only: no exit is emulated
-// here but the page on first use; each other exit goes back to the program.
+// here but the page on first use; each other exit goes back to the process.
 
 // The model-specific registers of SVM (the AMD manual, volume 2, "SVM
 // Related MSRs").
@@ -76,12 +76,12 @@ INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 8 | 1 << 9 | 1 << 10 | 1 <<
 // Each read and each write of a debug register: the exit does not restore
 // DR0 to DR3, which hold the breakpoints of threads.
 INTERCEPT_DEBUG_REGISTERS :: u32(0xFFFF_FFFF)
-// The machine check: a fault of the machine, which stops it, as in a program.
+// The machine check: a fault of the machine, which stops it, as in a process.
 // The alignment check and the debug exception: a guest that owns its
 // descriptor table and its stack can make the delivery of one of them raise
 // it again, so the processor loops in the delivery, takes no interrupt and
 // never exits; each processor that then waits for it stops too. Each one
-// exits, and the program gets it as an exit of the kind Other.
+// exits, and the process gets it as an exit of the kind Other.
 GUEST_VECTOR_DEBUG :: 1
 GUEST_VECTOR_ALIGNMENT_CHECK :: 17
 INTERCEPT_EXCEPTIONS :: u32(1 << VECTOR_MACHINE_CHECK | 1 << GUEST_VECTOR_DEBUG | 1 << GUEST_VECTOR_ALIGNMENT_CHECK)
@@ -171,7 +171,7 @@ GUEST_PAGES_IN_ONE_RUN :: 64
 
 // What the processors can do for a guest. Written by the first processor
 // at its setup, and cleared by another processor that cannot do the same,
-// before any program runs.
+// before any process runs.
 Guest_Support :: struct {
 	ready:               bool, // Each processor that runs threads can run a guest.
 	next_instruction:    bool, // NRIPS: the exit gives the address after the instruction.
@@ -190,19 +190,19 @@ guest_register_map: u64 // Physical: GUEST_REGISTER_MAP_PAGES pages of ones.
 guest_host_areas: [PROCESSOR_CAPACITY]u64
 guest_host_save_areas: [PROCESSOR_CAPACITY]u64
 // For each processor, the nested page table of the guest that it runs now,
-// or 0 (atomic). processors_with_table reads it: an unmap in a guest program
+// or 0 (atomic). processors_with_table reads it: an unmap in a guest process
 // reaches the processor that runs the guest, whose cr3 is another table.
 guest_tables_running: [PROCESSOR_CAPACITY]u64
 
-// The guest processor of a program, by the index of the program. One for
-// each program slot: a guest is a program.
+// The guest processor of a process, by the index of the process. One for
+// each process slot: a guest is a process.
 Guest :: struct {
-	program_serial: u32, // The serial of the program that is this guest. 0: no guest in the slot.
-	running:        bool, // A thread runs the guest processor now. Program lock of the guest.
+	process_serial: u32, // The serial of the process that is this guest. 0: no guest in the slot.
+	running:        bool, // A thread runs the guest processor now. Process lock of the guest.
 	control_block:  u64, // Physical: the control block of the guest processor, one page.
 	state_area:     u64, // Physical: the extended state of the guest processor, one page.
 }
-guests: [PROGRAM_CAPACITY]Guest
+guests: [PROCESS_CAPACITY]Guest
 
 // The general registers of a guest processor that the control block does
 // not keep, in the order of guest_enter in processor.asm.
@@ -272,7 +272,7 @@ guest_support_read :: proc "contextless" () -> (support: Guest_Support) {
 // SVM on, and its two pages. The first processor reads the support and makes
 // the two maps. A processor that cannot run a guest turns the support off
 // for the machine: a thread can run on any processor. It runs at the setup
-// of each processor, before any program.
+// of each processor, before any process.
 guest_processor_setup :: proc "contextless" (cpu: ^Processor) {
 	if cpu.index == 0 {
 		guest_support = guest_support_read()
@@ -322,12 +322,12 @@ guest_processor_setup :: proc "contextless" (cpu: ^Processor) {
 	model_specific_register_write(MSR_HOST_SAVE_AREA, host_save_area)
 }
 
-// program_is_guest says if a program is a guest now: Program_Start refuses
+// process_is_guest says if a process is a guest now: Process_Start refuses
 // it, because its page table has no kernel half. The caller holds the
-// program lock.
-program_is_guest :: proc "contextless" (index: u32) -> bool {
-	serial := guests[index].program_serial
-	return serial != 0 && serial == programs[index].serial
+// process lock.
+process_is_guest :: proc "contextless" (index: u32) -> bool {
+	serial := guests[index].process_serial
+	return serial != 0 && serial == processes[index].serial
 }
 
 // guest_segment_write writes one segment of the state of a guest processor:
@@ -372,63 +372,63 @@ guest_control_block_write :: proc "contextless" (block: u64, table: u64) {
 	direct(block + STATE_PAGE_ATTRIBUTES, u64)^ = PAGE_ATTRIBUTES_AT_RESET
 }
 
-// guest_frame_return gives a page that the budget of a program paid back to
+// guest_frame_return gives a page that the budget of a process paid back to
 // that budget, as address_space_free does for a table.
-guest_frame_return :: proc "contextless" (program: ^Program, frame: u64) {
+guest_frame_return :: proc "contextless" (process: ^Process, frame: u64) {
 	lock_take(&frame_lock, .Frame)
 	frames_free_held(frame, 1)
-	budgets[program.budget].amounts.pages += 1
+	budgets[process.budget].amounts.pages += 1
 	lock_free(&frame_lock, .Frame)
 }
 
-// guest_create makes a program a guest, at its first Guest_Run: the budget
-// of the program pays the control block and the extended state; the time
-// page and the own log ring leave the program, and the kernel half leaves
+// guest_create makes a process a guest, at its first Guest_Run: the budget
+// of the process pays the control block and the extended state; the time
+// page and the own log ring leave the process, and the kernel half leaves
 // its top table, so
-// that the guest reaches only what its program mapped. Nothing changes when
-// the budget cannot pay. The caller holds the program lock; the program is
+// that the guest reaches only what its process mapped. Nothing changes when
+// the budget cannot pay. The caller holds the process lock; the process is
 // Created, with no thread.
 guest_create :: proc "contextless" (index: u32) -> Operation_Outcome {
-	program := &programs[index]
-	control_block := frame_paid(&program.budget)
+	process := &processes[index]
+	control_block := frame_paid(&process.budget)
 	if control_block == 0 {
 		return .No_Budget
 	}
-	state_area := frame_paid(&program.budget)
+	state_area := frame_paid(&process.budget)
 	if state_area == 0 {
-		guest_frame_return(program, control_block)
+		guest_frame_return(process, control_block)
 		return .No_Budget
 	}
 	extended_state_start(direct(state_area, Extended_State_Area))
-	guest_control_block_write(control_block, program.table)
-	for &mapping in program.mappings {
+	guest_control_block_write(control_block, process.table)
+	for &mapping in process.mappings {
 		if mapping.page_count != 0 && mapping.address == op.TIME_ADDRESS {
-			unmap(program, &mapping)
+			unmap(process, &mapping)
 			break
 		}
 	}
 	// A guest has no thread, so it never writes a log record: its own log
 	// ring returns to its budget, as the time page leaves it.
-	own_log_ring_end(program)
-	// No processor uses this table as its cr3: the program has no thread,
-	// and Program_Start refuses it from now.
-	for &entry in direct(program.table, [512]u64)^[256:] {
+	own_log_ring_end(process)
+	// No processor uses this table as its cr3: the process has no thread,
+	// and Process_Start refuses it from now.
+	for &entry in direct(process.table, [512]u64)^[256:] {
 		entry = 0
 	}
-	guests[index] = {program_serial = program.serial, control_block = control_block, state_area = state_area}
+	guests[index] = {process_serial = process.serial, control_block = control_block, state_area = state_area}
 	return .Ok
 }
 
-// guest_end gives back the pages of the guest of a program that ends. The
-// caller is program_cleanup, with the program lock: no run holds the
-// program any more.
+// guest_end gives back the pages of the guest of a process that ends. The
+// caller is process_cleanup, with the process lock: no run holds the
+// process any more.
 guest_end :: proc "contextless" (index: u32) {
-	if !program_is_guest(index) {
+	if !process_is_guest(index) {
 		return
 	}
 	guest := &guests[index]
-	guest_frame_return(&programs[index], guest.control_block)
-	guest_frame_return(&programs[index], guest.state_area)
+	guest_frame_return(&processes[index], guest.control_block)
+	guest_frame_return(&processes[index], guest.state_area)
 	guest^ = {}
 }
 
@@ -437,16 +437,16 @@ guest_end :: proc "contextless" (index: u32) {
 // exit. The extended state of the thread leaves the processor during the
 // guest, and comes back after it: the kernel has no vector instruction of
 // its own, so the registers of the thread are live here.
-guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest: ^Guest, program: ^Program, registers: ^op.Guest_Registers) -> (exit: Guest_Exit) {
+guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest: ^Guest, process: ^Process, registers: ^op.Guest_Registers) -> (exit: Guest_Exit) {
 	// Before the entry, and seen by an unmap that cleared its entries, or
 	// by a stop: then either the unmap or the stop sends its interrupt
 	// here, or this entry sees what it wrote: the cleared entries, or the
-	// state Stopped below (processors_with_table, program_stop). Each side
+	// state Stopped below (processors_with_table, process_stop). Each side
 	// writes, then reads the word of the other side.
-	intrinsics.atomic_store(&guest_tables_running[cpu.index], program.table)
-	if intrinsics.atomic_load(&program.state) == .Stopped {
+	intrinsics.atomic_store(&guest_tables_running[cpu.index], process.table)
+	if intrinsics.atomic_load(&process.state) == .Stopped {
 		intrinsics.atomic_store(&guest_tables_running[cpu.index], 0)
-		return {code = GUEST_EXIT_INTERRUPT} // The program stopped: no instruction of the guest runs after its stop.
+		return {code = GUEST_EXIT_INTERRUPT} // The process stopped: no instruction of the guest runs after its stop.
 	}
 	block := guest.control_block
 	direct(block + STATE_RAX, u64)^ = registers.rax
@@ -503,7 +503,7 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest:
 		direct(block + CONTROL_EVENT_INJECTION, u64)^ = guest_event_to_deliver_again(direct(block + CONTROL_EXIT_EVENT, u64)^)
 	}
 	// An interrupt of another processor that waits in processor_sync is
-	// held until the return to the program: the answer comes now.
+	// held until the return to the process: the answer comes now.
 	sync_acknowledge(cpu)
 	return exit
 }
@@ -523,7 +523,7 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 	case GUEST_EXIT_PORT:
 		information := exit.information_1
 		if information & (PORT_STRING | PORT_REPEAT) != 0 {
-			break // A string of ports reads or writes guest memory: the program decodes it (Other).
+			break // A string of ports reads or writes guest memory: the process decodes it (Other).
 		}
 		size := u64(4)
 		if information & PORT_ONE_BYTE != 0 {
@@ -564,31 +564,31 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 
 // guest_run runs the operation Guest_Run (src/md/features/guest.md, "The
 // run, step by step"). It takes its own locks: the lock of the caller for
-// the handle and the record, the lock of the guest program for its state and
+// the handle and the record, the lock of the guest process for its state and
 // for each page on first use, and no lock while the guest runs. A run holds
-// the guest program as a thread on a processor holds its program: a stop
-// during the run cleans the program up after it.
+// the guest process as a thread on a processor holds its process: a stop
+// during the run cleans the process up after it.
 guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if !intrinsics.atomic_load(&guest_support.ready) {
 		return .Bad_Operation
 	}
 	thread := &threads[index]
-	caller_index := thread.program
-	caller := &programs[caller_index]
+	caller_index := thread.process
+	caller := &processes[caller_index]
 	registers: op.Guest_Registers
 	guest_index, guest_serial: u32
-	caller_taken := program_lock(caller_index)
-	slot, found := handle_find(caller, v[0], .Program, {.Control})
+	caller_taken := process_lock(caller_index)
+	slot, found := handle_find(caller, v[0], .Process, {.Control})
 	readable := found == .Ok && user_range(caller, v[1], size_of(op.Guest_Registers), true)
 	if readable {
-		// A copy, checked after: the program can change its memory meanwhile.
+		// A copy, checked after: the process can change its memory meanwhile.
 		user_copy(&registers, rawptr(uintptr(v[1])), size_of(registers))
 		guest_index = slot.object
-		// The handle holds the program: its slot serves no other program
+		// The handle holds the process: its slot serves no other process
 		// while the handle lives.
-		guest_serial = intrinsics.atomic_load(&programs[guest_index].serial)
+		guest_serial = intrinsics.atomic_load(&processes[guest_index].serial)
 	}
-	program_unlock(caller_index, caller_taken)
+	process_unlock(caller_index, caller_taken)
 	if found != .Ok {
 		return found
 	}
@@ -602,59 +602,59 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 		return .Bad_Operation
 	}
 
-	guest_program := &programs[guest_index]
+	guest_process := &processes[guest_index]
 	guest := &guests[guest_index]
-	guest_taken := program_lock(guest_index)
-	// The handle can have closed since: the serial names the program.
-	if intrinsics.atomic_load(&guest_program.serial) != guest_serial || guest_program.state != .Created || guest_program.thread_count != 0 {
-		program_unlock(guest_index, guest_taken)
+	guest_taken := process_lock(guest_index)
+	// The handle can have closed since: the serial names the process.
+	if intrinsics.atomic_load(&guest_process.serial) != guest_serial || guest_process.state != .Created || guest_process.thread_count != 0 {
+		process_unlock(guest_index, guest_taken)
 		return .Bad_State
 	}
-	if !program_is_guest(guest_index) {
+	if !process_is_guest(guest_index) {
 		if status := guest_create(guest_index); status != .Ok {
-			program_unlock(guest_index, guest_taken)
+			process_unlock(guest_index, guest_taken)
 			return status
 		}
 	}
 	if guest.running {
-		program_unlock(guest_index, guest_taken)
+		process_unlock(guest_index, guest_taken)
 		return .Bad_State // One guest processor: one thread runs it at a time.
 	}
 	guest.running = true
-	intrinsics.atomic_add(&guest_program.holds, 1)
-	program_unlock(guest_index, guest_taken)
+	intrinsics.atomic_add(&guest_process.holds, 1)
+	process_unlock(guest_index, guest_taken)
 
 	cpu := processor_self()
 	exit: Guest_Exit
 	pages_given := 0
 	for {
-		exit = guest_enter_once(cpu, thread, guest, guest_program, &registers)
+		exit = guest_enter_once(cpu, thread, guest, guest_process, &registers)
 		if exit.code == GUEST_EXIT_MACHINE_CHECK {
 			fault_report_begin()
-			log("kernel: machine check while a guest of program ", Module_Name{program_name(caller)}, " ran: a fault of the machine, not of the guest: the machine stops")
+			log("kernel: machine check while a guest of process ", Module_Name{process_name(caller)}, " ran: a fault of the machine, not of the guest: the machine stops")
 			machine_stop(.Fault)
 		}
 		if exit.code == GUEST_EXIT_NESTED_PAGE_FAULT && exit.information_1 & FAULT_RESERVED_BIT != 0 {
 			// The guest can perhaps cause it with an address past the
 			// width of the nested table: an exit that a guest can cause
-			// never stops the machine. The run ends, and the program gets
+			// never stops the machine. The run ends, and the process gets
 			// the exit of a memory fault.
 			// One line at each power of two of the count, as the faults of
 			// a device: a guest repeats it at each run.
 			reserved_faults := intrinsics.atomic_add(&guest_reserved_bit_faults, 1) + 1
-			if reserved_faults & (reserved_faults - 1) == 0 do log("kernel: a nested page fault with the reserved bit (", reserved_faults, " in all) in a guest of program ", Module_Name{program_name(caller)}, ": error ", Hex(exit.information_1), " guest address ", Hex(exit.information_2), "; the run ends")
+			if reserved_faults & (reserved_faults - 1) == 0 do log("kernel: a nested page fault with the reserved bit (", reserved_faults, " in all) in a guest of process ", Module_Name{process_name(caller)}, ": error ", Hex(exit.information_1), " guest address ", Hex(exit.information_2), "; the run ends")
 			break
 		}
 		if exit.code != GUEST_EXIT_NESTED_PAGE_FAULT || intrinsics.atomic_load(&thread.stop_requested) {
 			break
 		}
-		// A page on first use of a mapping of the guest, as for a program.
-		page_taken := program_lock(guest_index)
-		running := guest_program.state == .Created
-		given := running && page_give(guest_program, exit.information_2, exit.information_1 & FAULT_WRITE != 0, exit.information_1 & FAULT_EXECUTE != 0)
-		program_unlock(guest_index, page_taken)
+		// A page on first use of a mapping of the guest, as for a process.
+		page_taken := process_lock(guest_index)
+		running := guest_process.state == .Created
+		given := running && page_give(guest_process, exit.information_2, exit.information_1 & FAULT_WRITE != 0, exit.information_1 & FAULT_EXECUTE != 0)
+		process_unlock(guest_index, page_taken)
 		if !running {
-			exit = {code = GUEST_EXIT_INTERRUPT} // The program stopped: the run ends with nothing to answer.
+			exit = {code = GUEST_EXIT_INTERRUPT} // The process stopped: the run ends with nothing to answer.
 			break
 		}
 		if !given {
@@ -667,23 +667,23 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 		}
 	}
 
-	release_taken := program_lock(guest_index)
+	release_taken := process_lock(guest_index)
 	guest.running = false
-	program_unlock(guest_index, release_taken)
-	// A stop of the guest program during the run waited for this hold.
-	if program_leave(guest_index) {
+	process_unlock(guest_index, release_taken)
+	// A stop of the guest process during the run waited for this hold.
+	if process_leave(guest_index) {
 		control_take()
-		program_cleanup(guest_index)
+		process_cleanup(guest_index)
 		control_free()
 	}
 
 	guest_exit_results(exit, &registers, results)
-	caller_taken = program_lock(caller_index)
+	caller_taken = process_lock(caller_index)
 	writable := user_range(caller, v[1], size_of(op.Guest_Registers), true)
 	if writable {
 		user_copy(rawptr(uintptr(v[1])), &registers, size_of(registers))
 	}
-	program_unlock(caller_index, caller_taken)
+	process_unlock(caller_index, caller_taken)
 	if !writable {
 		results^ = {}
 		return .Bad_Address

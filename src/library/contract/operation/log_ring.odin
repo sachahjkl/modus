@@ -7,7 +7,7 @@ package operation
 // the whole record. While it writes, `written` is still W. So the record
 // W - LOG_RECORD_CAPACITY, whose number is `written - LOG_RECORD_CAPACITY`,
 // can be half written: a reader never takes it. A copy that holds the old
-// head of a record and the new text would give one program the text of
+// head of a record and the new text would give one process the text of
 // another one.
 //
 // A reader copies the record, puts an acquire fence, reads `written` again,
@@ -47,7 +47,7 @@ log_copy_kept :: proc "contextless" (number: u64, written_after_copy: u64) -> bo
 OWN_NUMBER_HALF :: u64(1) << 31
 
 // own_log_window gives which records of an own log ring a reader receives
-// when it asks from the own number `after` on, and the program wrote
+// when it asks from the own number `after` on, and the process wrote
 // `written` records: the count of the first one, the own records from
 // `after` that the ring no longer keeps, and the records from the first one
 // to the last one. `after` is an own number, the low 32 bits of a count: it
@@ -72,7 +72,7 @@ own_log_window :: proc "contextless" (written: u64, after: u32) -> (first: u64, 
 }
 
 // own_log_place gives where the record with the count `number` of a
-// program is in its own log ring: the page of the ring, and the offset in
+// process is in its own log ring: the page of the ring, and the offset in
 // that page. A page holds whole records.
 own_log_place :: proc "contextless" (number: u64) -> (page: u64, offset: u64) {
 	RECORDS_OF_A_PAGE :: 4096 / size_of(Log_Record)
@@ -83,7 +83,7 @@ own_log_place :: proc "contextless" (number: u64) -> (page: u64, offset: u64) {
 // The bytes of the head of a line of the serial port: "[", the name, ":",
 // the channel, "] ".
 LOG_LINE_HEAD_CAPACITY :: 1 + LOG_NAME_BYTES + 1 + LOG_CHANNEL_CAPACITY + 2
-// The bytes of the name of a program in a record (`Log_Record.name`).
+// The bytes of the name of a process in a record (`Log_Record.name`).
 LOG_NAME_BYTES :: 32
 #assert(offset_of(Log_Record, channel) - offset_of(Log_Record, name) == LOG_NAME_BYTES)
 // The most bytes that one record puts on the serial port: the head, its
@@ -92,14 +92,14 @@ LOG_SERIAL_LINE_BYTES_MOST :: LOG_LINE_HEAD_CAPACITY + LOG_TEXT_CAPACITY + 2
 
 // log_line_head writes into `head` the head of the line of a record on the
 // serial port, and gives its bytes: `[name:channel] ` for a record of a
-// program that starts a line, `[name] ` when the program gave no channel,
+// process that starts a line, `[name] ` when the process gave no channel,
 // and nothing for a record of the kernel or a record that continues the
 // line of the record before it (`line_open`). The kernel writes the serial
 // port from the whole log with it, so the line of a long text that the log
 // splits into records is one line again
 // (src/md/features/log_side_channels.md).
 log_line_head :: proc "contextless" (record: ^Log_Record, line_open: bool, head: ^[LOG_LINE_HEAD_CAPACITY]u8) -> int {
-	if line_open || record.program == 0 {
+	if line_open || record.process == 0 {
 		return 0
 	}
 	count := 0

@@ -7,8 +7,8 @@
 // message interrupt, memory for the queues, the machine with the right
 // Physical only, and a copy of the configuration of the device. The root
 // service found the device, enabled it and set its interrupt. The kernel has
-// no code for this device: the code that knows a device is a program or a
-// library. The code of virtio that the block service also uses is in
+// no code for this device: the code that knows a device is a module: a service
+// or a library. The code of virtio that the block service also uses is in
 // src/library/support/virtio.
 //
 // The device reads and writes the frame region of the client, and reads its
@@ -16,12 +16,12 @@
 // with no kernel entry. This service does not read a frame: the client
 // builds and checks each one.
 //
-// **What it is for.** It shows that a network driver is a program, with no
+// **What it is for.** It shows that a network driver is a process, with no
 // right beyond its one device, and that the frames move with no copy by
 // the kernel: the client holds a [frame region](term:frame-region), lends
 // it once with `Attach`, and the device reads and writes it directly.
 //
-// **Who uses it.** The root service starts it for the program with the
+// **Who uses it.** The root service starts it for the process with the
 // grant **Network_Device**: the [network service](term:network-service),
 // which builds and checks each frame. It gives the
 // [frame ring](term:frame-ring) to that one client.
@@ -40,7 +40,7 @@
 // - `Read_Region_Add`, `Read_Region_Remove`: take, then end, a
 //   [read region](term:read-region): memory that the device only reads,
 //   where the network service lets the device read the data of a datagram
-//   in the datagram region of the program that sends it.
+//   in the datagram region of the process that sends it.
 // - `Statistics`: the frames and bytes sent and received, the kernel
 //   entries and the interrupts of the service, for a measure.
 //
@@ -64,7 +64,7 @@ import "modus:support/virtio"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, processes = 1, threads = 1}
 
 // The features of a virtio network device that this service takes.
 FEATURE_MAC :: 5 // The configuration has the hardware address.

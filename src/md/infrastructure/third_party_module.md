@@ -14,7 +14,7 @@ The terms outside module and module build file are in [`docs/glossary/communicat
 
 ## What the developer has
 
-1. A folder with one Odin package: the sources of the module, and its assembly files if it has some. The sources import the packages of the system from the source library `modus`, with the lines of a program of the system.
+1. A folder with one Odin package: the sources of the module, and its assembly files if it has some. The sources import the packages of the system from the source library `modus`, with the lines of a module of the system.
 2. In that folder, the module build file `module.txt`.
 3. A checkout of the system. For a module with an import, the checkout is built: the build of the system wrote the file of each module.
 
@@ -23,7 +23,7 @@ The terms outside module and module build file are in [`docs/glossary/communicat
 The file has the fields of a row of the module table that a developer chooses, one on each line, as `key: value`:
 
 ```
-name: my_program
+name: my_process
 imports: drawing
 defines: DRAWING_THROUGH_MODULE=true
 library: no
@@ -90,7 +90,7 @@ The folder `build` is inside the folder of the package. The compiler reads the s
 
 A debug object names each source file by a path that is not a path of the host: from the root of the repository for a source of the system, with the name of its library for a source of the compiler. A source of an outside module is in neither.
 
-The chosen form: the path from the folder that holds the folder of the module. The file `main.odin` of the folder `/home/someone/projects/my_program` is `my_program/main.odin`. A stop report and the debugger then show the name that the developer gave the folder, and no folder above it.
+The chosen form: the path from the folder that holds the folder of the module. The file `main.odin` of the folder `/home/someone/projects/my_process` is `my_process/main.odin`. A stop report and the debugger then show the name that the developer gave the folder, and no folder above it.
 
 - The rule for the folder of the module is read before the rule for the root of the repository. In the check of the project, the folder of the example is inside the repository.
 - The writer of the debug object refuses an object whose bytes hold the folder above the folder of the module, as it refuses the folder of the build.
@@ -124,7 +124,7 @@ The rules of the repository of the system that the tool does not apply to an out
 
 `modustool check` builds two outside modules, each from a copy of a module of the system:
 
-- `tally`, a program with no import;
+- `tally`, a module with no import;
 - `agenda`, a module that imports `calendar`.
 
 For each, the check copies the sources with no change to a folder outside `src`, writes the module build file, and starts the tool as a second process in the folder of the copy, with the argument `--system`. So the check passes the path that a developer types: the read of the file, the change of the working folder, the two steps. Then it reads the module file and proves:
@@ -142,9 +142,9 @@ The limit: the examples are copies inside the folder of the build. A folder on a
 
 ## Built and left
 
-Built: a machine that runs the module (the command `program-disk` writes a data disk whose store of the programs holds module files, and the root service starts a disk program by its hash, with no grant: the boot image, its system description and its build record do not change); the debug object of the module in that machine (`program-disk` writes it beside the module file, and the debugger reads it at an attach, and for the stop report of the module that the root service keeps after a fault: [`../features/debug_object_of_a_disk_program.md`](../features/debug_object_of_a_disk_program.md)); the command `module-build`, the module build file, the three settings of the process (the folder of the outputs, the folder of the imports, the folder of the outside source), the rule of the three places, the path of an outside source in a debug object, the variable `MODUS_SYSTEM` in the command of the flake and a development shell with the build tools and no hook of the repository, the proof with two examples.
+Built: a machine that runs the module (the command `module-disk` writes a data disk whose store of the module files holds module files, and the root service starts a disk process by its hash, with no grant: the boot image, its system description and its build record do not change); the debug object of the module in that machine (`module-disk` writes it beside the module file, and the debugger reads it at an attach, and for the stop report of the module that the root service keeps after a fault: [`../features/debug_object_of_a_disk_process.md`](../features/debug_object_of_a_disk_process.md)); the command `module-build`, the module build file, the three settings of the process (the folder of the outputs, the folder of the imports, the folder of the outside source), the rule of the three places, the path of an outside source in a debug object, the variable `MODUS_SYSTEM` in the command of the flake and a development shell with the build tools and no hook of the repository, the proof with two examples.
 
 Left:
 
-- **An import of another outside module.** An import names a module of the system. A developer with a library module and a program of their own needs a second place for the file of an import. The roadmap holds this work.
+- **An import of another outside module.** An import names a module of the system. A developer with a library module and a module of their own that imports it needs a second place for the file of an import. The roadmap holds this work.
 - **A module in another language.** The description of the exports comes from the Odin source.

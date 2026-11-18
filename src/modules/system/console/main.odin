@@ -1,6 +1,6 @@
-// The console: a program that has a terminal. The input
+// The console: a process that has a terminal. The input
 // types expressions of a small language. A command is a function with typed
-// parameters and a typed result; it is not a separate program, and it does
+// parameters and a typed result; it is not a separate process, and it does
 // not parse text.
 //
 // **What it is for.** The console is the place where the principal talks to
@@ -16,7 +16,7 @@
 // **What a reader sees.** The root service starts the console at each
 // boot, after the compositor and `date`. The console has no surface: it
 // writes records to its [terminal](term:terminal) and reads keys from it
-// (src/library/support/terminal); the program `terminal` draws them in a window. The
+// (src/library/support/terminal); the process `terminal` draws them in a window. The
 // first line is `kernel console. A command is a typed function: try
 // help()`, and the log gets `console: ready`. Each line that the input
 // enters goes to the log too, after the prompt `> `.
@@ -34,7 +34,7 @@
 // where(log.records(0), "level", "error")
 // start("life")
 // where(grants("remote"), "state", "held")
-// sort(where(programs(), "state", "waiting"), "name")
+// sort(where(processes(), "state", "waiting"), "name")
 // ```
 //
 // **The commands of the console itself** (`commands.odin`, `tables.odin`,
@@ -46,10 +46,10 @@
 //   nothing of the console), `unload(name)`, `loaded()`.
 // - Services: `connect(name)` makes each export of a running service a
 //   command `name.export`.
-// - Programs: `programs()` (the export `monitor.programs`, under a short
-//   name), `program_modules()`, `start(name)`, `stop(name)`,
+// - Processes: `processes()` (the export `monitor.processes`, under a short
+//   name), `process_modules()`, `start(name)`, `stop(name)`,
 //   `grants(name)`, `revoke(name, grant)`.
-// - The debugger: `debug(program)`, `break_at(place)`, `stack(thread)`,
+// - The debugger: `debug(process)`, `break_at(place)`, `stack(thread)`,
 //   `locals(thread, frame)`, `step(thread)`, `detach()` and the others:
 //   each one is an export of the service `debugger` under a short name
 //   (docs/CONSOLE.md, "The commands of the debugger").
@@ -62,7 +62,7 @@
 //   `variables()`, `clear()`, `shutdown()`, `history_clear()`.
 //
 // **The log records of a line.** While a line calls an export, the console
-// shows under the line the log records that the called program writes, by
+// shows under the line the log records that the called process writes, by
 // channel, with each value in the color of its value kind. It reads them
 // as any caller does: from the service `log`
 // (docs/CONSOLE.md, "The log records of a line").
@@ -79,11 +79,11 @@
 // isolated call when the input presses Escape. A slow command never
 // freezes the edit line.
 //
-// **Its grants** (the root service, `program_roles`), each for one group of
+// **Its grants** (the root service, `process_roles`), each for one group of
 // commands:
 //
-// - **Root_Ring**: start and stop programs, and connect to every service.
-// - **Inspect**: `memory()`, `locks()` and `program_modules()` read the
+// - **Root_Ring**: start and stop processes, and connect to every service.
+// - **Inspect**: `memory()`, `locks()` and `process_modules()` read the
 //   reports of the machine.
 // - **Stop**: `shutdown()` stops the machine.
 // - **Image** and **Debug_Image**: `load` and `isolate` read modules of the
@@ -91,7 +91,7 @@
 // - **Terminal**: its terminal.
 // - **Store**: a private store in the storage service.
 // - **Acts_For_Principal**: a service shows it what it holds for all
-//   callers (the log records, the programs of `monitor`).
+//   callers (the log records, the processes of `monitor`).
 // - **Replacements** and **Replace**: read and change the
 //   [replacement table](term:replacement-table).
 // - **History_Store**: the store of its line history, apart from its
@@ -100,13 +100,13 @@
 //   its commands show in the palette of the desktop
 //   (docs/CONSOLE.md, "8. The palette provider").
 //
-// Its budget has room for 5 programs and 6 threads: the console, its 4
+// Its budget has room for 5 processes and 6 threads: the console, its 4
 // [sandboxes](term:sandbox) of isolated calls, and their threads.
 //
 // **What it does not prove.** The console acts for principal 0 only: the
 // storage service refuses it the stores of a
 // [named principal](term:named-principal) (docs/PRINCIPALS.md). It does not
-// show that a program that is not the console cannot reach these commands:
+// show that a process that is not the console cannot reach these commands:
 // that is the work of the grants of the root service.
 package console
 
@@ -120,7 +120,7 @@ import terminal "modus:support/terminal"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7583, programs = 5, threads = 6}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7583, processes = 5, threads = 6}
 
 CONSOLE_MARK :: "console: ready"
 
@@ -140,7 +140,7 @@ Work :: struct {
 	finished: u32, // The lines that the second thread ran.
 	cancel:   u32, // 1: the input pressed Escape. An isolated call waits on this word.
 	// 1: the line is in a call that Escape can stop (a call of a sandboxed
-	// program or of a service). The second thread writes it; the first
+	// process or of a service). The second thread writes it; the first
 	// thread reads it to know what Escape means.
 	call_stoppable: u32,
 }
@@ -177,8 +177,8 @@ log_count: int
 
 ctx: ^system.Context
 
-// The random generator of this program (src/library/support/random).
-program_generator: random.Generator
+// The random generator of this process (src/library/support/random).
+process_generator: random.Generator
 
 // entry starts the console and runs its first thread: it reads the keys
 // until the machine stops.
@@ -186,7 +186,7 @@ program_generator: random.Generator
 // **What it sets up**, in order:
 //
 // 1. The random generator, from the seed that the root service wrote in the
-//    context: it gives the seed of each program that the console starts.
+//    context: it gives the seed of each process that the console starts.
 // 2. The terminal (`terminal.open`).
 // 3. The commands (`commands_start`): it maps the boot image, the debug
 //    image, the root ring and the replacement table that the root service
@@ -215,9 +215,9 @@ program_generator: random.Generator
 // `shutdown()` ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (start_context: ^system.Context) -> ! {
-	// The random generator of this program, from the seed that its starter
-	// gave: it gives the seed of each program that this one starts.
-	if !random.generator_from_context(&program_generator, start_context) {
+	// The random generator of this process, from the seed that its starter
+	// gave: it gives the seed of each process that this one starts.
+	if !random.generator_from_context(&process_generator, start_context) {
 		system.log("console: no random seed in the context")
 		system.stop(1)
 	}

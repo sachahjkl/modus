@@ -463,7 +463,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		commands := COMMANDS
 		main_text, _ := site_read_quiet(SITE_TOOL_MAIN_FILE)
 		main_lines := site_lines(main_text)
-		fmt.sbprintf(&b, "<h1>Commands of modustool</h1>\n<p>All the automation of the project is one program, <code>modustool</code>. Run a command with <code>nix develop -c modustool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
+		fmt.sbprintf(&b, "<h1>Commands of modustool</h1>\n<p>All the automation of the project is one program of the host, <code>modustool</code>. Run a command with <code>nix develop -c modustool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
 		site_about_paragraph(site, &b, path, site_comment_above(main_text, "COMMANDS ::"), SITE_TOOL_MAIN_FILE, "COMMANDS")
 		strings.write_string(&b, "<p>The table names each command; under it, each command has its documentation, the help that <code>modustool help</code> prints, and a link to its line.</p>\n")
 		site_source_line(site, &b, SITE_TOOL_MAIN_FILE)
@@ -621,7 +621,7 @@ site_numbers_body :: proc(site: ^Site) -> string {
 	}
 	strings.write_string(&b, "<h1>Measured numbers</h1>\n")
 	site_numbers_run(site, &b)
-	fmt.sbprintf(&b, "<p>Each row is a line that a program of the system printed in the log of a machine test, quoted whole: the line gives its own conditions. A machine runs under QEMU on the host that ran the test: each number is one run on that host. %d of %d numbers are measured.</p>\n", measured_count, len(site.measured))
+	fmt.sbprintf(&b, "<p>Each row is a line that a process of the system printed in the log of a machine test, quoted whole: the line gives its own conditions. A machine runs under QEMU on the host that ran the test: each number is one run on that host. %d of %d numbers are measured.</p>\n", measured_count, len(site.measured))
 	numbers_table := site_table_start(&b, "Measured numbers", site_numbers_columns[:])
 	number_ids := make(map[string]bool, context.temp_allocator)
 	for number in site.measured {
@@ -887,7 +887,7 @@ site_home_add :: proc(site: ^Site) {
 	site_news_home(site, &b)
 	site_home_explanation(site, &b)
 
-	// The path from power to the first program: the stages that the
+	// The path from power to the first process: the stages that the
 	// kernel logged, on a line of time.
 	site_boot_timeline_write(site, &b, home)
 

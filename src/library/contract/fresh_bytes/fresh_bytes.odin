@@ -1,16 +1,16 @@
 // The fresh bytes page (src/md/features/fresh_bytes.md): one page for each
-// program that the root service starts, that the root service writes and
-// the program reads. Every 30 seconds the root service reads the entropy
+// process that the root service starts, that the root service writes and
+// the process reads. Every 30 seconds the root service reads the entropy
 // device, mixes the bytes into its generator, and writes 32 bytes of its
-// stream in the page of each program: each program has its own bytes. The
-// random generator of the program mixes them into its key at its next
+// stream in the page of each process: each process has its own bytes. The
+// random generator of the process mixes them into its key at its next
 // refill, or before its next key or seed (modus:support/random,
 // `fresh_bytes_attach`), and at no other draw.
 //
 // The root service maps the page with the right Read only, at PAGE_ADDRESS;
 // the bit of the range Fresh_Bytes_Page in the context value
-// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is mapped. A program
-// that another program starts has none.
+// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is mapped. A process
+// that another process starts has none.
 //
 // A change: the root service makes change_count odd, writes the bytes,
 // then makes it even again. A reader copies the bytes while change_count
@@ -29,13 +29,13 @@ import "base:intrinsics"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 
-PAGE_ADDRESS :: fixed_addresses.FRESH_BYTES_PAGE_ADDRESS // Where a program maps its fresh bytes page.
+PAGE_ADDRESS :: fixed_addresses.FRESH_BYTES_PAGE_ADDRESS // Where a process maps its fresh bytes page.
 
 BYTES :: 32 // The fresh bytes of one change: as many as a key of the generator.
 WORDS :: BYTES / 8 // The words of the bytes: the writer stores each one whole.
 CHANGE_STEP :: 2 // What one write adds to the change count: odd during the write, even after it.
 
-// The fresh bytes page: what the root service writes and one program reads.
+// The fresh bytes page: what the root service writes and one process reads.
 Page :: struct {
 	change_count: u32, // Even when the page is stable. Each change adds CHANGE_STEP. 0: no fresh bytes yet.
 	reserved:     u32, // 0.
@@ -43,7 +43,7 @@ Page :: struct {
 }
 #assert(size_of(Page) <= 4096)
 
-// page_of gives the fresh bytes page of a program, or nil.
+// page_of gives the fresh bytes page of a process, or nil.
 page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {
 	return .Fresh_Bytes_Page in fixed_addresses.ranges_mapped(&ctx.values) ? (^Page)(uintptr(PAGE_ADDRESS)) : nil
 }
@@ -102,8 +102,8 @@ write :: proc "contextless" (page: ^Page, bytes: ^[BYTES]u8) {
 }
 
 // clear writes the page to zero with the change count 0, for a new
-// program: it reads no byte that the program before it read. The root
-// service clears a page only while no program maps it.
+// process: it reads no byte that the process before it read. The root
+// service clears a page only while no process maps it.
 clear :: proc "contextless" (page: ^Page) {
 	if page == nil {
 		return

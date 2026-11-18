@@ -9,12 +9,12 @@ import "modus:contract/value_kinds"
 
 // The kernel entry (docs/ARCHITECTURE.md, "Rings and wait"). It executes the
 // command records of the kernel ring
-// of the program, then makes the program wait if it asked for that.
+// of the process, then makes the process wait if it asked for that.
 
 
 enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread := &threads[index]
-	intrinsics.atomic_add(&programs[thread.program].entries, 1)
+	intrinsics.atomic_add(&processes[thread.process].entries, 1)
 	thread.in_enter = true
 	wait_begin(thread)
 	for _ in 0 ..< ring.CAPACITY {
@@ -38,18 +38,18 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		completion := ring.Record{tag = command.tag}
 		// The event point of an operation (events.odin): with no rule of
 		// this kind, one branch on a word of this processor; with a rule for
-		// another program only, one more load and branch. No read of the
+		// another process only, one more load and branch. No read of the
 		// cycle counter in either case.
 		started: u64
-		if event_wanted(cpu, OBSERVED_OPERATION, .Operation, thread.program) {
+		if event_wanted(cpu, OBSERVED_OPERATION, .Operation, thread.process) {
 			started = cycles_now()
 		}
 		status := command_run(index, command, &completion.values)
 		if started != 0 {
-			// The operation can have stopped this thread or its program: its
-			// slot keeps its program and its number until its processor
+			// The operation can have stopped this thread or its process: its
+			// slot keeps its process and its number until its processor
 			// leaves it (schedule), so the record names it.
-			event_record(cpu, .Operation, thread.program, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(status))
+			event_record(cpu, .Operation, thread.process, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(status))
 		}
 		// The operation can end the thread: then it does nothing more.
 		if intrinsics.atomic_load(&thread.stop_requested) {
@@ -59,12 +59,12 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if status != .Ok {
 			// The error record: the values of a failed operation, and the
 			// table of error details that the command names (diagnose.odin).
-			completion.values = transmute([7]u64)diagnose_command(thread.program, command, status)
+			completion.values = transmute([7]u64)diagnose_command(thread.process, command, status)
 		}
 		// The room was checked before the run, and only the reader changes
 		// the read counter: the push fails only after a thread of the
-		// program wrote a false count into this ring, and the loss is then
-		// the program's alone.
+		// process wrote a false count into this ring, and the loss is then
+		// the process's alone.
 		_ = ring.push(&thread.ring.completions, completion)
 	}
 	// A word that changed before the wait: the thread reads it again.
@@ -72,9 +72,9 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 }
 
 // The result of a kernel operation inside the kernel: each status of the
-// contract, with its value, and Needs_Control, which no program sees. An
-// operation that touches another program, or ends an object that other
-// programs name, needs the control lock (docs/ARCHITECTURE.md, "Locks of
+// contract, with its value, and Needs_Control, which no process sees. An
+// operation that touches another process, or ends an object that other
+// processes name, needs the control lock (docs/ARCHITECTURE.md, "Locks of
 // the kernel"): it gives Needs_Control before it changes anything, and
 // command_run runs it again with the lock. One value says it, so no path
 // can ask for the lock and still run on.
@@ -133,7 +133,7 @@ Operation_In_Progress :: struct {
 	control: bool, // The operation holds the control lock.
 	// The stops that the operation made (stop_wait).
 	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
-	stopped_programs: u64, // Bit n: program n had a thread on a processor; its serial is in Processor.stopped_serials.
+	stopped_processes: u64, // Bit n: process n had a thread on a processor; its serial is in Processor.stopped_serials.
 	// The part and the value that a write of Thread_Control refused: the
 	// error record takes them from here, not from a second read of the
 	// memory of the caller, which the caller can change between the two
@@ -148,7 +148,7 @@ Operation_In_Progress :: struct {
 	thread_create_weight_limit: u32,
 }
 
-// command_run executes one command under the program lock of the caller,
+// command_run executes one command under the process lock of the caller,
 // and runs it again with the control lock when it gives Needs_Control.
 command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> op.Status {
 	cpu := processor_self()
@@ -180,7 +180,7 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 
 // stop_wait waits, with no lock held, until each thread that this
 // operation stopped on another processor left it: after Thread_Stop or
-// Program_Stop, no thread of what stopped runs an instruction: a thread
+// Process_Stop, no thread of what stopped runs an instruction: a thread
 // that another thread stops ends at any instruction, and the caller then
 // owns the data that this thread was changing.
 // The wait ends at once if the current thread is stopped too: two threads
@@ -198,11 +198,11 @@ stop_wait :: proc "contextless" (cpu: ^Processor) {
 		}
 		operation.stopped_thread = 0
 	}
-	for operation.stopped_programs != 0 {
-		index := u32(intrinsics.count_trailing_zeros(operation.stopped_programs))
-		operation.stopped_programs &~= 1 << index
-		program := &programs[index]
-		for intrinsics.atomic_load(&program.serial) == cpu.stopped_serials[index] && intrinsics.atomic_load(&program.holds) & (HOLDS_STOPPED - 1) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
+	for operation.stopped_processes != 0 {
+		index := u32(intrinsics.count_trailing_zeros(operation.stopped_processes))
+		operation.stopped_processes &~= 1 << index
+		process := &processes[index]
+		for intrinsics.atomic_load(&process.serial) == cpu.stopped_serials[index] && intrinsics.atomic_load(&process.holds) & (HOLDS_STOPPED - 1) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
 			sync_acknowledge(cpu)
 			intrinsics.cpu_relax()
 		}
@@ -210,9 +210,9 @@ stop_wait :: proc "contextless" (cpu: ^Processor) {
 }
 
 execute_locked :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> Operation_Outcome {
-	program_index := threads[index].program
-	taken := program_lock(program_index)
-	defer program_unlock(program_index, taken)
+	process_index := threads[index].process
+	taken := process_lock(process_index)
+	defer process_unlock(process_index, taken)
 	return execute(index, command, results)
 }
 
@@ -226,53 +226,53 @@ require_control :: proc "contextless" () -> Operation_Outcome {
 	return .Needs_Control
 }
 
-// target_lock gives the program that a program handle with the right
+// target_lock gives the process that a process handle with the right
 // Control names, with its lock (0 names the caller). The caller holds the
 // control lock when the handle is not 0.
-target_lock :: proc "contextless" (program: ^Program, handle: u64) -> (to: ^Program, taken: bool, status: Operation_Outcome) {
+target_lock :: proc "contextless" (process: ^Process, handle: u64) -> (to: ^Process, taken: bool, status: Operation_Outcome) {
 	if handle == 0 {
-		return program, false, .Ok
+		return process, false, .Ok
 	}
-	slot := handle_find(program, handle, .Program, {.Control}) or_return
-	return &programs[slot.object], program_lock(slot.object), .Ok
+	slot := handle_find(process, handle, .Process, {.Control}) or_return
+	return &processes[slot.object], process_lock(slot.object), .Ok
 }
 
 // developer_report_ready checks the memory of a report of a developer tool
 // (report.odin), then asks for the control lock: the report reads another
-// program, and only the control lock keeps its slot for that program.
-developer_report_ready :: proc "contextless" (program: ^Program, v: [7]u64, size: u64) -> Operation_Outcome {
-	if v[4] < size || !user_range(program, v[3], size, true) {
+// process, and only the control lock keeps its slot for that process.
+developer_report_ready :: proc "contextless" (process: ^Process, v: [7]u64, size: u64) -> Operation_Outcome {
+	if v[4] < size || !user_range(process, v[3], size, true) {
 		return .Bad_Address
 	}
 	return require_control()
 }
 
-// execute runs one operation. The caller holds the program lock of the
-// program of the thread, and the control lock if the operation asked for it.
+// execute runs one operation. The caller holds the process lock of the
+// process of the thread, and the control lock if the operation asked for it.
 execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> Operation_Outcome {
-	program_index := threads[index].program
-	program := &programs[program_index]
+	process_index := threads[index].process
+	process := &processes[process_index]
 	v := command.values
 
 	switch op.Operation(command.kind) {
 	case .None:
 		// The kind 0 names no operation: a zero record is a command that
-		// a program never filled. It is refused as a kind past the last
+		// a process never filled. It is refused as a kind past the last
 		// operation is, and its error record says Unknown_Operation.
 		return .Bad_Operation
 
 	case .Guest_Run:
 		// command_run takes Guest_Run before it comes here: it runs
-		// outside the program lock.
+		// outside the process lock.
 		return .Bad_Operation
 
 	case .Log:
-		_ = handle_find(program, v[0], .Log, {.Write}) or_return
+		_ = handle_find(process, v[0], .Log, {.Write}) or_return
 		if v[6] > op.LOG_CALL_RUN_LIMIT {
 			return .Bad_Operation
 		}
 		run_bytes := v[6] * size_of(value_kinds.Value_Run_In_Call)
-		if v[2] > op.LOG_TEXT_BYTES_MOST || !user_range(program, v[1], v[2] + run_bytes, false) {
+		if v[2] > op.LOG_TEXT_BYTES_MOST || !user_range(process, v[1], v[2] + run_bytes, false) {
 			return .Bad_Address
 		}
 		level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
@@ -286,23 +286,23 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		for channel_count < len(channel) && channel[channel_count] > ' ' && channel[channel_count] < 127 {
 			channel_count += 1
 		}
-		name := transmute([]u8)program_name(program)
+		name := transmute([]u8)process_name(process)
 		log_text := &processor_self().log_text
 		user_copy(log_text, rawptr(uintptr(v[1])), v[2])
 		// The text of a log record is UTF-8 with no control character: the
 		// serial port goes to a terminal of the host, which acts on a
-		// carriage return or an escape sequence, so a program could forge or
+		// carriage return or an escape sequence, so a process could forge or
 		// hide a line. Each byte of an invalid sequence becomes "?" in the copy, which
 		// keeps each offset of the value runs.
 		text_encoding.invalid_sequences_replace(log_text[:v[2]])
 		// A Log spends the records that its text takes, counted in the copy
 		// as log_record cuts it: the amount bounds the lines of the serial
 		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 27 records.
-		if !budget_log(program.budget, log_records_of_text(log_text[:v[2]])) {
-			program.log_lines_refused += 1
+		if !budget_log(process.budget, log_records_of_text(log_text[:v[2]])) {
+			process.log_lines_refused += 1
 			return .No_Budget
 		}
-		program.log_lines_refused = 0
+		process.log_lines_refused = 0
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
 		log_runs := processor_self().log_runs[:v[6]]
@@ -313,10 +313,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The records only, under the log lock: the serial writer writes
 		// their line on the serial port after it. A Log that waited
 		// for the serial port would learn from its own time how much the
-		// other programs wrote (src/md/features/log_side_channels.md).
+		// other processes wrote (src/md/features/log_side_channels.md).
 		taken := log_take()
 		if taken && log_head != nil {
-			log_record(program_index, intrinsics.atomic_load(&program.serial), program, index, name, channel[:channel_count], level, log_text[:v[2]], log_runs)
+			log_record(process_index, intrinsics.atomic_load(&process.serial), process, index, name, channel[:channel_count], level, log_text[:v[2]], log_runs)
 			log_free(taken)
 			serial_drain_before_the_tick()
 			return .Ok
@@ -336,26 +336,26 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Log_Read:
 		// The authority is the memory of the log: its holder reads each
-		// record of the whole log, so the own log ring of a program tells it
+		// record of the whole log, so the own log ring of a process tells it
 		// nothing new (src/md/features/own_log_ring.md).
-		memory := handle_find(program, v[0], .Memory, {.Read}) or_return
+		memory := handle_find(process, v[0], .Memory, {.Read}) or_return
 		if log_region == 0 || memory.object != log_region {
 			return .Bad_Handle
 		}
-		if v[1] == 0 || v[1] >= PROGRAM_CAPACITY || v[5] > op.OWN_LOG_RECORD_CAPACITY {
+		if v[1] == 0 || v[1] >= PROCESS_CAPACITY || v[5] > op.OWN_LOG_RECORD_CAPACITY {
 			return .Bad_Operation
 		}
 		// The pages of the caller are present before the log lock: a page on
-		// first use takes the frame lock, which comes before it. The program
+		// first use takes the frame lock, which comes before it. The process
 		// lock of the caller keeps them mapped until the copy ends.
 		record_size := u64(size_of(op.Log_Record))
-		if !user_range(program, v[4], v[5] * record_size, true) {
+		if !user_range(process, v[4], v[5] * record_size, true) {
 			return .Bad_Address
 		}
 		// The records go to the buffer of this processor under the log
 		// lock, and to the caller after it.
 		buffer := &processor_self().own_log_copy
-		copied, lost, total, found := own_log_ring_copy(&programs[v[1]], v[2], u32(v[3]), v[5], buffer)
+		copied, lost, total, found := own_log_ring_copy(&processes[v[1]], v[2], u32(v[3]), v[5], buffer)
 		if !found {
 			return .Bad_State
 		}
@@ -368,7 +368,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Memory_Create:
-		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
+		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
 		if v[2] & ~op.MEMORY_FLAGS_KNOWN != 0 {
 			return .Bad_Operation
 		}
@@ -380,7 +380,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		large_pages := .Large_Pages in flags
 		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags || large_pages, now = .Frames_Now in flags, uncommitted = .Uncommitted in flags, large_pages = large_pages) or_return
-		handle := handle_insert(program, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
+		handle := handle_insert(process, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
 			region_release(region)
@@ -403,24 +403,24 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if .Execute in flags {
 			needed += {.Execute}
 		}
-		slot := handle_find(program, v[0], .Memory, needed) or_return
+		slot := handle_find(process, v[0], .Memory, needed) or_return
 		if v[1] != 0 {
 			require_control() or_return
 		}
-		to, taken := target_lock(program, v[1]) or_return
-		defer program_unlock(index_of_program(to), taken)
+		to, taken := target_lock(process, v[1]) or_return
+		defer process_unlock(index_of_process(to), taken)
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
 		// The registers of a device with a domain drive the device only from
-		// the program that holds them: a mapping in another program would
+		// the process that holds them: a mapping in another process would
 		// outlive the domain of the owner, and could make the device write
 		// what the next service of the device declares
 		// (src/md/infrastructure/iommu.md, "Mechanism in the kernel, policy outside").
-		if to != program && regions[slot.object].requester != 0 {
+		if to != process && regions[slot.object].requester != 0 {
 			return .Bad_Operation
 		}
-		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(program, slot), by_the_program = to == program)
+		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(process, slot), by_the_process = to == process)
 		results[0] = address
 		return status
 
@@ -428,18 +428,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[0] != 0 {
 			require_control() or_return
 		}
-		to, taken := target_lock(program, v[0]) or_return
-		defer program_unlock(index_of_program(to), taken)
+		to, taken := target_lock(process, v[0]) or_return
+		defer process_unlock(index_of_process(to), taken)
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
 		for &mapping in to.mappings {
 			if mapping.page_count != 0 && mapping.address == v[1] && mapping.address < op.THREAD_AREA_BASE {
 				// The code of a module of the starter stays: else the
-				// program maps its own code there, under the name of
+				// process maps its own code there, under the name of
 				// that module. The refusal changes nothing, so it comes
 				// before the request of the control lock.
-				if to == program && starter_module_meeting(to, mapping.address, mapping.page_count * PAGE_SIZE) != nil {
+				if to == process && starter_module_meeting(to, mapping.address, mapping.page_count * PAGE_SIZE) != nil {
 					return .No_Right
 				}
 				// The registers of a function behind a conventional bridge can
@@ -454,47 +454,47 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Bad_Address
 
 	case .Memory_Size:
-		slot := handle_find(program, v[0], .Memory) or_return
+		slot := handle_find(process, v[0], .Memory) or_return
 		results[0] = regions[slot.object].page_count
 		return .Ok
 
-	case .Program_Create:
+	case .Process_Create:
 		require_control() or_return
-		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		if v[2] > op.PROGRAM_NAME_BYTES_MOST || !user_range(program, v[1], v[2], false) {
+		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
+		if v[2] > op.PROCESS_NAME_BYTES_MOST || !user_range(process, v[1], v[2], false) {
 			return .Bad_Address
 		}
-		name: [op.PROGRAM_NAME_BYTES_MOST + 1]u8
+		name: [op.PROCESS_NAME_BYTES_MOST + 1]u8
 		user_copy(&name, rawptr(uintptr(v[1])), v[2])
-		// The name starts each line of the log of the program on the serial
+		// The name starts each line of the log of the process on the serial
 		// port: it is a name of the system, printable characters of ASCII
 		// and the space ("node 1"), so that no name acts on a terminal of
 		// the host. The check is on the copy. An empty name stays allowed.
 		if v[2] > 0 && !text_encoding.identifier_words_valid(name[:v[2]]) {
 			return .Bad_Operation
 		}
-		created := program_create(budget.object, name[:v[2]]) or_return
-		handle := handle_insert(program, {kind = .Program, rights = RIGHTS_PROGRAM, object = created})
+		created := process_create(budget.object, name[:v[2]]) or_return
+		handle := handle_insert(process, {kind = .Process, rights = RIGHTS_PROCESS, object = created})
 		if handle == 0 {
-			program_stop(created, 0)
+			process_stop(created, 0)
 			return .No_Slot
 		}
 		results[0] = u64(handle)
 		return .Ok
 
-	case .Program_Start:
+	case .Process_Start:
 		require_control() or_return
-		slot := handle_find(program, v[0], .Program, {.Control}) or_return
-		to := &programs[slot.object]
-		taken := program_lock(slot.object)
-		defer program_unlock(slot.object, taken)
+		slot := handle_find(process, v[0], .Process, {.Control}) or_return
+		to := &processes[slot.object]
+		taken := process_lock(slot.object)
+		defer process_unlock(slot.object, taken)
 		// A guest has no kernel half in its page table: no thread runs on it.
-		if to.state != .Created || program_is_guest(slot.object) {
+		if to.state != .Created || process_is_guest(slot.object) {
 			return .Bad_State
 		}
-		// The first thread of the program gets the limit of a new thread of
+		// The first thread of the process gets the limit of a new thread of
 		// the thread that starts it, and the limit of its placement: a
-		// program does not leave a limit by a program that it starts.
+		// process does not leave a limit by a process that it starts.
 		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = creation_weight_limit(index), processors_limit = intrinsics.atomic_load(&threads[index].processors_limit)); status != .Ok {
 			return status
 		}
@@ -503,13 +503,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Thread_Create:
 		require_control() or_return
-		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		// A weight above the full weight would raise the share: a program
+		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
+		// A weight above the full weight would raise the share: a process
 		// would take processor time that its budget does not give. A weight
 		// above the limit of a new thread of the calling thread would undo
 		// a limit that the holder of the machine set: the new thread gets
 		// that limit. A write of the value of the thread comes before this
-		// read or after it, and a write of the value of its program holds
+		// read or after it, and a write of the value of its process holds
 		// the control lock, which this operation holds: the creation is
 		// then wholly before the write or after.
 		weight_limit := creation_weight_limit(index)
@@ -520,8 +520,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The limit of the placement of the calling thread goes to the new
 		// thread in the same way, and a write of it at the same time comes
 		// before this read or after it.
-		created := thread_create(program_index, budget.object, v[1], v[2], v[3], v[4], v[5], weight_limit, intrinsics.atomic_load(&threads[index].processors_limit)) or_return
-		handle := handle_insert(program, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
+		created := thread_create(process_index, budget.object, v[1], v[2], v[3], v[4], v[5], weight_limit, intrinsics.atomic_load(&threads[index].processors_limit)) or_return
+		handle := handle_insert(process, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)
 			return .No_Slot
@@ -535,12 +535,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			thread_stop(index)
 			return .Ok
 		}
-		slot := handle_find(program, v[0], .Thread, {.Control}) or_return
+		slot := handle_find(process, v[0], .Thread, {.Control}) or_return
 		thread_stop(slot.object)
 		return .Ok
 
 	case .Thread_State:
-		slot := handle_find(program, v[0], .Thread, {.Read}) or_return
+		slot := handle_find(process, v[0], .Thread, {.Read}) or_return
 		results[0] = u64(intrinsics.atomic_load(&threads[slot.object].state))
 		// What a holder of the thread needs for Thread_Control: the stop
 		// count, and the size and the layout of the extended state area.
@@ -550,69 +550,69 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[4] = u64(EXTENDED_STATE_LAYOUTS[extended_state_form])
 		return .Ok
 
-	case .Program_Stop:
+	case .Process_Stop:
 		require_control() or_return
-		to, taken := target_lock(program, v[0]) or_return
-		program_unlock(index_of_program(to), taken)
-		program_stop(index_of_program(to), u32(v[1]))
+		to, taken := target_lock(process, v[0]) or_return
+		process_unlock(index_of_process(to), taken)
+		process_stop(index_of_process(to), u32(v[1]))
 		return .Ok
 
-	case .Program_State:
+	case .Process_State:
 		require_control() or_return
-		slot := handle_find(program, v[0], .Program, {.Read}) or_return
-		taken := program_lock(slot.object)
-		defer program_unlock(slot.object, taken)
-		results[0] = u64(program_state(slot.object))
-		results[1] = u64(programs[slot.object].code)
-		results[2] = programs[slot.object].entries
-		// The place of the program in the reports of Inspect: a starter that
+		slot := handle_find(process, v[0], .Process, {.Read}) or_return
+		taken := process_lock(slot.object)
+		defer process_unlock(slot.object, taken)
+		results[0] = u64(process_state(slot.object))
+		results[1] = u64(processes[slot.object].code)
+		results[2] = processes[slot.object].entries
+		// The place of the process in the reports of Inspect: a starter that
 		// states facts of its child by its slot needs no search of the
-		// reports, which another program with the same name can confuse.
+		// reports, which another process with the same name can confuse.
 		results[3] = u64(slot.object)
-		results[4] = u64(intrinsics.atomic_load(&programs[slot.object].serial))
+		results[4] = u64(intrinsics.atomic_load(&processes[slot.object].serial))
 		if v[1] != 0 {
-			if !user_range(program, v[1], size_of(op.Stop_Report), true) {
+			if !user_range(process, v[1], size_of(op.Stop_Report), true) {
 				return .Bad_Address
 			}
-			user_copy(rawptr(uintptr(v[1])), &programs[slot.object].stop, size_of(op.Stop_Report))
+			user_copy(rawptr(uintptr(v[1])), &processes[slot.object].stop, size_of(op.Stop_Report))
 		}
 		return .Ok
 
 	case .Handle_Give:
-		// A copy in this program needs no Give right: no other program receives it.
-		given := handle_find(program, v[1], .None, v[0] == 0 ? op.Rights{} : op.Rights{.Give}) or_return
+		// A copy in this process needs no Give right: no other process receives it.
+		given := handle_find(process, v[1], .None, v[0] == 0 ? op.Rights{} : op.Rights{.Give}) or_return
 		if v[0] != 0 || given.kind == .Ports || given.kind == .Interrupt {
 			require_control() or_return
 		}
-		to: ^Program
+		to: ^Process
 		through: u64
 		if v[0] == 0 {
-			to = program
+			to = process
 		} else {
-			to_slot := handle_find(program, v[0], .None) or_return
+			to_slot := handle_find(process, v[0], .None) or_return
 			switch to_slot.kind {
-			case .Program:
+			case .Process:
 				if .Control not_in to_slot.rights {
 					return .No_Right
 				}
-				to = &programs[to_slot.object]
+				to = &processes[to_slot.object]
 			case .Memory:
-				find: for &other, other_index in programs[1:] {
-					other_taken := program_lock(u32(other_index + 1))
-					maps := &other != program && other.state != .None && other.state != .Stopped && maps_region(&other, to_slot.object)
-					program_unlock(u32(other_index + 1), other_taken)
+				find: for &other, other_index in processes[1:] {
+					other_taken := process_lock(u32(other_index + 1))
+					maps := &other != process && other.state != .None && other.state != .Stopped && maps_region(&other, to_slot.object)
+					process_unlock(u32(other_index + 1), other_taken)
 					if maps {
 						to = &other
 						break find
 					}
 				}
 				if to == nil {
-					// No other program maps the memory yet: the one other
-					// program that holds a handle to it. Two holders: no target.
-					for &other, other_index in programs[1:] {
-						other_taken := program_lock(u32(other_index + 1))
-						holds := &other != program && other.state != .None && other.state != .Stopped && holds_region(&other, to_slot.object)
-						program_unlock(u32(other_index + 1), other_taken)
+					// No other process maps the memory yet: the one other
+					// process that holds a handle to it. Two holders: no target.
+					for &other, other_index in processes[1:] {
+						other_taken := process_lock(u32(other_index + 1))
+						holds := &other != process && other.state != .None && other.state != .Stopped && holds_region(&other, to_slot.object)
+						process_unlock(u32(other_index + 1), other_taken)
 						if !holds {
 							continue
 						}
@@ -624,29 +624,29 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				}
 				through = regions[to_slot.object].serial
 			case .Interrupt, .Ports, .Machine, .Thread, .Budget, .Log, .None:
-				// A target of another kind names no program: Bad_Handle below.
+				// A target of another kind names no process: Bad_Handle below.
 			}
 		}
 		if to == nil {
 			return .Bad_Handle
 		}
-		to_taken := program_lock(index_of_program(to))
-		defer program_unlock(index_of_program(to), to_taken)
+		to_taken := process_lock(index_of_process(to))
+		defer process_unlock(index_of_process(to), to_taken)
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
 		// An object with marks of protection of a part is not given: the marks
-		// would reach the mapping of the other program.
-		if given.kind == .Memory && to != program && intrinsics.atomic_load(&regions[given.object].marked_pages) != 0 {
+		// would reach the mapping of the other process.
+		if given.kind == .Memory && to != process && intrinsics.atomic_load(&regions[given.object].marked_pages) != 0 {
 			return .Bad_State
 		}
 		copy := given^
 		copy.rights &= transmute(op.Rights)u32(v[2])
-		// A program handle that reaches the program that it names loses
-		// Control and Give: else the program gives it to a child, and the
+		// A process handle that reaches the process that it names loses
+		// Control and Give: else the process gives it to a child, and the
 		// child changes the module records of its starter in its place
 		// (src/md/features/module_record_writer.md).
-		if given.kind == .Program && given.object == index_of_program(to) {
+		if given.kind == .Process && given.object == index_of_process(to) {
 			copy.rights -= {.Control, .Give}
 		}
 		copy.through = through
@@ -654,7 +654,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if handle == 0 {
 			return .No_Slot
 		}
-		if !origin_attach(holding_of_handle(to, &to.handles[u32(handle) & 0xFFFF]), holding_of_handle(program, given)) {
+		if !origin_attach(holding_of_handle(to, &to.handles[u32(handle) & 0xFFFF]), holding_of_handle(process, given)) {
 			handle_insert_undo(to, handle)
 			return .Needs_Control
 		}
@@ -663,35 +663,35 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Handle_Revoke:
 		require_control() or_return
-		slot := handle_find(program, v[0], .None) or_return
+		slot := handle_find(process, v[0], .None) or_return
 		only: u32
 		if v[1] != 0 {
-			in_program := handle_find(program, v[1], .Program, {.Control}) or_return
-			only = in_program.object
+			in_process := handle_find(process, v[1], .Process, {.Control}) or_return
+			only = in_process.object
 		}
-		results[0] = revoke(holding_of_handle(program, slot), program_index, only)
+		results[0] = revoke(holding_of_handle(process, slot), process_index, only)
 		return .Ok
 
-	case .Program_Module:
+	case .Process_Module:
 		if v[0] != 0 {
 			require_control() or_return
 		}
-		to, taken := target_lock(program, v[0]) or_return
-		defer program_unlock(index_of_program(to), taken)
+		to, taken := target_lock(process, v[0]) or_return
+		defer process_unlock(index_of_process(to), taken)
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
-		if !user_range(program, v[1], size_of(op.Module_Record), false) {
+		if !user_range(process, v[1], size_of(op.Module_Record), false) {
 			return .Bad_Address
 		}
 		record: op.Module_Record
 		user_copy(&record, rawptr(uintptr(v[1])), size_of(record))
-		// The writer is the party: a program that holds a handle to itself
-		// is still the program.
-		return program_module(to, record, by_the_program = to == program)
+		// The writer is the party: a process that holds a handle to itself
+		// is still the process.
+		return process_module(to, record, by_the_process = to == process)
 
 	case .Handle_Close:
-		slot := handle_find(program, v[0], .None) or_return
+		slot := handle_find(process, v[0], .None) or_return
 		// A machine handle with Events can end the event table, which
 		// changes under the control lock (events.odin). The registers of a
 		// function behind a conventional bridge can end the domain of its
@@ -702,14 +702,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if handle_needs_control(slot.kind) || slot.kind == .Machine && .Events in slot.rights || bridge_registers {
 			require_control() or_return
 		}
-		handle_close(program, slot)
+		handle_close(process, slot)
 		return .Ok
 
 	case .Budget_Create:
 		require_control() or_return
-		from := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		created := budget_create(from.object, {pages = v[1], programs = v[2], threads = v[3], processor = v[4], log_records = v[5]}) or_return
-		handle := handle_insert(program, {kind = .Budget, rights = RIGHTS_BUDGET, object = created})
+		from := handle_find(process, v[0], .Budget, {.Spend}) or_return
+		created := budget_create(from.object, {pages = v[1], processes = v[2], threads = v[3], processor = v[4], log_records = v[5]}) or_return
+		handle := handle_insert(process, {kind = .Budget, rights = RIGHTS_BUDGET, object = created})
 		if handle == 0 {
 			budgets[created].references = 1
 			budget_release(created)
@@ -719,21 +719,21 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Handle_State:
-		slot := handle_find(program, v[0], .None) or_return
+		slot := handle_find(process, v[0], .None) or_return
 		results[0] = u64(slot.kind)
 		results[1] = u64(transmute(u32)slot.rights)
 		if v[1] != 0 {
-			memory := handle_find(program, v[1], .Memory) or_return
+			memory := handle_find(process, v[1], .Memory) or_return
 			results[2] = u64(slot.through != 0 && slot.through == regions[memory.object].serial)
 		}
-		results[3] = origin_count(holding_of_handle(program, slot))
+		results[3] = origin_count(holding_of_handle(process, slot))
 		return .Ok
 
 	case .Budget_Read:
-		slot := handle_find(program, v[0], .Budget, {.Read}) or_return
+		slot := handle_find(process, v[0], .Budget, {.Read}) or_return
 		amounts := budgets[slot.object].amounts
 		results[0] = amounts.pages
-		results[1] = amounts.programs
+		results[1] = amounts.processes
 		results[2] = amounts.threads
 		results[3] = amounts.processor
 		results[4] = amounts.log_records
@@ -746,13 +746,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[1] > u64(op.WORD_WAIT_CAPACITY - thread.word_count) {
 			return .No_Slot
 		}
-		if !user_range(program, v[0], v[1] * size_of(op.Word), false) {
+		if !user_range(process, v[0], v[1] * size_of(op.Word), false) {
 			return .Bad_Address
 		}
 		for index in 0 ..< v[1] {
 			word: op.Word
 			user_copy(&word, rawptr(uintptr(v[0] + index * size_of(op.Word))), size_of(op.Word))
-			physical := word_address(program, word.address)
+			physical := word_address(process, word.address)
 			if physical == 0 {
 				thread.word_changed = true // The wait cannot end by this word: do not wait.
 				return .Bad_Address
@@ -764,7 +764,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Word_Wake:
-		word := word_address(program, v[0])
+		word := word_address(process, v[0])
 		if word == 0 {
 			return .Bad_Address
 		}
@@ -772,12 +772,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Interrupt_Read:
-		slot := handle_find(program, v[0], .Interrupt, {.Read}) or_return
+		slot := handle_find(process, v[0], .Interrupt, {.Read}) or_return
 		results[0] = u64(intrinsics.atomic_exchange(&interrupt_pending[slot.object], 0))
 		return .Ok
 
 	case .Device_Create:
-		_ = handle_find(program, v[0], .Machine, {.Devices}) or_return
+		_ = handle_find(process, v[0], .Machine, {.Devices}) or_return
 		require_control() or_return
 		device_kind, device_kind_known := enum_word.member_of_word(op.Device_Kind, v[1])
 		if !device_kind_known {
@@ -814,7 +814,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// keep the rule of the framebuffer of the firmware, which the
 			// kernel maps with no attribute of its own.
 			regions[region].uncached = registers
-			// The function whose registers these are: the program that holds
+			// The function whose registers these are: the process that holds
 			// the handle is its service for the IOMMU. Pixels program no
 			// access of the device: video memory has no requester. Behind a
 			// conventional bridge, the requester is the one that the devices
@@ -822,7 +822,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if registers {
 				regions[region].requester, regions[region].bridge_function = iommu_requester_of(v[2])
 			}
-			handle := handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
+			handle := handle_insert(process, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
 			if handle == 0 {
 				regions[region].references = 1
 				region_release(region)
@@ -846,7 +846,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .No_Slot
 			}
 			interrupt_pending[message] = 0
-			handle := handle_insert(program, {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = message})
+			handle := handle_insert(process, {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = message})
 			if handle == 0 {
 				return .No_Slot
 			}
@@ -860,7 +860,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		case .None:
 			return .Bad_Operation
 		}
-		handle := handle_insert(program, slot)
+		handle := handle_insert(process, slot)
 		if handle == 0 {
 			return .No_Slot
 		}
@@ -868,20 +868,20 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Inspect:
-		_ = handle_find(program, v[0], .Machine, {.Inspect}) or_return
+		_ = handle_find(process, v[0], .Machine, {.Inspect}) or_return
 		inspect_kind, inspect_kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1])
 		if !inspect_kind_known {
 			return .Bad_Operation
 		}
 		switch inspect_kind {
 		case .System:
-			if v[4] < size_of(op.System_Report) || !user_range(program, v[3], size_of(op.System_Report), true) {
+			if v[4] < size_of(op.System_Report) || !user_range(process, v[3], size_of(op.System_Report), true) {
 				return .Bad_Address
 			}
 			report := op.System_Report {
 				time          = intrinsics.atomic_load(&time_milliseconds),
 				page_count    = frame_count,
-				program_slots = PROGRAM_CAPACITY,
+				process_slots = PROCESS_CAPACITY,
 				processors    = u64(processor_count),
 				locks         = lock_counts_sum(),
 				strategy      = intrinsics.atomic_load(&strategy_chosen),
@@ -907,25 +907,25 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.System_Report)
-		case .Program:
-			if v[4] < size_of(op.Program_Report) || !user_range(program, v[3], size_of(op.Program_Report), true) {
+		case .Process:
+			if v[4] < size_of(op.Process_Report) || !user_range(process, v[3], size_of(op.Process_Report), true) {
 				return .Bad_Address
 			}
-			// Another program: under its lock, with the control lock.
+			// Another process: under its lock, with the control lock.
 			require_control() or_return
-			report: op.Program_Report
-			if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
-				about := &programs[v[2]]
-				about_taken := program_lock(u32(v[2]))
-				defer program_unlock(u32(v[2]), about_taken)
+			report: op.Process_Report
+			if v[2] != 0 && v[2] < PROCESS_CAPACITY {
+				about := &processes[v[2]]
+				about_taken := process_lock(u32(v[2]))
+				defer process_unlock(u32(v[2]), about_taken)
 				report = {
-					state        = program_state(u32(v[2])),
+					state        = process_state(u32(v[2])),
 					thread_count = u64(about.thread_count),
 					code         = about.code,
 					name         = about.name,
 					mapped_pages = about.mapped_pages,
 					present_pages = about.state == .None || about.table == 0 ? 0 : present_pages(about),
-					program_serial = u64(about.serial),
+					process_serial = u64(about.serial),
 					run_time     = about.run_time,
 					start_time   = about.start_time,
 					entries      = about.entries,
@@ -940,9 +940,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				}
 			}
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
-			results[0] = size_of(op.Program_Report)
+			results[0] = size_of(op.Process_Report)
 		case .Boot:
-			if v[4] < size_of(op.Boot_Report) || !user_range(program, v[3], size_of(op.Boot_Report), true) {
+			if v[4] < size_of(op.Boot_Report) || !user_range(process, v[3], size_of(op.Boot_Report), true) {
 				return .Bad_Address
 			}
 			record := &processor_self().boot_report
@@ -950,32 +950,32 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			user_copy(rawptr(uintptr(v[3])), record, size_of(op.Boot_Report))
 			results[0] = size_of(op.Boot_Report)
 		case .Mappings:
-			if v[4] < size_of(op.Mapping_Report) || !user_range(program, v[3], size_of(op.Mapping_Report), true) {
+			if v[4] < size_of(op.Mapping_Report) || !user_range(process, v[3], size_of(op.Mapping_Report), true) {
 				return .Bad_Address
 			}
 			record := &processor_self().mapping_report
 			if v[2] == 0 {
 				mappings_report(record, kernel_table, 256, 512)
 			} else {
-				mappings_report(record, program.table, 0, 256)
+				mappings_report(record, process.table, 0, 256)
 			}
 			user_copy(rawptr(uintptr(v[3])), record, size_of(op.Mapping_Report))
 			results[0] = size_of(op.Mapping_Report)
 		case .Modules:
-			if v[4] < size_of(op.Module_Report) || !user_range(program, v[3], size_of(op.Module_Report), true) {
+			if v[4] < size_of(op.Module_Report) || !user_range(process, v[3], size_of(op.Module_Report), true) {
 				return .Bad_Address
 			}
 			require_control() or_return
 			report := &processor_self().module_report
 			report^ = {}
-			if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
-				about_taken := program_lock(u32(v[2]))
-				defer program_unlock(u32(v[2]), about_taken)
-				if programs[v[2]].state != .None {
-					report.program_serial = u64(programs[v[2]].serial)
+			if v[2] != 0 && v[2] < PROCESS_CAPACITY {
+				about_taken := process_lock(u32(v[2]))
+				defer process_unlock(u32(v[2]), about_taken)
+				if processes[v[2]].state != .None {
+					report.process_serial = u64(processes[v[2]].serial)
 				}
-				// In the order of the addresses: the module of the program first.
-				for item in programs[v[2]].modules {
+				// In the order of the addresses: the module of the process first.
+				for item in processes[v[2]].modules {
 					if item.size == 0 {
 						continue
 					}
@@ -991,7 +991,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Module_Report))
 			results[0] = size_of(op.Module_Report)
 		case .Processor:
-			if v[4] < size_of(op.Processor_Report) || !user_range(program, v[3], size_of(op.Processor_Report), true) {
+			if v[4] < size_of(op.Processor_Report) || !user_range(process, v[3], size_of(op.Processor_Report), true) {
 				return .Bad_Address
 			}
 			report: op.Processor_Report
@@ -1014,36 +1014,36 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				report.cache_batches_given = intrinsics.volatile_load(&cpu.frame_cache.batches_given)
 				report.cache_drains = intrinsics.volatile_load(&cpu.frame_cache.drains)
 				if cpu.current != 0 {
-					report.program = u64(threads[cpu.current].program)
-					report.same = u64(programs[report.program].table == program.table)
+					report.process = u64(threads[cpu.current].process)
+					report.same = u64(processes[report.process].table == process.table)
 				}
 			}
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Processor_Report)
-		case .Program_Mappings:
-			developer_report_ready(program, v, size_of(op.Program_Mapping_Report)) or_return
-			report := &processor_self().program_mapping_report
-			program_mappings_report(report, u32(min(v[2], PROGRAM_CAPACITY)))
-			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Program_Mapping_Report))
-			results[0] = size_of(op.Program_Mapping_Report)
+		case .Process_Mappings:
+			developer_report_ready(process, v, size_of(op.Process_Mapping_Report)) or_return
+			report := &processor_self().process_mapping_report
+			process_mappings_report(report, u32(min(v[2], PROCESS_CAPACITY)))
+			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Process_Mapping_Report))
+			results[0] = size_of(op.Process_Mapping_Report)
 		case .Threads:
-			developer_report_ready(program, v, size_of(op.Thread_Table_Report)) or_return
+			developer_report_ready(process, v, size_of(op.Thread_Table_Report)) or_return
 			report := &processor_self().thread_table_report
-			threads_report(report, u32(min(v[2], PROGRAM_CAPACITY)))
+			threads_report(report, u32(min(v[2], PROCESS_CAPACITY)))
 			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Thread_Table_Report))
 			results[0] = size_of(op.Thread_Table_Report)
 		case .Stop:
-			developer_report_ready(program, v, size_of(op.Stop_Report)) or_return
+			developer_report_ready(process, v, size_of(op.Stop_Report)) or_return
 			report := &processor_self().stop_report
-			stop_report_for_inspect(report, u32(min(v[2], PROGRAM_CAPACITY)))
+			stop_report_for_inspect(report, u32(min(v[2], PROCESS_CAPACITY)))
 			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Stop_Report))
 			results[0] = size_of(op.Stop_Report)
 		case .Pages:
-			if v[4] < size_of(op.Page_Report) || !user_range(program, v[3], size_of(op.Page_Report), true) {
+			if v[4] < size_of(op.Page_Report) || !user_range(process, v[3], size_of(op.Page_Report), true) {
 				return .Bad_Address
 			}
-			// The program that asks only: another program is not watched page
-			// by page. Its program lock is held (execute_locked).
+			// The process that asks only: another process is not watched page
+			// by page. Its process lock is held (execute_locked).
 			if v[2] != 0 {
 				return .Bad_Operation
 			}
@@ -1052,7 +1052,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if report.address & (PAGE_SIZE - 1) != 0 || report.address >= op.USER_END || op.PAGE_REPORT_CAPACITY * PAGE_SIZE > op.USER_END - report.address {
 				return .Bad_Operation
 			}
-			pages_report(&report, program)
+			pages_report(&report, process)
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Page_Report)
 		case .None:
@@ -1061,23 +1061,23 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Memory_Physical:
-		_ = handle_find(program, v[0], .Machine, {.Physical}) or_return
-		slot := handle_find(program, v[1], .Memory, {.Read}) or_return
+		_ = handle_find(process, v[0], .Machine, {.Physical}) or_return
+		slot := handle_find(process, v[1], .Memory, {.Read}) or_return
 		// The call of a device service declares the object to its devices,
 		// which write it only when this handle can, and gives the address
 		// that they use for it.
-		results[0] = iommu_declare(program_index, slot.object, .Write in slot.rights) or_return
+		results[0] = iommu_declare(process_index, slot.object, .Write in slot.rights) or_return
 		return .Ok
 
 	case .Memory_Commit:
-		memory := handle_find(program, v[0], .Memory, {.Write}) or_return
+		memory := handle_find(process, v[0], .Memory, {.Write}) or_return
 		flags := transmute(op.Commit_Flags)v[4]
 		decommit := .Decommit in flags
 		// The payer: a handle to the budget of the object, with Commit or
 		// Spend (docs/ARCHITECTURE.md, "Who pays a commit"). A decommit gives pages back to it, and
 		// reads no budget handle.
 		if !decommit {
-			budget := handle_find(program, v[1], .Budget) or_return
+			budget := handle_find(process, v[1], .Budget) or_return
 			if budget.rights & {.Commit, .Spend} == {} {
 				return .No_Right
 			}
@@ -1088,7 +1088,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[3] == 0 || v[3] > op.RANGE_TABLE_CAPACITY || v[4] & ~op.COMMIT_FLAGS_KNOWN != 0 {
 			return .Bad_Operation
 		}
-		if !user_range(program, v[2], v[3] * size_of(op.Page_Range), false) {
+		if !user_range(process, v[2], v[3] * size_of(op.Page_Range), false) {
 			return .Bad_Address
 		}
 		table := &processor_self().range_table
@@ -1100,7 +1100,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if table_pages(counts[:v[3]]) > op.RANGE_TABLE_PAGE_LIMIT {
 			return .Bad_Operation
 		}
-		changed := memory_commit(program, memory.object, table[:v[3]], decommit) or_return
+		changed := memory_commit(process, memory.object, table[:v[3]], decommit) or_return
 		results[0] = changed
 		return .Ok
 
@@ -1109,41 +1109,41 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Operation
 		}
 		flags := transmute(op.Map_Flags)v[2]
-		if !user_range(program, v[0], v[1] * size_of(op.Address_Range), false) {
+		if !user_range(process, v[0], v[1] * size_of(op.Address_Range), false) {
 			return .Bad_Address
 		}
 		table := &processor_self().range_table
 		user_copy(table, rawptr(uintptr(v[0])), v[1] * size_of(op.Address_Range))
 		ranges := ([^]op.Address_Range)(&table[0])[:v[1]]
-		changed := memory_protect(program, ranges, flags) or_return
+		changed := memory_protect(process, ranges, flags) or_return
 		results[0] = changed
 		return .Ok
 
 	case .Fault_Handler_Set:
-		// The fault ring (fault_ring.odin): the program names one of its
-		// own threads. The handler of the faults of a program is a thread
-		// of that program.
+		// The fault ring (fault_ring.odin): the process names one of its
+		// own threads. The handler of the faults of a process is a thread
+		// of that process.
 		action, action_known := enum_word.member_of_word(op.Fault_Handler_Action, v[1])
 		if v[3] != 0 {
-			// The debugger of another program: the thread takes the debug
-			// exceptions and the breakpoints of that program. Two programs:
+			// The debugger of another process: the thread takes the debug
+			// exceptions and the breakpoints of that process. Two processes:
 			// the control lock.
 			debugger_kinds, debugger_known := op.fault_kinds_of_debugger_argument(v[2])
 			if !action_known || !debugger_known || action == .End && v[2] != 0 {
 				return .Bad_Operation
 			}
-			debugged := handle_find(program, v[3], .Program, {.Debug}) or_return
+			debugged := handle_find(process, v[3], .Process, {.Debug}) or_return
 			require_control() or_return
 			switch action {
 			case .End:
-				return debug_handler_detach(program_index, debugged.object)
+				return debug_handler_detach(process_index, debugged.object)
 			case .Set:
 				debug_handler := index
 				if v[0] != 0 {
-					slot := handle_find(program, v[0], .Thread, {.Control}) or_return
+					slot := handle_find(process, v[0], .Thread, {.Control}) or_return
 					debug_handler = slot.object
 				}
-				return debug_handler_set(program_index, debug_handler, debugged.object, debugger_kinds)
+				return debug_handler_set(process_index, debug_handler, debugged.object, debugger_kinds)
 			}
 		}
 		kinds, known := op.fault_kinds_of_argument(v[2])
@@ -1155,15 +1155,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if v[2] != 0 {
 				return .Bad_Operation // The end of the delivery takes no kinds.
 			}
-			return fault_handler_set(program_index, 0, 0)
+			return fault_handler_set(process_index, 0, 0)
 		case .Set:
 		}
 		handler := index
 		if v[0] != 0 {
-			slot := handle_find(program, v[0], .Thread, {.Control}) or_return
+			slot := handle_find(process, v[0], .Thread, {.Control}) or_return
 			handler = slot.object
 		}
-		return fault_handler_set(program_index, handler, kinds)
+		return fault_handler_set(process_index, handler, kinds)
 
 	case .Fault_Answer:
 		answer, answer_known := enum_word.member_of_word(op.Fault_Answer_Kind, v[2])
@@ -1171,24 +1171,24 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Operation
 		}
 		if v[3] != 0 {
-			// The answer of the debugger of another program. Only Resume:
-			// the report of a stop reads the stack of the program through
+			// The answer of the debugger of another process. Only Resume:
+			// the report of a stop reads the stack of the process through
 			// the page table of this processor, which is the one of the
-			// debugger here; a debugger stops a program with Program_Stop.
+			// debugger here; a debugger stops a process with Process_Stop.
 			if answer != .Resume {
 				return .Bad_Operation
 			}
-			debugged := handle_find(program, v[3], .Program, {.Debug}) or_return
+			debugged := handle_find(process, v[3], .Process, {.Debug}) or_return
 			require_control() or_return
-			return debug_fault_answer(program_index, debugged.object, v[0], v[1])
+			return debug_fault_answer(process_index, debugged.object, v[0], v[1])
 		}
-		// A stop of the program on a fault takes the control lock.
+		// A stop of the process on a fault takes the control lock.
 		if answer == .Stop {
 			require_control() or_return
 		}
-		waiter_index := fault_waiter_find(program_index, v[0], v[1])
-		// A thread whose record went to the debugger of the program waits
-		// for the debugger: the program does not answer in its place.
+		waiter_index := fault_waiter_find(process_index, v[0], v[1])
+		// A thread whose record went to the debugger of the process waits
+		// for the debugger: the process does not answer in its place.
 		if waiter_index == 0 || threads[waiter_index].fault_to_debugger {
 			return .Bad_State // No thread with that number and fault serial waits: an old answer, or a wrong one.
 		}
@@ -1226,20 +1226,20 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// takes the two of the fault, which fault_deliver kept, so that it
 		// names the instruction that faulted and its stack trace. The vector
 		// and the error code are the fault's: no write changes them. The page
-		// table of this processor is the one of the program (the stack trace).
+		// table of this processor is the one of the process (the stack trace).
 		fault_frame := waiter.frame
 		fault_frame.rip = waiter.fault_instruction
 		fault_frame.rbp = waiter.fault_frame_pointer
-		program_stop(program_index, program_fault_report(program_index, &fault_frame, waiter.fault_address))
+		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address))
 		return .Ok
 
 	case .Events_Set:
 		// Kernel events (events.odin): the table changes under the control
 		// lock.
-		return events_set(program_index, v, results)
+		return events_set(process_index, v, results)
 
 	case .Strategy_Set:
-		_ = handle_find(program, v[0], .Machine, {.Schedule}) or_return
+		_ = handle_find(process, v[0], .Machine, {.Schedule}) or_return
 		strategy, strategy_known := enum_word.member_of_word(op.Strategy, v[1])
 		if !strategy_known || strategy == .None {
 			return .Bad_Operation
@@ -1252,7 +1252,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return thread_control(index, v, results)
 
 	case .Machine_Stop:
-		_ = handle_find(program, v[0], .Machine, {.Stop}) or_return
+		_ = handle_find(process, v[0], .Machine, {.Stop}) or_return
 		// The host receives one byte: a larger code would end the machine
 		// with its low byte, and 256 would read as a normal end.
 		if v[1] > op.MACHINE_STOP_CODE_MOST {

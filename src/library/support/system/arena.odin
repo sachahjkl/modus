@@ -3,7 +3,7 @@ package system
 import "modus:contract/errors"
 import op "modus:contract/operation"
 
-// An arena: an uncommitted memory object of this program that grows by an
+// An arena: an uncommitted memory object of this process that grows by an
 // explicit commit and ends whole. It holds data with no known bound, as the
 // tree of a document. See [arena](term:arena), and the design in
 // src/md/features/memory_without_a_bound.md.
@@ -12,12 +12,12 @@ import op "modus:contract/operation"
 // that a push gave stays valid until `arena_reset` or `arena_end`. A push
 // past the committed end commits the next pages; a budget that cannot pay
 // them refuses with `No_Budget`, which the push gives back, and the arena
-// stays as it was. A scratch arena of a frame is an arena that the program
+// stays as it was. A scratch arena of a frame is an arena that the process
 // resets at the start of each frame: it keeps its committed pages, so a
 // frame commits nothing in the usual case.
 //
 // The arena owns its memory object alone: one handle and one mapping, in
-// this program. A program that copies the handle or maps the object again
+// this process. A process that copies the handle or maps the object again
 // breaks the undo of a refused push, because a decommit of an object that
 // another holder names is refused.
 //
@@ -28,7 +28,7 @@ import op "modus:contract/operation"
 // ```
 Arena :: struct {
 	memory:            Handle, // The uncommitted object; 0 for an arena that a host test drives.
-	budget:            Handle, // The budget that pays the commits; 0: the budget of this program.
+	budget:            Handle, // The budget that pays the commits; 0: the budget of this process.
 	base:              [^]u8, // The first byte of the reserved range: it never moves.
 	reserved_pages:    u64, // The pages of the object.
 	committed_pages:   u64, // The pages from the base that the budget pays.
@@ -59,7 +59,7 @@ ARENA_ALIGNMENT_LIMIT :: PAGE_SIZE
 
 // arena_create reserves an arena of `reserve_pages` pages: an uncommitted
 // object, mapped once with Write. The budget (0: the budget of this
-// program) pays the frame list now and each page at its commit.
+// process) pays the frame list now and each page at its commit.
 //
 // - `reserve_pages`: from 1 to `op.MEMORY_PAGE_LIMIT` (1 GiB);
 //   `arena_reservation_pages` gives a size from what a budget holds.

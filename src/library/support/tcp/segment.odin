@@ -1,4 +1,4 @@
-// The TCP library: TCP in the program that uses it, so that the kernel is
+// The TCP library: TCP in the process that uses it, so that the kernel is
 // not on the path of the data (docs/NETWORK.md). This file: the numbers of
 // TCP, the order of sequence numbers, and the header of a segment.
 //
@@ -23,7 +23,7 @@ Flag :: enum u8 {
 	Fin = 0, // The sender has no more data.
 	Syn = 1, // Synchronize the sequence numbers: the first segment of each side.
 	Rst = 2, // Reset the connection.
-	Psh = 3, // Push: give the data to the program now.
+	Psh = 3, // Push: give the data to the process now.
 	Ack = 4, // The acknowledgment number is valid.
 	Urg = 5, // Urgent data: this library ignores it.
 	Ece = 6, // ECN echo: this library ignores it.

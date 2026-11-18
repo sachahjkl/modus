@@ -1,8 +1,8 @@
-package disk_program
+package disk_process
 
-// The import scan: how the root service finds an import of a disk program
+// The import scan: how the root service finds an import of a disk process
 // that the boot image does not hold, by the hash of the bytes of a file of
-// the store `programs` (docs/MODULE_CONTRACT.md, "A program from a disk").
+// the store `module_files` (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // This file keeps the account of a scan: the entries that the list gave,
 // the hashes that the imports want, and which entry to read next. The root
@@ -16,10 +16,10 @@ package disk_program
 SCAN_ENTRY_CAPACITY :: 64
 
 // The most hashes that one scan wants: the modules of the store that one
-// disk program imports, at each level together.
+// disk process imports, at each level together.
 SCAN_WANTED_CAPACITY :: 8
 
-// The most levels of imports: the imports of the program are level 1,
+// The most levels of imports: the imports of the process are level 1,
 // their imports level 2.
 SCAN_DEPTH_LIMIT :: 4
 
@@ -41,7 +41,7 @@ Scan_Entry :: struct {
 // One hash that an import names and the boot image does not hold.
 Scan_Wanted :: struct {
 	hash:     [HASH_SIZE]u8,
-	importer: int, // The entry of the module that imports it; -1: the disk program.
+	importer: int, // The entry of the module that imports it; -1: the disk process.
 	level:    int,
 	found:    bool,
 	entry:    int, // The entry whose bytes have the hash, when found.
@@ -69,7 +69,7 @@ Want_Answer :: enum u8 {
 
 // scan_want notes a hash that an import names and the boot image does not
 // hold. importer is the entry of the module that imports it, or -1 for the
-// disk program; level is 1 for an import of the disk program.
+// disk process; level is 1 for an import of the disk process.
 scan_want :: proc "contextless" (scan: ^Import_Scan, hash: [HASH_SIZE]u8, importer: int, level: int) -> Want_Answer {
 	if hash == {} {
 		return .Zero
@@ -94,8 +94,8 @@ scan_want :: proc "contextless" (scan: ^Import_Scan, hash: [HASH_SIZE]u8, import
 
 // scan_entry_add notes one entry of the list: an object of 1 byte to
 // FILE_BYTES_LIMIT, as the list says, whose name can be the name of a disk
-// program. It gives false for an entry that is not noted. The object
-// grant_table has no name of a disk program, so it is never read as a
+// process. It gives false for an entry that is not noted. The object
+// grant_table has no name of a disk process, so it is never read as a
 // module file.
 scan_entry_add :: proc "contextless" (scan: ^Import_Scan, name: string, size: i64) -> bool {
 	if problem, _ := name_problem(name); problem != .None || size < 1 || size > FILE_BYTES_LIMIT {

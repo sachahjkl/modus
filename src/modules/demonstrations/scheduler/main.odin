@@ -1,7 +1,7 @@
 // The scheduling strategies of the kernel, checked side by side, and
 // measured in a measure run (docs/SCHEDULING.md).
 //
-// The program runs its cases under each strategy: two threads that wake
+// The process runs its cases under each strategy: two threads that wake
 // each other while spinners keep each processor busy; a thread that sleeps
 // 2 ms, many times, while 8 spinners run, with the delay of each wake (a
 // [measure run](term:measure-run) only: the delay is a measure);
@@ -22,7 +22,7 @@
 // gives each case a fixed time, and writes the wakes in one second, the
 // late wakes and the work in one second.
 //
-// The program checks what does not depend on the load of the host: no
+// The process checks what does not depend on the load of the host: no
 // spinner starved, a wake ended turns under EEVDF and none under round
 // robin (the counts of the kernel; the wakes in one second are measures),
 // the weights order the shares under the strategies with weights, each
@@ -32,12 +32,12 @@
 // thread"): a thread reads and writes its own schedule, the weights written
 // through the machine handle order the shares, the kernel refuses each
 // write that it must refuse, and writes during the changes of strategy
-// lose no thread; the schedule of a thread of another program is read and
+// lose no thread; the schedule of a thread of another process is read and
 // written through the machine handle; a weight limit that the machine
 // handle wrote holds against the writes of the thread and against its new
-// threads; a write of the program never raises a weight or a request; the
+// threads; a write of the process never raises a weight or a request; the
 // lag that the kernel reports for a held thread stays the same after a
-// write of the program, and is 0 after a raise through the machine
+// write of the process, and is 0 after a raise through the machine
 // handle. For the placement of a thread on the processors
 // (docs/SCHEDULING.md, "The placement of a thread"; placement.odin): a
 // thread narrows its own set and then runs only there; the kernel refuses
@@ -49,35 +49,35 @@
 // processor cannot take does not stop the balance; writes of placements
 // during the changes of strategy lose no thread.
 //
-// For a share of the processors for each program (docs/SCHEDULING.md, "A
-// share for each program"; share.odin): after a round of the share policy,
-// each thread of four programs with 1, 2, 4 and 8 spinning threads has the
-// full weight divided by the threads of its program; a thread that asked a
-// smaller weight, or lowered itself, keeps it; a program that starts more
-// threads has no more weight in all; the part of the program with 8
-// threads against the program with 1 is smaller with the policy than
+// For a share of the processors for each process (docs/SCHEDULING.md, "A
+// share for each process"; share.odin): after a round of the share policy,
+// each thread of four processes with 1, 2, 4 and 8 spinning threads has the
+// full weight divided by the threads of its process; a thread that asked a
+// smaller weight, or lowered itself, keeps it; a process that starts more
+// threads has no more weight in all; the part of the process with 8
+// threads against the process with 1 is smaller with the policy than
 // without it; when the policy goes off, each thread has its weight back.
 //
-// The program needs the machine with the rights Inspect and Schedule.
+// The process needs the machine with the rights Inspect and Schedule.
 //
 // **What it is for.** The kernel has three scheduling strategies (round
 // robin, fair, EEVDF) and changes from one to another at run time. This
-// program shows what each one gives on the same load, and checks what each
+// process shows what each one gives on the same load, and checks what each
 // one must keep, whatever the speed of the host.
 //
 // **Start**: `start("scheduler")` in the console, or the bar of the
 // desktop. Its budget has room for 24 threads: 12 spinners, two threads
 // that wake each other, one that sleeps, a changer, a thread that writes
 // schedules, and a thread that starts threads; then the 15 threads of the
-// four programs of the shares, which it starts from the boot image.
+// four processes of the shares, which it starts from the boot image.
 //
 // **The share policy.** `scheduler.policy(1)` in the console, the key P or
-// the button of the view of the shares turns it on: each program then has
-// one program weight, which the program divides between the threads of
-// that program, so a program with many threads takes no more of the
-// processors than a program with one. `scheduler.share("paint", 256)` gives
-// the programs with a name another program weight. The policy is off when
-// the program starts. The two commands are served after the checks.
+// the button of the view of the shares turns it on: each process then has
+// one process weight, which the process divides between the threads of
+// that process, so a process with many threads takes no more of the
+// processors than a process with one. `scheduler.share("paint", 256)` gives
+// the processes with a name another process weight. The policy is off when
+// the process starts. The two commands are served after the checks.
 //
 // **Grants**, as the root service gives them:
 //
@@ -85,24 +85,24 @@
 //   scheduler in the system report.
 // - **Schedule**: the right to change the strategy of the whole machine,
 //   and the weight and the request of any thread. A change touches every
-//   program, so this right is rare.
-// - **Serve**: the program is a service. Its export `strategy_set` sets
+//   process, so this right is rare.
+// - **Serve**: the process is a service. Its export `strategy_set` sets
 //   the strategy for a caller that holds no right over the machine: the
 //   console runs it as `strategy("eevdf")`, and the palette of the desktop
 //   for the entry "set strategy to eevdf". The calls run after the checks,
 //   in the loop of the window. Its exports `share` and `policy` are
 //   commands of the console too.
-// - **Image**: the boot image, to start the four programs of the shares
+// - **Image**: the boot image, to start the four processes of the shares
 //   from its own file.
 //
 // **What a reader sees**: one tile for each strategy with its numbers, and
 // the strategy in use. The key S, or the button after the tiles, opens the
-// view of the shares: one row for each program, with its threads that
-// count, its program weight, the weight of each thread, and its share of
+// view of the shares: one row for each process, with its threads that
+// count, its process weight, the weight of each thread, and its share of
 // the processors in the last period as a bar. The log has one line of results for each strategy,
 // then "scheduler: ok, no spinner starved under 3 strategies, ..." or
 // "scheduler: wrong: ..." with the first problem, and the time to draw the
-// window. At the end the program sets the strategy that was in use at its
+// window. At the end the process sets the strategy that was in use at its
 // start.
 //
 // **What it does not prove**: the wakes in one second and the shares are
@@ -122,13 +122,13 @@ import "modus:support/system"
 
 // Threads: 12 spinners, two threads that wake each other, one that sleeps,
 // a changer, a thread that starts threads; later, with its first thread,
-// the 15 threads of the four programs of the shares, or 8 spinners of its
-// own. Programs: itself and those four. The tool counts its module, a
+// the 15 threads of the four processes of the shares, or 8 spinners of its
+// own. Processes: itself and those four. The tool counts its module, a
 // stack and a thread area for each of the 24 threads, and its window. The
-// working memory: 512 for each of the four programs of the shares, its
+// working memory: 512 for each of the four processes of the shares, its
 // own tables, and the rest of the 5632 pages that it had before the tool
 // counted.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3659, programs = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3659, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 STRATEGY_COUNT :: 3
 @(rodata)
@@ -168,7 +168,7 @@ SPINNER_LIMIT :: 16
 Spinner :: struct #align (64) {
 	count:  u64,
 	stop:   u32,
-	number: u32, // 1 + the number of its thread in the program: the spinner writes it when it starts. 0: not yet.
+	number: u32, // 1 + the number of its thread in the process: the spinner writes it when it starts. 0: not yet.
 }
 
 // The results of one strategy.
@@ -297,29 +297,29 @@ spinner_counts :: proc "contextless" (first, count: int) -> (values: [SPINNER_LI
 	return values
 }
 
-// The threads of this program as the kernel reports them: the machine
+// The threads of this process as the kernel reports them: the machine
 // number of each one is its name for the machine handle.
 self_slot, self_serial: u64
-self_machine_number: u64 // The machine number of the first thread of this program.
+self_machine_number: u64 // The machine number of the first thread of this process.
 thread_table: op.Thread_Table_Report
 
-program_report :: proc "contextless" (slot: u64) -> (report: op.Program_Report, status: system.Status) {
-	_, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&report)), size_of(report))
+process_report :: proc "contextless" (slot: u64) -> (report: op.Process_Report, status: system.Status) {
+	_, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 	return report, status
 }
 
-// threads_of reads the thread report of a program slot into thread_table.
-// true: the report is of the program with this serial.
+// threads_of reads the thread report of a process slot into thread_table.
+// true: the report is of the process with this serial.
 threads_of :: proc "contextless" (slot, serial: u64) -> bool {
 	_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Threads), slot, u64(uintptr(&thread_table)), size_of(thread_table))
-	return status == .Ok && thread_table.program_serial == serial
+	return status == .Ok && thread_table.process_serial == serial
 }
 
 // machine_number_is_this_thread says if a machine number names the calling
-// thread. A name of a program does not say it: two programs can have one
+// thread. A name of a process does not say it: two processes can have one
 // name. The thread lowers its request by one microsecond by its own
-// number, which names a thread of this program only, and reads the new
-// value by the machine number: two times. A write of a program only
+// number, which names a thread of this process only, and reads the new
+// value by the machine number: two times. A write of a process only
 // lowers a request, so each try costs two microseconds of the request;
 // for its own thread the machine handle then writes the schedule of the
 // start back.
@@ -342,18 +342,18 @@ machine_number_is_this_thread :: proc "contextless" (candidate: u64) -> bool {
 	return own
 }
 
-// find_self finds the slot and the serial of this program, and the machine
+// find_self finds the slot and the serial of this process, and the machine
 // number of its first thread, which runs this code. A slot is a candidate
-// by its name; it is this program only when the thread of the calling
+// by its name; it is this process only when the thread of the calling
 // number in its report is the calling thread. false: not found.
 find_self :: proc "contextless" () -> bool {
 	number := u32(system.thread_record().number)
 	for index in u64(1) ..< 64 {
-		report, status := program_report(index)
+		report, status := process_report(index)
 		if status != .Ok || system.name_of(report.name[:]) != "scheduler" || report.state == .Stopped || report.state == .None {
 			continue
 		}
-		if !threads_of(index, report.program_serial) {
+		if !threads_of(index, report.process_serial) {
 			continue
 		}
 		candidate: u64
@@ -363,7 +363,7 @@ find_self :: proc "contextless" () -> bool {
 			}
 		}
 		if candidate != 0 && machine_number_is_this_thread(candidate) {
-			self_slot, self_serial, self_machine_number = index, report.program_serial, candidate
+			self_slot, self_serial, self_machine_number = index, report.process_serial, candidate
 			return true
 		}
 	}
@@ -373,7 +373,7 @@ find_self :: proc "contextless" () -> bool {
 // spinner_machine_numbers gives the machine number of each of count
 // spinners from first. It waits until each spinner wrote the number of its
 // thread (the time only ends a hang), then reads the thread report of this
-// program. false: a spinner did not start, or the report does not name it.
+// process. false: a spinner did not start, or the report does not name it.
 spinner_machine_numbers :: proc "contextless" (first, count: int, numbers: ^[SPINNER_LIMIT]u64) -> bool {
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for index in first ..< first + count {
@@ -402,7 +402,7 @@ spinner_machine_numbers :: proc "contextless" (first, count: int, numbers: ^[SPI
 }
 
 // spinner_run_times reads the processor time of each of count spinners
-// from first, in ticks, from the thread report of this program. numbers
+// from first, in ticks, from the thread report of this process. numbers
 // holds the machine number of each spinner. false: no report, or the
 // report does not name a spinner.
 spinner_run_times :: proc "contextless" (first, count: int, numbers: ^[SPINNER_LIMIT]u64, times: ^[SPINNER_LIMIT]u64) -> bool {
@@ -502,7 +502,7 @@ Pair :: struct {
 	stop:   u32,
 	rounds: [2]u64,
 	lost:   [2]u64,
-	refused: [2]u64, // The batches of a wake and a wait that the library refused: a fault of this program.
+	refused: [2]u64, // The batches of a wake and a wait that the library refused: a fault of this process.
 }
 
 pair: Pair
@@ -728,7 +728,7 @@ measure :: proc "contextless" (index: int, processors: u64) {
 	}
 
 	// 5. 12 spinners that start with the full weight. While they run, the
-	// program writes the weights 1, 2 and 4 through the machine handle, and
+	// process writes the weights 1, 2 and 4 through the machine handle, and
 	// reads each one back. The condition is the one of the case 4.
 	if !spinners_start(0, WEIGHTED_COUNT, full_weight) {
 		spinners_stop(0, WEIGHTED_COUNT)
@@ -1047,7 +1047,7 @@ own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 	// A thread lowers its own weight and its own request.
 	write_status = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2})
 	own_schedule.written, again_status = system.thread_schedule_read(0, number)
-	// A program only lowers: the values of the creation are refused now.
+	// A process only lowers: the values of the creation are refused now.
 	own_schedule.weight_raise = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT})
 	own_schedule.request_raise = system.thread_schedule_write(0, number, {request = OWN_REQUEST})
 	own_schedule.last, last_status = system.thread_schedule_read(0, number)
@@ -1058,7 +1058,7 @@ own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 // own_schedules: a thread reads the schedule of its creation, lowers its
 // weight and its request and reads them; its writes of the values of its
 // creation are refused and change nothing; the first thread of the
-// program reads the defaults.
+// process reads the defaults.
 own_schedules :: proc "contextless" () -> bool {
 	own_schedule = {}
 	thread, status := system.thread_start(own_schedule_run, nil, weight = OWN_WEIGHT, request = OWN_REQUEST)
@@ -1125,19 +1125,19 @@ schedule_refusals :: proc "contextless" () -> bool {
 	return as_it_must
 }
 
-// other_program_schedule reads and writes the schedule of a thread of
-// another program through the machine handle: the root service, which
+// other_process_schedule reads and writes the schedule of a thread of
+// another process through the machine handle: the root service, which
 // lives as long as the machine. Its slot is found by its name, and it is
-// not this program by its serial; the thread report and a second program
-// report have the same serial, so each read is of one program. The write
+// not this process by its serial; the thread report and a second process
+// report have the same serial, so each read is of one process. The write
 // changes the request by one microsecond, and the last write gives the
 // schedule that the thread had.
-other_program_schedule :: proc "contextless" () -> bool {
+other_process_schedule :: proc "contextless" () -> bool {
 	slot, serial: u64
 	for index in u64(1) ..< 64 {
-		report, status := program_report(index)
-		if status == .Ok && system.name_of(report.name[:]) == "root" && report.state != .Stopped && report.state != .None && report.program_serial != self_serial {
-			slot, serial = index, report.program_serial
+		report, status := process_report(index)
+		if status == .Ok && system.name_of(report.name[:]) == "root" && report.state != .Stopped && report.state != .None && report.process_serial != self_serial {
+			slot, serial = index, report.process_serial
 			break
 		}
 	}
@@ -1158,17 +1158,17 @@ other_program_schedule :: proc "contextless" () -> bool {
 		after, after_status := system.thread_schedule_read(machine, number)
 		restore_status := before_status == .Ok ? system.thread_schedule_write(machine, number, before) : system.Status.Bad_State
 		restored, restored_status := system.thread_schedule_read(machine, number)
-		again, again_status := program_report(slot)
+		again, again_status := process_report(slot)
 		as_it_must = before_status == .Ok && write_status == .Ok && after_status == .Ok && restore_status == .Ok && restored_status == .Ok
 		as_it_must &&= after == changed && restored == before
-		as_it_must &&= again_status == .Ok && again.program_serial == serial
+		as_it_must &&= again_status == .Ok && again.process_serial == serial
 	}
-	system.log("scheduler: a thread of another program, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back", as_it_must ? string(": as it must") : string(": WRONG"))
+	system.log("scheduler: a thread of another process, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back", as_it_must ? string(": as it must") : string(": WRONG"))
 	return as_it_must
 }
 
 // The weight limit (docs/SCHEDULING.md, "The schedule of a live thread"). The first
-// thread of the program gets a limit through the machine handle, tries to
+// thread of the process gets a limit through the machine handle, tries to
 // leave it by its own writes and by new threads, and gets the full limit
 // back at the end, on each path.
 WEIGHT_LIMIT_OF_THE_CASE :: 256
@@ -1212,7 +1212,7 @@ weight_limits :: proc "contextless" () -> bool {
 	kept, kept_status := system.thread_schedule_read(0, number)
 	first_right := lowered == .Ok && now_status == .Ok && now == limited && raise == .Bad_Operation && record_right && ignored == .Ok && kept_status == .Ok && kept == limited
 	// The same weight again and a lower one are accepted. The full weight
-	// and the weight of the limit are refused then: a program only lowers.
+	// and the weight of the limit are refused then: a process only lowers.
 	// Only the machine handle gives the weight of the limit back.
 	accepted, refused, machine_raises, above: u64
 	for _ in 0 ..< LIMIT_ROUNDS {
@@ -1253,7 +1253,7 @@ weight_limits :: proc "contextless" () -> bool {
 // (docs/SCHEDULING.md, "The schedule of a live thread"). The thread report
 // gives the lag that EEVDF keeps for a thread that is held
 // (`Thread_Report.lag`): below 0 the thread owes time, above 0 it is owed
-// time. A write of the program lowers or is refused, and leaves that
+// time. A write of the process lowers or is refused, and leaves that
 // number as it is. A raise through the machine handle makes it 0: the
 // thread starts again as a new thread. The conditions compare numbers of
 // the kernel: no time and no share is in them.
@@ -1262,15 +1262,15 @@ OWING_ROUNDS :: 100
 // What the rounds saw: the last three values are measures.
 Owing_Result :: struct {
 	rounds:    u64, // The rounds that ran.
-	changed:   u64, // Writes of the program after which the reported lag was another number.
-	raised:    u64, // Raises of the program that the kernel did not refuse.
+	changed:   u64, // Writes of the process after which the reported lag was another number.
+	raised:    u64, // Raises of the process that the kernel did not refuse.
 	not_new:   u64, // Raises through the machine handle after which the lag was not 0.
 	owing:     u64, // Rounds where the held thread owed time.
 	owed:      u64, // Rounds where it was owed time.
 	largest:   u64, // The most that it owed, in weighted cycles.
 }
 
-// thread_item gives the record of a thread of this program in a new
+// thread_item gives the record of a thread of this process in a new
 // thread report, or nil.
 thread_item :: proc "contextless" (number: u32) -> ^op.Thread_Report {
 	if self_slot == 0 || !threads_of(self_slot, self_serial) {
@@ -1285,7 +1285,7 @@ thread_item :: proc "contextless" (number: u32) -> ^op.Thread_Report {
 }
 
 // held_lag gives the lag that the kernel reports for a thread of this
-// program that a stop holds. false: the report does not show it held.
+// process that a stop holds. false: the report does not show it held.
 held_lag :: proc "contextless" (number: u32) -> (lag: i64, held: bool) {
 	item := thread_item(number)
 	if item == nil {
@@ -1335,7 +1335,7 @@ spinner_with_company :: proc "contextless" (count: int) -> int {
 // OWING_ROUNDS until the kernel reported the held spinner with a lag below
 // 0 at least one time: a state of the kernel, not a speed. The hang bound
 // ends the rounds if that state never comes, and the case then fails and
-// says so. With as many processors as the program has spinners, or more,
+// says so. With as many processors as the process has spinners, or more,
 // each spinner can be alone in its queue for ever: the case says so and
 // checks nothing.
 owing_kept :: proc "contextless" (processors: u64) -> bool {
@@ -1372,7 +1372,7 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 		if stop_status == .Ok {
 			first, held := held_lag(number)
 			round_right &&= held
-			// The program: a raise is refused, a lower request is accepted.
+			// The process: a raise is refused, a lower request is accepted.
 			raise := system.thread_schedule_write(thread, 0, {weight = op.WEIGHT_FULL})
 			after_raise, held_after_raise := held_lag(number)
 			lower := system.thread_schedule_write(thread, 0, {request = 1})
@@ -1490,7 +1490,7 @@ VIEW_BUTTON_X :: TILE_X + STRATEGY_COUNT * (TILE_WIDTH + MARGIN)
 VIEW_BUTTON_WIDTH :: WIDTH - MARGIN - CARD_INSIDE - VIEW_BUTTON_X
 
 // The two views of the window under the head: the checks and the measures
-// of the strategies, or the shares of the programs.
+// of the strategies, or the shares of the processes.
 View :: enum {
 	Strategies,
 	Shares,
@@ -1519,8 +1519,8 @@ POLICY_BUTTON_WIDTH :: 136
 POLICY_BUTTON_HEIGHT :: 24
 
 // share_cell writes the text of one cell of a row of the shares: the name,
-// the threads, the program weight, the weight of each thread, the share.
-share_cell :: proc "contextless" (buffer: []u8, row: ^Program_Row, column: int, elapsed, processors: u64) -> string {
+// the threads, the process weight, the weight of each thread, the share.
+share_cell :: proc "contextless" (buffer: []u8, row: ^Process_Row, column: int, elapsed, processors: u64) -> string {
 	switch column {
 	case 0:
 		return system.name_of(row.name[:])
@@ -1539,10 +1539,10 @@ share_cell :: proc "contextless" (buffer: []u8, row: ^Program_Row, column: int, 
 }
 
 @(rodata)
-share_headers := [SHARE_COLUMNS]string{"program", "threads that count", "program weight", "weight of each thread", "share, last period"}
+share_headers := [SHARE_COLUMNS]string{"process", "threads that count", "process weight", "weight of each thread", "share, last period"}
 
 // draw_shares draws the view of the shares: the state of the share policy
-// with its button, then one row for each program. The width of each
+// with its button, then one row for each process. The width of each
 // column is the width of its widest text in this frame, so no text is cut
 // and no text is over another one; the bar takes the room that is left.
 draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
@@ -1550,7 +1550,7 @@ draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
 	round_drawn = round_shown
 	system.unlock(&policy_lock)
 	round := &round_drawn
-	inside := card(frame, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "SHARES", "Thread_Table_Report, Program_Report.run_time")
+	inside := card(frame, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "SHARES", "Thread_Table_Report, Process_Report.run_time")
 	line: [96]u8
 
 	// The policy: a button, and what it does now.
@@ -1560,19 +1560,19 @@ draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
 		policy_toggle()
 	}
 	if on {
-		block(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, graphics.shade(graphics.colors.program, 120), graphics.shade(graphics.colors.program, 70))
+		block(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, graphics.shade(graphics.colors.process, 120), graphics.shade(graphics.colors.process, 70))
 		write(inside, 12, 4, "policy on", graphics.colors.background)
 	} else {
 		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, button.under_pointer ? graphics.shade(graphics.colors.track, 130) : graphics.colors.track)
-		fill(inside, 0, POLICY_BUTTON_HEIGHT - 2, POLICY_BUTTON_WIDTH, 2, graphics.colors.program)
+		fill(inside, 0, POLICY_BUTTON_HEIGHT - 2, POLICY_BUTTON_WIDTH, 2, graphics.colors.process)
 		write(inside, 12, 4, "policy off", graphics.colors.text)
 	}
 	if button.focused {
 		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, 2, graphics.COLOR_WHITE)
 	}
-	about := on ? string("each program has its weight, divided between its threads that count; scheduler.share sets it") : string("each thread has the weight that its program asked; the key P, or scheduler.policy(1)")
+	about := on ? string("each process has its weight, divided between its threads that count; scheduler.share sets it") : string("each thread has the weight that its process asked; the key P, or scheduler.policy(1)")
 	write(inside, POLICY_BUTTON_WIDTH + 16, 4, about, on ? graphics.colors.text : graphics.colors.dim)
-	write(inside, 0, 32, system.format(line[:], "round ", round.number, ": ", u64(round.count), " programs, ", round.threads, " threads, ", round.writes, " writes, ", round.duration / 1000, " us"), graphics.colors.dim)
+	write(inside, 0, 32, system.format(line[:], "round ", round.number, ": ", u64(round.count), " processes, ", round.threads, " threads, ", round.writes, " writes, ", round.duration / 1000, " us"), graphics.colors.dim)
 
 	// The rows that have room, and one line for the others.
 	room := max((inside.height - SHARE_ROWS_Y) / SHARE_ROW, 0)
@@ -1617,13 +1617,13 @@ draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
 			}
 			write(inside, places[column], y, share_cell(line[:], &row, column, round.elapsed, shown_processors), color)
 		}
-		// The bar: the program with the most processor time has the whole bar.
+		// The bar: the process with the most processor time has the whole bar.
 		if bar_width >= 64 {
 			bar(inside, bar_x, y + 4, bar_width, 8, int(row.ran * u64(bar_width) / most), graphics.colors.kernel)
 		}
 	}
 	if round.count > rows {
-		write(inside, 0, SHARE_ROWS_Y + rows * SHARE_ROW, system.format(line[:], u64(round.count - rows), " more programs, each with less processor time in the last period"), graphics.colors.dim)
+		write(inside, 0, SHARE_ROWS_Y + rows * SHARE_ROW, system.format(line[:], u64(round.count - rows), " more processes, each with less processor time in the last period"), graphics.colors.dim)
 	}
 	if round.number == 0 {
 		write(inside, 0, SHARE_ROWS_Y, "the first round runs after the checks", graphics.colors.dim)
@@ -1693,7 +1693,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		view_toggle()
 	}
 	fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, TILE_HEIGHT, view_button.under_pointer ? graphics.shade(graphics.colors.track, 130) : graphics.colors.track)
-	fill(WHOLE, VIEW_BUTTON_X, TILE_Y + TILE_HEIGHT - 2, VIEW_BUTTON_WIDTH, 2, graphics.colors.program)
+	fill(WHOLE, VIEW_BUTTON_X, TILE_Y + TILE_HEIGHT - 2, VIEW_BUTTON_WIDTH, 2, graphics.colors.process)
 	write(WHOLE, VIEW_BUTTON_X + 8, TILE_Y + 12, view == .Strategies ? "shares" : "checks", graphics.colors.text)
 	if view_button.focused {
 		fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, 2, graphics.COLOR_WHITE)
@@ -1854,7 +1854,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	case !done:
 		write(last, 0, status_y, "measures in progress", graphics.colors.boot_program)
 	case right:
-		write(last, 0, status_y, "ok: no thread starved, each thread ran after the changes, a change needs the right Schedule", graphics.colors.program)
+		write(last, 0, status_y, "ok: no thread starved, each thread ran after the changes, a change needs the right Schedule", graphics.colors.process)
 	case:
 		write(last, 0, status_y, system.format(line[:], "wrong: ", problem), graphics.colors.failed)
 	}
@@ -1892,17 +1892,17 @@ strategy_name_is :: proc "contextless" (text: string, name: string) -> bool {
 // name. The result is the number of the strategy that the machine used
 // before (1 round robin, 2 fair, 3 EEVDF).
 //
-// The program `scheduler` holds the right Schedule on the machine; a
+// The process `scheduler` holds the right Schedule on the machine; a
 // caller holds none. The console calls this export for its command
 // `strategy`, and the palette of the desktop for an entry such as "set
-// strategy to eevdf". The program serves its calls after its checks, in
+// strategy to eevdf". The process serves its calls after its checks, in
 // the loop of its window: the checks change the strategy themselves.
 //
 // - **name**: `round_robin`, `fair` or `eevdf`; 16 bytes at most. The case
 //   of the letters does not count, and a space is the same as `_`.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the
-// console has that grant. The program uses its own right for a caller, so
+// console has that grant. The process uses its own right for a caller, so
 // it serves only a caller whose requests are those of the principal; the
 // root service gives that grant, shows it and revokes it.
 //
@@ -1968,10 +1968,10 @@ choose :: proc "contextless" (index: int) {
 // a caller.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// A program of the case of the shares has this file and no window: it
+	// A process of the case of the shares has this file and no window: it
 	// only computes.
 	if threads := share_role_threads(ctx.values[SHARE_VALUE_ROLE]); threads != 0 {
-		share_program_run(threads)
+		share_process_run(threads)
 	}
 	if ctx.values[SHARE_VALUE_ROLE] == SHORT_THREADS_ROLE {
 		short_threads_run()
@@ -1982,12 +1982,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
-	// The boot image holds the file of this program, for the programs of
-	// the case of the shares; each one needs a seed from this program.
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok && random.generator_from_context(&program_generator, ctx) {
+	// The boot image holds the file of this process, for the processes of
+	// the case of the shares; each one needs a seed from this process.
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok && random.generator_from_context(&process_generator, ctx) {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
-	// A program scheduler that was stopped with the share policy on left
+	// A process `scheduler` that was stopped with the share policy on left
 	// each thread under a weight limit: they get the full limit back.
 	policy_weights_give_back()
 	report := system_report()
@@ -2001,7 +2001,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("a change with no right Schedule, or a weight above 1024, was not refused")
 	}
 	if !find_self() {
-		fail("the program did not find its own threads in the reports")
+		fail("the process did not find its own threads in the reports")
 	}
 	if !own_schedules() {
 		fail("a thread did not read or write its own schedule")
@@ -2009,8 +2009,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !schedule_refusals() {
 		fail("a write of a schedule was not refused as it must")
 	}
-	if !other_program_schedule() {
-		fail("the schedule of a thread of another program was not read and written")
+	if !other_process_schedule() {
+		fail("the schedule of a thread of another process was not read and written")
 	}
 	if self_machine_number == 0 || !weight_limits() {
 		fail("a weight limit did not hold")
@@ -2044,10 +2044,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	stress()
 	system.strategy_set(machine, original)
 	if !share_case() {
-		fail("the share policy did not give each program its part, or did not keep a lowered weight")
+		fail("the share policy did not give each process its part, or did not keep a lowered weight")
 	}
 	if !short_threads_case() {
-		fail("a thread that no round of the share policy saw had more than the new-thread weight limit of its program")
+		fail("a thread that no round of the share policy saw had more than the new-thread weight limit of its process")
 	}
 	done = true
 	if right && system.measure_run() {
@@ -2063,7 +2063,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	drawn := system.nanoseconds() - start
 	system.log("scheduler: the window took ", drawn / 1000, " us to draw")
 	// The rounds of the share policy run on a thread of their own: a round
-	// enters the kernel for each program, and this thread draws and serves
+	// enters the kernel for each process, and this thread draws and serves
 	// the commands.
 	if _, policy_status := system.thread_start(policy_run, nil); policy_status != .Ok {
 		system.log("scheduler: the thread of the share policy did not start: ", op.STATUS_NAMES[policy_status])

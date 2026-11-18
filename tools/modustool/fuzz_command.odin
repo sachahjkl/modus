@@ -45,7 +45,7 @@ Fuzz_Child_Outcome :: struct {
 
 // One child that runs.
 Fuzz_Running_Child :: struct {
-	process:       os.Process,
+	host_process:       os.Process,
 	mailbox:       ^Fuzz_Mailbox,
 	error_path:    string, // The standard error of the child: the message of a bounds check of Odin.
 	last_count:    u64,
@@ -89,12 +89,12 @@ fuzz_child_start :: proc(binary: string, mode: Fuzz_Child_Mode, target: ^Fuzz_Ta
 	if file != "" {
 		append(&command, file)
 	}
-	process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = error_file})
+	host_process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = error_file})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start the child %s: %v", binary, start_error)
 		return {}, false
 	}
-	child.process = process
+	child.host_process = host_process
 	child.started = time.tick_now()
 	child.last_change = child.started
 	return child, true
@@ -113,7 +113,7 @@ fuzz_children_watch :: proc(children: []Fuzz_Running_Child) {
 				continue
 			}
 			// A wait of 0 does not block: Timeout says that the child runs.
-			_, wait_error := os.process_wait(child.process, 0)
+			_, wait_error := os.process_wait(child.host_process, 0)
 			if wait_error != os.General_Error.Timeout {
 				child.ended = true
 				if intrinsics.atomic_load_explicit(&child.mailbox.state, .Acquire) != u32(Fuzz_Child_State.Done) {
@@ -134,8 +134,8 @@ fuzz_children_watch :: proc(children: []Fuzz_Running_Child) {
 		if stop_all {
 			for &child in children {
 				if !child.ended {
-					_ = os.process_kill(child.process)
-					_, _ = os.process_wait(child.process)
+					_ = os.process_kill(child.host_process)
+					_, _ = os.process_wait(child.host_process)
 					child.ended = true
 				}
 			}
@@ -378,7 +378,7 @@ fuzz_print_literal :: proc(name: string, input: []u8) {
 
 // run_fuzz is the command `fuzz` (docs/TOOLS.md, "The fuzzing").
 run_fuzz :: proc(args: []string) -> int {
-	usage_text :: "modustool: fuzz list | <target> [<executions> [<processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | regression operations <finding folder> | replay operations <file>"
+	usage_text :: "modustool: fuzz list | <target> [<executions> [<host_processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | regression operations <finding folder> | replay operations <file>"
 	if len(args) == 0 {
 		fmt.eprintln(usage_text)
 		return EXIT_USAGE
@@ -494,7 +494,7 @@ run_fuzz :: proc(args: []string) -> int {
 	// with no end, so the default is the count of the check, and 0 is
 	// refused. A long run names its count.
 	executions := u64(FUZZ_CHECK_EXECUTIONS)
-	processes := 1
+	host_processes := 1
 	seed := fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
 	if len(args) >= 2 {
 		value, ok := strconv.parse_u64(args[1])
@@ -511,7 +511,7 @@ run_fuzz :: proc(args: []string) -> int {
 			fmt.eprintln(usage_text)
 			return EXIT_USAGE
 		}
-		processes = value
+		host_processes = value
 	}
 	if len(args) >= 4 {
 		value, ok := strconv.parse_u64(args[3])
@@ -546,8 +546,8 @@ run_fuzz :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	for target in chosen {
-		fmt.printfln("modustool: fuzz %s: the seed %d, %d processes", target.name, seed, processes)
-		children := make([]Fuzz_Running_Child, processes)
+		fmt.printfln("modustool: fuzz %s: the seed %d, %d processes", target.name, seed, host_processes)
+		children := make([]Fuzz_Running_Child, host_processes)
 		defer delete(children)
 		for &child, number in children {
 			started: bool

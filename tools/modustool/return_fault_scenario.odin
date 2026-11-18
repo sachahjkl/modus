@@ -1,17 +1,17 @@
 package modustool
 
-// The return to a program (docs/ARCHITECTURE.md, "The return to a program"):
+// The return to a process (docs/ARCHITECTURE.md, "The return to a process"):
 // three machines.
 //
-// The first machine runs the kernel of the system. The program
+// The first machine runs the kernel of the system. The process
 // extended_state holds its registers in more threads than processors; while
-// it runs, the program return_fault starts five children, each with a
+// it runs, the process return_fault starts five children, each with a
 // thread whose return the processor would refuse at iretq, or whose flags
 // the kernel must not keep. The kernel stops the children of the addresses
 // as their own faults, with the stop code of a refused return and the
 // address in the stop report; it returns to the child of nested task with
-// the flags of a program; the child of the trap flag stops on its own
-// debug exception, in the program. The machine goes on: the threads of
+// the flags of a process; the child of the trap flag stops on its own
+// debug exception, in the process. The machine goes on: the threads of
 // extended_state keep each register, also the threads that ran on the
 // processor of a child that the kernel stopped while it held values in the
 // high halves of its ymm registers.
@@ -24,7 +24,7 @@ package modustool
 // the test fails if its log has the line of that kernel (machine_test).
 //
 // The third machine sends a non-maskable interrupt to each processor
-// through the QEMU monitor, while the lockers of the program locks enter
+// through the QEMU monitor, while the lockers of the process locks enter
 // the kernel in a loop. Its stack is its own on each processor, also in the
 // first instructions of a kernel entry and the last ones of a return, and
 // the kernel stops the machine with its line (docs/ARCHITECTURE.md, "The
@@ -33,7 +33,7 @@ package modustool
 // came: no test can choose the instruction that an interrupt of the host
 // lands on.
 //
-// The lines of the two programs come in any order between them: each Wait
+// The lines of the two processes come in any order between them: each Wait
 // but the last one searches from the place after "extended_state: the
 // usable instruction sets".
 
@@ -41,10 +41,10 @@ TEST_OUTPUT_RETURN_FAULT :: BUILD_FOLDER + "/test_output_return_fault.txt"
 TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK :: BUILD_FOLDER + "/test_output_return_fault_without_check.txt"
 
 // The boot line of kernel_without_return_check: the same text as
-// TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/kernel/return_to_program.odin.
-TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE :: "kernel: TEST BUILD: the check of the instruction address before a return to a program is skipped"
+// TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/kernel/return_to_process.odin.
+TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE :: "kernel: TEST BUILD: the check of the instruction address before a return to a process is skipped"
 
-RETURN_FAULT_OK :: "return_fault: ok, 5 cases: each child stopped as its own fault or returned with the flags of a program, and the machine goes on"
+RETURN_FAULT_OK :: "return_fault: ok, 5 cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on"
 
 @(rodata)
 scenario_return_fault := [?]Step {
@@ -55,9 +55,9 @@ scenario_return_fault := [?]Step {
 	{kind = .Wait, text = "extended_state: the usable instruction sets: SSE, SSE2"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"return_fault\")"},
-	{kind = .Wait, text = "kernel: program return_fault child stopped: the kernel cannot return to its thread: the instruction address is not an address of a program: 0000800000000000", any_order = true},
+	{kind = .Wait, text = "kernel: process return_fault child stopped: the kernel cannot return to its thread: the instruction address is not an address of a process: 0000800000000000", any_order = true},
 	{kind = .Wait, text = "return_fault: the instruction address after the last page: the child stopped with the code 0000000000000400, the address 0000800000000000: as it must", any_order = true},
-	{kind = .Wait, text = "kernel: program return_fault child stopped: the kernel cannot return to its thread: the stack address is not canonical: 8000000000000000", any_order = true},
+	{kind = .Wait, text = "kernel: process return_fault child stopped: the kernel cannot return to its thread: the stack address is not canonical: 8000000000000000", any_order = true},
 	{kind = .Wait, text = "return_fault: a stack address that is not canonical: the child stopped with the code 0000000000000400, the address 8000000000000000: as it must", any_order = true},
 	{kind = .Wait, text = "return_fault: the flag nested task at a syscall: the child stopped with the code 0000000000000001, the address 0000000000000000: as it must", any_order = true},
 	{kind = .Wait, text = "return_fault: the trap flag at a syscall: the child stopped with the code 0000000000000101, the address 0000000000000000: as it must", any_order = true},
@@ -77,7 +77,7 @@ scenario_return_fault_without_check := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"return_fault\")"},
-	{kind = .Wait, text = "kernel: program return_fault child stopped: the kernel cannot return to its thread: the processor refused the return, with the instruction address 0000800000000000"},
+	{kind = .Wait, text = "kernel: process return_fault child stopped: the kernel cannot return to its thread: the processor refused the return, with the instruction address 0000800000000000"},
 	{kind = .Wait, text = "return_fault: the instruction address after the last page: the child stopped with the code 0000000000000400, the address 0000800000000000: as it must"},
 	{kind = .Wait, text = RETURN_FAULT_OK},
 	{kind = .Front, text = "console"},
@@ -88,7 +88,7 @@ scenario_return_fault_without_check := [?]Step {
 TEST_OUTPUT_NON_MASKABLE_INTERRUPT :: BUILD_FOLDER + "/test_output_non_maskable_interrupt.txt"
 
 // The line of the stop is one of two: "kernel: non-maskable interrupt
-// vector 2 while a program ran, at ..." or "kernel: exception in the
+// vector 2 while a process ran, at ..." or "kernel: exception in the
 // kernel: non-maskable interrupt vector 2 error ...". The Wait takes the
 // part that both have.
 @(rodata)

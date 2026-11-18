@@ -3,16 +3,16 @@
 // resource of the boot image,
 // RESOURCE_NAME. The modus tool writes it from the subsets of
 // resources/fonts. The root service checks its hash once, and maps it
-// read-only at ADDRESS in each program that gets the glyph caches and in
-// the font service. A program draws from it the glyphs past the glyph
+// read-only at ADDRESS in each process that gets the glyph caches and in
+// the font service. A process draws from it the glyphs past the glyph
 // caches into its private glyph cache.
 //
 //   Header        HEADER_SIZE bytes, at 0
 //   Font_Record   RECORD_SIZE bytes x font_count, at RECORDS_OFFSET
 //   font files    each at its offset, inside file_size
 //
-// A program validates the header and the records once (validate_at): no
-// program writes the resource, as no program writes a glyph cache
+// A process validates the header and the records once (validate_at): no
+// process writes the resource, as no process writes a glyph cache
 // (docs/FONTS.md, "Who can write a cache"). The parser of
 // src/library/support/vector_font checks each read of a font file against
 // its bytes.
@@ -35,7 +35,7 @@ RECORDS_OFFSET :: HEADER_SIZE // The records follow the header.
 NAME_SIZE :: 32
 FONT_LIMIT :: 8 // The most fonts of one resource.
 RESOURCE_NAME :: "font_outlines" // The name of the resource in the boot image.
-ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a program maps it, read-only.
+ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a process maps it, read-only.
 
 // The first HEADER_SIZE bytes of the resource.
 Header :: struct {
@@ -59,7 +59,7 @@ Font_Record :: struct {
 // Why a resource was refused.
 Problem_Kind :: enum u8 {
 	None, // The resource is valid.
-	Not_Mapped, // The starter of the program did not map it: no byte was read.
+	Not_Mapped, // The starter of the process did not map it: no byte was read.
 	Too_Short, // The resource is shorter than its header or than its records, or its address is not aligned.
 	Bad_Magic, // It does not start with MAGIC.
 	Bad_Version, // Another version.
@@ -184,7 +184,7 @@ validate_at :: proc "contextless" (address: uintptr, span: u64) -> (outlines: Ou
 	return validate(([^]u8)(address)[:size])
 }
 
-// open validates the resource that the starter of a program mapped at
+// open validates the resource that the starter of a process mapped at
 // ADDRESS: Not_Mapped when the bit of its range is clear, and nothing is
 // read.
 open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (outlines: Outlines, problem: Problem) {

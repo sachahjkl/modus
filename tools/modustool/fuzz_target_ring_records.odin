@@ -12,7 +12,7 @@ import "modus:support/key_path"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
-// The fuzz target of the records between programs that a program reads
+// The fuzz target of the records between processes that a process reads
 // from a ring (src/md/infrastructure/fuzzing.md, "The targets, in order of
 // value"): the input events of the compositor, the input records of the
 // terminal, the commands of the service ring, and the records of the root

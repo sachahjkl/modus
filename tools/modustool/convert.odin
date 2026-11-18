@@ -73,7 +73,7 @@ Module_Description :: struct {
 // the same fields here.
 Stated_Budget :: struct {
 	working_memory_pages: u64,
-	programs:             u64,
+	processes:             u64,
 	threads:              u64,
 	window_width:         u64, // Pixels; 0: no window.
 	window_height:        u64,
@@ -133,10 +133,10 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		return fail(name, "the input is not a position-independent x86-64 object")
 	}
 
-	programs := make([dynamic]Elf_Program_Header, context.temp_allocator)
+	processes := make([dynamic]Elf_Program_Header, context.temp_allocator)
 	for i in 0 ..< u64(head.program_header_count) {
-		program := at(elf, head.program_header_offset + i * u64(head.program_header_size), Elf_Program_Header) or_return
-		append(&programs, program)
+		process := at(elf, head.program_header_offset + i * u64(head.program_header_size), Elf_Program_Header) or_return
+		append(&processes, process)
 	}
 	sections := make([dynamic]Elf_Section_Header, context.temp_allocator)
 	for i in 0 ..< u64(head.section_header_count) {
@@ -153,35 +153,35 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	// no ELF structure reaches the module.
 	images := make([dynamic]Segment_Image, context.temp_allocator)
 	relro_start, relro_end: u64
-	for program in programs {
-		switch program.type {
+	for process in processes {
+		switch process.type {
 		case ELF_PROGRAM_TLS:
-			if program.memory_size != 0 {
+			if process.memory_size != 0 {
 				return fail(name, "thread-local data is not in the module contract")
 			}
 		case ELF_PROGRAM_RELRO:
-			relro_start, relro_end = program.address, program.address + program.memory_size
+			relro_start, relro_end = process.address, process.address + process.memory_size
 		}
 	}
 	memory_size: u64
-	for program in programs {
-		if program.type != ELF_PROGRAM_LOAD {
+	for process in processes {
+		if process.type != ELF_PROGRAM_LOAD {
 			continue
 		}
-		start := mem.align_backward_uint(uint(program.address), module.PAGE_SIZE)
-		end := mem.align_forward_uint(uint(program.address + program.memory_size), module.PAGE_SIZE)
+		start := mem.align_backward_uint(uint(process.address), module.PAGE_SIZE)
+		end := mem.align_forward_uint(uint(process.address + process.memory_size), module.PAGE_SIZE)
 		if u64(start) < memory_size {
 			return fail(name, "two segments of the input share a page")
 		}
 		memory_size = u64(end)
 		image := Segment_Image {
 			record = {memory_offset = u64(start), memory_size = u64(end - start)},
-			data = make([]u8, program.address - u64(start) + program.file_size, context.temp_allocator),
+			data = make([]u8, process.address - u64(start) + process.file_size, context.temp_allocator),
 		}
-		if program.flags & ELF_PROGRAM_READ != 0 {image.record.flags += {.Read}}
-		if program.flags & ELF_PROGRAM_WRITE != 0 {image.record.flags += {.Write}}
-		if program.flags & ELF_PROGRAM_EXECUTE != 0 {image.record.flags += {.Execute}}
-		if .Write in image.record.flags && program.address >= relro_start && program.address + program.memory_size <= relro_end {
+		if process.flags & ELF_PROGRAM_READ != 0 {image.record.flags += {.Read}}
+		if process.flags & ELF_PROGRAM_WRITE != 0 {image.record.flags += {.Write}}
+		if process.flags & ELF_PROGRAM_EXECUTE != 0 {image.record.flags += {.Execute}}
+		if .Write in image.record.flags && process.address >= relro_start && process.address + process.memory_size <= relro_end {
 			image.record.flags += {.Read_Only_After_Load}
 		}
 		if image.record.flags & {.Write, .Execute} == {.Write, .Execute} {
@@ -361,7 +361,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	}
 	// A segment that the loader writes nowhere is only read. The linker puts
 	// its own table there, which is not copied, so such a segment is often
-	// empty: every program that has the module can then share its pages.
+	// empty: every process that has the module can then share its pages.
 	for &image in images {
 		image.record.flags = segment_flags_after_the_relocations(image.record, rebases[:], slot_records[1:])
 	}
@@ -466,7 +466,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 // and a slot, and both lists are complete here. The pages of such a
 // segment are then the same at each base and with each binding, which is
 // what makes a segment a part of the shared code of a module. Its
-// protection in a program does not change: a segment that is read-only
+// protection in a process does not change: a segment that is read-only
 // after the load was never writable there.
 segment_flags_after_the_relocations :: proc(segment: module.Segment, rebases: []u64, slots: []module.Slot) -> module.Segment_Flags {
 	if .Read_Only_After_Load not_in segment.flags {

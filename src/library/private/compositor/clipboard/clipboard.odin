@@ -22,7 +22,7 @@ Clipboard_Key :: enum {
 
 // clipboard_key_of reads a key record of the input service: Control with
 // the character c or v, in either case, as the layout gives it. The press
-// and the release are both keys of the clipboard, so no program sees the
+// and the release are both keys of the clipboard, so no process sees the
 // release of a key whose press it did not see; only the press acts.
 clipboard_key_of :: proc "contextless" (character: rune, modifiers: u32) -> Clipboard_Key {
 	if modifiers & MODIFIER_CONTROL == 0 {
@@ -41,7 +41,7 @@ clipboard_key_of :: proc "contextless" (character: rune, modifiers: u32) -> Clip
 // handle, the words of the record, and the state of the window.
 Copy_Facts :: struct {
 	asked:        bool, // The record names the serial of the Copy_Asked that waits for this window (copy_names_the_request).
-	through:      bool, // The handle is a gift of this program through the ring of its window.
+	through:      bool, // The handle is a gift of this process through the ring of its window.
 	names_held:   bool, // The number names a handle that the compositor holds already: the content of now, or a lent copy of it.
 	is_memory:    bool, // The handle names a memory object.
 	readable:     bool, // The handle has Read.
@@ -56,7 +56,7 @@ Copy_Facts :: struct {
 Copy_Refusal :: enum {
 	None,
 	Not_Asked, // No key of the principal asked for this copy.
-	Not_Given, // The handle is not a gift of this program through its ring: the compositor neither uses it nor closes it.
+	Not_Given, // The handle is not a gift of this process through its ring: the compositor neither uses it nor closes it.
 	Names_Held, // The number names the content that the compositor holds: it neither takes it again nor closes it.
 	Not_Memory, // The handle names no memory object.
 	No_Read, // The handle has no Read.
@@ -96,7 +96,7 @@ copy_refusal :: proc "contextless" (facts: Copy_Facts) -> Copy_Refusal {
 }
 
 // The clipboard state of one window: what waits for an answer of its
-// program. Each starts at a key of the principal, has the serial of that
+// process. Each starts at a key of the principal, has the serial of that
 // key, and ends at one answer that names the serial. A serial is never 0,
 // and the compositor never gives one twice (Serials), so an answer to a
 // request that ended never matches the request of now.
@@ -117,7 +117,7 @@ serial_next :: proc "contextless" (serials: ^Serials) -> u64 {
 	return serials.last
 }
 
-// An answer of a program.
+// An answer of a process.
 Answer :: enum {
 	Copy, // A Copy that copy_refusal took.
 	Copy_Declined,
@@ -125,8 +125,8 @@ Answer :: enum {
 }
 
 // copy_key_take starts a copy at the key of the principal, with the serial
-// of that key. A copy that waited is replaced: its program can have lost
-// it, and a later answer to it is refused (answer_take). The program
+// of that key. A copy that waited is replaced: its process can have lost
+// it, and a later answer to it is refused (answer_take). The process
 // answers the newest request.
 copy_key_take :: proc "contextless" (state: ^Window_State, serial: u64) {
 	state.copy_serial = serial
@@ -154,7 +154,7 @@ paste_key_take :: proc "contextless" (state: ^Window_State, window_in_front, con
 	return .None, lend_ended
 }
 
-// answer_take changes the state for an answer of a program that names a
+// answer_take changes the state for an answer of a process that names a
 // serial, and says if the compositor takes it: only when it names the
 // serial of the state that waits. A Paste_Taken with no paste of the
 // principal before it, or for a lend that ended, is refused, as a Copy or
@@ -185,7 +185,7 @@ End_Effects :: struct {
 // client_end_effects decides what the end of the client `client` ends.
 // The content ends with the client that copied it. A lend ends with the
 // client that copied what it lends (lend_owner: a newer copy can have
-// replaced that content since), because that memory belongs to a program
+// replaced that content since), because that memory belongs to a process
 // that has no budget any more, and no handle of it stays; and with the
 // client that it was lent to. lend_client is -1 with no lend; content is
 // false with an empty slot.

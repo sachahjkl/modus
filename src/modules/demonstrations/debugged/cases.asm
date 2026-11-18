@@ -6,7 +6,7 @@ section .text
 
 ; load_stack_selector_then_syscall(selector: ^u64)
 ; It loads the stack selector from a word of memory, and the next
-; instruction is a syscall. The debugger of the program watches that word
+; instruction is a syscall. The debugger of the process watches that word
 ; with a data breakpoint: the load is a read of the word, and the processor
 ; can hold the trap of a load of ss until the instruction after it, the
 ; syscall, where the trap comes at the first instruction of the kernel

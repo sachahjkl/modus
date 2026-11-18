@@ -1,4 +1,4 @@
-// The frame contract: what a program and a frame service agree on. A frame
+// The frame contract: what a process and a frame service agree on. A frame
 // service is the device service of one network device. The first one drives
 // a virtio network device (src/modules/system/frame); a driver of another device class
 // serves the same contract.
@@ -25,7 +25,7 @@
 // right Read only (Read_Region_Add), at one of READ_REGION_CAPACITY places;
 // the device reads it and never writes it. The network service gives the
 // datagram region of each endpoint as a read region, so the device reads
-// the data of a datagram where the program wrote it, and the network
+// the data of a datagram where the process wrote it, and the network
 // service writes only the headers in its frame region
 // (src/md/infrastructure/network_data_path.md). The frame service keeps
 // its handle of a read region until the last Send that reads it is

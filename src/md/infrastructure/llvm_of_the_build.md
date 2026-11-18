@@ -27,7 +27,7 @@ This file records why the build uses LLVM 18 with one commit of a later LLVM, an
 - **Move each buffer out of its loop.** It hides one case and leaves the cause. The next module with the same form of code differs, and the check finds it only when two builds happen to differ.
 - **`-thread-count:1`.** Measured: the fault stays. With this release the flag leaves two threads. Even with one thread, the order of a table keyed by addresses is a fact of the allocator, not of the source.
 - **Stop assignment tracking in `same-code`, by a commit of the fork.** It removes the records whose order shows the fault, and leaves the visit in the order of addresses. A debugger then loses locations that assignment tracking keeps. The fork changes the compiler for a fault of LLVM. This form was not measured.
-- **Sort the records in the tool, as it writes 0 for the time of the compile.** The tool would rewrite the program after the compiler. The order of debug records at one place is a part of their meaning, and a sort that is right for this case is not proved for the next one.
+- **Sort the records in the tool, as it writes 0 for the time of the compile.** The tool would rewrite the module after the compiler. The order of debug records at one place is a part of their meaning, and a sort that is right for this case is not proved for the next one.
 - **A newer LLVM.** LLVM 21 has the commit, but the compiler release builds with LLVM 18, and a newer LLVM changes the code of some modules with and without debug information ([debug_information_and_code.md](debug_information_and_code.md)).
 - **A patch file in the repository.** The commit upstream is the source of the change. The flake names it by its hash.
 

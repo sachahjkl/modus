@@ -1,16 +1,16 @@
 // A demonstration of the origin of a handle and of Handle_Revoke: a
-// program holds only the handles that it was given, and each grant can be
+// process holds only the handles that it was given, and each grant can be
 // revoked with all that came from it.
 //
 // The kernel keeps, for each handle and each mapping, the handle that it
-// came from. A program takes back what came from a handle of its own: the
-// copies, the handles that other programs received, and their mappings.
+// came from. A process takes back what came from a handle of its own: the
+// copies, the handles that other processes received, and their mappings.
 // The window shows each case and the answer of the kernel.
 //
 // **What it is for.** It shows that each access in the system can be taken
-// back. A program lends a handle for one call, then revokes it: the kernel
-// ends each copy and each mapping that came from it, in this program and in
-// the programs that received it. No program needs the cooperation of the
+// back. A process lends a handle for one call, then revokes it: the kernel
+// ends each copy and each mapping that came from it, in this process and in
+// the processes that received it. No process needs the cooperation of the
 // receiver to take back what it gave.
 //
 // **The cases**, in order:
@@ -18,15 +18,15 @@
 // - a copy with the right Read, then a copy of the copy that asks for Write:
 //   the kernel gives Read only, because a copy never has more rights;
 // - the count of what came from a handle, before and after a close;
-// - a revocation: the copies end, the mapping of the program stays;
-// - a mapping in another program, then its revocation;
-// - a revocation in one other program only, with `Handle_Revoke` and the
-//   handle of that program;
-// - a revocation of a handle that the program does not have: `Bad_Handle`.
+// - a revocation: the copies end, the mapping of the process stays;
+// - a mapping in another process, then its revocation;
+// - a revocation in one other process only, with `Handle_Revoke` and the
+//   handle of that process;
+// - a revocation of a handle that the process does not have: `Bad_Handle`.
 //
 // **Start**: `start("origin")` in the console, or the bar of the desktop.
-// Its row of `program_roles` has no grant: everything that it uses, it makes. Its
-// budget has room for two programs: itself and the program "held", which
+// Its row of `process_roles` has no grant: everything that it uses, it makes. Its
+// budget has room for two processes: itself and the process "held", which
 // never runs and only receives.
 //
 // **What a reader sees**: the table of the cases and the answers of the
@@ -42,8 +42,8 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// Itself and one program that only receives.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1372, programs = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// Itself and one process that only receives.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1372, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -58,7 +58,7 @@ HEIGHT :: 442
 #assert(HEIGHT == 12 + 4 * LINE + CASE_CAPACITY * LINE + 3 * LINE + 12)
 
 
-// One case: what the program did, and what the kernel answered.
+// One case: what the process did, and what the kernel answered.
 Case :: struct {
 	text:   string,
 	answer: string,
@@ -73,12 +73,12 @@ note :: proc "contextless" (text: string, answer: string, right: bool) {
 	case_count += 1
 }
 
-// The measure: the cost of one handle that a program lends for a call and
+// The measure: the cost of one handle that a process lends for a call and
 // takes back, against the two kernel entries of a copy that it closes.
 CYCLES :: 20000
 lend_time, copy_time: u64 // Nanoseconds for one cycle.
 
-// Where the program maps its memory object in the other program.
+// Where the process maps its memory object in the other process.
 OTHER_ADDRESS :: 0x0000_0000_0100_0000
 
 live :: proc "contextless" (handle: system.Handle) -> bool {
@@ -91,7 +91,7 @@ live :: proc "contextless" (handle: system.Handle) -> bool {
 // the window.
 //
 // With no window it stops with the code 1. It creates one memory object and
-// one program "held" from its own budget, runs the cases (each one compares
+// one process "held" from its own budget, runs the cases (each one compares
 // the answer of the kernel with the expected answer), writes the result on
 // the log, and measures 20000 cycles of "lend and take back" and 20000 of
 // "copy and close". Then it draws the table and waits for events for ever.
@@ -101,13 +101,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	// One memory object, mapped here, and one other program that never
+	// One memory object, mapped here, and one other process that never
 	// runs: it only receives.
 	memory, _ := system.memory_create(1)
 	bytes, _ := system.memory_map(memory)
 	(^u64)(bytes)^ = 7
 	name := "held"
-	created, _ := system.call(.Program_Create, u64(ctx.handles[op.CONTEXT_BUDGET]), u64(uintptr(raw_data(name))), u64(len(name)))
+	created, _ := system.call(.Process_Create, u64(ctx.handles[op.CONTEXT_BUDGET]), u64(uintptr(raw_data(name))), u64(len(name)))
 	other := system.Handle(created[0])
 	count: u64
 
@@ -122,28 +122,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	note("close the first copy", "2: the second stays", system.handle_holdings(memory) == 2 && live(second))
 	count, _ = system.handle_revoke(memory)
 	note("revoke the handle", "the second copy ended", count == 1 && !live(second))
-	note("read the memory of this program", "the mapping stays", (^u64)(bytes)^ == 7 && system.handle_holdings(memory) == 1)
+	note("read the memory of this process", "the mapping stays", (^u64)(bytes)^ == 7 && system.handle_holdings(memory) == 1)
 
-	// A mapping in the other program, made with a copy that closes.
+	// A mapping in the other process, made with a copy that closes.
 	first, _ = system.give(0, memory, {.Read})
 	_, status := system.memory_map(first, {}, other, OTHER_ADDRESS)
 	system.close(first)
 	_, again := system.memory_map(memory, {}, other, OTHER_ADDRESS)
-	note("map the memory in another program", "mapped", status == .Ok && again == .Bad_Address)
+	note("map the memory in another process", "mapped", status == .Ok && again == .Bad_Address)
 	count, _ = system.handle_revoke(memory)
 	_, again = system.memory_map(memory, {}, other, OTHER_ADDRESS)
 	note("revoke the handle", "the mapping ended", count == 1 && again == .Ok)
 
-	// Now the other program has a mapping. It receives a handle too.
+	// Now the other process has a mapping. It receives a handle too.
 	given, _ := system.give(other, memory, {.Read})
 	first, _ = system.give(0, memory, {.Read})
-	note("give the handle to the other program", "4 came from the handle", given != 0 && system.handle_holdings(memory) == 4)
+	note("give the handle to the other process", "4 came from the handle", given != 0 && system.handle_holdings(memory) == 4)
 	count, _ = system.handle_revoke(memory, other)
-	note("revoke in the other program only", "2 ended, the copy stays", count == 2 && live(first) && system.handle_holdings(memory) == 2)
+	note("revoke in the other process only", "2 ended, the copy stays", count == 2 && live(first) && system.handle_holdings(memory) == 2)
 	count, _ = system.handle_revoke(first)
 	note("revoke the copy", "0 ended, the handle stays", count == 0 && live(memory))
 	_, status = system.handle_revoke(system.Handle(0xFFFF))
-	note("revoke a handle that the program does not have", "refused: bad handle", status == .Bad_Handle)
+	note("revoke a handle that the process does not have", "refused: bad handle", status == .Bad_Handle)
 
 	wrong: u64
 	for item in cases[:case_count] {
@@ -157,7 +157,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	// The measure. One cycle of a lent handle is four kernel entries: a
-	// copy, a handle for the other program, the revocation, the close.
+	// copy, a handle for the other process, the revocation, the close.
 	start := system.time()
 	for _ in 0 ..< CYCLES {
 		copy, _ := system.give(0, memory, {.Read, .Give})
@@ -179,19 +179,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// Each line is a line of a table: its text 3 pixels under its top.
 		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
 		interface.cell_text(&frame, interface.column_take(&column, LINE), "the kernel keeps the origin of each handle and of each mapping.", graphics.colors.dim)
-		interface.cell_text(&frame, interface.column_take(&column, LINE), "a program takes back what came from a handle that it holds.", graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "a process takes back what came from a handle that it holds.", graphics.colors.dim)
 		interface.column_take(&column, LINE / 2)
 		sizes := [2]interface.Size{interface.pixels(ANSWER_X - 12), interface.share()}
 		cells: [2]interface.Area
 		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
-		interface.cell_text(&frame, cells[0], "the program does", graphics.colors.dim)
+		interface.cell_text(&frame, cells[0], "the process does", graphics.colors.dim)
 		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
 		for item, index in cases[:case_count] {
 			row := interface.column_take(&column, LINE)
 			interface.table_band(&frame, {row.x - 6, row.y, row.width + 12, row.height}, index)
 			interface.row_split(row, sizes[:], cells[:])
 			interface.cell_text(&frame, cells[0], item.text, graphics.colors.text)
-			interface.cell_text(&frame, cells[1], item.right ? item.answer : "another answer", item.right ? graphics.colors.program : graphics.colors.failed)
+			interface.cell_text(&frame, cells[1], item.right ? item.answer : "another answer", item.right ? graphics.colors.process : graphics.colors.failed)
 		}
 		interface.column_take(&column, LINE / 2)
 		line: [96]u8

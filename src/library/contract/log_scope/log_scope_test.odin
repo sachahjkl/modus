@@ -13,8 +13,8 @@ own_records_amount_round_trip :: proc(t: ^testing.T) {
 	grant := isolated.caller_grant_make(amount, 1, false)
 	scope := scope_of(grant)
 	testing.expect(t, !scope.whole_log)
-	testing.expect_value(t, scope.program, 12)
-	testing.expect_value(t, scope.program_serial, 3)
+	testing.expect_value(t, scope.process, 12)
+	testing.expect_value(t, scope.process_serial, 3)
 	testing.expect_value(t, isolated.caller_principal(grant), 1)
 
 	// The largest slot and serial of the fields: the amount fills its 46 bits
@@ -23,12 +23,12 @@ own_records_amount_round_trip :: proc(t: ^testing.T) {
 	testing.expect(t, largest_ok)
 	testing.expect_value(t, largest, isolated.CALLER_AMOUNT_MASK)
 	largest_scope := scope_of(isolated.caller_grant_make(largest, 0, false))
-	testing.expect_value(t, largest_scope.program, OWN_SLOT_LIMIT - 1)
-	testing.expect_value(t, largest_scope.program_serial, OWN_SERIAL_MASK)
+	testing.expect_value(t, largest_scope.process, OWN_SLOT_LIMIT - 1)
+	testing.expect_value(t, largest_scope.process_serial, OWN_SERIAL_MASK)
 }
 
 // The kernel is never a caller, and a value past its field is refused, not
-// cut: a cut slot or serial would name another program.
+// cut: a cut slot or serial would name another process.
 @(test)
 own_records_amount_refusals :: proc(t: ^testing.T) {
 	_, kernel_ok := own_records_amount(0, 1)
@@ -41,36 +41,36 @@ own_records_amount_refusals :: proc(t: ^testing.T) {
 
 // A starter that lends the handle of its child reads the own log ring of
 // that child: its slot and its serial, which the kernel checks against the
-// program in the slot (Log_Read), so neither an earlier nor a later program
+// process in the slot (Log_Read), so neither an earlier nor a later process
 // of the slot, nor the starter itself.
 @(test)
-records_of_a_lent_program :: proc(t: ^testing.T) {
+records_of_a_lent_process :: proc(t: ^testing.T) {
 	CHILD_SLOT :: 9
 	CHILD_SERIAL :: 4
-	child := lent_program_scope(CHILD_SLOT, CHILD_SERIAL)
+	child := lent_process_scope(CHILD_SLOT, CHILD_SERIAL)
 	testing.expect(t, !child.whole_log)
 	testing.expect(t, reads_own_records(child))
-	testing.expect_value(t, child.program, CHILD_SLOT)
-	testing.expect_value(t, child.program_serial, CHILD_SERIAL)
+	testing.expect_value(t, child.process, CHILD_SLOT)
+	testing.expect_value(t, child.process_serial, CHILD_SERIAL)
 }
 
-// The scope of a lent program does not depend on the grant of the
+// The scope of a lent process does not depend on the grant of the
 // connection: a caller that acts for the principal and lends a handle reads
-// the ring of that program only, and the slot 0, which no program handle
+// the ring of that process only, and the slot 0, which no process handle
 // names, reads no ring.
 @(test)
-lent_program_is_never_the_whole_log :: proc(t: ^testing.T) {
+lent_process_is_never_the_whole_log :: proc(t: ^testing.T) {
 	whole := scope_of(isolated.caller_grant_make(0, 0, true))
 	testing.expect(t, whole.whole_log)
-	child := lent_program_scope(3, 2)
+	child := lent_process_scope(3, 2)
 	testing.expect(t, !child.whole_log)
 	testing.expect(t, reads_own_records(child))
 
-	none := lent_program_scope(0, 0)
+	none := lent_process_scope(0, 0)
 	testing.expect(t, !reads_own_records(none))
 }
 
-// The grant of a caller with no amount names no program: it reads no own
+// The grant of a caller with no amount names no process: it reads no own
 // log ring, not the records of the kernel (slot 0). The grant to act for
 // the principal is the whole log, whatever its amount.
 @(test)

@@ -7,7 +7,7 @@ package mark
 //
 // The rule of the choice is here once, for each place that plays the
 // animations: the modus tool runs it as the model of the script of the
-// site, and the program `heron` runs it in the system. Pure procedures: a
+// site, and the process `heron` runs it in the system. Pure procedures: a
 // caller gives the memory and the numbers of chance.
 
 // The part of the time that the heron is still, over a long play, in
@@ -33,7 +33,7 @@ ORDER_MEMORY_EMPTY :: Order_Memory{played = 0, last = -1}
 // A source of whole numbers with a seed, for a model and a test of the
 // rule: the same seed gives the same numbers in the script of the site. A
 // place that plays for a reader takes its numbers of chance elsewhere: the
-// page from the browser, a program from its random generator.
+// page from the browser, a process from its random generator.
 Number_Generator :: struct {
 	state: u32, // The seed, then the state after each number.
 }

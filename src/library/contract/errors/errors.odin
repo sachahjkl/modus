@@ -8,11 +8,11 @@
 //
 // The record holds values only: no text, no address. Its seven fields are
 // Integers, so an export describes it as any record (module.Record), and a
-// program in any language reads it. Zero is "no error".
+// process in any language reads it. Zero is "no error".
 //
 // Who uses it: the kernel (each failed operation), every service (the
 // completion of a ring command that fails), every module (an export that
-// fails), and every program that reports a failure: the console and the
+// fails), and every process that reports a failure: the console and the
 // library `src/library/support/sentence` turn a record into one sentence of English.
 //
 // The parts of the package:
@@ -35,7 +35,7 @@ package errors
 // integers.
 //
 // The callee writes it, and only when the call fails; the caller reads it.
-// A record from another program is a claim of that program: a reader shows
+// A record from another process is a claim of that process: a reader shows
 // it, and checks a kind or a unit that it does not know (`kind_known`,
 // `unit_known`) before it indexes a table with it. 56 bytes: the seven
 // values of a completion record.
@@ -85,22 +85,22 @@ Kind :: enum i64 {
 	// A name or a text holds a byte that the call refuses: the storage service for a byte 0 or `/` in a name, or a
 	// name `.` or `..`, the HTTP server for a byte that a name of a page cannot hold.
 	Bad_Address       = 7, // value: the address; limit: the count of bytes; found: 1 when the call writes there.
-	// The kernel gives it with the status `Bad_Address`: the program cannot read, or write, the bytes that an
+	// The kernel gives it with the status `Bad_Address`: the process cannot read, or write, the bytes that an
 	// argument names.
 	Handle_Absent     = 8, // value: a number that names no handle of the caller.
 	// With the unit `Lent_Handles`: in an isolated call, the handle did not come through the call ring.
 	Handle_Ended      = 9, // value: the handle; found: an End.
 	// The handle named an object once: it was closed or revoked. The kernel gives it with `Bad_Handle`.
 	Handle_Kind       = 10, // value: the handle; limit: the kind of object that the call needs; found: the kind of its object (op.Object_Kind).
-	// The kernel gives it with `Bad_Handle`: for example a memory handle given to `Program_Start`.
+	// The kernel gives it with `Bad_Handle`: for example a memory handle given to `Process_Start`.
 	Handle_Rights     = 11, // value: the handle; limit: the rights that the call needs; found: the rights of the handle (op.Rights).
 	// The kernel gives it with `No_Right`. Both sets are `op.Rights` as integers.
 	Budget            = 12, // value: the handle of the budget; limit: what the call asks; found: what the budget holds.
 	// The kernel gives it with `No_Budget` when the handle has **Read**. The unit names the amount: `Pages`,
-	// `Programs`, `Threads`, `Processor` or `Log_Records`.
+	// `Processes`, `Threads`, `Processor` or `Log_Records`.
 	Budget_Hidden     = 13, // value: the handle of the budget; limit: what the call asks. The handle has no right Read: the budget is not described.
 	// The kernel gives it with `No_Budget`. The record depends on the call alone, so it tells nothing of a budget
-	// that another program shares.
+	// that another process shares.
 	Over_Limit        = 14, // value: what the call makes; limit: the limit. Unit Blocks (the storage service): the blocks of the current objects with the change, with no earlier version kept.
 	// The kernel gives it for `Log` above the records of the second (`Log_Records`). The network service gives it
 	// with `Bytes` when a send passes the limit of the address check; the remote service with `Milliseconds` when
@@ -108,8 +108,8 @@ Kind :: enum i64 {
 	Full              = 15, // A table has no free place. limit: its capacity.
 	// The unit names the table: `Handles`, `Mappings`, `Threads`, `Modules`, `Interrupts`, `Places`,
 	// `Connections`, `Principals`, `Commit_Blocks`. Another try can pass after a place frees.
-	State             = 16, // value: the handle; found: the op.Program_State of its object, or 0 when the handle has no right Read.
-	// The kernel gives it with `Bad_State`: the program is stopped, or not started yet. A service gives it for a
+	State             = 16, // value: the handle; found: the op.Process_State of its object, or 0 when the handle has no right Read.
+	// The kernel gives it with `Bad_State`: the process is stopped, or not started yet. A service gives it for a
 	// connection or a stream that is not in the state of the command.
 	Absent            = 17, // No object has the name or the number of the argument. found: 0, or the number from 1 of the row of a table argument that names it.
 	// The unit names what is absent: `Objects` or `Trees` (a name of the storage service), `Places`, `Versions`,
@@ -123,15 +123,15 @@ Kind :: enum i64 {
 	No_Grant          = 20, // The caller has no grant for this call: the unit says which grant.
 	// Given by a service: the storage service (`Store`, `Changes`), the root service (`Root_Commands`,
 	// `Acts_For_Principal`), the compositor (`Display`), the terminal (`Terminal`), the network service
-	// (`Endpoint`, `Connection`). The fix is a grant from the starter of the program, not another call.
+	// (`Endpoint`, `Connection`). The fix is a grant from the starter of the process, not another call.
 	Malformed         = 21, // The module of the argument breaks a rule of the module format. value: the kind of the problem; found: the byte of the file.
-	// Given by the loader of `src/library/support/system` and by the program `manual`. Also by `system.ring_open` with
+	// Given by the loader of `src/library/support/system` and by the process `manual`. Also by `system.ring_open` with
 	// argument 1: the header of a ring is not one that `ring.open` takes.
-	No_Target         = 22, // value: the handle of a memory object that names no one other program to receive the handle.
-	// The kernel gives it for `Handle_Give` whose target is a memory object that no one other program maps or
+	No_Target         = 22, // value: the handle of a memory object that names no one other process to receive the handle.
+	// The kernel gives it for `Handle_Give` whose target is a memory object that no one other process maps or
 	// holds.
-	Overlap           = 23, // value: an address, or with the unit Region an offset in the call region of an isolated call; limit: the count of bytes. They overlap something that the program has, or another argument of the call that is written.
-	// The kernel gives it for `Memory_Map` at an address that another mapping holds, for `Program_Module` over
+	Overlap           = 23, // value: an address, or with the unit Region an offset in the call region of an isolated call; limit: the count of bytes. They overlap something that the process has, or another argument of the call that is written.
+	// The kernel gives it for `Memory_Map` at an address that another mapping holds, for `Process_Module` over
 	// another module record, and for `Memory_Commit` with ranges that overlap.
 	Unknown_Operation = 24, // value: the number of the operation.
 	// The kernel gives it for a command record whose kind is 0 or above the last `op.Operation`; limit is the
@@ -154,11 +154,11 @@ Kind :: enum i64 {
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist; found: 0, or the number from 1 of the record of a table argument that names them (a record that names bytes of another argument by an offset, docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").
 	// The services of rings give it for a place and a count past the end of their data region (the unit `Bytes`),
 	// and the storage service for a range past the end of an object.
-	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
-	// The root service gives it for `Start` or `Stop` of such a program.
+	Reserved          = 31, // The argument names a process of the system that the call does not act on: it starts at boot, or it is a device service.
+	// The root service gives it for `Start` or `Stop` of such a process.
 	Not_Payer         = 32, // value: the handle of a budget that does not pay for the memory object of the call. It says nothing of the budget.
 	// The kernel gives it for `Memory_Commit` with a budget that is not the budget of the object.
-	Object_Shared     = 33, // value: the handle of a memory object, or 0; the call needs an object that only this program names, with one mapping at most.
+	Object_Shared     = 33, // value: the handle of a memory object, or 0; the call needs an object that only this process names, with one mapping at most.
 	// The kernel gives it for a decommit (`Memory_Commit`) and for `Memory_Protect` on an object that another
 	// handle or another mapping names.
 	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
@@ -170,14 +170,14 @@ Kind :: enum i64 {
 	Not_Authentic     = 37, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
 	// The cryptography module gives it for an open of a sealed text, and QUIC for a packet or a handshake that
 	// does not verify. See [not authentic](term:not-authentic).
-	Seed_Too_Weak     = 38, // The random seed of the program is weaker than the least strength that the caller accepts. value: the word of the op.Seed_Strength of the seed; limit: the word of the least strength asked. Nothing is made.
+	Seed_Too_Weak     = 38, // The random seed of the process is weaker than the least strength that the caller accepts. value: the word of the op.Seed_Strength of the seed; limit: the word of the least strength asked. Nothing is made.
 	// `random.fill_for_a_key` gives it when the seed of the generator has a lower `Seed_Strength` than the call
 	// asks. A plain draw (`random.fill`) never gives it.
 	Exists            = 39, // The name of the argument names something that exists already, and the call makes a new one. found: 0, or the number from 1 of the row of a table argument that names it.
 	// The storage service gives it for a new tree or object at a name in use.
-	Starter_Module    = 40, // value: the address that the call names; limit: the base of a module record that the starter of the program wrote (op.Module_Writer.Starter); found: its size in bytes.
-	// The kernel gives it with `No_Right` for `Program_Module`, `Memory_Map` and `Memory_Unmap` of a program in
-	// itself over that record: only a holder of its program handle changes it.
+	Starter_Module    = 40, // value: the address that the call names; limit: the base of a module record that the starter of the process wrote (op.Module_Writer.Starter); found: its size in bytes.
+	// The kernel gives it with `No_Right` for `Process_Module`, `Memory_Map` and `Memory_Unmap` of a process in
+	// itself over that record: only a holder of its process handle changes it.
 }
 
 // What did not answer, in `found` of a record No_Answer. The record
@@ -201,7 +201,7 @@ unanswered_of_word :: proc "contextless" (word: i64) -> (unanswered: Unanswered,
 }
 
 // kind_of_word, unit_of_word and end_of_word are the borders of the words
-// of an error record that another program wrote: the member, or false for
+// of an error record that another process wrote: the member, or false for
 // a word that names none. A reader then switches on the member, never on a
 // cast of the word.
 kind_of_word :: proc "contextless" (word: i64) -> (kind: Kind, ok: bool) {
@@ -244,11 +244,11 @@ Unit :: enum i64 {
 	Blocks      = 3, // Blocks of a disk or of a store.
 	Objects     = 4, // Objects of a store.
 	Stores      = 5, // Stores of the storage service.
-	Programs    = 6, // Program slots of a budget.
-	Threads     = 7, // Thread slots of a budget, or the threads of a program.
-	Handles     = 8, // The handle table of a program.
-	Mappings    = 9, // The mappings of a program (`op.MAPPING_REPORT_CAPACITY`).
-	Modules     = 10, // Module records of a program.
+	Processes    = 6, // Process slots of a budget.
+	Threads     = 7, // Thread slots of a budget, or the threads of a process.
+	Handles     = 8, // The handle table of a process.
+	Mappings    = 9, // The mappings of a process (`op.MAPPING_REPORT_CAPACITY`).
+	Modules     = 10, // Module records of a process.
 	Words       = 11, // The words of one word wait.
 	Log_Records = 12, // Log records in one second.
 	Processor   = 13, // Microseconds of processor time in one second.
@@ -265,9 +265,9 @@ Unit :: enum i64 {
 	Requests    = 24, // Requests in flight.
 	Endpoint    = 25, // A remote of the network: an IPv4 address and a port, in one value (endpoint_pack). No_Grant: value the remote that the call names, limit the remote of the grant (0: none), found the local port when it is not a port of the endpoint.
 	Region      = 26, // Absent: the data region of a ring. Overlap: bytes of the call region of an isolated call; value is their offset, limit their count.
-	Root_Commands = 27, // No_Grant: the commands of the root ring that change other programs.
+	Root_Commands = 27, // No_Grant: the commands of the root ring that change other processes.
 	Services    = 28, // Services that run.
-	Grants      = 29, // The grants of a program (system.Root_Grant).
+	Grants      = 29, // The grants of a process (system.Root_Grant).
 	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
 	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
 	Lent_Handles = 32, // Handle_Absent: the handle did not come through the call ring for this call (an isolated call).
@@ -280,15 +280,15 @@ Unit :: enum i64 {
 	Trees       = 39, // Absent: the name names no tree. Bad_Value: a tree would move inside itself.
 	Changes     = 40, // No_Grant: a change of a store; the connection reads only.
 	Pending     = 41, // The pending changes of an object in the storage service (docs/STORAGE.md, "Ranges"). Full: limit the blocks that the service holds for them. Absent: the object has no pending change on this connection; found 1: another change of the object came first, and its pending changes are dropped.
-	Debug_Objects = 42, // Absent: the debug objects of the modules of a debugged program; no one describes the module of the address (docs/TOOLS.md, "The debugger").
+	Debug_Objects = 42, // Absent: the debug objects of the modules of a debugged process; no one describes the module of the address (docs/TOOLS.md, "The debugger").
 	Breakpoints = 43, // The breakpoints of a thread. Full: limit the breakpoints that a thread has (`op.THREAD_BREAKPOINT_CAPACITY`). Absent: the number names no breakpoint of the debugger.
-	Held_Threads = 44, // Absent: the threads that the debugger holds; the thread of the argument runs, or the program has no thread with this number.
-	Debugged_Programs = 45, // The programs that the debugger service debugs. Absent: the caller attached to none. Full: the service debugs a program for another caller; limit the programs that it debugs at one time.
+	Held_Threads = 44, // Absent: the threads that the debugger holds; the thread of the argument runs, or the process has no thread with this number.
+	Debugged_Processes = 45, // The processes that the debugger service debugs. Absent: the caller attached to none. Full: the service debugs a process for another caller; limit the processes that it debugs at one time.
 	Readable_Variables = 46, // Absent: the variables that are visible and readable at the instruction of a frame; the name of the argument is none of them, or its location is not readable there.
-	Debug_Access = 47, // No_Grant: the debug access to a program. found: 0, or 1 + the number of the start grant of the program that refuses it (start_grant.Grant); a sentence writes the name of that grant.
+	Debug_Access = 47, // No_Grant: the debug access to a process. found: 0, or 1 + the number of the start grant of the process that refuses it (start_grant.Grant); a sentence writes the name of that grant.
 	Stack_Frames = 48, // Absent: the frames of the stack of a held thread; the number of the argument is past the last frame.
 	Source_Places = 49, // Absent: the procedures and the source lines of the debug objects; the place of the argument names none.
-	Stop_Reports = 50, // Absent: the stop reports of disk programs that the root service keeps; no disk program of the principal of the caller with this nickname stopped on a fault, or newer reports took its place (src/md/features/debug_object_of_a_disk_program.md).
+	Stop_Reports = 50, // Absent: the stop reports of disk processes that the root service keeps; no disk process of the principal of the caller with this nickname stopped on a fault, or newer reports took its place (src/md/features/debug_object_of_a_disk_process.md).
 	Versions_Erase = 51, // No_Grant: the erase of the versions of an object (the start grant Versions_Erase, docs/STORAGE.md, "4.8 The erase of versions").
 	Dropped_Writes = 52, // Device: the blocks of a commit that the disk answered with Ok and did not keep; found: their count. The storage service refused the commit (docs/STORAGE.md, "3.3 The commit and the open").
 	Nanoseconds = 53, // A time of the system clock, or a span of it, in nanoseconds: the time of a record of a timed stream (src/library/contract/timed_stream).
@@ -301,7 +301,7 @@ Unit :: enum i64 {
 // ended, so that `Handle_Ended` tells a closed handle from a revoked one.
 End :: enum i64 {
 	Unknown = 0, // The kernel no longer knows how: the slot served again for a later handle since.
-	Closed  = 1, // Its program closed it.
+	Closed  = 1, // Its process closed it.
 	Revoked = 2, // A revocation ended it (Handle_Revoke).
 }
 
@@ -343,7 +343,7 @@ UNIT_NAMES := [Unit]string {
 	.Blocks      = "blocks",
 	.Objects     = "objects",
 	.Stores      = "stores",
-	.Programs    = "programs",
+	.Processes    = "processes",
 	.Threads     = "threads",
 	.Handles     = "handles",
 	.Mappings    = "mappings",
@@ -364,9 +364,9 @@ UNIT_NAMES := [Unit]string {
 	.Requests    = "requests in flight",
 	.Endpoint    = "a remote address and port",
 	.Region      = "a data region",
-	.Root_Commands = "the commands of the root ring that change other programs",
+	.Root_Commands = "the commands of the root ring that change other processes",
 	.Services    = "services that run",
-	.Grants      = "grants of the program",
+	.Grants      = "grants of the process",
 	.Display     = "a surface on the screen",
 	.Terminal    = "a terminal",
 	.Lent_Handles = "handles lent for this call",
@@ -379,15 +379,15 @@ UNIT_NAMES := [Unit]string {
 	.Trees       = "trees",
 	.Changes     = "a change of the store (the connection reads only)",
 	.Pending     = "pending changes of the object",
-	.Debug_Objects = "debug objects of the modules of the program",
+	.Debug_Objects = "debug objects of the modules of the process",
 	.Breakpoints = "breakpoints of a thread",
 	.Held_Threads = "threads that the debugger holds",
-	.Debugged_Programs = "programs that the debugger service debugs for this caller",
+	.Debugged_Processes = "processes that the debugger service debugs for this caller",
 	.Readable_Variables = "variables that are readable at this instruction",
-	.Debug_Access = "the debug access to this program",
+	.Debug_Access = "the debug access to this process",
 	.Stack_Frames = "frames of the stack of the thread",
 	.Source_Places = "procedures and source lines of the debug objects",
-	.Stop_Reports = "stop reports of disk programs that the root service keeps",
+	.Stop_Reports = "stop reports of disk processes that the root service keeps",
 	.Versions_Erase = "the erase of the versions of an object",
 	.Dropped_Writes = "blocks that the disk did not keep",
 	.Nanoseconds = "nanoseconds",

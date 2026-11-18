@@ -10,12 +10,12 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
 
-// The fuzz targets of the text between programs
+// The fuzz targets of the text between processes
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"):
 // the check of a text that each border calls, the value runs that a
-// program gives with a line of the log and that the kernel cuts into its
-// records, and the sentences that a program writes for an error record of
-// another program.
+// process gives with a line of the log and that the kernel cuts into its
+// records, and the sentences that a process writes for an error record of
+// another process.
 
 // ---------------------------------------------------------------------
 // The text encoding check.

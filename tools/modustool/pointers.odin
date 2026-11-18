@@ -72,7 +72,7 @@ pointer_accents :: proc() -> [3]Pointer_Accent {
 	dark, light := graphics.DARK_COLOR_TOKENS, graphics.LIGHT_COLOR_TOKENS
 	return {
 		{name = "title", on_dark = dark.title, on_light = light.title}, // The blue of the title bar and of the focus.
-		{name = "stop_program", on_dark = dark.stop_program, on_light = light.stop_program}, // The red of "stop a program".
+		{name = "stop_process", on_dark = dark.stop_process, on_light = light.stop_process}, // The red of "stop a process".
 		{name = "boot_program", on_dark = dark.boot_program, on_light = light.boot_program}, // The amber of "starts", and of a match.
 	}
 }
@@ -608,7 +608,7 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 					}
 				}
 				if !known {
-					return {}, fail(path, line_number, len(words) > 2 ? words[2].column : len(statement) + 1, "the name of an accent: \"title\", \"stop_program\" or \"boot_program\"", quoted(len(words) > 2 ? words[2].text : ""))
+					return {}, fail(path, line_number, len(words) > 2 ? words[2].column : len(statement) + 1, "the name of an accent: \"title\", \"stop_process\" or \"boot_program\"", quoted(len(words) > 2 ? words[2].text : ""))
 				}
 				next = 3
 			case:

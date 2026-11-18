@@ -3,7 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 
-// The times of a line in the form of the program.
+// The times of a line in the form of the process.
 @(private = "file")
 times_text :: proc(least, median, frames, rounds: string) -> string {
 	return strings.concatenate({PROCESSOR_FRAME_LEAST, least, PROCESSOR_FRAME_MEDIAN, median, PROCESSOR_FRAME_FRAMES, frames, PROCESSOR_FRAME_ROUNDS, rounds, PROCESSOR_FRAME_END}, context.temp_allocator)

@@ -10,13 +10,13 @@ each_call_of_remote_has_the_key_of_its_start :: proc(t: ^testing.T) {
 	right := []Step {
 		{kind = .Launch, text = "remote"},
 		{kind = .Remote_Key, text = "remote: the public key of this service: "},
-		{kind = .Call, text = "monitor.programs()"},
+		{kind = .Call, text = "monitor.processes()"},
 		{kind = .Record, text = "a text"},
 	}
 	testing.expect_value(t, remote_key_problem(right), "")
 	no_key := []Step {
 		{kind = .Launch, text = "remote"},
-		{kind = .Call, text = "monitor.programs()"},
+		{kind = .Call, text = "monitor.processes()"},
 	}
 	testing.expect(t, remote_key_problem(no_key) != "", "a call with no key is refused")
 	// A start again makes a new key: the key of the start before does not
@@ -24,7 +24,7 @@ each_call_of_remote_has_the_key_of_its_start :: proc(t: ^testing.T) {
 	started_again := []Step {
 		{kind = .Launch, text = "remote"},
 		{kind = .Remote_Key, text = "remote: the public key of this service: "},
-		{kind = .Call, text = "monitor.programs()"},
+		{kind = .Call, text = "monitor.processes()"},
 		{kind = .Close, text = "remote"},
 		{kind = .Type, text = "start(\"remote\")"},
 		{kind = .Remote_Case, text = "two at once"},

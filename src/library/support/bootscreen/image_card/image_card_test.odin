@@ -24,83 +24,83 @@ Test_File :: struct {
 // image.
 @(private = "file", rodata)
 image_of_today := [?]Test_File {
-	{"root", 249856, .Program},
-	{"input", 20480, .Program},
-	{"compositor", 166219, .Program},
-	{"console", 304344, .Program},
-	{"monitor", 110592, .Program},
-	{"plasma", 69632, .Program},
-	{"life", 92924, .Program},
-	{"paint", 94208, .Program},
-	{"fault", 16384, .Program},
-	{"hall_of_fame", 249856, .Program},
-	{"node", 16384, .Program},
-	{"rings", 126976, .Program},
-	{"threads", 77824, .Program},
-	{"workers", 77824, .Program},
-	{"rights", 77824, .Program},
-	{"origin", 77824, .Program},
-	{"limits", 79537, .Program},
-	{"budget", 77824, .Program},
-	{"flow", 77824, .Program},
-	{"crowd", 86016, .Program},
-	{"tally", 94208, .Program},
-	{"manual", 180224, .Program},
-	{"clock", 87632, .Program},
-	{"randomness", 86016, .Program},
-	{"extended_state", 102400, .Program},
-	{"return_fault", 127833, .Program},
-	{"fault_ring", 153257, .Program},
-	{"kernel_events", 179329, .Program},
-	{"terminal", 98304, .Program},
-	{"flood", 28672, .Program},
-	{"processors", 81920, .Program},
-	{"boot", 102400, .Program},
-	{"pages", 53248, .Program},
-	{"frames", 131072, .Program},
-	{"twin", 12288, .Program},
-	{"locks", 147456, .Program},
-	{"shortage", 24576, .Program},
-	{"scheduler", 106496, .Program},
-	{"address_space", 204800, .Program},
-	{"locker", 16384, .Program},
-	{"log", 73728, .Program},
-	{"block", 24576, .Program},
-	{"frame", 24576, .Program},
-	{"network", 61440, .Program},
-	{"net", 115931, .Program},
-	{"server", 172032, .Program},
-	{"fetch", 114688, .Program},
-	{"inspect", 131072, .Program},
-	{"disk", 105124, .Program},
-	{"storage", 131072, .Program},
-	{"notes", 118352, .Program},
-	{"host", 81920, .Program},
+	{"root", 249856, .Entry},
+	{"input", 20480, .Entry},
+	{"compositor", 166219, .Entry},
+	{"console", 304344, .Entry},
+	{"monitor", 110592, .Entry},
+	{"plasma", 69632, .Entry},
+	{"life", 92924, .Entry},
+	{"paint", 94208, .Entry},
+	{"fault", 16384, .Entry},
+	{"hall_of_fame", 249856, .Entry},
+	{"node", 16384, .Entry},
+	{"rings", 126976, .Entry},
+	{"threads", 77824, .Entry},
+	{"workers", 77824, .Entry},
+	{"rights", 77824, .Entry},
+	{"origin", 77824, .Entry},
+	{"limits", 79537, .Entry},
+	{"budget", 77824, .Entry},
+	{"flow", 77824, .Entry},
+	{"crowd", 86016, .Entry},
+	{"tally", 94208, .Entry},
+	{"manual", 180224, .Entry},
+	{"clock", 87632, .Entry},
+	{"randomness", 86016, .Entry},
+	{"extended_state", 102400, .Entry},
+	{"return_fault", 127833, .Entry},
+	{"fault_ring", 153257, .Entry},
+	{"kernel_events", 179329, .Entry},
+	{"terminal", 98304, .Entry},
+	{"flood", 28672, .Entry},
+	{"processors", 81920, .Entry},
+	{"boot", 102400, .Entry},
+	{"pages", 53248, .Entry},
+	{"frames", 131072, .Entry},
+	{"twin", 12288, .Entry},
+	{"locks", 147456, .Entry},
+	{"shortage", 24576, .Entry},
+	{"scheduler", 106496, .Entry},
+	{"address_space", 204800, .Entry},
+	{"locker", 16384, .Entry},
+	{"log", 73728, .Entry},
+	{"block", 24576, .Entry},
+	{"frame", 24576, .Entry},
+	{"network", 61440, .Entry},
+	{"net", 115931, .Entry},
+	{"server", 172032, .Entry},
+	{"fetch", 114688, .Entry},
+	{"inspect", 131072, .Entry},
+	{"disk", 105124, .Entry},
+	{"storage", 131072, .Entry},
+	{"notes", 118352, .Entry},
+	{"host", 81920, .Entry},
 	{"probe", 16384, .No_Entry},
 	{"math", 15297, .No_Entry},
 	{"cryptography", 282473, .No_Entry},
-	{"cryptography_vectors", 102400, .Program},
-	{"quic_echo", 204800, .Program},
-	{"remote", 237568, .Program},
-	{"sample", 45056, .Program},
+	{"cryptography_vectors", 102400, .Entry},
+	{"quic_echo", 204800, .Entry},
+	{"remote", 237568, .Entry},
+	{"sample", 45056, .Entry},
 	{"hostile_exports", 12288, .No_Entry},
 	{"calendar", 12288, .No_Entry},
 	{"calendar_fixed", 12288, .No_Entry},
 	{"calendar_changed", 12288, .No_Entry},
-	{"agenda", 12288, .Program},
+	{"agenda", 12288, .Entry},
 	{"lonely", 9154, .No_Entry},
-	{"imports", 155648, .Program},
-	{"errors", 209873, .Program},
-	{"interface_elements", 94208, .Program},
-	{"tables", 163840, .Program},
+	{"imports", 155648, .Entry},
+	{"errors", 209873, .Entry},
+	{"interface_elements", 94208, .Entry},
+	{"tables", 163840, .Entry},
 	{"interface_module", 57344, .No_Entry},
-	{"interface_through_module", 49152, .Program},
+	{"interface_through_module", 49152, .Entry},
 	{"text_shaping", 12288, .No_Entry},
-	{"vector_glyphs", 221184, .Program},
-	{"interface_font", 86016, .Program},
-	{"pointers", 96136, .Program},
-	{"settings", 136697, .Program},
-	{"date", 45056, .Program},
+	{"vector_glyphs", 221184, .Entry},
+	{"interface_font", 86016, .Entry},
+	{"pointers", 96136, .Entry},
+	{"settings", 136697, .Entry},
+	{"date", 45056, .Entry},
 	{"pointers_posy", 883008, .Resource},
 	{"pointers_system", 208512, .Resource},
 	{"glyph_cache", 378368, .Resource},
@@ -196,8 +196,8 @@ names_check :: proc(t: ^testing.T, layout: ^Layout, width: int, case_name: strin
 the_strip_fills_the_width :: proc(t: ^testing.T) {
 	layout := new(Layout)
 	defer free(layout)
-	one_large := [?]Test_File{{"large", 1_000_000, .Program}, {"a", 10, .Program}, {"b", 10, .No_Entry}, {"c", 10, .Resource}}
-	all_empty := [?]Test_File{{"a", 0, .Program}, {"b", 0, .Program}, {"c", 0, .Resource}}
+	one_large := [?]Test_File{{"large", 1_000_000, .Entry}, {"a", 10, .Entry}, {"b", 10, .No_Entry}, {"c", 10, .Resource}}
+	all_empty := [?]Test_File{{"a", 0, .Entry}, {"b", 0, .Entry}, {"c", 0, .Resource}}
 	alone := [?]Test_File{{"alone", 12345, .No_Entry}}
 	equal := [?]Test_File{{"a", 7, .Resource}, {"b", 7, .Resource}, {"c", 7, .Resource}}
 	many: [300]Test_File
@@ -257,15 +257,15 @@ the_smallest_files_leave_a_narrow_strip :: proc(t: ^testing.T) {
 the_order_is_stable :: proc(t: ^testing.T) {
 	layout := new(Layout)
 	defer free(layout)
-	files := [?]Test_File{{"resource", 50, .Resource}, {"first", 10, .Program}, {"no_entry", 90, .No_Entry}, {"second", 10, .Program}, {"large", 20, .Program}, {"third", 10, .Program}}
+	files := [?]Test_File{{"resource", 50, .Resource}, {"first", 10, .Entry}, {"no_entry", 90, .No_Entry}, {"second", 10, .Entry}, {"large", 20, .Entry}, {"third", 10, .Entry}}
 	layout_of(layout, files[:], "", CARD_WIDTH, NAMES_WIDTH)
 	expected := [?]string{"large", "first", "second", "third", "no_entry", "resource"}
 	testing.expect_value(t, layout.file_count, len(expected))
 	for name, index in expected {
 		testing.expectf(t, layout.files[index].name == name, "place %d: %s, not %s", index, layout.files[index].name, name)
 	}
-	testing.expect_value(t, layout.kinds[.Program].count, 4)
-	testing.expect_value(t, layout.kinds[.Program].bytes, u64(50))
+	testing.expect_value(t, layout.kinds[.Entry].count, 4)
+	testing.expect_value(t, layout.kinds[.Entry].bytes, u64(50))
 	testing.expect_value(t, file_total(layout), 6)
 	testing.expect_value(t, byte_total(layout), u64(190))
 }
@@ -274,16 +274,16 @@ the_order_is_stable :: proc(t: ^testing.T) {
 names_are_whole_or_absent :: proc(t: ^testing.T) {
 	layout := new(Layout)
 	defer free(layout)
-	long_names := [?]Test_File{{"a_name_much_wider_than_the_names_of_the_card", 900, .Program}, {"short", 800, .Program}, {"b", 1, .Resource}}
+	long_names := [?]Test_File{{"a_name_much_wider_than_the_names_of_the_card", 900, .Entry}, {"short", 800, .Entry}, {"b", 1, .Resource}}
 	for width in ([?]int{NAMES_WIDTH, 200, 64, 8}) {
 		layout_of(layout, image_of_today[:], "", CARD_WIDTH, width)
 		names_check(t, layout, width, "the image of today")
 		layout_of(layout, long_names[:], "", CARD_WIDTH, width)
 		names_check(t, layout, width, "a name wider than the card")
 	}
-	// The first name does not fit: no smaller program takes its place.
+	// The first name does not fit: no smaller module with an entry takes its place.
 	layout_of(layout, long_names[:], "", CARD_WIDTH, NAMES_WIDTH)
-	testing.expect_value(t, layout.kinds[.Program].named, 0)
+	testing.expect_value(t, layout.kinds[.Entry].named, 0)
 	testing.expect_value(t, layout.kinds[.Resource].named, 1)
 }
 
@@ -295,10 +295,10 @@ the_image_of_today_names_twelve_files :: proc(t: ^testing.T) {
 	defer free(layout)
 	layout_of(layout, image_of_today[:], "", CARD_WIDTH, NAMES_WIDTH)
 	testing.expectf(t, layout.tile_count >= 12, "%d names", layout.tile_count)
-	testing.expect_value(t, layout.kinds[.Program].count, 67)
+	testing.expect_value(t, layout.kinds[.Entry].count, 67)
 	testing.expect_value(t, layout.kinds[.No_Entry].count, 10)
 	testing.expect_value(t, layout.kinds[.Resource].count, 9)
-	// The largest program, module with no entry and resource each have a tile.
+	// The largest module with an entry, module with no entry and resource each have a tile.
 	for name in ([?]string{"console", "cryptography", "pointers_posy"}) {
 		found := false
 		for &tile in layout.tiles[:layout.tile_count] {
@@ -367,11 +367,11 @@ files_read_from_an_image :: proc(t: ^testing.T) {
 	layout_compute(layout, image, "imported", CARD_WIDTH, NAMES_WIDTH)
 	testing.expect(t, layout.valid)
 	testing.expect_value(t, layout.file_count, 4)
-	testing.expect_value(t, layout.kinds[.Program].count, 1)
+	testing.expect_value(t, layout.kinds[.Entry].count, 1)
 	testing.expect_value(t, layout.kinds[.No_Entry].count, 2)
 	testing.expect_value(t, layout.kinds[.No_Entry].bytes, u64(100))
 	testing.expect_value(t, layout.kinds[.Resource].count, 1)
-	testing.expect(t, layout.files[0].name == "starts" && layout.files[0].kind == .Program)
+	testing.expect(t, layout.files[0].name == "starts" && layout.files[0].kind == .Entry)
 	testing.expect(t, layout.files[1].name == "imported" && layout.files[1].failed)
 	testing.expect(t, layout.files[2].name == "outside" && layout.files[2].size == 0)
 	testing.expect(t, layout.files[3].name == "theme" && layout.files[3].kind == .Resource)

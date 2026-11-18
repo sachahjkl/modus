@@ -5,12 +5,12 @@ package console
 //
 // The console knows the names: its commands, the exports of the modules
 // and services that it loaded or connected (from their descriptions), its
-// variables, the modules of the boot image, the programs that run. It
+// variables, the modules of the boot image, the processes that run. It
 // ranks them with the fuzzy match of src/library/support/line_editor, and gives the
 // rows to show to its terminal (src/library/support/terminal, List_Row and List). The
 // terminal owns the cells and draws the list over its text. The rows go
 // through the text region of this console and its terminal, which no third
-// program reads: the terminal already shows each name that help() prints.
+// process reads: the terminal already shows each name that help() prints.
 //
 // Only the first thread uses this file, and only while no line runs: the
 // second thread changes the tables of names during a line, never between
@@ -31,10 +31,10 @@ List_Mode :: enum u8 {
 
 // The names that one list reads. Today the console has at most 128
 // commands, 12 services, 16 variables, the modules of the boot image and 64
-// programs; a name past this count is not read.
+// processes; a name past this count is not read.
 CANDIDATE_CAPACITY :: 512
 SEARCH_CAPACITY :: 64 // The bytes of a search of the history.
-PROGRAM_NAME_CAPACITY :: 64
+PROCESS_NAME_CAPACITY :: 64
 
 Completion :: struct {
 	mode:           List_Mode,
@@ -49,13 +49,13 @@ Completion :: struct {
 	first_shown:    int, // The first row of ranked that the terminal shows.
 	search:         [SEARCH_CAPACITY]u8,
 	search_count:   int,
-	program_names:  [PROGRAM_NAME_CAPACITY]system.Name, // The programs that run, for a list in quotes.
-	program_count:  int,
-	// The names of the programs are kept for one quote: where it starts,
+	process_names:  [PROCESS_NAME_CAPACITY]system.Name, // The processes that run, for a list in quotes.
+	process_count:  int,
+	// The names of the processes are kept for one quote: where it starts,
 	// and the count of the lines that ran when they were read.
-	programs_kept:  bool,
-	programs_quote: int,
-	programs_lines: u32,
+	processes_kept:  bool,
+	processes_quote: int,
+	processes_lines: u32,
 	// The measure of the cost of one key: the longest ranking so far, and
 	// the count of rankings.
 	longest_ranking: u64, // Nanoseconds.
@@ -296,9 +296,9 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 				candidate_add(table, system.name_of(entry.name[:]), .Module, index)
 			}
 		case "connect", "stop", "grants", "revoke":
-			programs_collect(place.word_start)
-			for &name, index in completion.program_names[:completion.program_count] {
-				candidate_add(table, system.name_of(name[:]), .Program, index)
+			processes_collect(place.word_start)
+			for &name, index in completion.process_names[:completion.process_count] {
+				candidate_add(table, system.name_of(name[:]), .Process, index)
 			}
 		case "unload":
 			for &item, index in loaded[:loaded_count] {
@@ -308,42 +308,42 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 	}
 }
 
-// programs_collect reads the names of the programs that run, with the
+// processes_collect reads the names of the processes that run, with the
 // grant to inspect the machine that the console holds. With no grant, the
 // list names the services that the console is connected to: the root
 // service has no list of its services to give. It reads them once for the
 // quote that starts at quote_place: the names stay until the caret leaves
 // the quote or a line runs, so a key in the quote makes no kernel call.
-programs_collect :: proc "contextless" (quote_place: int) {
-	if completion.programs_kept && completion.programs_quote == quote_place && completion.programs_lines == work.started {
+processes_collect :: proc "contextless" (quote_place: int) {
+	if completion.processes_kept && completion.processes_quote == quote_place && completion.processes_lines == work.started {
 		return
 	}
-	completion.programs_kept, completion.programs_quote, completion.programs_lines = true, quote_place, work.started
-	completion.program_count = 0
+	completion.processes_kept, completion.processes_quote, completion.processes_lines = true, quote_place, work.started
+	completion.process_count = 0
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
 		for &sandbox in sandboxes {
-			if sandbox.service && !sandbox.quiet && completion.program_count < PROGRAM_NAME_CAPACITY {
-				completion.program_names[completion.program_count] = {}
-				copy(completion.program_names[completion.program_count][:], sandbox.name)
-				completion.program_count += 1
+			if sandbox.service && !sandbox.quiet && completion.process_count < PROCESS_NAME_CAPACITY {
+				completion.process_names[completion.process_count] = {}
+				copy(completion.process_names[completion.process_count][:], sandbox.name)
+				completion.process_count += 1
 			}
 		}
 		return
 	}
-	for slot in 1 ..< report.program_slots {
-		if completion.program_count == PROGRAM_NAME_CAPACITY {
+	for slot in 1 ..< report.process_slots {
+		if completion.process_count == PROCESS_NAME_CAPACITY {
 			break
 		}
-		program: op.Program_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program)); status != .Ok {
+		process: op.Process_Report
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Ok {
 			continue
 		}
-		if program.state == .None || program.state == .Stopped {
+		if process.state == .None || process.state == .Stopped {
 			continue
 		}
-		completion.program_names[completion.program_count] = program.name
-		completion.program_count += 1
+		completion.process_names[completion.process_count] = process.name
+		completion.process_count += 1
 	}
 }
 
@@ -360,7 +360,7 @@ names_rank :: proc "contextless" (by_tab: bool) {
 	}
 	started := system.nanoseconds()
 	if place.place != .Quoted {
-		completion.programs_kept = false
+		completion.processes_kept = false
 	}
 	names_collect(&completion.names, place)
 	// A name with a dot whose owner is no service: the whole name is the
@@ -526,7 +526,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "command ")
 		case .Record:
 			system.write_part(writer, "record ")
-		case .Export, .Service, .Module, .Program, .Variable, .History_Line:
+		case .Export, .Service, .Module, .Process, .Variable, .History_Line:
 			system.write_part(writer, "export of ")
 			system.write_part(writer, owner_name(item))
 			system.write_part(writer, " ")
@@ -536,8 +536,8 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 		system.write_part(writer, "service")
 	case .Module:
 		system.write_part(writer, "module")
-	case .Program:
-		system.write_part(writer, "program that runs")
+	case .Process:
+		system.write_part(writer, "process that runs")
 	case .Variable:
 		if int(candidate.number) < VARIABLE_CAPACITY {
 			value := variables[candidate.number].value
@@ -597,7 +597,7 @@ list_icon_of_candidate := [line_editor.Candidate_Kind]terminal.List_Icon {
 	.Record       = .Record,
 	.Service      = .Service,
 	.Module       = .Module,
-	.Program      = .Program,
+	.Process      = .Process,
 	.Variable     = .Variable,
 	.History_Line = .History_Line,
 }

@@ -1,10 +1,10 @@
 // The graphics library: drawing with the processor into pixel memory
 // (the draw table is the one 2D interface, drawn on the processor:
 // docs/PROPERTIES.md, "One 2D interface"). It is compiled into
-// each program that draws.
+// each process that draws.
 //
 // Who uses it: the boot program (the boot display), the compositor, and
-// each program with a window, often through `src/library/support/interface`. It draws
+// each process with a window, often through `src/library/support/interface`. It draws
 // into memory that the caller gives (a `Canvas`); it allocates nothing and
 // calls the kernel never. The parts:
 //
@@ -36,7 +36,7 @@ rgb :: #force_inline proc "contextless" (red, green, blue: u32) -> Color {
 // A canvas is a rectangle of pixels in memory. Line y starts at pixel y * stride.
 //
 // A canvas does not own its pixels: a surface of the compositor, a picture
-// of a program, or the framebuffer. Each procedure of this package cuts what
+// of a process, or the framebuffer. Each procedure of this package cuts what
 // it draws to the canvas, so a shape partly outside it is drawn in part.
 Canvas :: struct {
 	pixels: [^]Color, // The first pixel of line 0.

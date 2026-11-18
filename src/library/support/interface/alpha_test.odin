@@ -12,8 +12,8 @@ import "modus:support/graphics"
 // a translucent record blends by the one rule in each cut, and a color that
 // draws nothing has one form.
 
-// The execution blends with the table of the text state, which a program
-// fills once at its start: the tests of this program fill it once, before
+// The execution blends with the table of the text state, which a process
+// fills once at its start: the tests of this process fill it once, before
 // the first test that blends reads it, and no test writes it again. Each
 // test that draws calls blend_table first, the tests of the interface font
 // too: a draw of a proportional text that finds the table empty fills it,

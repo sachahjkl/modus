@@ -9,14 +9,14 @@ import "core:strings"
 //
 // The first machine has each feature of the processor (`-cpu max`): the
 // kernel saves x87, SSE and AVX, and AVX-512 when the host has it, with
-// xsaveopt; the program extended_state holds ymm0 to ymm15, or zmm0 to
+// xsaveopt; the process extended_state holds ymm0 to ymm15, or zmm0 to
 // zmm31 and k0 to k7, in more threads than processors. The tool reads the
 // host first and waits for the exact lines of that machine: a host with no
 // AVX-512 does not test the AVX-512 path, and the output says so. The
 // second machine has no AVX: the kernel saves x87 and SSE with xsaveopt
-// (576 bytes), and the program says that AVX is not usable and holds xmm0
+// (576 bytes), and the process says that AVX is not usable and holds xmm0
 // to xmm15. The third machine has no xsave: the kernel saves with fxsave
-// (512 bytes), the other form of the same save, and the program holds xmm0
+// (512 bytes), the other form of the same save, and the process holds xmm0
 // to xmm15.
 
 TEST_OUTPUT_EXTENDED_STATE :: BUILD_FOLDER + "/test_output_extended_state.txt"

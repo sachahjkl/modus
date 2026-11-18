@@ -189,7 +189,7 @@ from_binary_coded_decimal :: proc "contextless" (value: u8) -> int {
 _ :: intrinsics
 
 // The real-time clock of a PC (the CMOS clock): the bytes of its registers,
-// as the program `date` reads them, and their meaning.
+// as the process `date` reads them, and their meaning.
 Clock_Reading :: struct {
 	second, minute, hour, day, month, year: u8, // The registers 0, 2, 4, 7, 8 and 9, as the clock gives them.
 }
@@ -200,7 +200,7 @@ CLOCK_HOUR_AFTERNOON :: 0x80 // The bit of the hour register for the afternoon, 
 
 // CLOCK_EARLIEST_YEAR is the first year that the clock gives. The year
 // register has two digits, and the century register is not read: only the
-// ACPI table FADT says if a machine has one, and where, and the program that
+// ACPI table FADT says if a machine has one, and where, and the process that
 // reads the clock does not read that table. So the two digits give a year
 // from 2020 to 2099, and the digits 00 to 19 give no date: a clock with an
 // empty battery starts again at 2000, and that is no date of now.

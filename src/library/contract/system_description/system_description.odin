@@ -4,7 +4,7 @@
 // kind, its size and its BLAKE3 hash. The signing key of the owner of the
 // machine signs its hash; the boot program verifies the signature
 // and each hash before it starts the kernel, and the root service checks
-// the boot image against it again before it starts the first program.
+// the boot image against it again before it starts the first process.
 //
 // The file, all numbers little-endian:
 //
@@ -118,7 +118,7 @@ Check_Fault :: enum u32 {
 	Kind_Differs        = 5, // A module of the description is a resource of the boot image, or the reverse.
 	Size_Differs        = 6, // The file has another size.
 	Hash_Differs        = 7, // The bytes of the file have another hash.
-	Stated_Hash_Differs = 8, // The entry of the boot image states another hash: the loader gives that hash to the program as its identity.
+	Stated_Hash_Differs = 8, // The entry of the boot image states another hash: the loader gives that hash to the process as its identity.
 	Outside_Image       = 9, // The entry of the boot image points outside the image.
 }
 

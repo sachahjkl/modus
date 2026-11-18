@@ -3,16 +3,16 @@
 //
 // The top part is the kernel half of the addresses: the direct map, the
 // kernel module, and the kernel stacks between their guard pages. The
-// bottom part is the half of this program. Each line is a run of pages
+// bottom part is the half of this process. Each line is a run of pages
 // with one protection. No page is both writable and executable.
 //
-// The program needs the grant to inspect the machine.
+// The process needs the grant to inspect the machine.
 //
 // **What it is for.** It shows two rules of the memory of the system as the
 // processor sees them, not as a document claims them: no page is both
 // writable and executable, and each kernel stack has a guard page on each
 // side. It also shows whether the processor keeps the kernel out of the
-// memory of programs (no execution of it, and no access outside a copy).
+// memory of processes (no execution of it, and no access outside a copy).
 //
 // **Start**: `start("pages")` in the console, or the bar of the desktop.
 //
@@ -20,18 +20,18 @@
 //
 // - **Inspect**: the machine with the right Inspect, for the report
 //   `Inspect_Kind.Mappings` of the kernel half and of the half of this
-//   program. The kernel walks the page tables themselves to make it.
+//   process. The kernel walks the page tables themselves to make it.
 //
 // **What a reader sees**: the two halves as runs of pages, each with its
 // protection, and the rules with a mark each. The log has, once:
 //
 // - the pages, the runs, the pages that are write and execute, and the
 //   guard pages of the kernel half;
-// - the same counts for this program;
+// - the same counts for this process;
 // - "pages: ok, the page tables keep the rules", or "pages: failed, ...";
-// - whether the processor refuses the memory of programs to the kernel.
+// - whether the processor refuses the memory of processes to the kernel.
 //
-// **What it does not prove**: it reads the tables of one program, its own.
+// **What it does not prove**: it reads the tables of one process, its own.
 // It shows the state at one moment, every 500 ms; it does not watch each
 // change of a mapping.
 package pages
@@ -55,7 +55,7 @@ WIDTH :: PART_X + 35 * graphics.CELL_WIDTH + MARGIN
 HEIGHT :: 668
 LINE :: 16
 KERNEL_ROWS :: 22
-PROGRAM_ROWS :: 10
+PROCESS_ROWS :: 10
 INTERVAL :: 500
 
 // The three protections of a run are a series: three things of one kind
@@ -66,7 +66,7 @@ PROTECTION_WRITE :: 1
 PROTECTION_READ :: 2
 
 kernel_half: op.Mapping_Report
-program_half: op.Mapping_Report
+process_half: op.Mapping_Report
 
 Text :: struct {
 	bytes: [96]u8,
@@ -160,8 +160,8 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 	text: Text
 	y := MARGIN + line * LINE
 	// The title of a half in the color of its concept: the kernel or a
-	// program.
-	accent := kernel ? graphics.colors.kernel : graphics.colors.program
+	// process.
+	accent := kernel ? graphics.colors.kernel : graphics.colors.process
 	graphics.fill(canvas, MARGIN, y, WIDTH - 2 * MARGIN, 2, accent)
 	x := graphics.text(canvas, MARGIN, y + 6, title, accent)
 	put(&text, "  ")
@@ -225,7 +225,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 
 rule :: proc "contextless" (canvas: graphics.Canvas, line: int, kept: bool, text: ^Text) {
 	y := MARGIN + line * LINE
-	graphics.fill(canvas, MARGIN, y + 4, 8, 8, kept ? graphics.colors.program : graphics.colors.failed)
+	graphics.fill(canvas, MARGIN, y + 4, 8, 8, kept ? graphics.colors.process : graphics.colors.failed)
 	show(canvas, MARGIN + 16, y, text, kept ? graphics.colors.text : graphics.colors.failed)
 }
 
@@ -235,19 +235,19 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	line := half(canvas, 0, "the kernel half", &kernel_half, KERNEL_ROWS, true)
 	line += 1
 	put(&text, "write and execute: ")
-	put_number(&text, kernel_half.write_execute_pages + program_half.write_execute_pages)
+	put_number(&text, kernel_half.write_execute_pages + process_half.write_execute_pages)
 	put(&text, " pages")
-	rule(canvas, line, kernel_half.write_execute_pages + program_half.write_execute_pages == 0, &text)
+	rule(canvas, line, kernel_half.write_execute_pages + process_half.write_execute_pages == 0, &text)
 	put(&text, "guard pages around the kernel stacks: ")
 	put_number(&text, kernel_half.guard_pages)
 	put(&text, " of ")
 	put_number(&text, kernel_half.guards_expected)
 	rule(canvas, line + 1, kernel_half.guard_pages == kernel_half.guards_expected, &text)
-	put(&text, kernel_half.kernel_no_execute != 0 ? "the kernel cannot execute memory of programs" : "the kernel can execute memory of programs: the processor has no guard")
+	put(&text, kernel_half.kernel_no_execute != 0 ? "the kernel cannot execute memory of processes" : "the kernel can execute memory of processes: the processor has no guard")
 	rule(canvas, line + 2, kernel_half.kernel_no_execute != 0, &text)
-	put(&text, kernel_half.kernel_guard != 0 ? "the kernel cannot use memory of programs outside a copy" : "the kernel can use memory of programs: the processor has no guard")
+	put(&text, kernel_half.kernel_guard != 0 ? "the kernel cannot use memory of processes outside a copy" : "the kernel can use memory of processes: the processor has no guard")
 	rule(canvas, line + 3, kernel_half.kernel_guard != 0, &text)
-	half(canvas, line + 5, "the half of this program", &program_half, PROGRAM_ROWS, false)
+	half(canvas, line + 5, "the half of this process", &process_half, PROCESS_ROWS, false)
 }
 
 // The entry of pages: every 500 ms it reads the two mapping reports and
@@ -264,7 +264,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	logged := false
 	for {
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 0, u64(uintptr(&kernel_half)), size_of(op.Mapping_Report))
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 1, u64(uintptr(&program_half)), size_of(op.Mapping_Report))
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 1, u64(uintptr(&process_half)), size_of(op.Mapping_Report))
 		// The canvas is the picture that the compositor does not read,
 		// after it took the picture before: the whole canvas is drawn.
 		if display.canvas_wait(&window) {
@@ -274,11 +274,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if !logged {
 			logged = true
 			system.log("pages: the kernel half: ", kernel_half.pages, " pages in ", kernel_half.run_count, " runs, ", kernel_half.write_execute_pages, " write and execute, ", kernel_half.guard_pages, " guard pages of ", kernel_half.guards_expected)
-			system.log("pages: this program: ", program_half.pages, " pages in ", program_half.run_count, " runs, ", program_half.write_execute_pages, " write and execute")
-			kept := kernel_half.pages != 0 && program_half.pages != 0 && kernel_half.write_execute_pages == 0 && program_half.write_execute_pages == 0 && kernel_half.guard_pages == kernel_half.guards_expected && kernel_half.guards_expected != 0
+			system.log("pages: this process: ", process_half.pages, " pages in ", process_half.run_count, " runs, ", process_half.write_execute_pages, " write and execute")
+			kept := kernel_half.pages != 0 && process_half.pages != 0 && kernel_half.write_execute_pages == 0 && process_half.write_execute_pages == 0 && kernel_half.guard_pages == kernel_half.guards_expected && kernel_half.guards_expected != 0
 			guards := kernel_half.kernel_no_execute != 0 && kernel_half.kernel_guard != 0
 			system.log(kept ? "pages: ok, the page tables keep the rules" : "pages: failed, the page tables do not keep the rules")
-			system.log(guards ? "pages: the processor refuses the memory of programs to the kernel" : "pages: the processor has no guard for the memory of programs")
+			system.log(guards ? "pages: the processor refuses the memory of processes to the kernel" : "pages: the processor has no guard for the memory of processes")
 		}
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

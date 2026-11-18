@@ -1,7 +1,7 @@
 package terminal_records
 
 // The runs of code of a row: what each part of a line of code is, so that
-// the terminal colors it (docs/CONSOLE.md, section 7). The program sends
+// the terminal colors it (docs/CONSOLE.md, section 7). The process sends
 // kinds, not colors: the terminal maps each kind to a class of the colors
 // of code of the system (src/library/support/graphics/code_colors.odin), so one table
 // changes the colors of every terminal.
@@ -38,7 +38,7 @@ Code_Kind :: enum u8 {
 // One run: start and length in bytes of the text of its row. A row has at
 // most RUN_LIMIT bytes: a byte holds its start. A part of one kind that is
 // longer than 255 bytes is two runs. The kind is the byte of a Code_Kind,
-// not the enum: the runs come from another program, and a reader takes the
+// not the enum: the runs come from another process, and a reader takes the
 // byte through code_kind_of, which refuses a byte that names no kind.
 Code_Run :: struct {
 	start:    u8, // The first byte of the run in the text of its row.
@@ -79,7 +79,7 @@ code_kind_classes := [Code_Kind]graphics.Code_Class {
 	.Unknown         = .Comment,
 }
 
-// code_kind_of is the border of the kind of a byte that a program wrote:
+// code_kind_of is the border of the kind of a byte that a process wrote:
 // the member, or false for a byte that names none.
 code_kind_of :: proc "contextless" (value: u8) -> (kind: Code_Kind, ok: bool) {
 	return enum_word.member_of_word(Code_Kind, u64(value))
@@ -93,7 +93,7 @@ code_kind_color :: proc "contextless" (kind: Code_Kind, plain: graphics.Color) -
 }
 
 // code_runs_send gives the runs of the next record of a target: Kind.Edit,
-// or Kind.List_Row with the number of its row. The program sends it just
+// or Kind.List_Row with the number of its row. The process sends it just
 // before that record. No runs: nothing is sent, and the record is plain.
 code_runs_send :: proc "contextless" (terminal: ^Terminal, target: Kind, row: int, runs: []Code_Run) {
 	count := min(len(runs), CODE_RUN_LIMIT)

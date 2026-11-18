@@ -1,7 +1,7 @@
-// The root ring: the commands that a program sends to the root service, the
+// The root ring: the commands that a process sends to the root service, the
 // words of their records, and the rule of who can send each one.
 //
-// A program that the root service starts with one of the start grants
+// A process that the root service starts with one of the start grants
 // `ROOT_RING_GRANTS` receives a root ring at the handle
 // `system.GRANT_ROOT`. It writes `Root_Command` records on it; the root
 // service reads each word of a record at one border of this package, which
@@ -9,9 +9,9 @@
 // with `sender_allowed`, then runs the command and sends a completion.
 //
 // The role of the sender is the set of start grants that the root service
-// gave the program at its start. The name of the program is not read: a
-// disk program has a nickname that it chose, and the nickname gives it no
-// command (docs/MODULE_CONTRACT.md, "A program from a disk").
+// gave the process at its start. The name of the process is not read: a
+// disk process has a nickname that it chose, and the nickname gives it no
+// command (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // The design: (src/md/api/root_ring.md).
 package root_ring
@@ -22,14 +22,14 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
 
-// The ring to the root service. The name of the program is in values[0..4],
+// The ring to the root service. The name of the process is in values[0..4],
 // but for `Start_From_Disk`, whose hash takes those values.
 // The completion record has the tag of the command, and a Status as kind.
 // When the status is not Ok, its values are an error record
 // (errors.completion_record): the argument 1 is the name.
 //
-// A program with a root ring (`system.GRANT_ROOT`) writes these commands;
-// the root service checks the role of the program for each one
+// A process with a root ring (`system.GRANT_ROOT`) writes these commands;
+// the root service checks the role of the process for each one
 // (ROOT_COMMAND_SENDERS).
 //
 // ```odin
@@ -38,38 +38,38 @@ import "modus:contract/start_grant"
 // ```
 Root_Command :: enum u32 {
 	None       = 0, // Refused with `Unsupported`, as a word that names no command (command_of_word).
-	Start      = 1, // Start the program of the boot image with this name. A program of the system (root, input, compositor, terminal, block, frame) is refused with `Reserved`; a name with no module with `Absent`.
-	Stop       = 2, // Stop the program with this name. The compositor and the terminal are refused with `Reserved`; a name that runs no program with `Absent`.
+	Start      = 1, // Start the module of the boot image with this name. A module of the system (root, input, compositor, terminal, block, frame) is refused with `Reserved`; a name with no module with `Absent`.
+	Stop       = 2, // Stop the process with this name. The compositor and the terminal are refused with `Reserved`; a name that runs no process with `Absent`.
 	// Connect makes a connection to a service that runs. The completion has
-	// three handles of the caller: values[0] the program (right Read: its
+	// three handles of the caller: values[0] the process (right Read: its
 	// state), values[1] the call ring, values[2] the call region. values[3..7]
-	// is the hash of the file of the program: its exports are described there.
+	// is the hash of the module file of the process: its exports are described there.
 	//
 	// values[4] not 0: the connection is for the row values[4] - 1 of the
 	// client table, whose serial is values[5] (modus:contract/remote,
-	// Client_Table). Only a program with the start grant Remote_Clients
+	// Client_Table). Only a process with the start grant Remote_Clients
 	// sends it. The connection acts for the principal of that row, and ends
 	// when the grant of the row ends. A row with another serial is refused
 	// with `Absent` (unit `Grants`); a row whose principal has its session
 	// locked with `Absent` (unit `Principals`).
 	Connect    = 3,
 	Disconnect = 4, // End the connection to the service with this name; with values[4] not 0, the connection for that row of the client table, as Connect names it.
-	// Grants reads the grants of the program with this name. The completion
+	// Grants reads the grants of the process with this name. The completion
 	// has two sets of Root_Grant (bit n: grant n): values[0] the grants that
-	// the program has, values[1] the grants that were revoked. values[2] is
-	// the number of the principal whose session the program belongs to (0:
+	// the process has, values[1] the grants that were revoked. values[2] is
+	// the number of the principal whose session the process belongs to (0:
 	// the machine), and values[3..6] the name of that principal, 31 bytes at
 	// most, zero bytes after it (docs/PRINCIPALS.md).
 	Grants     = 5,
-	// Revoke ends one grant of the program with this name: values[4] is the
+	// Revoke ends one grant of the process with this name: values[4] is the
 	// Root_Grant. The kernel ends each handle and each mapping that came
-	// from the grant, in that program and in the programs that it gave them
+	// from the grant, in that process and in the processes that it gave them
 	// to. values[0] of the completion is their count.
 	Revoke     = 6,
 	// Replace sets the replacement of the module with this name, in the
 	// replacement table of the machine: values[4] is the number, from 1, of
 	// the entry of the boot image of the module that replaces it. 0 removes
-	// the replacement. The root service refuses it to a program that does
+	// the replacement. The root service refuses it to a process that does
 	// not have the role, and refuses a chain: a module that replaces is not
 	// replaced. The completion has Bad_State for a chain, No_Slot for a
 	// full table.
@@ -81,14 +81,14 @@ Root_Command :: enum u32 {
 	// store of its own, named after the caller with ".history", with a
 	// small limit of blocks and no grant to act for the principal, so it
 	// reaches that store and no other one. The completion is the completion
-	// of Connect. The root service refuses it to a program that does not
+	// of Connect. The root service refuses it to a process that does not
 	// have the role, and after a revocation of the grant History.
 	Connect_History = 8,
 	// The commands of the principals (docs/PRINCIPALS.md). The root service
 	// takes Principal_Create, Principal_Lock, Principals and
-	// Machine_Passphrase from a program with the grant Root_Ring, and
+	// Machine_Passphrase from a process with the grant Root_Ring, and
 	// Principal_Record, Principal_Unlock, Machine_Key and
-	// Principal_Change_End from the program `unlock` only.
+	// Principal_Change_End from the process `unlock` only.
 	//
 	// Principal_Create records a new named principal: the name is in
 	// values[0..4]. The root service starts `unlock`, which asks for the
@@ -96,8 +96,8 @@ Root_Command :: enum u32 {
 	// store. The completion comes at once: the creation ends in `unlock`.
 	Principal_Create = 9,
 	// Principal_Lock ends the session of the named principal that is
-	// unlocked: each program of the session stops, and `unlock` starts
-	// again. values[0] of the completion is the count of the programs
+	// unlocked: each process of the session stops, and `unlock` starts
+	// again. values[0] of the completion is the count of the processes
 	// stopped.
 	Principal_Lock = 10,
 	// Principals reads the record of the principal with the number
@@ -116,7 +116,7 @@ Root_Command :: enum u32 {
 	// Principal_Unlock starts the session of the principal with the number
 	// values[4]: `unlock` opened its sealed keys with the passphrase.
 	// values[0..3] is the key of the tag of the disk grant table of that
-	// principal (modus:support/disk_program, table_key_of_principal_key),
+	// principal (modus:support/disk_process, table_key_of_principal_key),
 	// and values[5] its origin: Principal_Key_Origin.Opened from the open of an
 	// existing file, Principal_Key_Origin.New from the creation of the principal.
 	// At the first unlock of a run the root service takes the key and reads
@@ -126,28 +126,28 @@ Root_Command :: enum u32 {
 	// the machine started is refused with Bad_State. A key of 32 zero bytes,
 	// or another origin, is refused with Bad_Operation.
 	Principal_Unlock = 13,
-	// Debug gives the debugger service the handle of the program with this
+	// Debug gives the debugger service the handle of the process with this
 	// name, with the right Debug only, on behalf of one of its callers:
 	// values[4] is the call ring of the connection of that caller, as the
-	// service names it. The service becomes the debugger of the program
+	// service names it. The service becomes the debugger of the process
 	// with `debug_attach` (docs/TOOLS.md, "The debugger"). The root service
 	// gives the handle only when the caller acts for the principal whose
-	// session runs that program, and when each grant of the program is a
+	// session runs that process, and when each grant of the process is a
 	// grant that the caller holds itself: a debugger acts with each handle
-	// of the program that it debugs. A grant refuses for each caller when
-	// what it reaches belongs to that one program: a service, a private
+	// of the process that it debugs. A grant refuses for each caller when
+	// what it reaches belongs to that one process: a service, a private
 	// store, a terminal, an endpoint of the network. After a revocation of
 	// a grant of the caller, the root service ends each debugging that the
 	// rule no longer gives.
 	// The completion: values[0] the handle, values[1..4] the hash of the
-	// file of the program, values[5] its principal. A refusal has the kind
+	// module file of the process, values[5] its principal. A refusal has the kind
 	// `No_Grant` with the unit `Debug_Access`, and `found` is 1 + the start
 	// grant that refuses (start_grant.Grant), which the sentence of the
 	// record names. The grant is `debug` in `Grants`, a grant of the
 	// caller; `Revoke` ends each handle that came from it, and the
 	// debugging with them. With values[5] not 0, the service says that it
-	// ended the debugging of the program for that caller: the root service
-	// forgets the debug access. Only the program with the grant Debugger
+	// ended the debugging of the process for that caller: the root service
+	// forgets the debug access. Only the process with the grant Debugger
 	// sends this command.
 	Debug = 14,
 	// Palette_Provide makes the caller the palette provider of the desktop
@@ -156,28 +156,28 @@ Root_Command :: enum u32 {
 	// the caller and to the compositor: the caller writes the table, the
 	// compositor maps it read-only. The name of the command is not read.
 	// The completion: values[0] the handle of the table, values[1] the
-	// handle of the ring. The root service refuses it to a program that
+	// handle of the ring. The root service refuses it to a process that
 	// does not have the grant Palette, after a revocation of that grant,
 	// and when a provider exists already (Bad_State).
 	Palette_Provide = 15,
-	// Start_From_Disk starts a disk program: a program whose module file is
-	// an object of the store `programs` of the storage service, and not a
+	// Start_From_Disk starts a disk process: a process whose module file is
+	// an object of the store `module_files` of the storage service, and not a
 	// file of the boot image
-	// (docs/MODULE_CONTRACT.md, "A program from a disk").
+	// (docs/MODULE_CONTRACT.md, "A module from a disk").
 	// This command does not carry its name as the others do:
 	// values[0..3] is the hash of the module file (BLAKE3, 32 bytes), and
-	// values[4..6] the name of the program and of its entry in the store, 1
-	// to 23 bytes, zero bytes after it (modus:support/disk_program).
+	// values[4..6] the name of the module and of its entry in the store, 1
+	// to 23 bytes, zero bytes after it (modus:support/disk_process).
 	//
 	// The root service reads the object from the storage service and starts
 	// its bytes only when their hash is the hash of the command: the
-	// storage service does not choose what runs. The program receives the
-	// log and a window, no grant, and the budget of a program that the
+	// storage service does not choose what runs. The process receives the
+	// log and a window, no grant, and the budget of a process that the
 	// tables of the root service do not name; its name gives it nothing.
-	// The program belongs to the session of the caller, and the store is
-	// the store `programs` of the principal of that session.
+	// The process belongs to the session of the caller, and the store is
+	// the store `module_files` of the principal of that session.
 	//
-	// The completion comes when the program started or the load ended, and
+	// The completion comes when the process started or the load ended, and
 	// not before: the root service serves each other ring meanwhile. A
 	// refusal has an error record whose argument 1 is the name and whose
 	// argument 2 is the hash: `Not_Authentic` for bytes with another hash,
@@ -193,21 +193,21 @@ Root_Command :: enum u32 {
 	// the disk grant table of the principal: `Absent` (unit `Grants`) when
 	// the nickname has no row. A row with another hash refuses the start
 	// before any read: `Exists` (unit `Grants`), and the value is the first
-	// 8 bytes of the hash of the row. A disk program whose row has the grant
+	// 8 bytes of the hash of the row. A disk process whose row has the grant
 	// store gets the store of its nickname.
 	Start_From_Disk = 16,
 	// Disk_Grant changes the disk grant table of the principal of the
-	// caller (docs/MODULE_CONTRACT.md, "The grants of a disk program"):
+	// caller (docs/MODULE_CONTRACT.md, "The grants of a disk process"):
 	// values[0..2] the nickname, 1 to 23 bytes with zero bytes after it
-	// (modus:support/disk_program, name_pack); values[4] a
+	// (modus:support/disk_process, name_pack); values[4] a
 	// Disk_Grant_Action, another word refused with `Bad_Value`; values[5] the start grant (modus:contract/start_grant). The
 	// row names the hash that the nickname names now: its row, or the disk
-	// program of the nickname that runs. The grant takes effect at the next
+	// process of the nickname that runs. The grant takes effect at the next
 	// start. The caller must act for its principal (`No_Grant`, unit
 	// `Acts_For_Principal`). A grant that no command gives is refused with
 	// `Reserved` (unit `Grants`), one that no command gives yet with
-	// `Unsupported`; a nickname with no row and no program with `Absent`
-	// (unit `Programs`); a full table with `Full` (unit `Grants`).
+	// `Unsupported`; a nickname with no row and no process with `Absent`
+	// (unit `Processes`); a full table with `Full` (unit `Grants`).
 	Disk_Grant = 17,
 	// Nickname_Move points a nickname of the disk grant table of the
 	// principal of the caller to another file: values[0..3] the hash,
@@ -229,7 +229,7 @@ Root_Command :: enum u32 {
 	// record of the machine passphrase that `unlock` cannot read; a change
 	// and a new machine passphrase are refused. Machine_Key_State.Opened and
 	// Machine_Key_State.New: values[0..3] is the key of the tag of that table
-	// (modus:support/disk_program, table_key_of_machine_key), from the open
+	// (modus:support/disk_process, table_key_of_machine_key), from the open
 	// of the record or from a new machine passphrase. The root service
 	// reads the table, then writes it after each change. A table that does
 	// not verify under an opened key is refused and kept; under a new key
@@ -239,32 +239,32 @@ Root_Command :: enum u32 {
 	// Disk_Grant_Persistence sets how long a row of the disk grant table of
 	// the principal of the caller lasts across a restart: values[0..2] the
 	// nickname, as Disk_Grant carries it, or no byte for the global
-	// setting; values[4] a disk_program.Persistence (0 the global setting,
+	// setting; values[4] a disk_process.Persistence (0 the global setting,
 	// 1 persist, 2 forget; the global setting takes 1 or 2). The caller
 	// must act for its principal. A nickname with no row is refused with
 	// `Absent` (unit `Grants`).
 	Disk_Grant_Persistence = 21,
 	// Debug_Store gives the debugger service a connection to the storage
-	// service that reads only, to the store `programs` of the principal of
-	// the disk program with this name: the service reads there the debug
-	// object of the module of the program
-	// (docs/MODULE_CONTRACT.md, "The debug object of a disk program").
+	// service that reads only, to the store `module_files` of the principal of
+	// the disk process with this name: the service reads there the debug
+	// object of the module of the process
+	// (docs/MODULE_CONTRACT.md, "The debug object of a disk process").
 	// values[4] is the call ring of the caller, as for Debug. The root
-	// service gives it only for a program that it gave this service the
-	// debug access to, for that caller, and only for a disk program
+	// service gives it only for a process that it gave this service the
+	// debug access to, for that caller, and only for a disk process
 	// (`Absent`, unit `Debug_Objects`). The completion: values[0] the
 	// storage service (right Read: its state), values[1] the call ring,
 	// values[2] the call region. With values[5] not 0, the service says
 	// that it read the object: the root service ends the connection. The
 	// connection ends in any case when the debug access ends. Only the
-	// program with the grant Debugger sends this command.
+	// process with the grant Debugger sends this command.
 	//
 	// With values[6] not 0, the connection is for the stop report that the
-	// root service kept of the disk program with this nickname, which
+	// root service kept of the disk process with this nickname, which
 	// stopped on a fault: the caller must act for its principal, and the
 	// grant `debug` of the caller must not be revoked; no debug access is
 	// needed (`Absent`, unit `Stop_Reports`: no such report). The
-	// completion adds values[3], one page with a disk_program.Kept_Stop_Report
+	// completion adds values[3], one page with a disk_process.Kept_Stop_Report
 	// (right Read), and values[4], the principal. The connection ends at the
 	// end that the service sends with values[6], and when the caller or the
 	// service stops.
@@ -412,18 +412,18 @@ command_refusal :: proc "contextless" (word: u32) -> [7]u64 {
 // Who can send a command of the root ring, by the start grants of the
 // sender. The rule reads the role of the sender only, never its name.
 Root_Command_Sender :: enum u8 {
-	Nobody, // No program: None, which command_of_word refuses first.
-	Root_Ring, // A program with the start grant Root_Ring, as the console.
-	// A program with the start grant Root_Ring, or with Connect to a
+	Nobody, // No process: None, which command_of_word refuses first.
+	Root_Ring, // A process with the start grant Root_Ring, as the console.
+	// A process with the start grant Root_Ring, or with Connect to a
 	// service of its list: the root service checks the list, which is a
-	// part of the role of the program.
+	// part of the role of the process.
 	Root_Ring_Or_Connect,
-	Each_Ring, // Each program that has a root ring: the end of a connection that it holds.
-	// The program with the start grant Principals only: a program with
+	Each_Ring, // Each process that has a root ring: the end of a connection that it holds.
+	// The process with the start grant Principals only: a process with
 	// Root_Ring does not send these, as they carry the keys and the records
 	// of the principals.
 	Principals,
-	// The program with the start grant Debugger only: it names a caller of
+	// The process with the start grant Debugger only: it names a caller of
 	// its own connections, and the root service applies the rule of the
 	// debug access to that caller.
 	Debugger,
@@ -462,24 +462,24 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Remote_Client          = .Root_Ring,
 }
 
-// The start grants that give a program a root ring. A program with none of
-// them has no root ring, so it sends no command: a disk program, whose
+// The start grants that give a process a root ring. A process with none of
+// them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
 ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger}
 
-// root_ring_given says if a program with these start grants receives a
+// root_ring_given says if a process with these start grants receives a
 // root ring at its start.
 root_ring_given :: proc "contextless" (role: bit_set[start_grant.Grant]) -> bool {
 	return role & ROOT_RING_GRANTS != {}
 }
 
-// The handles that the root service gives a program of the boot image at
-// its start, by its start grants. Each one has one context slot
+// The handles that the root service gives a process that it starts from
+// the boot image, at its start, by its start grants. Each one has one context slot
 // (system.ROLE_HANDLE_SLOTS); several start grants can give one handle (the
 // machine, the root ring). A start writes a handle only when role_handles
 // gives it, so this mapping is the one that the start follows.
 Role_Handle :: enum u8 {
-	Display, // A program with no grant Terminal: the ring to the compositor.
+	Display, // A process with no grant Terminal: the ring to the compositor.
 	Root_Ring, // A start grant of ROOT_RING_GRANTS.
 	Machine, // Inspect, Stop, Schedule, Events or Counters: one handle with those rights.
 	Image,
@@ -502,7 +502,7 @@ Role_Handle :: enum u8 {
 	Tpm_Service, // Tpm.
 	Tpm_Region, // Tpm.
 	Client_Table, // Remote_Clients.
-	Log, // Each program: the log.
+	Log, // Each process: the log.
 }
 
 // role_handles gives the handles that a start gives a role.
@@ -558,10 +558,10 @@ role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handle
 	return handles
 }
 
-// sender_allowed says if a program with these start grants can send a
+// sender_allowed says if a process with these start grants can send a
 // command. A refused command gets `No_Grant` (sender_refusal) and runs
 // nothing. For Connect with the grant Connect and not Root_Ring, the root
-// service then checks the list of the services of the program.
+// service then checks the list of the services of the process.
 sender_allowed :: proc "contextless" (command: Root_Command, role: bit_set[start_grant.Grant]) -> bool {
 	if !root_ring_given(role) {
 		return false
@@ -720,7 +720,7 @@ member_of_word :: proc "contextless" ($Enum: typeid, word: u64, command: Root_Co
 }
 
 // word_refusal is the error record of a word that names no member. It is
-// not polymorphic, so a program that never reads such a word still uses
+// not polymorphic, so a process that never reads such a word still uses
 // the import of its record.
 word_refusal :: proc "contextless" (command: Root_Command, argument: i64, word: u64, largest: u64) -> [7]u64 {
 	return errors.ring_fail(u32(command), .Bad_Value, .None, argument, i64(min(word, 1 << 62)), i64(largest))
@@ -866,7 +866,7 @@ root_second_argument_names := [Root_Command]string {
 }
 
 // command_of_record reads the command that an error record names: the
-// number comes from another program. A number that names no member gives
+// number comes from another process. A number that names no member gives
 // false, and so does None.
 command_of_record :: proc "contextless" (command: i64) -> (read: Root_Command, ok: bool) {
 	if command < 0 || command > i64(max(u32)) {

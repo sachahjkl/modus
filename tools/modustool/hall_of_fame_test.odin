@@ -6,14 +6,14 @@ import "core:testing"
 
 // Each row of the credits file names a picture of the resources, the
 // pixels that `modustool portraits` made from it, and a credit that the
-// program shows: its author and its license are texts of the program.
+// process shows: its author and its license are texts of the module.
 @(test)
-hall_of_fame_credits_match_the_pictures_and_the_program :: proc(t: ^testing.T) {
+hall_of_fame_credits_match_the_pictures_and_the_module :: proc(t: ^testing.T) {
 	credits, problem := hall_of_fame_credits_read()
 	testing.expectf(t, problem == "", "the credits file is refused: %s", problem)
 	testing.expect_value(t, len(credits), 5)
-	program, read_error := os.read_entire_file(HALL_OF_FAME_PROGRAM_FILE, context.temp_allocator)
-	testing.expectf(t, read_error == nil, "cannot read %s: %v", HALL_OF_FAME_PROGRAM_FILE, read_error)
+	module_source, read_error := os.read_entire_file(HALL_OF_FAME_MODULE_FILE, context.temp_allocator)
+	testing.expectf(t, read_error == nil, "cannot read %s: %v", HALL_OF_FAME_MODULE_FILE, read_error)
 	for credit in credits {
 		picture := strings.concatenate({HALL_OF_FAME_RESOURCE_FOLDER, "/", credit.file}, context.temp_allocator)
 		testing.expectf(t, os.is_file(picture), "%s is not a file of the repository", picture)
@@ -22,13 +22,13 @@ hall_of_fame_credits_match_the_pictures_and_the_program :: proc(t: ^testing.T) {
 		testing.expectf(t, stat_error == nil && information.size == HALL_OF_FAME_PORTRAIT_WIDTH * HALL_OF_FAME_PORTRAIT_HEIGHT * 4, "%s has %d bytes, not the pixels of one portrait: run modustool portraits", pixels, information.size)
 		for text in ([]string{credit.author, credit.license}) {
 			quoted := strings.concatenate({"\"", text, "\""}, context.temp_allocator)
-			testing.expectf(t, strings.contains(string(program), quoted), "the program does not show the credit %s of %s", quoted, credit.file)
+			testing.expectf(t, strings.contains(string(module_source), quoted), "the module does not show the credit %s of %s", quoted, credit.file)
 		}
 		testing.expect(t, strings.has_prefix(credit.address, "https://"), "a source has its address")
 	}
 }
 
-// A row with a missing cell, a name that is not a PNG file of the program
+// A row with a missing cell, a name that is not a PNG file of the module
 // folder, and a source with no address are refused; the address ends at
 // the end of its cell.
 @(test)

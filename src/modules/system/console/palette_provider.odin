@@ -62,7 +62,7 @@ line_value: Value // The value of the line that ran last, for the answer to the 
 // palette_provider_start asks the root service for the entry table and the
 // ring, and writes the first table. The first thread calls it once, before
 // a line runs. Without the grant the console has no provider part, and the
-// palette lists the programs and the windows only.
+// palette lists the modules and the windows only.
 palette_provider_start :: proc "contextless" () {
 	// The root service answers when it reaches its loop, after its boot
 	// passes: the bound only ends a hang.
@@ -188,13 +188,13 @@ palette_next_entries: [palette_table.ENTRY_CAPACITY]palette_table.Entry
 
 PALETTE_STRATEGY_VALUE_CAPACITY :: 16 // The bytes of the name of a strategy as a value of the command `strategy`.
 // The act name of the entries of the strategies, and the name of their
-// row: the name of the command that they run. The program `scheduler`
+// row: the name of the command that they run. The process `scheduler`
 // names the tile of the strategy in use with it.
 PALETTE_STRATEGY_ACT_NAME :: "strategy"
 
 // palette_strategy_value gives the name of a scheduling strategy as the
 // command `strategy` takes it: the name of the kernel contract in lower
-// case, with "_" for a space: "round_robin", "fair", "eevdf". The program
+// case, with "_" for a space: "round_robin", "fair", "eevdf". The process
 // `scheduler` reads the same names (its export `strategy_set`). A name
 // that does not fit gives "".
 palette_strategy_value :: proc "contextless" (buffer: ^[PALETTE_STRATEGY_VALUE_CAPACITY]u8, strategy: op.Strategy) -> string {
@@ -477,7 +477,7 @@ palette_setting_line :: proc "contextless" (writer: ^system.Writer, name: string
 // compositor names, when the index is inside the table of the console and
 // the hash is the hash of the name of that entry: an index that names
 // another entry, after the table changed, is not the entry that the panel
-// showed. Each number is the number of another program.
+// showed. Each number is the number of another process.
 palette_entry_named :: proc "contextless" (record: ring.Record) -> (entry: palette_table.Entry, ok: bool) {
 	index, hash := record.values[1], record.values[2]
 	system.lock(&palette_table_lock)
@@ -640,11 +640,11 @@ palette_candidate_kind :: proc "contextless" (command_name: string, parameter: u
 	switch command_name {
 	case "stop", "grants", "connect", "debug":
 		if parameter == 0 {
-			return .Program
+			return .Process
 		}
 	case "revoke":
 		if parameter == 0 {
-			return .Program
+			return .Process
 		}
 		if parameter == 1 {
 			return .Grant
@@ -671,13 +671,13 @@ palette_candidate_kind :: proc "contextless" (command_name: string, parameter: u
 
 // palette_candidates_closed says if the candidates of a kind are the only
 // values that a parameter takes: the strategies of the kernel and the names
-// of the settings are; the programs that run, the modules and the grants
+// of the settings are; the processes that run, the modules and the grants
 // are suggestions, since a line can name another one.
 palette_candidates_closed :: proc "contextless" (kind: palette_table.Candidate_Kind) -> bool {
 	switch kind {
 	case .Strategy, .Setting:
 		return true
-	case .None, .Program, .Module, .Grant:
+	case .None, .Process, .Module, .Grant:
 	}
 	return false
 }
@@ -723,21 +723,21 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 		for &image_entry in entries {
 			add(&candidates, &count, system.name_of(image_entry.name[:]))
 		}
-	case .Program:
-		// The programs that run, from the reports of the machine, as the
+	case .Process:
+		// The processes that run, from the reports of the machine, as the
 		// completion of the edit line reads them.
 		report: op.System_Report
 		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Ok {
-			for slot in 1 ..< report.program_slots {
-				program: op.Program_Report
-				if _, program_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program)); program_status != .Ok {
+			for slot in 1 ..< report.process_slots {
+				process: op.Process_Report
+				if _, process_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); process_status != .Ok {
 					continue
 				}
-				if program.state == .None || program.state == .Stopped {
+				if process.state == .None || process.state == .Stopped {
 					continue
 				}
-				// One row for each name: two programs can have one.
-				name := system.name_of(program.name[:])
+				// One row for each name: two processes can have one.
+				name := system.name_of(process.name[:])
 				known := false
 				for &candidate in candidates[:count] {
 					if string(candidate.name[:candidate.length]) == name {
@@ -790,7 +790,7 @@ palette_commands_add :: proc "contextless" () {
 	//
 	// - `name`: the name of a module of the boot image.
 	//
-	// The program `manual` must run: the command starts no program.
+	// The process `manual` must run: the command starts no process.
 	//
 	// Errors: those of `connect("manual")`, and those of the export.
 	command("manual_page", {.Text}, .Integer, "show the page of a module in the manual: manual.show()", proc "contextless" (arguments: []Value) -> Value {
@@ -802,8 +802,8 @@ palette_commands_add :: proc "contextless" () {
 	//
 	// - `name`: `round_robin`, `fair` or `eevdf`.
 	//
-	// The console holds no right to change the strategy: the program
-	// `scheduler` holds it, and must run. The command starts no program.
+	// The console holds no right to change the strategy: the process
+	// `scheduler` holds it, and must run. The command starts no process.
 	// The palette of the desktop runs it for an entry such as "set
 	// strategy to eevdf".
 	//
@@ -829,7 +829,7 @@ palette_commands_add :: proc "contextless" () {
 		{"isolate", {"name", ""}},
 		{"unload", {"name", ""}},
 		{"replace", {"module", "by"}},
-		{"debug", {"program", ""}},
+		{"debug", {"process", ""}},
 		{"describe", {"name", ""}},
 		{"setting", {"name", "value"}},
 		{"manual_page", {"name", ""}},
@@ -837,7 +837,7 @@ palette_commands_add :: proc "contextless" () {
 		{"buffer", {"count", ""}},
 		{"debug_memory", {"place", "count"}},
 		{"wait_stop", {"milliseconds", ""}},
-		{"stop_report", {"program", ""}},
+		{"stop_report", {"process", ""}},
 	}
 	for item in named {
 		if found := palette_command_named(item.command); found != nil && found.run != nil {

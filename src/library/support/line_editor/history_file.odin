@@ -5,10 +5,10 @@ import "modus:contract/byte_order"
 import "modus:contract/text_encoding"
 
 // The line history as bytes, to keep it in a store across a stop of the
-// program (docs/CONSOLE.md, section 6). The bytes come back from a disk:
+// process (docs/CONSOLE.md, section 6). The bytes come back from a disk:
 // they are data that this run did not write, and the read checks each
 // field before it uses it. A file that fails a check gives an empty
-// history and the name of the check: the program says it once, and runs
+// history and the name of the check: the process says it once, and runs
 // nothing of it.
 //
 // The form, version 1, numbers in little-endian order:
@@ -30,7 +30,7 @@ HISTORY_FILE_HASH_SIZE :: blake3.HASH_SIZE // The bytes of the hash at the end.
 // kept: about 120 lines of 30 bytes.
 HISTORY_FILE_SIZE_LIMIT :: 4096
 
-// Why a history file is refused. The program then starts with an empty
+// Why a history file is refused. The process then starts with an empty
 // history, and says so.
 History_File_Problem :: enum u8 {
 	None           = 0, // The file is valid.
@@ -45,7 +45,7 @@ History_File_Problem :: enum u8 {
 	Wrong_Count    = 9, // The lines end before or after the count of lines.
 }
 
-// The words of each problem, for the line that the program writes.
+// The words of each problem, for the line that the process writes.
 @(rodata)
 history_file_problem_texts := [History_File_Problem]string {
 	.None           = "no problem",

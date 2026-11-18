@@ -1,4 +1,4 @@
-// The program that the test of the debugger debugs (docs/TOOLS.md, "The
+// The process that the test of the debugger debugs (docs/TOOLS.md, "The
 // debugger").
 //
 // It holds what a debugger shows, with values that a test knows: a record
@@ -7,7 +7,7 @@
 // to step through, and a second thread that only waits.
 //
 // **What it is for.** The machine test `modustool test debugger` attaches
-// the debugger service to this program from the console and from the host,
+// the debugger service to this process from the console and from the host,
 // and waits for exact rows: a breakpoint by a procedure name and by a file
 // and a line, the frames of the stack, a local variable of a caller, the
 // fields of the record, an element of the array, the name of the
@@ -18,8 +18,8 @@
 // session can debug it.
 //
 // **What a reader sees**: the log has "debug_target: 64 more rounds ran, so
-// the program is not held: as it must" each time its main thread ended 64
-// rounds: a thread that a debugger holds writes no such line. The program
+// the process is not held: as it must" each time its main thread ended 64
+// rounds: a thread that a debugger holds writes no such line. The process
 // has no window and no end: `stop("debug_target")` ends it.
 //
 // **Why its variables stay in memory.** The build optimises each module,
@@ -40,9 +40,9 @@ import "base:intrinsics"
 import "modus:support/system"
 
 // Its main thread, and one thread that only waits.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1954, programs = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1954, processes = 1, threads = 2}
 
-// What the program does now.
+// What the process does now.
 Phase :: enum u8 {
 	Starting = 0,
 	Counting = 1,
@@ -135,7 +135,7 @@ run_rounds :: proc "contextless" () -> ! {
 		#force_no_inline record_round()
 		if intrinsics.volatile_load(&rounds) % ROUNDS_FOR_ONE_LINE == 0 {
 			if wrong_totals == 0 {
-				system.log("debug_target: 64 more rounds ran, so the program is not held: as it must")
+				system.log("debug_target: 64 more rounds ran, so the process is not held: as it must")
 			} else {
 				system.log("debug_target: 64 more rounds ran, and ", wrong_totals, " rounds gave a wrong total: WRONG")
 			}

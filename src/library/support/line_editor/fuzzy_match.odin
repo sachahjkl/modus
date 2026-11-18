@@ -9,7 +9,7 @@ import "modus:contract/text_encoding"
 // and the match compares whole characters of UTF-8, never a part of one
 // (src/md/data/text_encoding.md, "The chosen form").
 //
-// The work for one name is bounded, whatever another program wrote in its
+// The work for one name is bounded, whatever another process wrote in its
 // descriptions:
 //   the match     the first NAME_SCAN_LIMIT bytes of the name and the
 //                 query decoded once (128 + 64), then the characters two
@@ -155,13 +155,13 @@ fuzzy_match :: proc "contextless" (query: string, name: string) -> (score: int, 
 
 // What a name is, for the reader: the list shows it at the right of the name.
 Candidate_Kind :: enum u8 {
-	Command      = 0, // A command of the program itself.
+	Command      = 0, // A command of the process itself.
 	Export       = 1, // An export of a module or of a service.
 	Record       = 2, // A command that makes a record from its fields.
-	Service      = 3, // A service that the program is connected to.
+	Service      = 3, // A service that the process is connected to.
 	Module       = 4, // A module of the boot image.
-	Program      = 5, // A program that runs.
-	Variable     = 6, // A variable of the program.
+	Process      = 5, // A process that runs.
+	Variable     = 6, // A variable of the process.
 	History_Line = 7, // A line of the history.
 }
 

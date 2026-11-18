@@ -5,17 +5,17 @@ import "core:testing"
 
 // The folders of the sources of a small tree, at the root.
 @(private = "file")
-TREE_FOLDERS_AT_THE_ROOT :: [?]string{"kernel", "programs", "modules", "support"}
+TREE_FOLDERS_AT_THE_ROOT :: [?]string{"kernel", "processes", "modules", "support"}
 
 // The same folders after a move under one folder.
 @(private = "file")
-TREE_FOLDERS_MOVED :: [?]string{"src/kernel", "src/programs", "src/modules", "src/library/support"}
+TREE_FOLDERS_MOVED :: [?]string{"src/kernel", "src/processes", "src/modules", "src/library/support"}
 
 // The files and the folders of the small tree, before the move.
 @(private = "file")
 tree_at_the_root_exists :: proc(path: string) -> bool {
 	switch path {
-	case "kernel", "kernel/enter.odin", "programs", "programs/console", "programs/console/main.odin", "modules", "support", "support/system":
+	case "kernel", "kernel/enter.odin", "processes", "processes/console", "processes/console/main.odin", "modules", "support", "support/system":
 		return true
 	}
 	return false
@@ -25,7 +25,7 @@ tree_at_the_root_exists :: proc(path: string) -> bool {
 @(private = "file")
 tree_moved_exists :: proc(path: string) -> bool {
 	switch path {
-	case "src", "src/kernel", "src/kernel/enter.odin", "src/programs", "src/programs/console", "src/library", "src/library/support", "src/library/support/system":
+	case "src", "src/kernel", "src/kernel/enter.odin", "src/processes", "src/processes/console", "src/library", "src/library/support", "src/library/support/system":
 		return true
 	}
 	return false
@@ -41,7 +41,7 @@ problems_at_the_root :: proc(content: string) -> ([]string, int) {
 // "/", a path with a line number, and a path before words.
 @(test)
 source_path_that_exists_has_no_fault :: proc(t: ^testing.T) {
-	problems, count := problems_at_the_root("# A guide\n\nThe entry is `kernel/enter.odin`, in `kernel/`. The console is `programs/console`.\nThe line is `kernel/enter.odin:34`. The package `support/system` and `programs/console/main.odin, the first line`.\n")
+	problems, count := problems_at_the_root("# A guide\n\nThe entry is `kernel/enter.odin`, in `kernel/`. The console is `processes/console`.\nThe line is `kernel/enter.odin:34`. The package `support/system` and `processes/console/main.odin, the first line`.\n")
 	testing.expectf(t, len(problems) == 0, "%v", problems)
 	testing.expect_value(t, count, 6)
 }
@@ -50,13 +50,13 @@ source_path_that_exists_has_no_fault :: proc(t: ^testing.T) {
 // the span. A line number does not hide it.
 @(test)
 source_path_that_does_not_exist_is_a_fault :: proc(t: ^testing.T) {
-	problems, count := problems_at_the_root("# A guide\n\nGood: `kernel/enter.odin`.\nGone: `kernel/gone.odin`.\n\nGone with a line: `programs/console/gone.odin:12`.\n## A heading with `support/gone`\n")
+	problems, count := problems_at_the_root("# A guide\n\nGood: `kernel/enter.odin`.\nGone: `kernel/gone.odin`.\n\nGone with a line: `processes/console/gone.odin:12`.\n## A heading with `support/gone`\n")
 	testing.expect_value(t, count, 4)
 	if !testing.expect_value(t, len(problems), 3) {
 		return
 	}
 	testing.expect(t, strings.contains(problems[0], "docs/GUIDE.md, line 4") && strings.contains(problems[0], "`kernel/gone.odin`"), problems[0])
-	testing.expect(t, strings.contains(problems[1], "line 6") && strings.contains(problems[1], "names programs/console/gone.odin,"), problems[1])
+	testing.expect(t, strings.contains(problems[1], "line 6") && strings.contains(problems[1], "names processes/console/gone.odin,"), problems[1])
 	testing.expect(t, strings.contains(problems[2], "line 7") && strings.contains(problems[2], "support/gone"), problems[2])
 }
 
@@ -74,13 +74,13 @@ source_path_inside_a_longer_path_is_not_read :: proc(t: ^testing.T) {
 // before them: that folder must exist.
 @(test)
 source_path_with_a_pattern_names_its_folder :: proc(t: ^testing.T) {
-	problems, count := problems_at_the_root("Each program: `programs/*/main.odin`, `programs/<name>/main.odin`, `programs/console/*_test.odin`, `kernel/enter_*.odin`.\n")
+	problems, count := problems_at_the_root("Each process: `processes/*/main.odin`, `processes/<name>/main.odin`, `processes/console/*_test.odin`, `kernel/enter_*.odin`.\n")
 	testing.expectf(t, len(problems) == 0, "%v", problems)
 	testing.expect_value(t, count, 4)
-	problems, count = problems_at_the_root("Gone: `programs/gone/*.odin` and `modules/gone/<name>`.\n")
+	problems, count = problems_at_the_root("Gone: `processes/gone/*.odin` and `modules/gone/<name>`.\n")
 	testing.expect_value(t, count, 2)
 	if testing.expect_value(t, len(problems), 2) {
-		testing.expect(t, strings.contains(problems[0], "names programs/gone,"), problems[0])
+		testing.expect(t, strings.contains(problems[0], "names processes/gone,"), problems[0])
 		testing.expect(t, strings.contains(problems[1], "names modules/gone,"), problems[1])
 	}
 }
@@ -120,9 +120,9 @@ source_path_of_before_a_move_is_refused :: proc(t: ^testing.T) {
 source_path_starts_of_the_folders :: proc(t: ^testing.T) {
 	folders := TREE_FOLDERS_MOVED
 	starts := source_path_starts(folders[:])
-	testing.expect_value(t, strings.join(starts, " ", context.temp_allocator), "src/kernel/ kernel/ src/programs/ programs/ src/modules/ modules/ src/library/support/ support/")
+	testing.expect_value(t, strings.join(starts, " ", context.temp_allocator), "src/kernel/ kernel/ src/processes/ processes/ src/modules/ modules/ src/library/support/ support/")
 	at_the_root := TREE_FOLDERS_AT_THE_ROOT
-	testing.expect_value(t, strings.join(source_path_starts(at_the_root[:]), " ", context.temp_allocator), "kernel/ programs/ modules/ support/")
+	testing.expect_value(t, strings.join(source_path_starts(at_the_root[:]), " ", context.temp_allocator), "kernel/ processes/ modules/ support/")
 }
 
 // The documents of the repository name sources that exist.

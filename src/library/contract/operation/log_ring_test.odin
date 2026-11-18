@@ -45,7 +45,7 @@ the_first_kept_record_agrees_with_the_copy_rule :: proc(t: ^testing.T) {
 }
 
 // An own log ring keeps the last OWN_LOG_RECORD_CAPACITY records of its
-// program: a reader from the own number 0 loses the records before them,
+// process: a reader from the own number 0 loses the records before them,
 // and a reader with fewer records than that loses none.
 @(test)
 an_own_log_ring_keeps_the_last_records :: proc(t: ^testing.T) {
@@ -83,7 +83,7 @@ an_own_log_ring_keeps_the_last_records :: proc(t: ^testing.T) {
 }
 
 // The own number has 32 bits and the count of the kernel 64: an `after`
-// names the count below the count of the program with the same low bits,
+// names the count below the count of the process with the same low bits,
 // across the wrap at 2^32.
 @(test)
 an_own_number_names_its_record_across_the_wrap :: proc(t: ^testing.T) {
@@ -94,7 +94,7 @@ an_own_number_names_its_record_across_the_wrap :: proc(t: ^testing.T) {
 	testing.expect_value(t, total, 4)
 	testing.expect_value(t, u32(first), 0xFFFF_FFFF)
 
-	// The own number 0 of the start of the program is far before the ring:
+	// The own number 0 of the start of the process is far before the ring:
 	// it reads as the count 2^32, and the ring keeps the records from there.
 	start_first, start_lost, start_total := own_log_window(written, 0)
 	testing.expect_value(t, start_first, written - 3)
@@ -129,13 +129,13 @@ the_places_of_an_own_log_ring :: proc(t: ^testing.T) {
 }
 
 // The head of a line of the serial port: the name and the channel of a
-// program in brackets, the name alone with no channel, nothing for the
+// process in brackets, the name alone with no channel, nothing for the
 // kernel and for a record that continues a line. A name and a channel that
 // fill their whole fields have no zero after them, and still fit.
 @(test)
 the_head_of_a_line_of_the_serial_port :: proc(t: ^testing.T) {
 	head: [LOG_LINE_HEAD_CAPACITY]u8
-	record := Log_Record{program = 3}
+	record := Log_Record{process = 3}
 	copy(record.name[:], "console")
 	copy(record.channel[:], "shell")
 	count := log_line_head(&record, false, &head)

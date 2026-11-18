@@ -11,7 +11,7 @@ import "modus:support/text_shaping"
 // Cells_8x16: the grid of the font of the cells, 8 x 16 pixels at scale 1;
 // the vector font of the system and Spleen 8x16 both draw on it, as the
 // setting `font` chooses. Interface: the proportional font of the
-// names, titles, labels, buttons and lists (B612), when the program has it
+// names, titles, labels, buttons and lists (B612), when the process has it
 // (Draw_Table.interface_font) and the setting is the vector font; else a
 // text of this kind is measured and drawn in the font of the cells. A text
 // is always measured in the font that will draw it. The font is a field of

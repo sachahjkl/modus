@@ -9,27 +9,27 @@ import "core:time"
 // (docs/TOOLS.md, "When the tool takes a picture").
 //
 // A picture is right when the screen shows the last picture of each
-// window. That is two facts: each program sent the picture of its last
+// window. That is two facts: each process sent the picture of its last
 // change, and the compositor drew each picture that it received. The tool
 // reads the two through the remote service when it can call the compositor
-// (machine.confirm): the state of the programs from the monitor, the state
+// (machine.confirm): the state of the processes from the monitor, the state
 // of the screen from the compositor. Else it takes pictures until two in a
 // row are the same.
 //
 // A window that draws with no end has no last picture: its part of the
 // screen is whatever frame is there, and no condition reads it.
 
-// The programs whose window changes with no input: each one draws a new
+// The processes whose window changes with no input: each one draws a new
 // picture at each frame, or has threads that compute with no end. Such a
-// program is never in a wait for long, and its window never stays the
+// process is never in a wait for long, and its window never stays the
 // same, so the condition of a picture leaves its window out.
 @(rodata)
-programs_that_draw_without_end := [?]string{"life", "plasma", "threads", "workers", "rings", "processors", "limits", "flood"}
+processes_that_draw_without_end := [?]string{"life", "plasma", "threads", "workers", "rings", "processors", "limits", "flood"}
 
 // draws_without_end says if a window with this title is left out of the
 // condition of a picture.
 draws_without_end :: proc(title: string) -> bool {
-	for name in programs_that_draw_without_end {
+	for name in processes_that_draw_without_end {
 		if name == title {
 			return true
 		}
@@ -37,21 +37,21 @@ draws_without_end :: proc(title: string) -> bool {
 	return false
 }
 
-// The programs that carry the reads of the condition: the remote service
-// takes each call, and the monitor answers the read of the programs. Each
+// The processes that carry the reads of the condition: the remote service
+// takes each call, and the monitor answers the read of the processes. Each
 // one runs because of the read itself, and its window counts the calls, so
 // the condition by calls leaves its window out too.
 @(rodata)
-programs_that_serve_the_reads := [?]string{"remote", "monitor"}
+processes_that_serve_the_reads := [?]string{"remote", "monitor"}
 
-// The program that draws the window of another program: a terminal. Its
-// window has the title of the program that writes in it.
-PROGRAM_THAT_DRAWS_FOR_ANOTHER :: "terminal"
+// The process that draws the window of another process: a terminal. Its
+// window has the title of the process that writes in it.
+PROCESS_THAT_DRAWS_FOR_ANOTHER :: "terminal"
 
 // left_out_of_calls says if the condition by calls leaves out a window
 // with this title.
 left_out_of_calls :: proc(title: string) -> bool {
-	for name in programs_that_serve_the_reads {
+	for name in processes_that_serve_the_reads {
 		if name == title {
 			return true
 		}
@@ -59,8 +59,8 @@ left_out_of_calls :: proc(title: string) -> bool {
 	return draws_without_end(title)
 }
 
-// One row of monitor.programs(), for the condition of a picture.
-Settle_Program :: struct {
+// One row of monitor.processes(), for the condition of a picture.
+Settle_Process :: struct {
 	slot:    i64,
 	name:    string,
 	state:   string, // created, ready, waiting or stopped.
@@ -72,19 +72,19 @@ Settle_Window :: struct {
 	title:    string,
 	presents: i64,
 	waits:    bool, // A Present that no frame drew yet.
-	due:      bool, // The program said that a change waits for its next picture, which it draws on its own clock (display.Command.Picture_Due).
+	due:      bool, // The process said that a change waits for its next picture, which it draws on its own clock (display.Command.Picture_Due).
 }
 
 // screen_settle_problem says why the screen is not settled, or "". The
-// three reads are in this order: the programs, then the windows and the
-// desktop of the compositor, then the programs again.
+// three reads are in this order: the processes, then the windows and the
+// desktop of the compositor, then the processes again.
 //
-// A program that is in a wait in the two reads, with the same count of
+// A process that is in a wait in the two reads, with the same count of
 // kernel entries, did not run between them: to run and to wait again, it
 // enters the kernel. So each picture that it sent, it sent before the first
 // read, and the compositor counted it before it answered. With no Present
 // that waits for a frame, the screen shows the last picture of the window.
-screen_settle_problem :: proc(before: []Settle_Program, windows: []Settle_Window, desktop_waits: bool, after: []Settle_Program) -> string {
+screen_settle_problem :: proc(before: []Settle_Process, windows: []Settle_Window, desktop_waits: bool, after: []Settle_Process) -> string {
 	if desktop_waits {
 		return "the desktop has a change that no frame drew yet"
 	}
@@ -95,63 +95,63 @@ screen_settle_problem :: proc(before: []Settle_Program, windows: []Settle_Window
 		if window.waits {
 			return fmt.tprintf("the window %s has a picture that no frame drew yet", window.title)
 		}
-		// A program that paces its pictures waits on its clock with a change
+		// A process that paces its pictures waits on its clock with a change
 		// that it did not draw: the wait looks the same as a wait with
-		// nothing to draw, so the program says it.
+		// nothing to draw, so the process says it.
 		if window.due {
-			return fmt.tprintf("the program of the window %s has a change that waits for its next picture", window.title)
+			return fmt.tprintf("the process of the window %s has a change that waits for its next picture", window.title)
 		}
 		alive := false
-		for program in after {
-			if program.name != window.title || program.state == "stopped" {
+		for process in after {
+			if process.name != window.title || process.state == "stopped" {
 				continue
 			}
 			alive = true
-			if program.state != "waiting" {
-				return fmt.tprintf("the program of the window %s is %s, not in a wait: it can still draw", window.title, program.state)
+			if process.state != "waiting" {
+				return fmt.tprintf("the process of the window %s is %s, not in a wait: it can still draw", window.title, process.state)
 			}
 			paired := false
 			for earlier in before {
-				if earlier.slot != program.slot || earlier.name != program.name {
+				if earlier.slot != process.slot || earlier.name != process.name {
 					continue
 				}
 				paired = true
 				if earlier.state != "waiting" {
-					return fmt.tprintf("the program of the window %s was %s, not in a wait: it can still draw", window.title, earlier.state)
+					return fmt.tprintf("the process of the window %s was %s, not in a wait: it can still draw", window.title, earlier.state)
 				}
-				if earlier.entries != program.entries {
-					return fmt.tprintf("the program of the window %s entered the kernel %d times between two reads: it ran", window.title, program.entries - earlier.entries)
+				if earlier.entries != process.entries {
+					return fmt.tprintf("the process of the window %s entered the kernel %d times between two reads: it ran", window.title, process.entries - earlier.entries)
 				}
 			}
 			if !paired {
-				return fmt.tprintf("the program of the window %s started between two reads", window.title)
+				return fmt.tprintf("the process of the window %s started between two reads", window.title)
 			}
 		}
-		// A window whose program stopped gets no picture more.
+		// A window whose process stopped gets no picture more.
 		if alive && window.presents == 0 {
-			return fmt.tprintf("the window %s has no picture of its program yet", window.title)
+			return fmt.tprintf("the window %s has no picture of its process yet", window.title)
 		}
 	}
-	// A terminal draws the window of another program: the window has the
-	// title of that program, so the loop above read the program that
+	// A terminal draws the window of another process: the window has the
+	// title of that process, so the loop above read the process that
 	// writes, not the one that draws. Each terminal is in a wait too, and
 	// did not run between the two reads.
-	for program in after {
-		if program.name != PROGRAM_THAT_DRAWS_FOR_ANOTHER || program.state == "stopped" {
+	for process in after {
+		if process.name != PROCESS_THAT_DRAWS_FOR_ANOTHER || process.state == "stopped" {
 			continue
 		}
-		if program.state != "waiting" {
-			return fmt.tprintf("a program %s is %s, not in a wait: it can still draw the window of its program", program.name, program.state)
+		if process.state != "waiting" {
+			return fmt.tprintf("a process %s is %s, not in a wait: it can still draw the window of its process", process.name, process.state)
 		}
 		for earlier in before {
-			if earlier.slot != program.slot || earlier.name != program.name {
+			if earlier.slot != process.slot || earlier.name != process.name {
 				continue
 			}
 			if earlier.state != "waiting" {
-				return fmt.tprintf("a program %s was %s, not in a wait: it can still draw the window of its program", program.name, earlier.state)
+				return fmt.tprintf("a process %s was %s, not in a wait: it can still draw the window of its process", process.name, earlier.state)
 			}
-			if earlier.entries != program.entries {
-				return fmt.tprintf("a program %s entered the kernel %d times between two reads: it ran", program.name, program.entries - earlier.entries)
+			if earlier.entries != process.entries {
+				return fmt.tprintf("a process %s entered the kernel %d times between two reads: it ran", process.name, process.entries - earlier.entries)
 			}
 		}
 	}
@@ -159,20 +159,20 @@ screen_settle_problem :: proc(before: []Settle_Program, windows: []Settle_Window
 }
 
 @(private = "file")
-settle_programs_read :: proc(machine: ^Machine) -> (programs: []Settle_Program, ok: bool) {
-	table := table_call(&machine.client, "monitor.programs()") or_return
+settle_processes_read :: proc(machine: ^Machine) -> (processes: []Settle_Process, ok: bool) {
+	table := table_call(&machine.client, "monitor.processes()") or_return
 	count := len(table.rows) / table.size
 	if i64(count) < table.total {
 		return nil, false
 	}
-	programs = make([]Settle_Program, count, context.temp_allocator)
-	for &program, row in programs {
-		program.slot = strconv.parse_i64(table_value(&table, row, "slot")) or_return
-		program.entries = strconv.parse_i64(table_value(&table, row, "entries")) or_return
-		program.name = table_value(&table, row, "name")
-		program.state = table_value(&table, row, "state")
+	processes = make([]Settle_Process, count, context.temp_allocator)
+	for &process, row in processes {
+		process.slot = strconv.parse_i64(table_value(&table, row, "slot")) or_return
+		process.entries = strconv.parse_i64(table_value(&table, row, "entries")) or_return
+		process.name = table_value(&table, row, "name")
+		process.state = table_value(&table, row, "state")
 	}
-	return programs, true
+	return processes, true
 }
 
 @(private = "file")
@@ -201,19 +201,19 @@ Screen_Settle_Result :: enum {
 	Hang, // The screen did not settle within the hang bound.
 }
 
-// screen_settle_wait_by_calls waits until the programs and the compositor
+// screen_settle_wait_by_calls waits until the processes and the compositor
 // say that the screen shows the last picture of each window that does not
 // draw with no end. what names the picture in a message of failure.
 screen_settle_wait_by_calls :: proc(machine: ^Machine, what: string) -> Screen_Settle_Result {
 	problem := ""
 	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
-		before, before_read := settle_programs_read(machine)
+		before, before_read := settle_processes_read(machine)
 		if !before_read {
 			return .Not_Readable
 		}
 		windows, windows_read := settle_windows_read(machine)
 		screen, screen_read := record_fields(&machine.client, "compositor.screen()", {"desktop"})
-		after, after_read := settle_programs_read(machine)
+		after, after_read := settle_processes_read(machine)
 		if !windows_read || !screen_read || !after_read {
 			return .Not_Readable
 		}
@@ -303,7 +303,7 @@ pictures_differ_outside :: proc(first, second: []u8, width, height: int, left_ou
 windows_left_out :: proc(machine: ^Machine) -> []Picture_Rectangle {
 	log := log_read(machine)
 	rectangles := make([dynamic]Picture_Rectangle, context.temp_allocator)
-	for title in programs_that_draw_without_end {
+	for title in processes_that_draw_without_end {
 		if rectangle, found := log_window_rectangle(log, title); found {
 			append(&rectangles, rectangle)
 		}

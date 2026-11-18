@@ -20,12 +20,12 @@ Budget_Request :: module.Budget_Request
 // The tool reads the constant from the source, counts the pages of the
 // module and of its imports, of each thread and of the two pictures of the
 // window, and writes the table Budget: its pages are the working memory and
-// the counted pages; its programs and its threads are the parts of this
+// the counted pages; its processes and its threads are the parts of this
 // record. A part is an integer literal; a window part can also name a
 // constant of the package whose value is one integer literal.
 Stated_Budget :: struct {
-	working_memory_pages: u64, // What the program chooses: its tables, its caches, the budgets of its children. Left out: none.
-	programs:             u64, // The program itself and each child at one time. Left out: the least.
+	working_memory_pages: u64, // What the process chooses: its tables, its caches, the budgets of its children. Left out: none.
+	processes:             u64, // The process itself and each child at one time. Left out: the least.
 	threads:              u64, // Each thread at one time, the first one and the threads of the children. Left out: the least.
 	window_width:         u64, // The size of its window, in pixels, as it passes it to display.open. Left out: no window.
 	window_height:        u64,
@@ -34,7 +34,7 @@ Stated_Budget :: struct {
 // One part of a budget request.
 Budget_Part :: enum u8 {
 	Pages    = 0,
-	Programs = 1,
+	Processes = 1,
 	Threads  = 2,
 }
 // The parts that a starter limited, or that are short.
@@ -44,7 +44,7 @@ Budget_Parts :: bit_set[Budget_Part;u8]
 @(rodata)
 budget_part_names := [Budget_Part]string {
 	.Pages    = "pages",
-	.Programs = "programs",
+	.Processes = "processes",
 	.Threads  = "threads",
 }
 
@@ -53,8 +53,8 @@ budget_part :: proc "contextless" (request: Budget_Request, part: Budget_Part) -
 	switch part {
 	case .Pages:
 		return request.pages
-	case .Programs:
-		return request.programs
+	case .Processes:
+		return request.processes
 	case .Threads:
 		return request.threads
 	}
@@ -66,7 +66,7 @@ budget_part :: proc "contextless" (request: Budget_Request, part: Budget_Part) -
 // accepts a part that is not above its largest budget, and gives the largest
 // budget of a part that is above it. limited names each part that the
 // starter gave less than the module asked for: the starter writes it on the
-// log. A starter widens a request with a larger `largest` for one program.
+// log. A starter widens a request with a larger `largest` for one process.
 //
 // Example: the request {pages = 50000} with the least {2048, 1, 1} and the
 // largest {16384, 8, 32} gives {16384, 1, 1}, and limited is {.Pages}.
@@ -80,7 +80,7 @@ budget_decide :: proc "contextless" (request, least, largest: Budget_Request) ->
 		return value
 	}
 	granted.pages = decide(request.pages, least.pages, largest.pages, .Pages, &limited)
-	granted.programs = decide(request.programs, least.programs, largest.programs, .Programs, &limited)
+	granted.processes = decide(request.processes, least.processes, largest.processes, .Processes, &limited)
 	granted.threads = decide(request.threads, least.threads, largest.threads, .Threads, &limited)
 	return granted, limited
 }

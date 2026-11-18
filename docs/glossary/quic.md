@@ -156,7 +156,7 @@ Do not use: send window (for this).
 
 A QUIC stream is one ordered flow of bytes in each direction inside a QUIC connection, named by a stream identifier.
 
-A connection carries several streams at once, and the bytes of one never wait for a loss of another, which TCP cannot give. This system has bidirectional streams only, and only the client opens them. A stream ends when both directions ended, and its identifier then never names a stream again. A program uses `stream_open`, `stream_write`, `stream_read`, `stream_reset` and `stream_stop_sending`; each stream lives in a stream record. Example: `remote` maps one call to one stream.
+A connection carries several streams at once, and the bytes of one never wait for a loss of another, which TCP cannot give. This system has bidirectional streams only, and only the client opens them. A stream ends when both directions ended, and its identifier then never names a stream again. A process uses `stream_open`, `stream_write`, `stream_read`, `stream_reset` and `stream_stop_sending`; each stream lives in a stream record. Example: `remote` maps one call to one stream.
 
 The design: `docs/QUIC.md`, "What the transport does".
 
@@ -166,7 +166,7 @@ Do not use: channel (for this), substream.
 
 A stream record is one `quic.Stream` in the table that the caller of a QUIC connection gives: the state and the buffers of one open QUIC stream.
 
-The caller allocates the table, in its own memory, with the connection; each record holds two buffers of 64 KiB. Their count bounds the streams that are open at one time, and a server gives the client a limit of streams equal to its records. When a stream ends, its record is free again and its buffers are written with zeros. A program must read each stream to its end: a stream that it never reads keeps its record for the life of the connection.
+The caller allocates the table, in its own memory, with the connection; each record holds two buffers of 64 KiB. Their count bounds the streams that are open at one time, and a server gives the client a limit of streams equal to its records. When a stream ends, its record is free again and its buffers are written with zeros. A process must read each stream to its end: a stream that it never reads keeps its record for the life of the connection.
 
 The design: `docs/QUIC.md`, "What the transport does".
 
@@ -186,7 +186,7 @@ Do not use: stream credit, concurrency limit (for this).
 
 An implicit open is the open of a QUIC stream by a frame of the peer that names it, or names a higher stream of the same kind, before the peer sent anything on it.
 
-Streams of one kind open in order, so a frame for client stream 8 also opens the client streams 0 and 4 that are not open yet. The limit of streams bounds that count: a stream far ahead within the limit takes records that exist, and one past it is STREAM_LIMIT_ERROR. The program finds the streams that the peer opened by a walk of `connection.streams`.
+Streams of one kind open in order, so a frame for client stream 8 also opens the client streams 0 and 4 that are not open yet. The limit of streams bounds that count: a stream far ahead within the limit takes records that exist, and one past it is STREAM_LIMIT_ERROR. The process finds the streams that the peer opened by a walk of `connection.streams`.
 
 The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
 
@@ -204,7 +204,7 @@ Do not use: receive window (for this).
 
 The anti-amplification limit is the rule that a server sends at most 3 times the bytes that it received from a client whose address it did not validate.
 
-An attacker can forge the source address of a datagram, and without the limit one small forged datagram can make a server send a large answer to a victim. The limit is held twice: by `src/library/support/quic` in the program, until the address validation of the connection, and by the network service, which knows no QUIC and refuses a Send past 3 times (the status `Amplification`) until the program sends the command `Validate`. A Retry packet answers a datagram of 1200 bytes with at most 113 bytes.
+An attacker can forge the source address of a datagram, and without the limit one small forged datagram can make a server send a large answer to a victim. The limit is held twice: by `src/library/support/quic` in the process, until the address validation of the connection, and by the network service, which knows no QUIC and refuses a Send past 3 times (the status `Amplification`) until the process sends the command `Validate`. A Retry packet answers a datagram of 1200 bytes with at most 113 bytes.
 
 The design: `docs/QUIC.md`, "The listen grant of UDP".
 
@@ -212,7 +212,7 @@ The design: `docs/QUIC.md`, "The listen grant of UDP".
 
 Address validation is the proof that a client receives datagrams at the address that it claims.
 
-Until it, a server holds the anti-amplification limit. A connection of this system validates the address of the client by a Handshake packet of the client, which needs the keys of the flight of the server, or by an Initial that carries the retry token of that address. Each record of `quic.Server` is validated at its start, because a record needs a token. The program then sends `Validate` to the network service for that remote, which makes it a validated remote.
+Until it, a server holds the anti-amplification limit. A connection of this system validates the address of the client by a Handshake packet of the client, which needs the keys of the flight of the server, or by an Initial that carries the retry token of that address. Each record of `quic.Server` is validated at its start, because a record needs a token. The process then sends `Validate` to the network service for that remote, which makes it a validated remote.
 
 The design: `docs/QUIC.md`, "The server of several connections".
 
@@ -228,7 +228,7 @@ Do not use: handshake done (for the state).
 
 ### Connection record
 
-A connection record is one `quic.Connection` in memory of the program: all the state of one QUIC connection.
+A connection record is one `quic.Connection` in memory of the process: all the state of one QUIC connection.
 
 The record holds the packet number spaces, the keys, the handshake of TLS, the timers and the connection identifiers: no allocation and no kernel call happen behind it. Its streams are in a separate table of stream records. A record goes in global memory or in a mapping, never on a stack, which leaves too little room for the cryptography module. A server holds a table of records, and a record gets a new generation each time it is taken. It is not a socket: the network service sees only datagrams.
 
@@ -258,9 +258,9 @@ Do not use: cookie (for this), address token (for the token of NEW_TOKEN).
 
 ### Validated remote
 
-A validated remote is an admitted remote of a UDP listen grant that the program marked with the command `Validate`, because it proved its address.
+A validated remote is an admitted remote of a UDP listen grant that the process marked with the command `Validate`, because it proved its address.
 
-The network service then sends to it with no limit of 3 times the bytes that came from it. `quic_echo` and `remote` validate a remote when its client came back with the token of a Retry. A program that validates every remote can send any volume, for 120 s, to an address whose name came in one forged datagram; the principal revokes the grant of such a program.
+The network service then sends to it with no limit of 3 times the bytes that came from it. `quic_echo` and `remote` validate a remote when its client came back with the token of a Retry. A process that validates every remote can send any volume, for 120 s, to an address whose name came in one forged datagram; the principal revokes the grant of such a process.
 
 The design: `docs/QUIC.md`, "The listen grant of UDP".
 
@@ -358,7 +358,7 @@ Do not use: address cache.
 
 A budget of work is the most pieces of one kind of work that a QUIC server does for datagrams of unknown identifiers, as a token bucket.
 
-That work is cryptography for a sender that nobody checked yet. The server has three shared budgets: Retries, token checks, and Initial checks with a valid token. A datagram over a budget is dropped before any cryptography. The datagrams of known records have no budget and come first. A flood above a shared budget still stops new clients while it lasts. It is not a budget of the kernel: a budget of memory pays for kernel objects, and a budget of work bounds time spent by one program.
+That work is cryptography for a sender that nobody checked yet. The server has three shared budgets: Retries, token checks, and Initial checks with a valid token. A datagram over a budget is dropped before any cryptography. The datagrams of known records have no budget and come first. A flood above a shared budget still stops new clients while it lasts. It is not a budget of the kernel: a budget of memory pays for kernel objects, and a budget of work bounds time spent by one process.
 
 The design: `docs/QUIC.md`, "The budgets of work".
 

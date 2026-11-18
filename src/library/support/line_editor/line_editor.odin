@@ -1,4 +1,4 @@
-// The line that the input edits in a text program: the bytes, the caret
+// The line that the input edits in a text process: the bytes, the caret
 // inside them, and the keys that change them. The package also finds the
 // name at the caret that a completion can replace, and the call that the
 // caret is in (line_context.odin), keeps the history of the lines
@@ -7,7 +7,7 @@
 //
 // The package has no state of its own and makes no kernel call: each
 // procedure takes a record in the memory of the caller. So the host tests
-// run each key, and a program can keep several lines.
+// run each key, and a process can keep several lines.
 //
 // The caller can write in each record: each procedure first brings the
 // counts back inside their arrays, and never writes past an array.
@@ -19,7 +19,7 @@ package line_editor
 
 import "modus:contract/text_encoding"
 
-// The bytes of one line. A text program can show a line of this length
+// The bytes of one line. A text process can show a line of this length
 // after a prompt of a few characters, in one terminal record.
 LINE_CAPACITY :: 200
 

@@ -1,4 +1,4 @@
-// A QUIC echo server (docs/QUIC.md, section 6): QUIC in the program
+// A QUIC echo server (docs/QUIC.md, section 6): QUIC in the process
 // (src/library/support/quic), over a datagram endpoint with a listen grant of UDP. A
 // client opens up to STREAMS_PER_CONNECTION streams at one time; on each
 // one the server writes back each byte that it reads, then ends the stream
@@ -9,12 +9,12 @@
 //       remotes that send a datagram of 1200 bytes to it;
 //   the module cryptography, through its import slots.
 //
-// The key of the server: an Ed25519 key that this program makes at its
+// The key of the server: an Ed25519 key that this process makes at its
 // start from its own generator (fill_for_a_key, the strength "processor" at
 // least). Its public key goes on the log and in the window: a client pins
-// it. The private key stays in the memory of this program; a new start
+// it. The private key stays in the memory of this process; a new start
 // makes a new key. A seed weaker than "processor" makes no key: the
-// program says so in its window, and listens on nothing.
+// process says so in its window, and listens on nothing.
 //
 // **What it is for.** It is the test bench of the QUIC library on a real
 // network path: the handshake of TLS 1.3, streams in both directions, Retry,
@@ -33,7 +33,7 @@
 //   the limit of three times the bytes that came from it.
 //
 // It needs no other grant: the cryptography is the module `cryptography`,
-// which the loader gives through the imports of this program.
+// which the loader gives through the imports of this process.
 //
 // **What a reader sees**: a window with the key and the counts of the
 // server. The log has "quic_echo: the public key of this server: ...",
@@ -62,8 +62,8 @@ import "modus:support/system"
 
 // 16 QUIC connections of about 85 KiB each, 4 streams of about 130 KiB for
 // each, and an echo buffer of 16 KiB for each stream: about 2770 pages, in
-// one mapping of the program (docs/QUIC.md, section 6).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3667, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// one mapping of the process (docs/QUIC.md, section 6).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3667, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -88,7 +88,7 @@ STREAMS_PER_CONNECTION :: 4 // The streams that one client may open at one time.
 // writes them back before it reads more.
 ECHO_BUFFER_SIZE :: 16384
 // The memory of the connections, of their streams and of their echo: one
-// mapping of this program, never a stack.
+// mapping of this process, never a stack.
 CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * size_of(quic.Stream)
 ECHO_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * ECHO_BUFFER_SIZE
@@ -118,7 +118,7 @@ VALIDATE_GENERATION_MASK :: (u64(1) << (31 - VALIDATE_PLACE_BITS)) - 1
 // A Validate follows a datagram that arrived, as a Release does.
 HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
 
-LOG_LIMIT :: 50 // Lines of connections in one second at most: a client that opens many must not fill the log limit of the program.
+LOG_LIMIT :: 50 // Lines of connections in one second at most: a client that opens many must not fill the log limit of the process.
 
 cryptography := quic.Cryptography {
 	seal_with_aes_128_gcm                = seal_with_aes_128_gcm,
@@ -137,7 +137,7 @@ cryptography := quic.Cryptography {
 	ed25519_verify                       = ed25519_verify,
 }
 
-program_generator: random.Generator
+process_generator: random.Generator
 server: quic.Server
 records: [CAPACITY]quic.Server_Record
 connections: []quic.Connection
@@ -229,7 +229,7 @@ data_bytes :: proc "contextless" (place: u32) -> []u8 {
 }
 
 // send sends length bytes of data that are at data_bytes(place). This
-// program writes the UDP header and a real checksum: the network service
+// process writes the UDP header and a real checksum: the network service
 // computes none, and a remote can refuse a datagram with no checksum.
 send :: proc "contextless" (place: u32, length: int, remote: quic.Remote) {
 	whole := network.udp_header_write(place_bytes(place), local_address, remote.address, listen_port, remote.port, length)
@@ -320,7 +320,7 @@ end_reason :: proc "contextless" (connection: ^quic.Connection) -> string {
 // received nothing, in time of the machine, against its bound: at least
 // its idle timeout. The line also gives its bound (the larger of the idle
 // timeout and three probe timeouts with no backoff) and how late after it
-// the end came: the program learns that the deadline passed when its wait
+// the end came: the process learns that the deadline passed when its wait
 // ends, and how late a busy or slow machine wakes it depends on the host,
 // so no verdict checks that side. A test reads the verdict; the numbers
 // are on the line.
@@ -524,11 +524,11 @@ exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 }
 
 // key_make makes the Ed25519 key of this server from the generator of the
-// program, with the strength "processor" at least. false: the seed is
+// process, with the strength "processor" at least. false: the seed is
 // weaker; nothing is made.
 key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -> bool {
 	error: errors.Error_Record
-	if !random.fill_for_a_key(&program_generator, configuration.tls.server_private_key[:], .Processor, &error) {
+	if !random.fill_for_a_key(&process_generator, configuration.tls.server_private_key[:], .Processor, &error) {
 		return false
 	}
 	secret := string(configuration.tls.server_private_key[:])
@@ -547,7 +547,7 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 // 1. takes its random generator (with no seed it stops: `fail`) and opens
 //    its window;
 // 2. makes its Ed25519 key. With a seed under the strength "processor" it
-//    writes "quic_echo: the random seed of this program is weak: ..." and
+//    writes "quic_echo: the random seed of this process is weak: ..." and
 //    then only draws its window;
 // 3. writes the public key on the log;
 // 4. opens its endpoint and its datagram region, and asks the network
@@ -563,7 +563,7 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 // of the window, the next deadline of QUIC, or one second.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		fail("no random seed in the context")
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "quic_echo")
@@ -574,10 +574,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	configuration.tls = {role = .Server, least_seed_strength = .Processor}
 	configuration.tls.application_protocol_length = copy(configuration.tls.application_protocol[:], APPLICATION_PROTOCOL)
 	if !key_make(&configuration) {
-		// The rule on a weak seed: the program chooses what it
+		// The rule on a weak seed: the process chooses what it
 		// accepts, and a seed under it is an error that it shows.
 		weak_seed = true
-		system.log("quic_echo: the random seed of this program is weak: it makes no key of a server, and listens on nothing")
+		system.log("quic_echo: the random seed of this process is weak: it makes no key of a server, and listens on nothing")
 		for {
 			draw(&window)
 			display.wait(&window, system.time() + 1000)
@@ -590,7 +590,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("quic_echo: the public key of this server: ", hex_text(text[:], public_key[:]))
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		fail("no endpoint: the program has no grant of the network")
+		fail("no endpoint: the process has no grant of the network")
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	if map_status != .Ok {
@@ -615,7 +615,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	listen_port = grant.port
 	local_address = u32(info.values[0])
-	// The connections and their echo: one mapping of this program.
+	// The connections and their echo: one mapping of this process.
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || table_status != .Ok {
@@ -625,7 +625,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	streams = ([^]quic.Stream)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CAPACITY * STREAMS_PER_CONNECTION]
 	echo_buffers = ([^][ECHO_BUFFER_SIZE]u8)(rawptr(uintptr(table) + CONNECTION_BYTES + STREAM_BYTES))[:CAPACITY * STREAMS_PER_CONNECTION]
 	error: errors.Error_Record
-	if !quic.server_init(&server, connections, records[:], streams, &configuration, &cryptography, &program_generator, quic.SERVER_LIMITS_DEFAULT, &error) {
+	if !quic.server_init(&server, connections, records[:], streams, &configuration, &cryptography, &process_generator, quic.SERVER_LIMITS_DEFAULT, &error) {
 		fail("the server refused its configuration")
 	}
 	// The server keeps its own copy of the key. A plain store of zeros to a
@@ -639,7 +639,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("quic_echo: listening on the UDP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections of ", u64(size_of(quic.Connection) / 1024), " KiB, each with ", u64(STREAMS_PER_CONNECTION), " streams of ", u64(size_of(quic.Stream) / 1024), " KiB, the key of this server from the generator of the program")
+	system.log("quic_echo: listening on the UDP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections of ", u64(size_of(quic.Connection) / 1024), " KiB, each with ", u64(STREAMS_PER_CONNECTION), " streams of ", u64(size_of(quic.Stream) / 1024), " KiB, the key of this server from the generator of the process")
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	last_draw: u64

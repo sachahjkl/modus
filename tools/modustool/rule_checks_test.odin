@@ -34,7 +34,7 @@ list := make([]u8, 4)
 other := isolated.caller_grant_make(1, 2, true)
 queue := ring.make(4)
 // make(a comment)
-system.log("the program cannot make(it)")
+system.log("the process cannot make(it)")
 values: [dynamic]int
 context.allocator = nil
 item := new(Thing)

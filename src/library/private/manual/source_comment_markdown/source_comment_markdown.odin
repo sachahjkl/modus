@@ -1,4 +1,4 @@
-// The reader of the Markdown of a source comment, for a program of the
+// The reader of the Markdown of a source comment, for a module of the
 // system (docs/SITE.md, "The Markdown of a source comment").
 //
 // A module carries the comments of its source as its documentation, in a

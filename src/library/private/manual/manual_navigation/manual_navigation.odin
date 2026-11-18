@@ -1,7 +1,7 @@
-// The navigation of the program `manual` between its pages
+// The navigation of the process `manual` between its pages
 // (src/md/features/manual_links.md): the history that Backspace walks back,
 // and the order in which Tab moves the focus between the links of a page.
-// It has no state of its own: the program keeps a History, and the host
+// It has no state of its own: the process keeps a History, and the host
 // tests check the two rules with no window.
 package manual_navigation
 

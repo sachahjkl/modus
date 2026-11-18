@@ -32,9 +32,9 @@ the_context_of_a_terminal_takes_each_place_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, grants.grants[system.GRANT_DISPLAY], system.Grant{handle = 11, rights = {.Read, .Write}})
 	testing.expect_value(t, grants.grants[GRANT_RING], system.Grant{handle = 12, rights = {.Read, .Write}})
 	testing.expect_value(t, grants.grants[GRANT_TEXT], system.Grant{handle = 13, rights = {.Read}})
-	testing.expect_value(t, grants.grants[GRANT_PROGRAM], system.Grant{handle = 14, rights = {.Read}})
+	testing.expect_value(t, grants.grants[GRANT_PROCESS], system.Grant{handle = 14, rights = {.Read}})
 	testing.expect_value(t, grants.grants[op.CONTEXT_LOG], handles.log)
-	testing.expect_value(t, grants.taken, bit_set[0 ..< op.CONTEXT_HANDLES; u16]{system.GRANT_DISPLAY, GRANT_RING, GRANT_TEXT, GRANT_PROGRAM, op.CONTEXT_LOG})
+	testing.expect_value(t, grants.taken, bit_set[0 ..< op.CONTEXT_HANDLES; u16]{system.GRANT_DISPLAY, GRANT_RING, GRANT_TEXT, GRANT_PROCESS, op.CONTEXT_LOG})
 	for word, index in name {
 		testing.expect_value(t, values.values[VALUE_NAME + index], word)
 	}
@@ -43,7 +43,7 @@ the_context_of_a_terminal_takes_each_place_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, values.values[VALUE_MEASURE], u64(1))
 }
 
-// The program of a terminal writes the kind of each record of the terminal
+// The process of a terminal writes the kind of each record of the terminal
 // ring: None, one past the last kind and the largest word are refused, and
 // give None. Then each kind but None comes back from its word.
 @(test)
@@ -166,8 +166,8 @@ a_record_cuts_after_a_whole_character :: proc(t: ^testing.T) {
 }
 
 // A List with no rows of its own shows empty rows, not the rows of the list
-// before; the rows of a list are forgotten when the program stops; each
-// value of the program is brought inside its array.
+// before; the rows of a list are forgotten when the process stops; each
+// value of the process is brought inside its array.
 @(test)
 list_rows_go_to_one_list :: proc(t: ^testing.T) {
 	keeping: List_Keeping
@@ -189,7 +189,7 @@ list_rows_go_to_one_list :: proc(t: ^testing.T) {
 }
 
 // A number that names no icon refuses its row: the row is not kept, and
-// the refusal is counted. A row keeps the icon that its program names; a
+// the refusal is counted. A row keeps the icon that its process names; a
 // row with no icon after a row with one has none.
 @(test)
 list_row_keeps_the_icon_of_its_kind :: proc(t: ^testing.T) {
@@ -214,7 +214,7 @@ list_row_keeps_the_icon_of_its_kind :: proc(t: ^testing.T) {
 }
 
 @(test)
-list_values_of_a_hostile_program :: proc(t: ^testing.T) {
+list_values_of_a_hostile_process :: proc(t: ^testing.T) {
 	keeping: List_Keeping
 	long: [RUN_LIMIT + 50]u8
 	list_keep_row(&keeping, {0 = LIST_ROWS}, long[:], nil) // A row past the rows: not kept.

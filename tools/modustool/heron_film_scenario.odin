@@ -1,7 +1,7 @@
 package modustool
 
-// The film of the program heron, the command `modustool film heron`
-// (docs/TOOLS.md, "The film"). What the program shows for each key is in
+// The film of the process heron, the command `modustool film heron`
+// (docs/TOOLS.md, "The film"). What the process shows for each key is in
 // the design rules (docs/DESIGN.md, "The animations" and "The moves").
 //
 // Before the film starts, the scenario makes the desktop: the console at
@@ -24,7 +24,7 @@ package modustool
 // two ways are those of the main scenario of the machine test
 // (machine.odin): the film shows what the test checks.
 //
-// Each key of the program writes one line after the program presented the
+// Each key of the process writes one line after the process presented the
 // state of that key, and each scene waits for its line: the film never
 // shows a state that the machine did not reach, and no hold stands for a
 // wait. A hold comes after its wait, where a viewer needs the time to see
@@ -38,7 +38,7 @@ package modustool
 // that the scene waits for is then of an animation that the film shows.
 @(rodata)
 scenario_heron_film := [?]Step {
-	// The boot. The programs write in an order that the system does not fix.
+	// The boot. The processes write in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
 	// The desktop of the film. The console goes to the left first: a drag

@@ -71,7 +71,7 @@ kernel_commands_push_refuses_a_batch_that_does_not_fit :: proc(t: ^testing.T) {
 // nothing is written: a command that waits (it would run first and its
 // answer would come first), a completion that waits (one), a completion
 // queue at its capacity (a held command would follow), and counters that
-// another thread of the program wrote false. The refusal is the record
+// another thread of the process wrote false. The refusal is the record
 // Busy with the records that wait, counted at most at the capacity.
 @(test)
 kernel_commands_push_refuses_a_ring_that_holds_a_record :: proc(t: ^testing.T) {
@@ -176,7 +176,7 @@ kernel_completions_take_refuses_an_answer_that_is_not_its_own :: proc(t: ^testin
 }
 
 // stop_step on a ring that does not empty: completion counters that the
-// program wrote false (the read one past the write, one past the capacity)
+// process wrote false (the read one past the write, one past the capacity)
 // stop by a fault at once, with the counters as they were; held commands
 // past the bound of the rounds (the capacity, the largest round) stop by a
 // fault, also with command counters that the kernel refuses to read, which

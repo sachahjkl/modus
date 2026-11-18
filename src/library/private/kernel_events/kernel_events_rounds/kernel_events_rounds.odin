@@ -1,4 +1,4 @@
-// What the program `kernel_events` and its load child agree on: the round
+// What the process `kernel_events` and its load child agree on: the round
 // that the parent writes in the shared page, and the stop of a child that
 // refuses it.
 package kernel_events_rounds

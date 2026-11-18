@@ -1,21 +1,21 @@
-// The bar of the desktop: the names of the programs, and the place of each
-// button of the bar and of each line of its two menus, the menu of the
-// programs and the menu of the windows. The compositor draws them; the
+// The bar of the desktop: the names of the modules, and the place of each
+// button of the bar and of each line of its two menus, the start menu and
+// the menu of the windows. The compositor draws them; the
 // modus tool clicks them in the machine test. The two read this one table.
 // The palette (src/library/private/compositor/palette) lists the same names.
 package bar
 
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "modus:contract/glyph_cache"
 import "modus:support/mark"
 import "modus:support/text_shaping"
 
-// The programs that the menu of the programs offers, in its order.
+// The modules that the start menu offers, in its order.
 @(rodata)
 names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "hall_of_fame", "heron", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "debugger_window", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault", "fault_ring", "kernel_events"}
 
 // The bar is on the grid of docs/DESIGN.md: 8 pixels.
-LABEL :: "programs" // The text of the button that opens the menu of the programs.
+LABEL :: "start" // The text of the button that opens the start menu.
 CHARACTER_WIDTH :: 8 // The font of the cells.
 START :: 80 // After the mark of the system.
 PADDING :: 8 // Pixels on each side of the text of a button.
@@ -25,7 +25,7 @@ BUTTON_HEIGHT :: 24 // The height of a button.
 LINE_HEIGHT :: 24 // One line of a menu.
 BORDER :: 1 // The border of a menu, in pixels.
 TITLE :: 40 // The title of a menu, as the title of a card.
-COLUMNS :: 2 // The menu of the programs has two columns of names.
+COLUMNS :: 2 // The start menu has two columns of names.
 COLUMN_LEAST :: 120 // The title of the menu fits.
 
 // Layout: the widths of the texts of the bar, measured in the font that
@@ -76,25 +76,25 @@ MARK_CELL_SIZE :: 1 // One pixel for each cell of the heron.
 MARK_SIZE :: mark.HERON_GRID_SIZE * MARK_CELL_SIZE // The side of the mark: 24 pixels.
 #assert(MARK_X + MARK_SIZE <= START && MARK_Y + MARK_SIZE <= HEIGHT)
 
-// rows gives the lines of one column of the menu of the programs.
+// rows gives the lines of one column of the start menu.
 rows :: proc "contextless" () -> int {
 	return (len(names) + COLUMNS - 1) / COLUMNS
 }
 
-// button gives the place of the button of the bar that opens the menu of
-// the programs: its label and a padding on each side.
+// button gives the place of the button of the bar that opens the start
+// menu: its label and a padding on each side.
 button :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 	return START, BUTTON_Y, layout.label_width + 2 * PADDING, BUTTON_HEIGHT
 }
 
-// column_width gives the width of one column of the menu of the programs:
+// column_width gives the width of one column of the start menu:
 // the widest name and a padding on each side, on the grid.
 column_width :: proc "contextless" (layout: Layout) -> int {
 	longest := max(layout.longest_name_width, layout.label_width)
 	return max((longest + 2 * PADDING + 7) / 8 * 8, COLUMN_LEAST)
 }
 
-// menu gives the place of the menu of the programs, under its button.
+// menu gives the place of the start menu, under its button.
 menu :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 	return START, HEIGHT, COLUMNS * column_width(layout) + 2 * BORDER, TITLE + rows() * LINE_HEIGHT + 2 * BORDER
 }
@@ -122,11 +122,11 @@ button_center :: proc "contextless" (layout: Layout) -> (center_x, center_y: int
 	return x + width / 2, y + height / 2
 }
 
-// center gives the middle of the line of a program in the menu. ok is
-// false if the menu does not have the program.
-center :: proc "contextless" (layout: Layout, program: string) -> (center_x, center_y: int, ok: bool) {
+// center gives the middle of the line of a module in the menu. ok is
+// false if the menu does not have the module.
+center :: proc "contextless" (layout: Layout, module: string) -> (center_x, center_y: int, ok: bool) {
 	for name, index in names {
-		if name == program {
+		if name == module {
 			x, y, width, height := line(layout, index)
 			return x + width / 2, y + height / 2, true
 		}
@@ -138,17 +138,17 @@ center :: proc "contextless" (layout: Layout, program: string) -> (center_x, cen
 // on a line brings the window to the front.
 WINDOWS_LABEL :: "windows"
 WINDOWS_GAP :: 8 // Between the two buttons.
-// The line of a disk program in the menu of the windows: its nickname, this
+// The line of a disk process in the menu of the windows: its nickname, this
 // gap, then its hash prefix in the font of the cells, faded
-// (modus:contract/disk_program_page).
+// (modus:contract/disk_process_page).
 WINDOWS_HASH_GAP :: 8
-WINDOWS_HASH_WIDTH :: program_page.HASH_PREFIX_DIGITS * CHARACTER_WIDTH
+WINDOWS_HASH_WIDTH :: process_page.HASH_PREFIX_DIGITS * CHARACTER_WIDTH
 // The room of a title in the menu of the windows, in pixels: a title is
 // cut to it in the font that draws it. It is the room of the larger of two
 // lines in the font of the cells: the 32 cells of the longest title of a
 // window (system.Name), and the longest nickname with its hash prefix. So
 // the menu has one width in both fonts.
-WINDOWS_TITLE_ROOM :: max(32 * CHARACTER_WIDTH, program_page.NICKNAME_LIMIT * CHARACTER_WIDTH + WINDOWS_HASH_GAP + WINDOWS_HASH_WIDTH)
+WINDOWS_TITLE_ROOM :: max(32 * CHARACTER_WIDTH, process_page.NICKNAME_LIMIT * CHARACTER_WIDTH + WINDOWS_HASH_GAP + WINDOWS_HASH_WIDTH)
 // The place of a title in its line: after the square that marks the window
 // with the focus.
 WINDOWS_TITLE_X :: 24
@@ -198,7 +198,7 @@ windows_line_center :: proc "contextless" (layout: Layout, index: int) -> (cente
 // A button of the bar.
 Bar_Button :: enum u8 {
 	None, // No button: the pointer is elsewhere.
-	Programs, // The button that opens the menu of the programs.
+	Start, // The button that opens the start menu.
 	Windows, // The button that opens the menu of the windows.
 }
 
@@ -208,7 +208,7 @@ button_at :: proc "contextless" (layout: Layout, point_x, point_y: int) -> Bar_B
 		return point_x >= x && point_x < x + width && point_y >= y && point_y < y + height
 	}
 	if x, y, width, height := button(layout); inside(point_x, point_y, x, y, width, height) {
-		return .Programs
+		return .Start
 	}
 	if x, y, width, height := windows_button(layout); inside(point_x, point_y, x, y, width, height) {
 		return .Windows

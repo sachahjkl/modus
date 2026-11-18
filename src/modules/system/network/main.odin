@@ -1,11 +1,11 @@
 // The network service: the one client of the frame service of the network
-// device, and the service that gives each program with the grant one
+// device, and the service that gives each process with the grant one
 // endpoint of datagrams (src/library/contract/datagram).
 //
 // It speaks Ethernet, ARP, IPv4 and ICMP echo (request and answer), with
-// the protocol library src/library/support/network: this program does the input and
+// the protocol library src/library/support/network: this process does the input and
 // output, the library reads and writes the frames. UDP and TCP are in the
-// program that holds the endpoint: this service reads the header of a
+// process that holds the endpoint: this service reads the header of a
 // datagram or a segment, never its data. It has one static address
 // (10.0.2.15/24, the gateway 10.0.2.2: the network of QEMU).
 //
@@ -16,7 +16,7 @@
 // a listen grant (one local TCP port, and the remotes that sent a segment
 // to it). A request to another remote is refused with the detail of the
 // grant; a datagram or a segment from another remote does not reach the
-// program. TCP itself is in the program (src/library/support/tcp), and so are the
+// process. TCP itself is in the process (src/library/support/tcp), and so are the
 // header and the checksum of UDP (src/library/support/network, udp_header_write and
 // udp_data_read): this service checks the IPv4 header, the lengths and the
 // ports of each datagram and each segment, computes no checksum of their
@@ -27,7 +27,7 @@
 // control ring of the root service, and on the command queue of each
 // endpoint, with the deadline of the oldest request that waits for an
 // answer. A datagram or a segment that arrives is copied one time, from
-// the frame region to the datagram region of the program: the one pass of
+// the frame region to the datagram region of the process: the one pass of
 // this service over its bytes. One that leaves is not copied: this service
 // copies its first 8 bytes (the ports, and the length of UDP) into the
 // frame for the check, writes the headers of IPv4 and Ethernet before them,
@@ -39,22 +39,22 @@
 // kernel entry.
 //
 // **What it is for.** It is the one place where the frames of the machine
-// meet the grants of the programs. A program never sees a frame and never
-// names an address that its grant does not hold, so a program with a
+// meet the grants of the processes. A process never sees a frame and never
+// names an address that its grant does not hold, so a process with a
 // network grant reaches one remote, or answers on one port, and nothing
-// else. A program writes the header of what it sends; this service checks
-// the ports of that header in its own copy, so a program sends only from
+// else. A process writes the header of what it sends; this service checks
+// the ports of that header in its own copy, so a process sends only from
 // the local ports of its endpoint.
 //
 // **Start**: no line starts it. The root service starts it, with the frame
-// service of the device, before the first program with the grant
+// service of the device, before the first process with the grant
 // **Network** (net, server, fetch, quic_echo, remote).
 //
 // **Grants**, as the root service gives them:
 //
 // - **Network_Device**: the frame ring of the frame service of the network
 //   device, and a control ring from the root service. The root service
-//   sends on the control ring the endpoint of each program that it starts
+//   sends on the control ring the endpoint of each process that it starts
 //   with the grant **Network**, with the grant of that endpoint.
 //
 // **What a reader sees**: no window. The log has "network: ok, the address
@@ -63,8 +63,8 @@
 // ends, the log has its counts, and how many times this service read each
 // byte of its datagrams or segments: one time on receive; on send, 8 bytes
 // of each header and no byte of the data.
-// A program reads its own counts and problem rows through its endpoint;
-// a program with the grant to inspect the machine also reads the counts of
+// A process reads its own counts and problem rows through its endpoint;
+// a process with the grant to inspect the machine also reads the counts of
 // the whole service.
 //
 // **What it does not do**: no DHCP and no DNS (the address is static), no
@@ -117,7 +117,7 @@ TAG_READ_REGION_REMOVE :: 1200 // + the place of the endpoint.
 // reads the rest from the datagram region.
 SEND_HEADER_COPIED :: 8
 
-// A request that the program sent and that waits for the wire.
+// A request that the process sent and that waits for the wire.
 Pending_Kind :: enum u8 {
 	None,
 	Send, // The frame is in a send place; it waits for the hardware address.
@@ -155,9 +155,9 @@ Data_Count :: struct {
 	data_bytes_read: u64, // The bytes of the data among them.
 }
 
-// The owner of a frame in a send place: the Send of a program, which
+// The owner of a frame in a send place: the Send of a process, which
 // completes when the frame service completes the frame, because the device
-// reads the data of the program until then.
+// reads the data of the process until then.
 Send_Owner :: struct {
 	busy:     bool,
 	endpoint: int,
@@ -188,12 +188,12 @@ Endpoint :: struct {
 	in_flight:       u32, // Commands taken that have no completion yet.
 	held:            ring.Record, // A Send that waits for a free send place.
 	has_held:        bool,
-	changed:         bool, // A completion was written: wake the program.
+	changed:         bool, // A completion was written: wake the process.
 	sent:            u64,
 	received:        u64,
 	dropped:         u64,
-	arrived_data:    Data_Count, // What this service did to the bytes that it gave to the program.
-	left_data:       Data_Count, // What it did to the bytes that it took from the program.
+	arrived_data:    Data_Count, // What this service did to the bytes that it gave to the process.
+	left_data:       Data_Count, // What it did to the bytes that it took from the process.
 	// The datagrams that reached the local port of this endpoint from a
 	// remote that its grant does not name: facts of this endpoint only.
 	problems:        network.Problem_Table,
@@ -216,8 +216,8 @@ neighbors: network.Neighbors
 identification: u16
 
 // The facts of the machine: an endpoint reads them only with the right
-// Inspect of its grant: they tell of the traffic of other programs, and a
-// program sees no other program.
+// Inspect of its grant: they tell of the traffic of other processes, and a
+// process sees no other process.
 answered: u64 // Echo requests from the wire that this service answered.
 machine_problems: network.Problem_Table // The frames that no endpoint owns.
 
@@ -334,9 +334,9 @@ problem :: proc "contextless" (found: datagram.Problem) {
 // for a next hop with a known hardware address, and sends it. The send
 // place holds the copy of its first SEND_HEADER_COPIED bytes; the rest is
 // at data_place + SEND_HEADER_COPIED in the datagram region, where the
-// device reads it. The program wrote the header of UDP or TCP and its
+// device reads it. The process wrote the header of UDP or TCP and its
 // checksum: this service writes the headers of IPv4 and Ethernet, and
-// reads no byte of the data. The Send of the program completes with the
+// reads no byte of the data. The Send of the process completes with the
 // frame (Send_Owner).
 payload_send :: proc "contextless" (endpoint: ^Endpoint, index: int, tag: u32, place: int, destination: network.Hardware, address: u32, length: int, data_place: u64) {
 	protocol := u8(endpoint.tcp ? network.PROTOCOL_TCP : network.PROTOCOL_UDP)
@@ -351,7 +351,7 @@ payload_send :: proc "contextless" (endpoint: ^Endpoint, index: int, tag: u32, p
 }
 
 // data_pass counts one pass of this service over bytes of a datagram or a
-// segment. Each place of this program that reads those bytes calls it, so
+// segment. Each place of this process that reads those bytes calls it, so
 // the count says how many times the service is on the path of the data.
 // data_bytes: the bytes of that pass after the least header of UDP or TCP.
 data_pass :: proc "contextless" (count: ^Data_Count, bytes: int, data_bytes: int) {
@@ -414,11 +414,11 @@ not_granted :: proc "contextless" (command: u32, argument: i64, address: u32, po
 
 // header_granted checks a datagram or a segment of count bytes to send, in
 // the copy of its first SEND_HEADER_COPIED bytes that this service made
-// (header): the program cannot change that copy, and this procedure reads
-// no byte of the region of the program. The two ports are at the same
+// (header): the process cannot change that copy, and this procedure reads
+// no byte of the region of the process. The two ports are at the same
 // place in the header of UDP and of TCP.
 //
-// - The source port is a local port of the endpoint: a program sends from
+// - The source port is a local port of the endpoint: a process sends from
 //   its own ports only.
 // - The remote (the address of the command, which goes in the IPv4 header
 //   that this service writes, and the destination port of the copy) is the
@@ -429,7 +429,7 @@ not_granted :: proc "contextless" (command: u32, argument: i64, address: u32, po
 //   the admitted remotes alive.
 //
 // The checksum is not checked: a wrong one harms only the packet of the
-// program that wrote it.
+// process that wrote it.
 header_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, header: []u8, count: int, now: u64) -> bool {
 	SEND :: u32(datagram.Command.Send)
 	local := byte_order.read_u16_big_endian(header, 0)
@@ -476,7 +476,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 	values := record.values
 	tag := record.tag
 	kind := record.kind
-	// The program of the endpoint writes the word: a word that names no
+	// The process of the endpoint writes the word: a word that names no
 	// command, and None, are refused with their record.
 	command_kind, command_kind_ok := datagram.command_of_ring_word(record.kind)
 	if !command_kind_ok {
@@ -521,9 +521,9 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			return false
 		}
 		// The one pass of this service over the bytes: the copy of the
-		// first SEND_HEADER_COPIED bytes, from the region of the program to
+		// first SEND_HEADER_COPIED bytes, from the region of the process to
 		// the frame. Each check of the header reads the copy, which the
-		// program cannot change; the region is not read again. The device
+		// process cannot change; the region is not read again. The device
 		// reads the data from the region (payload_send).
 		copied := place_bytes(send_place)[network.IPV4_DATA:][:SEND_HEADER_COPIED]
 		copy(copied, endpoint.region[place:][:SEND_HEADER_COPIED])
@@ -635,7 +635,7 @@ region_refusal :: proc "contextless" (endpoint: ^Endpoint, command: u32, place, 
 // busy gives the values of the error record of a full table of the
 // requests that wait for an answer: the requests of all the endpoints are
 // in it, so the record gives the capacity only: a count would tell of the
-// requests of other programs.
+// requests of other processes.
 busy :: proc "contextless" (command: u32, capacity: int) -> [7]u64 {
 	return errors.ring_fail(command, .Busy, .Requests, 0, 0, i64(capacity))
 }
@@ -736,7 +736,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 				break
 			}
 			// A remote is admitted on a SYN only (no ACK, no RST): a stray
-			// segment of an unknown remote takes no place, and the program
+			// segment of an unknown remote takes no place, and the process
 			// does not see it. And only from an address that can answer, and
 			// only when a Receive waits for the SYN.
 			if packet.tcp_flags & (TCP_SYN | TCP_RST | TCP_ACK) != TCP_SYN {
@@ -802,7 +802,7 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 	switch {
 	case endpoint.grant.address != 0 && packet.source_address != endpoint.grant.address:
 		// A UDP listen grant that names one remote address admits that
-		// address only: a datagram of another one never reaches the program,
+		// address only: a datagram of another one never reaches the process,
 		// whatever its size.
 		network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + 12, value = packet.source_address, limit = endpoint.grant.address}, .Endpoint)
 		return false
@@ -835,8 +835,8 @@ deliver :: proc "contextless" (endpoint: ^Endpoint, packet: network.Packet) {
 	endpoint.posted_first = (endpoint.posted_first + 1) % RECEIVE_CAPACITY
 	endpoint.posted_count -= 1
 	// The one copy, and the one pass of this service over the bytes: from
-	// the frame to the region of the program. No checksum of the datagram
-	// or the segment was computed before: the program checks it. The place
+	// the frame to the region of the process. No checksum of the datagram
+	// or the segment was computed before: the process checks it. The place
 	// was checked when it was posted.
 	count := min(u64(len(packet.data)), posted.room)
 	data_counted(&endpoint.arrived_data, int(count))
@@ -914,7 +914,7 @@ expire :: proc "contextless" (now: u64) -> (deadline: u64) {
 // hardware address, when the grant of the endpoint changes. The grant that
 // was checked for such a Send is gone: without this, the frame would leave
 // after a revocation, when the answer of ARP comes. The place is free
-// again, and the program gets the refusal of a remote that the grant does
+// again, and the process gets the refusal of a remote that the grant does
 // not name.
 sends_waiting_refuse :: proc "contextless" (endpoint: ^Endpoint, index: int) {
 	for &waiting in pending {
@@ -1112,7 +1112,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 			}
 			// The frame service closes its handle of the region after the
 			// last frame that reads it; the frames of the region stay until
-			// then, whatever this service and the program close.
+			// then, whatever this service and the process close.
 			frame_command(.Read_Region_Remove, TAG_READ_REGION_REMOVE + u32(index), {0 = u64(index)})
 			system.ring_close(&item.datagram_ring)
 			system.close(item.ring_memory)
@@ -1133,7 +1133,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 // data_passes_log writes what this service did to the bytes of the
 // datagrams or the segments of an endpoint that ends: a measure, the
 // passes for each byte in hundredths, then the structural fact: one pass
-// on receive (the copy to the region of the program); on send, the copy of
+// on receive (the copy to the region of the process); on send, the copy of
 // the first SEND_HEADER_COPIED bytes of each, for the check, and no byte of
 // the data, which the device read from the region; no pass for a checksum.
 data_passes_log :: proc "contextless" (endpoint: ^Endpoint) {
@@ -1185,7 +1185,7 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 // Then one loop runs for ever. Each pass takes the frames that arrived and
 // the frames that left, the new endpoints of the control ring, and the
 // commands of each endpoint while its completion queue has room. A command
-// that has no room waits in the endpoint, so a program that reads no
+// that has no room waits in the endpoint, so a process that reads no
 // completion slows only itself. The loop then wakes the rings that changed,
 // and waits for a record or for the deadline of the oldest request that
 // waits for an answer (an ARP request, an echo).
@@ -1237,10 +1237,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.write_bytes(&writer, {'/', '2', '4', ' '})
 	network.hardware_write(&writer, hardware)
 	system.log("network: ok, the address ", system.written(&writer), ", the gateway 10.0.2.2, the link is ", link_up ? "up" : "down", ", ", u64(min(RECEIVE_PLACES, int(info.values[3]))), " places for frames that arrive")
-	// The cost of what this program writes for each datagram or segment that leaves:
+	// The cost of what this process writes for each datagram or segment that leaves:
 	// the headers of IPv4 and Ethernet, with the checksum of the IPv4
 	// header. No byte of the payload is read: its checksum is the work of
-	// the program that sends it.
+	// the process that sends it.
 	{
 		ROUNDS :: 20_000
 		PAYLOAD :: network.MTU - network.IPV4_HEADER
@@ -1251,7 +1251,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		took := system.time() - start
 		send_place_free(place)
-		system.log("network: the headers of IPv4 and Ethernet of a frame with a payload of ", u64(PAYLOAD), " bytes: ", took * 1_000_000 / ROUNDS, " ns, in this program (no checksum of the payload)")
+		system.log("network: the headers of IPv4 and Ethernet of a frame with a payload of ", u64(PAYLOAD), " bytes: ", took * 1_000_000 / ROUNDS, " ns, in this process (no checksum of the payload)")
 	}
 
 	for {
@@ -1267,8 +1267,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				frame_receive(tag)
 			case tag < PLACE_COUNT:
-				// The device read the frame: the Send of a program completes
-				// now, and the program can write its place again.
+				// The device read the frame: the Send of a process completes
+				// now, and the process can write its place again.
 				owner := send_owners[tag - RECEIVE_PLACES]
 				send_owners[tag - RECEIVE_PLACES] = {}
 				send_place_free(tag)

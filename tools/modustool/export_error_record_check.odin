@@ -138,7 +138,7 @@ export_name_of_declaration :: proc(declaration: ^ast.Value_Decl, declared: strin
 
 // export_needs_a_check says if the check reads an export: it has a body,
 // an i64 result and no error record, and it is not the entry, whose
-// result is the code of the end of the program.
+// result is the code of the end of the process.
 @(private = "file")
 export_needs_a_check :: proc(literal: ^ast.Proc_Lit, name: string) -> bool {
 	if literal.body == nil || name == ENTRY_NAME || literal.type == nil || literal.type.results == nil {
@@ -268,8 +268,8 @@ procedure_gives_negative :: proc(search: ^Negative_Search, name: string) -> bool
 	return negative
 }
 
-// exports_without_error_record_of_tree reads each package of the programs
-// and of the modules under a root ("" is the repository).
+// exports_without_error_record_of_tree reads each package of the modules,
+// with an entry or not, under a root ("" is the repository).
 exports_without_error_record_of_tree :: proc(root: string) -> (found: []Export_Without_Error_Record, package_count: int, export_count: int, ok: bool) {
 	files := make([dynamic]string, context.temp_allocator)
 	folders := EXPORT_ERROR_RECORD_FOLDERS

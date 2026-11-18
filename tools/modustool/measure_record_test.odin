@@ -185,11 +185,11 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 			case TEST_OUTPUT_MEASURE_SCHEDULER:
 				waited ||= waits(scenario_measure_scheduler[:], measure.pattern)
 			case TEST_OUTPUT_MEASURE_CLOCK, TEST_OUTPUT_MEASURE_DISK:
-				// The log of the measure run of one program of the table.
-				for program in measure_programs {
-					if path == strings.concatenate({BUILD_FOLDER, "/test_output_measure_", program.name, ".txt"}, context.temp_allocator) {
+				// The log of the measure run of one process of the table.
+				for process in measure_processes {
+					if path == strings.concatenate({BUILD_FOLDER, "/test_output_measure_", process.name, ".txt"}, context.temp_allocator) {
 						steps := make([dynamic]Step, context.temp_allocator)
-						measure_program_steps(program, &steps)
+						measure_process_steps(process, &steps)
 						waited ||= waits(steps[:], measure.pattern)
 					}
 				}

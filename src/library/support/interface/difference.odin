@@ -165,7 +165,7 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 	shared := min(before.record_count, now.record_count)
 	for index in 0 ..< shared {
 		// One copy of each record: a table can be in memory that another
-		// program writes during the call (the interface as a module).
+		// process writes during the call (the interface as a module).
 		old := draw_record.copy_once(&before.records[index])
 		new := draw_record.copy_once(&now.records[index])
 		if records_equal(before, old, now, new) {
@@ -247,7 +247,7 @@ grid_damage :: proc "contextless" (before: ^Draw_Table, old_record: Draw_Record,
 }
 
 // Picture_Debts: what each of the two pictures of a surface owes. A
-// program draws one picture while the screen shows the other, so a picture holds the frame of two
+// process draws one picture while the screen shows the other, so a picture holds the frame of two
 // frames before. The window layer keeps one table, the table of the last
 // frame that it presented, and here, for each picture, the rectangles where
 // the picture differs from that table: its debt. A record of zeros: no
@@ -258,7 +258,7 @@ Picture_Debts :: struct {
 }
 
 // damage_of_picture finds what a frame draws and what it presents. picture
-// is the picture that the program draws now; the screen shows the other
+// is the picture that the process draws now; the screen shows the other
 // one. changed is the difference from the last table to the frame.
 //
 // draw: the changed rectangles and the debt of the picture, the pixels of

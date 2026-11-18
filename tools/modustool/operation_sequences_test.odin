@@ -142,7 +142,7 @@ oracle_sequence :: proc(steps: ..operation_sequence.Sequence_Step) -> operation_
 oracle_header :: proc() -> operation_sequence.Mailbox_Header {
 	header: operation_sequence.Mailbox_Header
 	header.outcome = u64(operation_sequence.Execution_Outcome.Ran)
-	header.budget_before = {pages = 100, programs = 2, threads = 3}
+	header.budget_before = {pages = 100, processes = 2, threads = 3}
 	header.budget_after = header.budget_before
 	return header
 }
@@ -208,8 +208,8 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	header.budget_after.pages -= 1
 	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Budget_Not_Back), "a page that did not come back is taken")
 	header.budget_after = header.budget_before
-	header.budget_after.programs += 1
-	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Budget_Not_Back), "a program slot more after the runner is taken")
+	header.budget_after.processes += 1
+	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Budget_Not_Back), "a process slot more after the runner is taken")
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
 	testing.expect_value(t, len(operation_findings(&sequence, &header, &results, &grammar)), 0)

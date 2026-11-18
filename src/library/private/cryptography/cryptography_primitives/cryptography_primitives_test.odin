@@ -137,7 +137,7 @@ a_signature_while_another_thread_changes_the_message :: proc(t: ^testing.T) {
 }
 
 // Each wrong size of a key, a nonce or a text is an error record with the
-// number of its argument, never a stop of the program.
+// number of its argument, never a stop of the process.
 @(test)
 arguments_of_a_wrong_size :: proc(t: ^testing.T) {
 	key_bytes: [40]u8
@@ -189,7 +189,7 @@ a_result_with_no_room :: proc(t: ^testing.T) {
 }
 
 // A result that overlaps the text with an offset is an error record (the
-// code of the origin stops the program); the same address, in place, is
+// code of the origin stops the process); the same address, in place, is
 // right. A refused open leaves no byte of the text in the result.
 @(test)
 results_that_overlap_and_refused_opens :: proc(t: ^testing.T) {

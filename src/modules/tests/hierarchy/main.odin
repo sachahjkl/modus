@@ -5,8 +5,8 @@
 // **What it is for.** It checks that a [store](term:store) holds a large
 // [tree](term:tree) of entries across a restart of the machine, and that a
 // handle on a part of the store reaches nothing outside that part. A
-// program sees only its [private store](term:private-store); inside it, a
-// tree is the unit that a program lends to a part of itself.
+// process sees only its [private store](term:private-store); inside it, a
+// tree is the unit that a process lends to a part of itself.
 //
 // **What a reader sees.** It has no window and no menu line: the machine
 // test starts it with `start("hierarchy")` on a machine with a data disk,
@@ -23,7 +23,7 @@ import format "modus:contract/store"
 import "modus:support/storage"
 import "modus:support/system"
 
-STORE_NAME :: "hierarchy" // Its private store: the root service names it after the program.
+STORE_NAME :: "hierarchy" // Its private store: the root service names it after the process.
 TOP_TREES :: 100
 PARTS :: 10
 OBJECTS_IN_PART :: 100
@@ -486,7 +486,7 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 // store it runs the first run: it makes the trees, then checks each case.
 // On a store that the first run filled it runs the second run: it checks
 // the counts and the contents. Each case writes its line on the log. The
-// program then stops with the code 0 when each case held, else 2. With no
+// process then stops with the code 0 when each case held, else 2. With no
 // store or no usage, it writes `hierarchy: WRONG: no store` (or `no usage`)
 // at the level error, and stops with the code 1.
 @(export, link_name = "entry")

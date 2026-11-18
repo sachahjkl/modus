@@ -1,20 +1,20 @@
-// A demonstration of budgets: a program holds only what it was given, and
+// A demonstration of budgets: a process holds only what it was given, and
 // each resource has a limit.
 //
 // No operation creates an object from nothing: a budget pays for each
-// memory object, each program and each thread. The root service gave this
-// program a budget. The program creates objects until the kernel refuses,
+// memory object, each process and each thread. The root service gave this
+// process a budget. The process creates objects until the kernel refuses,
 // then frees them: each page returns. Then it takes a part of its budget
 // for a new budget, and closes it: what the new budget held returns, and
 // this budget pays for the objects that live.
 //
 // **What it is for.** It shows that memory is supplied by the caller: a
-// [budget](term:budget) is a handle that pays for each page, each program
+// [budget](term:budget) is a handle that pays for each page, each process
 // and each thread, and the kernel refuses with `No_Budget`, never with a
-// hidden allocation, when it cannot pay. It also shows that a program can
+// hidden allocation, when it cannot pay. It also shows that a process can
 // split its budget, and that a closed budget gives back what it held.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("budget")` in the console. The window has one row for each step,
 // with its answer: the pages of the budget from the root service; memory
 // objects of 64 pages until `No_Budget`, then all of them closed; threads
@@ -24,7 +24,7 @@
 // `budget: wrong answer: ...` for a step that gave another answer.
 //
 // **Its grants**: none. Its budget from the root service holds 1280 pages,
-// 1 program and 4 threads: the limits that the steps reach.
+// 1 process and 4 threads: the limits that the steps reach.
 package budget
 
 import "modus:support/display"
@@ -34,7 +34,7 @@ import op "modus:contract/operation"
 import "modus:support/system"
 
 // The pages that its cases spend.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 598, programs = 1, threads = 4, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 598, processes = 1, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -59,7 +59,7 @@ FIRST_PAGES :: 200
 SECOND_PAGES :: 100
 
 
-// One step of the program: what it asked, the answer of the kernel, and
+// One step of the process: what it asked, the answer of the kernel, and
 // the pages that the budget holds after the step.
 Row :: struct {
 	text:    string,
@@ -98,7 +98,7 @@ wait_release :: proc "c" (parameter: rawptr) -> ! {
 }
 
 // entry runs each step of the demonstration once, writes the summary line,
-// then keeps the window open until the program is stopped. Each step checks
+// then keeps the window open until the process is stopped. Each step checks
 // its answer against the budget that it read before (`system.budget_read`):
 // the count of objects that the pages pay for, the pages left, and each
 // page back after the close. With no window, it stops with the code 1.
@@ -161,9 +161,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.close(first)
 	note("close the memory", false, pages_left() == start.pages, "each page returns")
 
-	// The budget paid for one program: this one.
-	_, status = system.call(.Program_Create, u64(system.own_budget()), 0, 0)
-	note("create a program", true, status == .No_Budget, "no budget")
+	// The budget paid for one process: this one.
+	_, status = system.call(.Process_Create, u64(system.own_budget()), 0, 0)
+	note("create a process", true, status == .No_Budget, "no budget")
 
 	wrong: u64
 	for &row in rows[:row_count] {
@@ -181,12 +181,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// Each line is a line of a table: its text 3 pixels under its top.
 		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
 		interface.cell_text(&frame, interface.column_take(&column, LINE), "no object comes from nothing: a budget pays for each page,", graphics.colors.dim)
-		interface.cell_text(&frame, interface.column_take(&column, LINE), "each program and each thread. what ends returns to its budget.", graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "each process and each thread. what ends returns to its budget.", graphics.colors.dim)
 		interface.column_take(&column, LINE / 2)
 		sizes := [3]interface.Size{interface.pixels(ANSWER_X - 12), interface.pixels(BAR_X - ANSWER_X), interface.share()}
 		cells: [3]interface.Area
 		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
-		interface.cell_text(&frame, cells[0], "the program asks", graphics.colors.dim)
+		interface.cell_text(&frame, cells[0], "the process asks", graphics.colors.dim)
 		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
 		interface.cell_text(&frame, cells[2], "pages of the budget", graphics.colors.dim)
 		for &row, index in rows[:row_count] {
@@ -197,7 +197,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The expected answer, a refusal too, is the expected answer of
 			// the rules; another answer is a check that did not pass. The
 			// words of the answer say whether it is a refusal.
-			color := row.correct ? graphics.colors.program : graphics.colors.failed
+			color := row.correct ? graphics.colors.process : graphics.colors.failed
 			interface.cell_text(&frame, cells[1], string(row.buffer[:row.count]), color)
 			// The pages of a budget are memory.
 			interface.bar_with_value(&frame, cells[2], BAR_WIDTH, row.pages, start.pages, graphics.colors.memory)

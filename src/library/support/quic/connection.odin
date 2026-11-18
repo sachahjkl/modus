@@ -5,7 +5,7 @@ package quic
 //
 // The whole state is one `Connection` record in memory of the caller, with no
 // allocation and no kernel call. The library never waits and never sends: the
-// caller owns the endpoint and the clock. So the same code runs in a program
+// caller owns the endpoint and the clock. So the same code runs in a process
 // of the system, in the peer of the tool on the host, and in a host test with
 // a fake clock.
 //
@@ -45,7 +45,7 @@ package quic
 import "modus:contract/errors"
 import "modus:support/random"
 
-CLOSE_REASON_KEPT :: 48 // The bytes of the reason phrase of a CONNECTION_CLOSE of the peer that a connection keeps, in `Connection.close_reason_of_peer`. A longer phrase is cut: a program logs these bytes to tell why a foreign stack closed.
+CLOSE_REASON_KEPT :: 48 // The bytes of the reason phrase of a CONNECTION_CLOSE of the peer that a connection keeps, in `Connection.close_reason_of_peer`. A longer phrase is cut: a process logs these bytes to tell why a foreign stack closed.
 MAX_DATAGRAM_SIZE :: 1200 // The bytes of the largest datagram that this side sends: 1200, the size that every path of QUIC carries (RFC 9000, section 14). `connection_datagram_send` never writes more. A datagram with an Initial packet of a client, or with an ack-eliciting Initial packet of a server, has exactly this size.
 CONNECTION_ID_SIZE :: 8 // The bytes of each connection identifier that this side chooses: 8 random bytes. A short header carries no length, so `header_read` takes this size to read the identifier of a 1-RTT packet.
 CRYPTO_BUFFER_SIZE :: 4096 // The handshake bytes of one encryption level in each direction that a `Crypto_Stream` holds. A CRYPTO frame of the peer that ends past it closes the connection with CRYPTO_BUFFER_EXCEEDED (RFC 9000, section 7.5); more bytes from TLS of this side close it with INTERNAL_ERROR.
@@ -87,7 +87,7 @@ HANDSHAKE_TIME_LIMIT :: 10_000_000
 //
 // It goes from `Idle` to `Handshake`, `Connected`, then `Closing` or
 // `Draining`, then `Closed`. A failure at the start, the idle timeout and the
-// handshake deadline go to `Closed` directly, with no packet. A program reads
+// handshake deadline go to `Closed` directly, with no packet. A process reads
 // `Connection.state` after each call: `Connected` means that the streams carry
 // data, and `Closed` means that the record is free.
 Connection_State :: enum u8 {
@@ -247,7 +247,7 @@ Connection_Configuration :: struct {
 // and their packets in flight, the round-trip time, the timers, the limits of
 // flow control, and two private buffers. It holds no stream: the stream
 // records are a table of the caller (`streams`). The record has about 88 KiB,
-// so it never goes on a stack: put it in the global memory of the program or
+// so it never goes on a stack: put it in the global memory of the process or
 // in a mapping (docs/QUIC.md, section 5).
 //
 // One thread uses a record at a time: no call locks. A caller reads the fields
@@ -269,9 +269,9 @@ Connection_Configuration :: struct {
 // ```
 Connection :: struct {
 	configuration:                     Connection_Configuration, // A copy of the configuration of the caller. The private key of a server or of a client is erased from it when TLS starts: the handshake has its own copy.
-	cryptography:                      ^Cryptography, // The cryptography module of the program: each seal, open and key derivation is a call of it. The caller keeps it loaded for the life of the record.
+	cryptography:                      ^Cryptography, // The cryptography module of the process: each seal, open and key derivation is a call of it. The caller keeps it loaded for the life of the record.
 	generator:                         ^random.Generator, // The random generator of the thread: the connection identifiers and the key share of TLS come from it.
-	state:                             Connection_State, // Where the connection is: a program reads it after each call.
+	state:                             Connection_State, // Where the connection is: a process reads it after each call.
 	tls:                               Tls_Handshake, // The state of the TLS handshake. Its secrets are erased when the handshake completes, and when the connection closes.
 	tls_started:                       bool, // The handshake of TLS started. A client: at its start. A server: at the first authentic Initial packet of its client; before it, the record has no timer and no key.
 	spaces:                            [Encryption_Level]Packet_Number_Space, // One packet number space for each encryption level: Initial, Handshake, application.
@@ -308,7 +308,7 @@ Connection :: struct {
 	// The round-trip time (RFC 9002, section 5), in microseconds.
 	has_round_trip_sample:             bool, // A round trip was measured: the three values below have a meaning. false: the timers use `INITIAL_ROUND_TRIP_TIME`.
 	latest_round_trip:                 u64, // The last sample, in microseconds: the time from the sending of the largest acknowledged packet to its ACK frame (latest_rtt in RFC 9002).
-	smoothed_round_trip:               u64, // The moving average of the samples, each one less the ack delay of the peer, in microseconds (smoothed_rtt). A program shows it as the round-trip time of the connection.
+	smoothed_round_trip:               u64, // The moving average of the samples, each one less the ack delay of the peer, in microseconds (smoothed_rtt). A process shows it as the round-trip time of the connection.
 	round_trip_variation:              u64, // The moving average of the distance of the samples from `smoothed_round_trip`, in microseconds (rttvar): 4 times it is the margin of the probe timeout.
 	min_round_trip:                    u64, // The smallest sample, in microseconds (min_rtt): an ack delay that would bring a sample below it is not subtracted.
 	probe_timeout_count:               u32, // The probe timeouts in a row with no acknowledgement (pto_count): the probe timeout doubles for each one, up to 2^16. An acknowledgement sets it to 0.
@@ -342,15 +342,15 @@ Connection :: struct {
 	close_frame_type:                  u64, // The type of the frame that caused a transport close, or 0 when no frame did.
 	close_is_application:              bool, // The close is of the application (a CONNECTION_CLOSE of type 0x1d): `close_error_code` is a code of the application, not a `Transport_Error`.
 	// The first bytes of the reason phrase of the CONNECTION_CLOSE of the peer,
-	// `CLOSE_REASON_KEPT` at most: a program logs them, to tell why a foreign
-	// stack closed. They are bytes of the peer: a program shows them as text only
+	// `CLOSE_REASON_KEPT` at most: a process logs them, to tell why a foreign
+	// stack closed. They are bytes of the peer: a process shows them as text only
 	// after it checked them. This side sends no reason phrase.
 	close_reason_of_peer:              [CLOSE_REASON_KEPT]u8,
 	close_reason_of_peer_length:       int, // The bytes of the reason phrase that were kept.
 	closed_by_peer:                    bool, // The peer sent CONNECTION_CLOSE: the close fields hold its code, its frame type and its kind.
 	closed_by_idle_timeout:            bool, // The idle timeout ended the connection, with no packet.
 	closed_by_handshake_timeout:       bool, // The handshake did not complete before the handshake deadline (`HANDSHAKE_TIME_LIMIT`): the connection ended, with no packet.
-	ended_at:                          u64, // The time at which the connection became `Closed`, in microseconds. With `last_activity`, a program shows how long an idle end took, and compares it with `connection_idle_bound`.
+	ended_at:                          u64, // The time at which the connection became `Closed`, in microseconds. With `last_activity`, a process shows how long an idle end took, and compares it with `connection_idle_bound`.
 	handshake_deadline:                u64, // The handshake deadline of this connection, in microseconds: its start, or the first authentic Initial packet at a server, plus `HANDSHAKE_TIME_LIMIT`.
 	// Set while the frames of one packet are read: data of the packet (a CRYPTO or
 	// a STREAM frame) had no place in a range set. The packet is then not recorded
@@ -391,7 +391,7 @@ Connection :: struct {
 //   The connection keeps the slice: the table lives as long as the record.
 // - `configuration`: copied. `tls.server_public_key` is the pinned key of the
 //   server; `tls.least_seed_strength` is `.Processor` at least.
-// - `cryptography`, `generator`: the cryptography module of the program and
+// - `cryptography`, `generator`: the cryptography module of the process and
 //   the random generator of the thread. The connection keeps both pointers.
 // - `now`: the time, in microseconds.
 // - `error`: the error record that a failure writes.
@@ -443,7 +443,7 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 // After it the record waits in the state `Handshake`, with no key, no timer
 // and nothing to send: `connection_deadline` gives `NO_DEADLINE` until the
 // first authentic Initial packet comes. The caller gives that datagram to
-// `connection_datagram_receive`. A program that serves several clients does
+// `connection_datagram_receive`. A process that serves several clients does
 // not call this: `Server` chooses a record for each client and calls it.
 //
 // **Parameters**
@@ -454,7 +454,7 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 //   the client can open as many streams at one time.
 // - `configuration`: copied. `tls.server_private_key` is the Ed25519 key of
 //   the server; `tls.least_seed_strength` is `.Processor` at least.
-// - `cryptography`, `generator`: the cryptography module of the program and
+// - `cryptography`, `generator`: the cryptography module of the process and
 //   the random generator of the thread. The connection keeps both pointers.
 // - `now`: the time, in microseconds.
 // - `error`: the error record that a failure writes.
@@ -494,7 +494,7 @@ connection_start_server :: proc "contextless" (connection: ^Connection, streams:
 // fail at once. It gives false and writes `Bad_Value` with the strength found
 // and the least strength allowed. `argument` is the number of the
 // configuration among the arguments of the caller, so that the record names
-// the argument as the program gave it: 3 for the two starts, 5 for
+// the argument as the process gave it: 3 for the two starts, 5 for
 // `server_init`.
 @(private)
 connection_seed_strength_check :: proc "contextless" (configuration: ^Connection_Configuration, argument: i64, error: ^errors.Error_Record) -> bool {
@@ -936,7 +936,7 @@ connection_enter_closing :: proc "contextless" (connection: ^Connection, now: u6
 // CONNECTION_CLOSE of the peer (RFC 9000, section 10.2.2).
 //
 // It keeps the code, the frame type and the kind of the close of the peer for
-// the program, sends nothing more (a CONNECTION_CLOSE of this side that waited
+// the process, sends nothing more (a CONNECTION_CLOSE of this side that waited
 // is dropped), sets the end of the state at three probe timeouts with no
 // backoff, and erases the secrets of TLS. `application` is true for a frame of
 // type 0x1d.
@@ -1091,7 +1091,7 @@ connection_idle_deadline :: proc "contextless" (connection: ^Connection) -> u64 
 //
 // The three probe timeouts keep a connection that works alive through a loss.
 // They use `probe_timeout_base`, not the timeout with its backoff: the bound
-// then does not grow while the peer is silent. A program compares this value
+// then does not grow while the peer is silent. A process compares this value
 // with the time that an idle end took (`Connection.ended_at` less
 // `Connection.last_activity`). The value has a meaning only when
 // `Connection.idle_timeout` is not 0.

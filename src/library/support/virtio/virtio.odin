@@ -7,7 +7,7 @@
 // configuration. This package reads the virtio capabilities in the copy,
 // agrees on the features with the device, and drives split virtqueues in
 // the memory of the queues. The kernel has no code for a device: the code
-// that knows a device is a program or a library.
+// that knows a device is a module or a library.
 //
 // A queue takes three pages of the memory of the queues: the descriptors,
 // what the driver gives (avail), what the device used. A queue has at most
@@ -322,7 +322,7 @@ Queue_Error :: enum {
 }
 
 // queue_start gives the device the queue `index`, in three pages of the
-// memory of the queues: base is their address in this program, physical
+// memory of the queues: base is their address in this process, physical
 // their physical address. The queue sends the message interrupt `vector`.
 queue_start :: proc "contextless" (device: ^Device, index: u16, base: uintptr, physical: u64, least: u32, vector: u16) -> (queue: Queue, error: Queue_Error) {
 	store_16(device.common + COMMON_QUEUE_SELECT, index)

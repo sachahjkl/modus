@@ -1,8 +1,8 @@
-// The counters of a thread: a program counts the events of the processor
+// The counters of a thread: a process counts the events of the processor
 // for its own code (docs/ARCHITECTURE.md, "The counters of a thread").
 //
 // **What it is for.** It is the proof of the thread counters, and the
-// smallest program that uses them. It counts a loop of known length, and it
+// smallest process that uses them. It counts a loop of known length, and it
 // counts the same reads of memory in two orders, so that a reader sees what
 // a data layout costs in cache misses, and not only in time.
 //
@@ -12,7 +12,7 @@
 //    No_Right. The right Counters is a grant.
 // 2. Read_Counters before a start gives Bad_State: the thread does not
 //    count. On a machine with no counters that the kernel uses, the command
-//    gives Bad_Operation with the error kind Unsupported: the program says so
+//    gives Bad_Operation with the error kind Unsupported: the process says so
 //    and ends there.
 // 3. A loop of LOOP_TURNS turns, each with a store that the compiler keeps:
 //    the instructions retired are at least LOOP_INSTRUCTIONS_LEAST. The four
@@ -38,10 +38,10 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The program itself and the region of the reads: 180 pages, as the other
-// small programs that hold no window, and the pages of the region. The
+// The process itself and the region of the reads: 180 pages, as the other
+// small processes that hold no window, and the pages of the region. The
 // tool reads a literal only, so the assert ties it to the region.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 692, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 692, processes = 1, threads = 1}
 #assert(MODULE_BUDGET.working_memory_pages == 180 + REGION_PAGES)
 
 // The turns of the loop of case 3, and the least count of instructions that
@@ -66,7 +66,7 @@ LINES_IN_A_PAGE :: PAGE_BYTES / LINE_BYTES
 loop_sink: u64
 
 // fail writes the line of a failure, which starts with "counters: failed: ",
-// and stops the program with the code 1.
+// and stops the process with the code 1.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
 	system.log(..parts)
 	system.stop(1)
@@ -87,7 +87,7 @@ difference :: proc "contextless" (after, before: op.Thread_Counters) -> op.Threa
 	}
 }
 
-// read_or_fail reads the counts of this thread, or stops the program.
+// read_or_fail reads the counts of this thread, or stops the process.
 read_or_fail :: proc "contextless" (machine: system.Handle, during: string) -> op.Thread_Counters {
 	counters, status := system.thread_counters_read(machine)
 	if status != .Ok {

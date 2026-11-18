@@ -43,7 +43,7 @@ SITE_SEARCH_ROWS :: 8
 Site_Search_Kind :: enum u8 {
 	Page,
 	Module,
-	Program,
+	Entry_Module,
 	Export,
 	Operation,
 	Error_Kind,
@@ -72,14 +72,14 @@ Site_Search_Kind_Description :: struct {
 // The one table of the kinds of entries. The chart of the docs home tells
 // the kinds apart by their icons and their colors, so the kinds with many
 // entries have looks of their own: a page is a file of the site, a term
-// has the kind of the glossary, an export (a procedure that a program
+// has the kind of the glossary, an export (a procedure that a process
 // calls in a module) the arrow into a box of a call, a license row the
-// mark of what a license grants. A module and a program share the look of
+// mark of what a license grants. A module and an entry module share the look of
 // the one page that lists both.
 site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Page            = {name = "page", value_kind = .File, folder = ""},
 	.Module          = {name = "module", value_kind = .Module, folder = SITE_MODULES_FOLDER},
-	.Program         = {name = "program", value_kind = .Module, folder = SITE_MODULES_FOLDER},
+	.Entry_Module    = {name = "entry module", value_kind = .Module, folder = SITE_MODULES_FOLDER},
 	.Export          = {name = "export", value_kind = .Operation, folder = ""},
 	.Operation       = {name = "operation", value_kind = .Operation, folder = SITE_OPERATIONS_FOLDER},
 	.Error_Kind      = {name = "error kind", value_kind = .Status, folder = SITE_ERRORS_FOLDER},
@@ -146,7 +146,7 @@ Site_Search_Match_Order :: struct {
 }
 
 site_search_match_names := [?]Site_Search_Match_Name {
-	{"system", "monitor.programs", 0},
+	{"system", "monitor.processes", 0},
 	{"system", "monitor.counts", 0},
 	{"system", "monitor.count", 0},
 	{"system", "monitor.counts_named", 0},
@@ -339,7 +339,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, page.title, page.path, "", .Page, page.description)
 	}
 	for item in site.reference.modules {
-		kind: Site_Search_Kind = item.kind == "program" ? .Program : .Module
+		kind: Site_Search_Kind = item.kind == "entry" ? .Entry_Module : .Module
 		site_search_add(&entries, item.build.name, item.page, "", kind, site_source_comment_plain(site, item.description.about))
 		for export in item.description.exports {
 			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))

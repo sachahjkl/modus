@@ -1,11 +1,11 @@
 #+build !freestanding
-package disk_program_page
+package disk_process_page
 
 import "core:testing"
 
-// A row that the root service writes is found by its program slot and its
-// program serial, with its nickname and its hash; another serial in the
-// same slot is another program, and finds nothing.
+// A row that the root service writes is found by its process slot and its
+// process serial, with its nickname and its hash; another serial in the
+// same slot is another process, and finds nothing.
 @(test)
 a_row_is_found_by_its_slot_and_its_serial :: proc(t: ^testing.T) {
 	page := new(Page)
@@ -25,11 +25,11 @@ a_row_is_found_by_its_slot_and_its_serial :: proc(t: ^testing.T) {
 	testing.expect(t, !other_serial)
 	_, other_slot := row_find(page, 6, 9)
 	testing.expect(t, !other_slot)
-	// The clear of the row: the program is found no more.
+	// The clear of the row: the process is found no more.
 	row_write(page, 3, {})
 	_, cleared := row_find(page, 5, 9)
 	testing.expect(t, !cleared)
-	// No page, and the slot 0 that no program has: no row.
+	// No page, and the slot 0 that no process has: no row.
 	_, no_page := row_find(nil, 5, 9)
 	testing.expect(t, !no_page)
 	_, slot_zero := row_find(page, 0, 0)

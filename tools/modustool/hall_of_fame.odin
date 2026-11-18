@@ -1,6 +1,6 @@
-// The portraits of the program hall_of_fame (src/md/features/hall_of_fame.md).
+// The portraits of the module hall_of_fame (src/md/features/hall_of_fame.md).
 // The pictures and their credits are resources of the repository; the
-// command "portraits" converts each picture to the pixels that the program
+// command "portraits" converts each picture to the pixels that the module
 // holds, so that a build decodes no PNG file. The credits file is the one
 // list of the portraits: the command, the page of the licenses of the site
 // and a host test read it.
@@ -14,16 +14,16 @@ import "core:strings"
 
 HALL_OF_FAME_RESOURCE_FOLDER :: "resources/hall_of_fame"
 HALL_OF_FAME_CREDITS_FILE :: HALL_OF_FAME_RESOURCE_FOLDER + "/CREDITS.md"
-HALL_OF_FAME_PROGRAM_FOLDER :: DEMONSTRATION_MODULE_SOURCES + "hall_of_fame"
-HALL_OF_FAME_PROGRAM_FILE :: HALL_OF_FAME_PROGRAM_FOLDER + "/main.odin"
-HALL_OF_FAME_PORTRAIT_FOLDER :: HALL_OF_FAME_PROGRAM_FOLDER + "/portraits"
+HALL_OF_FAME_MODULE_FOLDER :: DEMONSTRATION_MODULE_SOURCES + "hall_of_fame"
+HALL_OF_FAME_MODULE_FILE :: HALL_OF_FAME_MODULE_FOLDER + "/main.odin"
+HALL_OF_FAME_PORTRAIT_FOLDER :: HALL_OF_FAME_MODULE_FOLDER + "/portraits"
 // Each picture of the resources is a crop of this size.
 HALL_OF_FAME_SOURCE_WIDTH :: 480
 HALL_OF_FAME_SOURCE_HEIGHT :: 640
 // Each pixel of a portrait is the mean of a square of this side of the
 // source: a whole divisor, so that no pixel of the source counts twice.
 HALL_OF_FAME_REDUCTION :: 5
-// The size of a portrait in the program: PORTRAIT_WIDTH and
+// The size of a portrait in the process: PORTRAIT_WIDTH and
 // PORTRAIT_HEIGHT of src/modules/demonstrations/hall_of_fame/main.odin.
 HALL_OF_FAME_PORTRAIT_WIDTH :: HALL_OF_FAME_SOURCE_WIDTH / HALL_OF_FAME_REDUCTION
 HALL_OF_FAME_PORTRAIT_HEIGHT :: HALL_OF_FAME_SOURCE_HEIGHT / HALL_OF_FAME_REDUCTION
@@ -94,7 +94,7 @@ hall_of_fame_credits_parse :: proc(content: string) -> (credits: []Hall_Of_Fame_
 }
 
 // hall_of_fame_name_valid says if a name has only lower case letters,
-// digits and "_": the name of a file of the program folder.
+// digits and "_": the name of a file of the module folder.
 hall_of_fame_name_valid :: proc(name: string) -> bool {
 	for character in transmute([]u8)name {
 		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_') {
@@ -114,7 +114,7 @@ hall_of_fame_credits_read :: proc() -> (credits: []Hall_Of_Fame_Credit, problem:
 }
 
 // hall_of_fame_pixels_path gives the file of the pixels of a picture of the
-// resources, in the folder of the program.
+// resources, in the folder of the module.
 hall_of_fame_pixels_path :: proc(picture_file: string) -> string {
 	return strings.concatenate({HALL_OF_FAME_PORTRAIT_FOLDER, "/", strings.trim_suffix(picture_file, ".png"), ".pixels"}, context.temp_allocator)
 }

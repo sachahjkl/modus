@@ -26,7 +26,7 @@ SITE_FILM_SOURCE_TYPE :: "type='" + SITE_FILM_TYPE + "; codecs=\"" + SITE_FILM_C
 
 // The class of the accent of a kind: the colored mark of its card.
 site_news_kind_classes := [News_Kind]string {
-	.Shown    = "accent-program",
+	.Shown    = "accent-process",
 	.Measured = "accent-memory",
 	.Decided  = "accent-kernel",
 	.Fixed    = "accent-machine",
@@ -198,7 +198,7 @@ site_news_add :: proc(site: ^Site) {
 	// does not.
 	site_subscribe_menu_html(&b, path, SITE_NEWS_FEED)
 	fmt.sbprintf(&b, "<p>What a reader can now see or use in %s, newest first: %d entries. Each entry is one file of <code>%s/</code>, written in the step that made the thing, and never moved or merged. The technical list of the changes of each release is on the page <a href=\"%s\">Releases</a>.</p>\n<p>Each entry has a kind, which its color shows: <strong>Shown</strong>, a new thing runs in the system; <strong>Measured</strong>, a number about a thing that exists, with its conditions; <strong>Decided</strong>, a choice that a reader sees, as a name, a mark or a font; <strong>Fixed</strong>, a thing that failed now works. An entry links to its release and to the guide that explains the thing.</p>\n", SITE_SYSTEM_NAME, len(site.news), NEWS_FOLDER, site_page_link(site, path, site_section_page(.Releases)))
-	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-program\">Shown</span> a reader can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> a choice of design that a reader sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a reader saw fail now works.</p>\n")
+	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-process\">Shown</span> a reader can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> a choice of design that a reader sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a reader saw fail now works.</p>\n")
 	// One renderer for the page: the ids of the page stay unique, and each
 	// term of the glossary links once.
 	renderer := site_renderer_make(site, path, NEWS_FOLDER + "/" + NEWS_FOLDER_GUIDE)

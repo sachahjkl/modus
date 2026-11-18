@@ -1,15 +1,15 @@
-// A demonstration of rights on handles: a program holds only the handles
+// A demonstration of rights on handles: a process holds only the handles
 // that it was given, and only with the rights that it was given.
 //
-// The root service gives this program two handles, each with a part of its
-// rights: the machine with Inspect, the boot image with Read. The program
+// The root service gives this process two handles, each with a part of its
+// rights: the machine with Inspect, the boot image with Read. The process
 // asks the kernel for nine operations. The window shows each answer of the
 // kernel: the kernel refuses each operation that needs another right.
 //
 // **What it is for.** It shows that a right is part of a handle, and that
 // the kernel checks it on each operation: holding the machine is not
-// holding all of it. A handle that the program creates itself has each
-// right, so the program is not crippled for its own work.
+// holding all of it. A handle that the process creates itself has each
+// right, so the process is not crippled for its own work.
 //
 // **The nine operations**, with the answer that the kernel must give:
 //
@@ -44,7 +44,7 @@ import "modus:support/system"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1554, programs = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1554, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -59,7 +59,7 @@ HEIGHT :: 332
 #assert(HEIGHT == 12 + 5 * LINE + ATTEMPT_CAPACITY * LINE + 12)
 
 
-// One operation that the program asked, and the answer of the kernel.
+// One operation that the process asked, and the answer of the kernel.
 Attempt :: struct {
 	text:     string,
 	expected: system.Status,
@@ -136,7 +136,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	_, status = system.give(window.ring_memory, image, {.Read})
 	note("give the boot image to the compositor", .No_Right, status)
 
-	// The handle of an object that the program creates has each right.
+	// The handle of an object that the process creates has each right.
 	memory: system.Handle
 	memory, status = system.memory_create(1)
 	if status == .Ok {
@@ -174,21 +174,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		frame := interface.window_frame_start(&window_memory, &window)
 		// Each line is a line of a table: its text 3 pixels under its top.
 		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
-		interface.cell_text(&frame, interface.column_take(&column, LINE), "this program holds two handles from the root service:", graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "this process holds two handles from the root service:", graphics.colors.dim)
 		// A handle: its object, then its right in the color of a right that
-		// the program holds.
+		// the process holds.
 		handles := [2][2]string{{"the machine, with the right ", "Inspect"}, {"the boot image, with the right ", "Read"}}
 		for handle in handles {
 			line := interface.column_take(&column, LINE)
 			text_y := line.y + (line.height - interface.line_height({})) / 2
 			x := interface.draw_text(frame.table, line.x + 16, text_y, handle[0], graphics.colors.text)
-			interface.cell_text(&frame, {x, line.y, line.x + line.width - x, line.height}, handle[1], graphics.colors.program)
+			interface.cell_text(&frame, {x, line.y, line.x + line.width - x, line.height}, handle[1], graphics.colors.process)
 		}
 		interface.column_take(&column, LINE / 2)
 		sizes := [2]interface.Size{interface.pixels(ANSWER_X - 12), interface.share()}
 		cells: [2]interface.Area
 		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
-		interface.cell_text(&frame, cells[0], "the program asks", graphics.colors.dim)
+		interface.cell_text(&frame, cells[0], "the process asks", graphics.colors.dim)
 		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
 		for attempt, index in attempts[:attempt_count] {
 			row := interface.column_take(&column, LINE)
@@ -198,7 +198,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The expected answer, a refusal too, is the expected answer of
 			// the rules; another answer is a check that did not pass. The
 			// words of the answer say whether it is a refusal.
-			color := attempt.status == attempt.expected ? graphics.colors.program : graphics.colors.failed
+			color := attempt.status == attempt.expected ? graphics.colors.process : graphics.colors.failed
 			interface.cell_text(&frame, cells[1], answer(attempt.status), color)
 		}
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)

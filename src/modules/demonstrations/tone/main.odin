@@ -1,10 +1,10 @@
-// The program `tone`: a tone of 440 Hz through the sound service, at a
+// The process `tone`: a tone of 440 Hz through the sound service, at a
 // time that it names (src/md/features/timed_stream.md).
 //
 // **Who uses it.** A principal starts it from the console:
 // `start("tone")`. Its grant **Sound_Device** gives it the stream ring of
 // the sound service, which the root service starts for it; it is the one
-// program that plays while it runs, so a second `start("tone")` is
+// process that plays while it runs, so a second `start("tone")` is
 // refused.
 //
 // **What it does**, in order:
@@ -43,8 +43,8 @@ TONE_FRAMES :: timed_stream.FRAME_RATE / 2
 REGION_PAGES :: (TONE_FRAMES * timed_stream.FRAME_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 REGION_BYTES :: REGION_PAGES * system.PAGE_SIZE
 
-// What the program needs besides its region: the same as `counters`.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 204, programs = 1, threads = 1}
+// What the process needs besides its region: the same as `counters`.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 204, processes = 1, threads = 1}
 #assert(MODULE_BUDGET.working_memory_pages == 180 + REGION_PAGES)
 
 TONE_HERTZ :: 440
@@ -73,7 +73,7 @@ fail :: proc "contextless" (parts: ..system.Part) -> ! {
 
 // cosine gives the cosine of a small angle by its series: the step of the
 // tone, 0.058 radians, needs eight terms for the precision of a double.
-// The program has no library of mathematics.
+// The module has no library of mathematics.
 cosine :: proc "contextless" (angle: f64) -> (sum: f64) {
 	term := 1.0
 	for order in 0 ..< 8 {
@@ -141,7 +141,7 @@ call :: proc "contextless" (command: timed_stream.Command, tag: u32, values: [7]
 }
 
 // status_of reads the status of a completion through the border of the
-// contract. A word that names no status is a refusal that the program
+// contract. A word that names no status is a refusal that the process
 // cannot read: it stops, and never takes the word for a status.
 status_of :: proc "contextless" (record: ring.Record) -> timed_stream.Status {
 	status, known := timed_stream.status_of_completion_word(record.kind)

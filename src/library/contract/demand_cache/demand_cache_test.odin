@@ -204,7 +204,7 @@ the_faces_keep_their_glyphs_apart :: proc(t: ^testing.T) {
 }
 
 // A wrong entry of the shared memory is never a read outside the cache:
-// each one is found Absent, and the program draws the glyph itself. A cell
+// each one is found Absent, and the process draws the glyph itself. A cell
 // entry whose glyph leaves its cell, or whose advance is not its cell, is
 // wrong too.
 @(test)

@@ -4,7 +4,7 @@ The kernel does not charge a thread for the time in which the host ran no code o
 
 ## The fault that made it
 
-The kernel charges processor time with the cycle counter, from the moment when a processor takes a thread to the moment when it leaves it (`budget_charge`, [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "Processor time"). Under KVM the cycle counter goes on while the host runs another task on the physical processor. Those cycles went to the thread that ran when the host took the processor away. A full check ran while other builds loaded the host to a load average of 47 to 58 on 16 threads, and the program `limits` read 327 ms used by two budgets with a limit of 50 ms and of 200 ms in one second. The budgets had not run that long: the host had. So the measure depended on the load of the host, which the rule of the tests forbids ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The bounds of the tests").
+The kernel charges processor time with the cycle counter, from the moment when a processor takes a thread to the moment when it leaves it (`budget_charge`, [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "Processor time"). Under KVM the cycle counter goes on while the host runs another task on the physical processor. Those cycles went to the thread that ran when the host took the processor away. A full check ran while other builds loaded the host to a load average of 47 to 58 on 16 threads, and the process `limits` read 327 ms used by two budgets with a limit of 50 ms and of 200 ms in one second. The budgets had not run that long: the host had. So the measure depended on the load of the host, which the rule of the tests forbids ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The bounds of the tests").
 
 ## Constraints
 
@@ -39,7 +39,7 @@ The record, the constants, the decision from `CPUID` and the arithmetic are the 
 ## What does not change
 
 - **The length of a turn and of a period.** A turn ends by the cycle counter since the pick, and a period by the cycle counter since its start. Both are time of the machine, not time of a thread: a turn is a bound of latency for the other threads, and a period is the time against which a limit holds. A turn in which the host took the processor away is shorter for the thread, and it is right for the other threads.
-- **The run time in ticks.** `Thread_Report.run_time` and `Program_Report.run_time` count the ticks in which a thread ran. A processor that the host does not run gets no tick, so this count already holds no stolen time; it holds the share that the host gives each processor, which is what the check of the share policy still meets (`ROADMAP.md`).
+- **The run time in ticks.** `Thread_Report.run_time` and `Process_Report.run_time` count the ticks in which a thread ran. A processor that the host does not run gets no tick, so this count already holds no stolen time; it holds the share that the host gives each processor, which is what the check of the share policy still meets (`ROADMAP.md`).
 
 ## The deadline of a limit
 

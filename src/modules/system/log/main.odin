@@ -1,38 +1,38 @@
 // A system tool: the log of the machine, as records.
 //
-// Each record has a time, a program, a thread, a level, a channel and a
-// text. The kernel writes the records in one memory object; this program
+// Each record has a time, a process, a thread, a level, a channel and a
+// text. The kernel writes the records in one memory object; this process
 // maps it with the right Read, and waits on its counter. The top part
 // counts the records of each channel. The bottom part shows the last
 // records: the color of the mark is the level, and the color of the name
-// is the program. Each value of a text is in the color of its value kind,
+// is the process. Each value of a text is in the color of its value kind,
 // as the record keeps it (modus:contract/value_kinds); the head of the column of
-// the text is the legend of the kinds. A text that starts with its program,
+// the text is the legend of the kinds. A text that starts with its process,
 // or its channel, and ": " shows without that start: the columns at its
 // left already say it. The record keeps its text whole.
 //
-// The program needs the grant to read the records of the log. It is also a
+// The process needs the grant to read the records of the log. It is also a
 // service: records() and value_runs() give the records and their value runs
 // as tables (exports.odin).
 //
 // **What it is for.** The log is the one record of what the machine did:
-// the kernel and every program write to it, and the serial port prints the
-// same texts. This program shows the log as [log records](term:log-record)
+// the kernel and every process write to it, and the serial port prints the
+// same texts. This process shows the log as [log records](term:log-record)
 // with typed fields, not as lines of text: a reader sees at once which
-// program wrote a record, at which [level](term:level), on which
+// process wrote a record, at which [level](term:level), on which
 // [channel](term:channel), and which parts of the text are values (a
 // number, a size, a time, a module, a version, a status: the
 // [value runs](term:value-run)). It shows that a log is data, not text to
 // parse again.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("log")` in the console. The window has:
 //
 // - a top line: the count of records read, the count gone before its
 //   start, the count lost since, and the count of each level;
 // - the channels, each with its count of records (at most 12; the others
 //   count together);
-// - the newest records, in 30 lines: the time in seconds, the program, the
+// - the newest records, in 30 lines: the time in seconds, the process, the
 //   channel and the text, with the legend of the value kinds over the
 //   column of the text. A text is whole, on the lines that it needs.
 //
@@ -42,21 +42,21 @@
 //
 // **Lost records.** The kernel keeps the last 2047 records in a ring of
 // memory, and writes over the oldest one when the ring is full. The records
-// that the kernel wrote over before this program kept its first record are
+// that the kernel wrote over before this process kept its first record are
 // gone before its start: their count says how long the machine ran before
 // it. A reader that is slower than the writers loses records after that:
-// this program counts them as lost since, in red when the count is not 0.
+// this process counts them as lost since, in red when the count is not 0.
 //
 // **Its grants**: **Log_Records**, the memory of the log records with the
-// right Read, and **Serve**, its exports. The program writes no record in
-// the name of another program: the kernel sets the program, the thread and
+// right Read, and **Serve**, its exports. The process writes no record in
+// the name of another process: the kernel sets the process, the thread and
 // the time of each record.
 //
 // **Its exports** (`exports.odin`): `records` and `value_runs`: the whole
 // log to a caller that [acts for the principal](term:acts-for-the-principal),
 // and its [own records](term:own-records) to each other caller.
-// `program_records` and `program_value_runs`: the records of one program
-// whose program handle the caller lends, such as a child of the caller.
+// `process_records` and `process_value_runs`: the records of one process
+// whose process handle the caller lends, such as a child of the caller.
 //
 // ```
 // connect("log")
@@ -75,8 +75,8 @@ ROWS :: 30
 CHANNELS :: 12
 MARGIN :: 12
 LINE :: 16
-COLUMN_PROGRAM :: 11 * 8 // After "00000.000" and two spaces.
-COLUMN_CHANNEL :: COLUMN_PROGRAM + 13 * 8
+COLUMN_PROCESS :: 11 * 8 // After "00000.000" and two spaces.
+COLUMN_CHANNEL :: COLUMN_PROCESS + 13 * 8
 COLUMN_TEXT :: COLUMN_CHANNEL + 11 * 8
 TEXT_CHARACTERS :: 80
 WIDTH :: 2 * MARGIN + COLUMN_TEXT + TEXT_CHARACTERS * 8
@@ -84,12 +84,12 @@ TOP_LINES :: 4
 HEIGHT :: 2 * MARGIN + (TOP_LINES + ROWS) * LINE
 
 // level_color gives the color of a level in the appearance in force: a
-// record of a program that runs as it must, in the color of a program; a
+// record of a process that runs as it must, in the color of a process; a
 // debug record of less weight; a warning; a failure.
 level_color :: proc "contextless" (level: system.Log_Level) -> graphics.Color {
 	switch level {
 	case .Info:
-		return graphics.colors.program
+		return graphics.colors.process
 	case .Debug:
 		return graphics.colors.dim
 	case .Warning:
@@ -123,7 +123,7 @@ legend_kinds := [?]value_kinds.Value_Kind{.Number, .Size, .Time, .Module, .Versi
 legend_names := [?]string{"number", "size", "time", "module", "version", "status"}
 
 // repeated_start gives the count of bytes at the start of a text that say
-// its program, then its channel, each followed by ": ": "kernel: boot: " in
+// its process, then its channel, each followed by ": ": "kernel: boot: " in
 // a record of the kernel in the channel boot.
 repeated_start :: proc "contextless" (record: ^system.Log_Record, text: string) -> int {
 	skip := 0
@@ -146,7 +146,7 @@ JOIN_PARTS :: 4 // The records of one text that the window joins: a text of syst
 RECORD_TEXT_SIZE :: size_of(system.Log_Record) - offset_of(system.Log_Record, text)
 JOIN_CAPACITY :: JOIN_PARTS * RECORD_TEXT_SIZE
 JOIN_RUN_CAPACITY :: 64 // The value runs of one joined text that keep their color; a run past them is plain.
-NAME_ROOM :: COLUMN_CHANNEL - COLUMN_PROGRAM - 8 // The box of the name of the program.
+NAME_ROOM :: COLUMN_CHANNEL - COLUMN_PROCESS - 8 // The box of the name of the process.
 CHANNEL_ROOM :: COLUMN_TEXT - COLUMN_CHANNEL - 8 // The box of the channel.
 TEXT_ROOM :: TEXT_CHARACTERS * 8 // The box of the text.
 
@@ -161,7 +161,7 @@ Joined :: struct {
 	count:     int,
 	runs:      [JOIN_RUN_CAPACITY]Joined_Run,
 	run_count: int,
-	from:      int, // The bytes at the start that repeat the program and the channel: not shown.
+	from:      int, // The bytes at the start that repeat the process and the channel: not shown.
 }
 
 joined_text: Joined // The text that the window measures or draws now: not on the stack, it has 2 KiB.
@@ -200,7 +200,7 @@ join :: proc "contextless" (joined: ^Joined, group: Group) {
 }
 
 // group_lines gives the lines of a group: the most of the lines of its
-// text, of the name of its program and of its channel, each in its box.
+// text, of the name of its process and of its channel, each in its box.
 group_lines :: proc "contextless" (joined: ^Joined, group: Group) -> int {
 	record := record_shown(group.first)
 	text_lines := interface.text_wrapped_line_count(nil, {}, string(joined.bytes[joined.from:joined.count]), TEXT_ROOM)
@@ -268,7 +268,7 @@ take :: proc "contextless" (record: ^system.Log_Record) {
 
 // draw draws the whole window: the counts, the channels, the legend of the
 // value kinds, and the last records. A text drops the start that repeats
-// its program and its channel (`repeated_start`).
+// its process and its channel (`repeated_start`).
 draw :: proc "contextless" (canvas: graphics.Canvas) {
 	graphics.clear(canvas, graphics.colors.background)
 	// The log is a ring of the kernel: its title in the color of the kernel.
@@ -316,7 +316,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 
 	top := MARGIN + TOP_LINES * LINE
 	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.colors.dim)
-	graphics.text(canvas, MARGIN + COLUMN_PROGRAM, top - LINE, "program", graphics.colors.dim)
+	graphics.text(canvas, MARGIN + COLUMN_PROCESS, top - LINE, "process", graphics.colors.dim)
 	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", graphics.colors.dim)
 	x = graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text   ", graphics.colors.dim)
 	for kind, index in legend_kinds {
@@ -360,7 +360,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, graphics.colors.dim, 4)
 		x = graphics.text(canvas, x, y, ".", graphics.colors.dim)
 		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.colors.dim, 3)
-		lines_draw(canvas, MARGIN + COLUMN_PROGRAM, y, NAME_ROOM, system.name_of(record.name[:]), record.program == 0 ? graphics.colors.text : graphics.colors.series[record.program % graphics.SERIES_COLOR_COUNT])
+		lines_draw(canvas, MARGIN + COLUMN_PROCESS, y, NAME_ROOM, system.name_of(record.name[:]), record.process == 0 ? graphics.colors.text : graphics.colors.series[record.process % graphics.SERIES_COLOR_COUNT])
 		lines_draw(canvas, MARGIN + COLUMN_CHANNEL, y, CHANNEL_ROOM, system.name_of(record.channel[:]), graphics.colors.dim)
 		join(joined, group)
 		joined_text_draw(canvas, MARGIN + COLUMN_TEXT, y, joined, record.level == .Error ? graphics.colors.failed : graphics.colors.text)
@@ -369,7 +369,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 }
 
 // entry opens the window of the log and runs its loop: it shows each new
-// log record until the program is stopped.
+// log record until the process is stopped.
 //
 // **What it sets up**: a window, the reader of the log records (the memory
 // of the records that the grant **Log_Records** gives, mapped read-only),
@@ -412,7 +412,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for {
 			record, late, has := system.log_next(&reader)
 			// Before the first kept record, a gap only says how long the
-			// machine ran before this program; after it, a gap is a
+			// machine ran before this process; after it, a gap is a
 			// record that this reader was too slow to read.
 			if row_count == 0 {
 				gone_before_start += late

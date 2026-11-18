@@ -342,8 +342,8 @@ Tls_Configuration :: struct {
 	transport_parameters:       [TRANSPORT_PARAMETERS_LIMIT]u8,
 	// The bytes of the parameters: 0 to `TRANSPORT_PARAMETERS_LIMIT`.
 	transport_parameters_length: int,
-	// The server: its Ed25519 private key, 32 bytes. Its program holds it; it never leaves the memory
-	// of the program. The handshake erases its copy when it fails and when its secrets are erased
+	// The server: its Ed25519 private key, 32 bytes. Its process holds it; it never leaves the memory
+	// of the process. The handshake erases its copy when it fails and when its secrets are erased
 	// (`tls_handshake_erase_secrets`). A client leaves it at zero.
 	server_private_key:         [ED25519_KEY_SIZE]u8,
 	// The client: the [pinned key](term:pinned-key), the Ed25519 public key of the server that it
@@ -436,7 +436,7 @@ Tls_Handshake :: struct {
 	// The procedures of the module `cryptography`. The record that it points to must live as long as
 	// the handshake.
 	cryptography:                  ^Cryptography,
-	// The random generator of the program: the source of the Random of each Hello and of the X25519
+	// The random generator of the process: the source of the Random of each Hello and of the X25519
 	// private key.
 	generator:                     ^random.Generator,
 	// The state of the handshake. The transport reads it: `Connected` is the end of the handshake of
@@ -877,7 +877,7 @@ transcript_hash :: proc "contextless" (handshake: ^Tls_Handshake, output: ^[HASH
 
 // key_share_make draws the X25519 private key of this side and computes its public key.
 //
-// The private key is 32 random bytes from the generator of the program, with the least seed
+// The private key is 32 random bytes from the generator of the process, with the least seed
 // strength of the configuration (`random.fill_for_a_key`). The public key is the product of the
 // private key and the base point of the curve, the point 9.
 //
@@ -955,7 +955,7 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 // - `handshake`: the record of the handshake, in memory of the caller.
 // - `configuration`: the role, the protocol, the transport parameters and the key of this side.
 // - `cryptography`: the procedures of the module.
-// - `generator`: the random generator of the program.
+// - `generator`: the random generator of the process.
 // - `error`: the error record of a failure.
 //
 // **The ClientHello of a client** (RFC 8446, section 4.1.2): the legacy version 0x0303, the Random,
@@ -979,7 +979,7 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 //   holds the count of bytes at fault as its value;
 // - `Refused`, argument 0: the module did not give the public key of the server or of the
 //   client, or the key share;
-// - `Seed_Too_Weak`, the record of the generator: the seed of the program is weaker than the
+// - `Seed_Too_Weak`, the record of the generator: the seed of the process is weaker than the
 //   configuration asks. A server meets this later, when it reads the ClientHello.
 tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, error: ^errors.Error_Record) -> bool {
 	handshake^ = {configuration = configuration^, cryptography = cryptography, generator = generator}
@@ -1386,7 +1386,7 @@ message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 // (`shared_secret_and_handshake_keys`), then the rest of the flight at the Handshake level
 // (`server_flight_send`).
 //
-// A seed of the program that is too weak stops the handshake before any byte is written
+// A seed of the process that is too weak stops the handshake before any byte is written
 // (`Seed_Too_Weak`). On that path the copy of the private key of the server is not erased here:
 // the transport erases it when it ends the connection.
 @(private)

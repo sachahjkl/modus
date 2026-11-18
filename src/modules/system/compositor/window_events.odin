@@ -8,7 +8,7 @@ import "modus:support/system"
 // The events of a window whose ring is full
 // (docs/ARCHITECTURE.md, "The path of a key").
 //
-// The compositor cannot wait for a window: one program that does not read
+// The compositor cannot wait for a window: one process that does not read
 // would stop the desktop. So it keeps, for each window, the records that
 // the ring of the window refused (`key_path.Window_Queue`), and it sends
 // them in order, before any newer record, when the ring has room. The keys
@@ -141,7 +141,7 @@ window_events_pass :: proc "contextless" () {
 // that has records waiting: the compositor wakes when the window read half
 // of its ring, or before the window waits itself.
 //
-// It waits only on a ring that is exactly full. A program writes the read
+// It waits only on a ring that is exactly full. A process writes the read
 // counter of its ring: with a false count, the wait would end at once in
 // each turn. A window that gives a false count gets its records in a later
 // turn of the loop, and nothing more.

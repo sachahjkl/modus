@@ -472,7 +472,7 @@ site_description_cut :: proc(text: string) -> string {
 }
 
 // site_git_commit reads the commit of the work tree from the files of git,
-// with no program: .git is a folder, or a file "gitdir: <folder>" in a
+// with no host process: .git is a folder, or a file "gitdir: <folder>" in a
 // work tree; HEAD names a reference, which is a file or a line of
 // packed-refs in the common folder.
 site_git_commit :: proc() -> string {

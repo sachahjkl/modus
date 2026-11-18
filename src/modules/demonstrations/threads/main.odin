@@ -1,7 +1,7 @@
 // A demonstration of threads (docs/ARCHITECTURE.md, "Open questions about
 // the architecture", item 6).
 //
-// One program, one address space, five threads. Each square is drawn by its
+// One process, one address space, five threads. Each square is drawn by its
 // own thread, in a picture that the threads share with the first thread:
 // the threads share all the memory. The first thread shows the pictures in
 // the window. The same procedure runs in the four threads; only the
@@ -20,7 +20,7 @@
 // the first thread reads the sum in the shared memory.
 //
 // **Start**: `start("threads")` in the console, or the bar of the desktop.
-// Its row of `program_roles` has no grant; its budget has room for 6 threads.
+// Its row of `process_roles` has no grant; its budget has room for 6 threads.
 //
 // **What a reader sees**: four squares, each with its thread and its count
 // of frames, or "stopped". The log has "threads: a thread added the numbers
@@ -37,7 +37,7 @@ import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1389, programs = 1, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1389, processes = 1, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 SQUARE :: 176
 MARGIN :: 12
@@ -195,7 +195,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		drawn := 0
 		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
-		interface.draw_text(table, MARGIN, 8, "One program. Each square is one thread.", graphics.colors.text)
+		interface.draw_text(table, MARGIN, 8, "One process. Each square is one thread.", graphics.colors.text)
 		for &worker, index in workers {
 			x := MARGIN + (index % 2) * (SQUARE + MARGIN)
 			y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN)

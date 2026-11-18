@@ -203,8 +203,8 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 			return .Move
 		case inside(pointer_x, pointer_y, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height):
 			// The surface of the window in front at this place: the shape that
-			// its program asked for, over its own surface only: a program must not
-// change the pointer over the window of another program.
+			// its process asked for, over its own surface only: a process must not
+// change the pointer over the window of another process.
 			return client.pointer_shape
 		}
 		return .Arrow // The border.
@@ -253,7 +253,7 @@ pointer_wake :: proc "contextless" () -> u64 {
 }
 
 // pointer_shape_request takes the display command Pointer_Shape of a
-// program: the shape of its surface. A word that names no shape is
+// process: the shape of its surface. A word that names no shape is
 // refused, with a line: the surface keeps its shape.
 pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Record) {
 	shape, shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, record.values[0])

@@ -18,7 +18,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import module "modus:contract/module"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 
 // The name of the module build file, in the folder of the module.
 MODULE_BUILD_FILE_NAME :: "module.txt"
@@ -380,7 +380,7 @@ Outside_Module_Example :: struct {
 
 THIRD_PARTY_EXAMPLE_FOLDER :: BUILD_FOLDER + "/third_party_example"
 
-// A program with no import, and a module with an import: the second
+// A module with an entry and no import, and a module with an import: the second
 // needs the file of its import from the folder of the system while its
 // own file goes to the folder of the copy.
 OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
@@ -545,23 +545,23 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	return true
 }
 
-// The name of the outside module that the test of the disk programs starts
-// in a machine: the sources of the program visitor, copied outside the
+// The name of the outside module that the test of the disk processes starts
+// in a machine: the sources of the module visitor, copied outside the
 // sources and built by `module-build` under this name, which is no module
 // of the boot image.
-OUTSIDE_DISK_PROGRAM :: "outsider"
+OUTSIDE_DISK_MODULE :: "outsider"
 
 // The name of a second module from the same copy, built with one more
 // setting: it writes to the address 0 after its start, and the test reads
 // its stop report. Its folder is the folder of the copy, so its debug
 // object names its sources from the folder `outsider` too.
-OUTSIDE_FAULT_PROGRAM :: "outsider_fault"
+OUTSIDE_FAULT_MODULE :: "outsider_fault"
 
-// outside_program_for_a_disk builds that module as a developer does, and
+// outside_module_for_a_disk builds that module as a developer does, and
 // gives its file and its debug object. With `faults`, it builds the module
-// OUTSIDE_FAULT_PROGRAM from the same folder. The folder is written again
+// OUTSIDE_FAULT_MODULE from the same folder. The folder is written again
 // at each build: the bytes that a build gave are read before the next one.
-outside_program_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: []u8, ok: bool) {
+outside_module_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: []u8, ok: bool) {
 	tool_path, path_error := os.get_executable_path(context.temp_allocator)
 	if path_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot find the file of the tool: %v", path_error)
@@ -572,9 +572,9 @@ outside_program_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: 
 		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)
 		return nil, nil, false
 	}
-	module_name := faults ? OUTSIDE_FAULT_PROGRAM : OUTSIDE_DISK_PROGRAM
-	build_file := faults ? "name: " + OUTSIDE_FAULT_PROGRAM + "\ndefines: BUILT_OUTSIDE=true FAULTS_AFTER_THE_START=true\n" : "name: " + OUTSIDE_DISK_PROGRAM + "\ndefines: BUILT_OUTSIDE=true\n"
-	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = TEST_MODULE_SOURCES + DISK_PROGRAM_MODULE, build_file = build_file}
+	module_name := faults ? OUTSIDE_FAULT_MODULE : OUTSIDE_DISK_MODULE
+	build_file := faults ? "name: " + OUTSIDE_FAULT_MODULE + "\ndefines: BUILT_OUTSIDE=true FAULTS_AFTER_THE_START=true\n" : "name: " + OUTSIDE_DISK_MODULE + "\ndefines: BUILT_OUTSIDE=true\n"
+	example := Outside_Module_Example{name = OUTSIDE_DISK_MODULE, source = TEST_MODULE_SOURCES + DISK_MODULE_NAME, build_file = build_file}
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
 	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", module_name)
 	file = read_file(join(out, ".module")) or_return
@@ -582,31 +582,31 @@ outside_program_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: 
 	return file, debug_file, true
 }
 
-// The command program-disk: it writes a data disk whose store `programs`
+// The command module-disk: it writes a data disk whose store `module_files`
 // holds module files, each under the name of its file, and the debug
 // object of each one that has the file `<name>.debug` beside it, under the
 // hash of the module. A machine with that disk starts each one with
 // `start_from_disk` and its hash, which the command prints; the debugger
 // names its procedures and its lines. It writes no disk over a file that
 // exists: a data disk holds the stores of a principal.
-run_program_disk :: proc(args: []string) -> int {
+run_module_disk :: proc(args: []string) -> int {
 	if len(args) < 2 {
-		fmt.eprintln("modustool: program-disk <disk file to write> <module file> [<module file> ...]")
+		fmt.eprintln("modustool: module-disk <disk file to write> <module file> [<module file> ...]")
 		return EXIT_USAGE
 	}
 	disk := args[0]
 	if os.exists(disk) {
-		fmt.eprintfln("modustool: program-disk: %s exists, and a data disk holds the stores of a principal: remove it, or name another file", disk)
+		fmt.eprintfln("modustool: module-disk: %s exists, and a data disk holds the stores of a principal: remove it, or name another file", disk)
 		return EXIT_USAGE
 	}
-	files := make([dynamic]Program_File, context.temp_allocator)
+	files := make([dynamic]Module_File, context.temp_allocator)
 	for path in args[1:] {
 		bytes, read := read_file(path)
 		if !read {
 			return EXIT_FAILURE
 		}
 		if load_error := module.validate(bytes); load_error != .None {
-			fmt.eprintfln("modustool: program-disk: %s is not a module file that the loader takes: %v", path, load_error)
+			fmt.eprintfln("modustool: module-disk: %s is not a module file that the loader takes: %v", path, load_error)
 			return EXIT_FAILURE
 		}
 		name := path
@@ -614,33 +614,33 @@ run_program_disk :: proc(args: []string) -> int {
 			name = name[slash + 1:]
 		}
 		name = strings.trim_suffix(name, ".module")
-		append(&files, Program_File{name = name, bytes = bytes})
+		append(&files, Module_File{name = name, bytes = bytes})
 		// The debug object that module-build wrote beside the module file
 		// goes beside it in the store, named by the hash of the module.
 		debug_path := join(strings.trim_suffix(path, ".module"), ".debug")
 		if !os.exists(debug_path) {
-			fmt.printfln("modustool: program-disk: %s has no debug object beside it: the debugger names no procedure of %s", path, name)
+			fmt.printfln("modustool: module-disk: %s has no debug object beside it: the debugger names no procedure of %s", path, name)
 			continue
 		}
 		object, object_read := read_file(debug_path)
 		if !object_read {
 			return EXIT_FAILURE
 		}
-		debug_file, accepted := program_debug_object_file(name, bytes, object)
+		debug_file, accepted := module_debug_object_file(name, bytes, object)
 		if !accepted {
 			return EXIT_FAILURE
 		}
 		append(&files, debug_file)
 	}
-	if !program_disk_write(disk, files[:]) {
+	if !module_disk_write(disk, files[:]) {
 		return EXIT_FAILURE
 	}
 	for file in files {
-		if disk_program.debug_object_name_is(file.name) {
+		if disk_process.debug_object_name_is(file.name) {
 			continue
 		}
-		digits: [disk_program.HASH_DIGITS]u8
-		disk_program.hash_write(&digits, blake3.hash(file.bytes))
+		digits: [disk_process.HASH_DIGITS]u8
+		disk_process.hash_write(&digits, blake3.hash(file.bytes))
 		fmt.printfln("modustool: in the console of a machine with this disk: start_from_disk(\"%s\", \"%s\")", file.name, string(digits[:]))
 	}
 	return 0

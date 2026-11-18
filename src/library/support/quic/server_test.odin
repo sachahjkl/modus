@@ -140,7 +140,7 @@ harness_client_of :: proc(harness: ^Harness, remote: Remote) -> int {
 	return -1
 }
 
-// harness_server_receive gives one datagram to the server, as a program
+// harness_server_receive gives one datagram to the server, as a process
 // does: the answer to the remote, then the release of the remote.
 harness_server_receive :: proc(harness: ^Harness, remote: Remote, bytes: []u8) -> Server_Outcome {
 	answer: [MAX_DATAGRAM_SIZE]u8

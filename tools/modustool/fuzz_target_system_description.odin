@@ -9,7 +9,7 @@ import "modus:contract/system_description"
 // The fuzz targets of the system description and the boot image
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
 // boot program and the root service read them before the kernel and the
-// first program start. The raw target reads a description: one system has
+// first process start. The raw target reads a description: one system has
 // one description, so a description that `entries` accepts is the one that
 // its writer gives for its entries. The generated target builds a boot
 // image, its kernel and its description, then changes one byte: a changed

@@ -47,7 +47,7 @@ Test_Part_Run :: struct {
 // parts first, so that the last part to end starts early. The time of each
 // part is in build/test_times.txt.
 test_parts := [?]Test_Part {
-	{name = "main", does = "The main machine: the desktop, the console, the programs and the developer tools", run = main_tests_run, procedures = {"main_tests_run"}, volumes = {BOOT_VOLUME}},
+	{name = "main", does = "The main machine: the desktop, the console, the processes and the developer tools", run = main_tests_run, procedures = {"main_tests_run"}, volumes = {BOOT_VOLUME}},
 	{name = "tcp", does = "The two machines of TCP", run = tcp_tests_run, procedures = {"tcp_tests_run"}, volumes = {BOOT_VOLUME}},
 	{name = "random", does = "The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none", run = random_tests_run, procedures = {"random_tests_run"}, volumes = {BOOT_VOLUME}},
 	{name = "quic", does = "The machine of QUIC through the network service", run = quic_tests_run, procedures = {"quic_tests_run"}, volumes = {BOOT_VOLUME}},
@@ -63,10 +63,10 @@ test_parts := [?]Test_Part {
 		volumes = {BOOT_VOLUME, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_OTHER_SYSTEM},
 	},
 	{
-		name = "disk_programs",
-		does = "The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock (\"The disk of the disk programs\")",
-		run = disk_programs_tests_run,
-		procedures = {"disk_programs_tests_run", "disk_programs_named_principal_tests_run"},
+		name = "disk_processes",
+		does = "The six machines of the disk processes: a module that the boot image does not hold starts from the store `module_files`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a process calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant and a client key of `remote` that a console of the session of the named principal alice gives survive the restart and her unlock (\"The disk of the disk processes\")",
+		run = disk_processes_tests_run,
+		procedures = {"disk_processes_tests_run", "disk_processes_named_principal_tests_run"},
 		volumes = {BOOT_VOLUME},
 	},
 	// The two machines of the measure boot the main volume and the other
@@ -82,7 +82,7 @@ test_parts := [?]Test_Part {
 	{name = "power", does = "The loss of power: of the storage, of the settings, of the ranges, and the write that the disk drops", run = power_tests_run, procedures = {"power_tests_run", "power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run"}, volumes = {BOOT_VOLUME}},
 	{name = "persist", does = "The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines", run = persistence_run, procedures = {"persistence_run"}, volumes = {BOOT_VOLUME}},
 	{name = "extended_state", does = "The three machines of the extended state", run = extended_state_tests_run, procedures = {"extended_state_tests_run"}, volumes = {BOOT_VOLUME}},
-	{name = "return_fault", does = "The machine of the return to a program", run = return_fault_tests_run, procedures = {"return_fault_tests_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_WITHOUT_RETURN_CHECK}},
+	{name = "return_fault", does = "The machine of the return to a process", run = return_fault_tests_run, procedures = {"return_fault_tests_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_WITHOUT_RETURN_CHECK}},
 	{
 		name = "kernel_events",
 		does = "The machine of the kernel events, then the thread counters on the same machine: `counters` counts a loop of 1 000 000 turns (at least one instruction retired for each turn, the one count that the test checks) and the same reads of 2 MiB in order and by page, as measures. After the machine, the tool reads the last boot line \"kernel: performance counters\" of the test machine; a line with counters must say that the first processor passed the trial of the registers. When the kernel found no counters, or a processor refused their trial, it checks only that the commands gave `Unsupported`, and it writes what the host gives as the explanation (`ARCHITECTURE.md`, \"The counters of a thread\")",

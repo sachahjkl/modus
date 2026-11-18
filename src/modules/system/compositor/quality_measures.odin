@@ -16,7 +16,7 @@ import "modus:support/system"
 // into the console sees both; it also comes alone after FRAMES_OF_A_LINE
 // frames, with no key. That count is large, about one line a minute at
 // 60 frames a second: the log of the system keeps 2047 records for every
-// program, and a line each second would push the records of the others out.
+// process, and a line each second would push the records of the others out.
 KEYS_OF_A_LINE :: 16
 FRAMES_OF_A_LINE :: 4096
 
@@ -91,11 +91,11 @@ quality_present :: proc "contextless" (window: int, client: ^Client, first_pictu
 
 // quality_start_log writes the line of the start of a window.
 quality_start_log :: proc "contextless" (client: ^Client, span: u64) {
-	system.log("compositor: measure: the start of the window ", system.name_of(client.title[:]), ", from Program_Start to its first frame: ", span / 1000, ".", span / 100 % 10, " us")
+	system.log("compositor: measure: the start of the window ", system.name_of(client.title[:]), ", from Process_Start to its first frame: ", span / 1000, ".", span / 100 % 10, " us")
 }
 
 // quality_window_started takes the record Client_Started: the time of the
-// start of the program of a window. It comes before or after the first
+// start of the process of a window. It comes before or after the first
 // flip of the window: the line comes when both times are known.
 quality_window_started :: proc "contextless" (memory: system.Handle, started_at: u64) {
 	handles: [CLIENT_CAPACITY]u64

@@ -1,45 +1,45 @@
 // The debugger service: the commands of a debugger, as exports.
 //
-// A debugger stops a program where its author asks, shows its threads,
+// A debugger stops a process where its author asks, shows its threads,
 // its registers, its stack and its variables, and runs it one instruction
-// at a time. This program is the one debugger of the system: the console,
+// at a time. This process is the one debugger of the system: the console,
 // a window, and a developer on another machine through the service
 // `remote` call the same exports, and each export gives a table of
 // records, never text to parse.
 //
 // **What it is for.** `attach("clock")` asks the root service for the
-// handle of the program with the right Debug, on behalf of the caller. The
+// handle of the process with the right Debug, on behalf of the caller. The
 // root service decides: the caller must act for the principal whose
-// session runs the program, and each grant of the program must be a grant
+// session runs the process, and each grant of the process must be a grant
 // that the caller holds itself. Then `threads()`, `hold(1)`, `stack(1)`,
 // `locals(1, 0)`, `value(1, 0, "pair.next^.first")`, `break_at("fault::three")`,
-// `step(1)`, `continue_all()` and `detach()` act on that program.
+// `step(1)`, `continue_all()` and `detach()` act on that process.
 //
-// **How it works.** The service is the debugger of the program for the
+// **How it works.** The service is the debugger of the process for the
 // kernel: its main thread is the debug handler, so the breakpoints and the
-// single steps of the program become fault records of this thread
-// (docs/ARCHITECTURE.md, "The debugger of a program"). It reads the threads
-// and the module records of the program with `Inspect`, the registers and
+// single steps of the process become fault records of this thread
+// (docs/ARCHITECTURE.md, "The debugger of a process"). It reads the threads
+// and the module records of the process with `Inspect`, the registers and
 // the memory with `Thread_Control`, and the names, the lines, the types
 // and the variables in the debug object of each module, which it takes
 // from the debug image by the hash of the module. The module of a disk
-// program is not in the boot image: at the attach, the service reads its
-// debug object from the store `programs`, through a connection that reads
+// process is not in the boot image: at the attach, the service reads its
+// debug object from the store `module_files`, through a connection that reads
 // only and that the root service gives with the debug access
-// (disk_debug_object.odin). It writes no byte in the program: a breakpoint
+// (disk_debug_object.odin). It writes no byte in the process: a breakpoint
 // is a debug register of a thread.
 //
-// **A disk program that faulted.** `stop_report("visitor")` needs no
-// attach: the root service keeps the stop report of a disk program that
+// **A disk process that faulted.** `stop_report("visitor")` needs no
+// attach: the root service keeps the stop report of a disk process that
 // stopped on a fault, and gives it with the same connection to the store.
 // The export names each frame with the debug object of the module
 // (stop_report.odin).
 //
-// **One program at a time.** The service debugs one program, for one
+// **One process at a time.** The service debugs one process, for one
 // caller. A second `attach` while it does is refused with `Full`
-// (`Debugged_Programs`). The debugging ends at `detach()`, when the
+// (`Debugged_Processes`). The debugging ends at `detach()`, when the
 // caller disconnects or stops, when the grant `debug` of the caller is
-// revoked, and when the program stops: the kernel then gives the program
+// revoked, and when the process stops: the kernel then gives the process
 // back each thread that the debugger held.
 //
 // **Start**: the root service starts it when a caller connects to
@@ -51,7 +51,7 @@
 // - **Serve**: its exports.
 // - **Debugger**: the commands `Debug` and `Debug_Store` of the root ring,
 //   and no other.
-// - **Inspect**: the thread report and the module report of a program.
+// - **Inspect**: the thread report and the module report of a process.
 // - **Debug_Image**: the debug objects.
 // - **Image**: the name of each module, from its hash.
 //
@@ -75,8 +75,8 @@ import "modus:support/system"
 // The results of an export that fails: a negative number, with an error
 // record.
 ERROR_ACTS_FOR_PRINCIPAL :: -1 // No_Grant, Acts_For_Principal: the caller does not act for the principal.
-ERROR_NOT_ATTACHED :: -2 // Absent, Debugged_Programs: the caller attached to no program.
-ERROR_BUSY :: -3 // Full, Debugged_Programs: the service debugs a program already.
+ERROR_NOT_ATTACHED :: -2 // Absent, Debugged_Processes: the caller attached to no process.
+ERROR_BUSY :: -3 // Full, Debugged_Processes: the service debugs a process already.
 ERROR_REFUSED :: -4 // The root service or the kernel refused: the record is theirs, or Refused with the status.
 ERROR_THREAD :: -5 // Absent, Threads or Held_Threads: no such thread, or the thread is not held.
 ERROR_NO_DEBUG_OBJECT :: -6 // Absent, Debug_Objects: no debug object describes the module of the address.
@@ -85,19 +85,19 @@ ERROR_VARIABLE :: -8 // Absent, Readable_Variables: no variable or global has th
 ERROR_PATH :: -9 // Bad_Byte or Bad_Value: the text is not a path, or a step of the path names nothing.
 ERROR_PLACE :: -10 // Absent, Source_Places: no procedure and no line has the place of the breakpoint.
 ERROR_BREAKPOINTS :: -11 // Full or Absent, Breakpoints: no breakpoint is free, or the number names none.
-ERROR_ADDRESS :: -12 // Bad_Address or Bad_Value: the program does not map the address, or the text is no address.
-ERROR_ENDED :: -13 // Absent, Programs: the program stopped, or the debug access ended.
-ERROR_AMBIGUOUS :: -14 // Bad_Value, Programs: two programs have the name and the module; the service cannot tell which one the handle names.
+ERROR_ADDRESS :: -12 // Bad_Address or Bad_Value: the process does not map the address, or the text is no address.
+ERROR_ENDED :: -13 // Absent, Processes: the process stopped, or the debug access ended.
+ERROR_AMBIGUOUS :: -14 // Bad_Value, Processes: two processes have the name and the module; the service cannot tell which one the handle names.
 ERROR_TEXT :: -15 // Too_Long, Bytes: a text argument is longer than the service takes.
 
-// The debug object of the module of a disk program, read from the store
+// The debug object of the module of a disk process, read from the store
 // into memory of this service: at most DEBUG_OBJECT_BYTES_LIMIT, 2048
 // pages. The rest: the page tables of its mapping, and the call ring and
 // the call region of the connection that reads it.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2080, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2080, processes = 1, threads = 1}
 
-PROGRAM_SLOTS_SEARCHED :: 256 // The program slots that an attach searches for the name.
-THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one program.
+PROCESS_SLOTS_SEARCHED :: 256 // The process slots that an attach searches for the name.
+THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one process.
 BREAK_CAPACITY :: op.THREAD_BREAKPOINT_CAPACITY // The breakpoints of the debugger: the debug address registers of a thread.
 EVENT_CAPACITY :: 32 // The stops that the service keeps until `events()` gives them.
 TEXT_ARGUMENT_LIMIT :: 160 // The bytes of a text argument: a path, a place.
@@ -116,7 +116,7 @@ SOURCE_PATH_SIZE :: 80
 PROCEDURE_NAME_SIZE :: 80
 #assert(SOURCE_PATH_SIZE <= TEXT_ARGUMENT_LIMIT) // A path that a row gives is a path that `source` and `break_at` take.
 // The bounds of the exports that wait. The service has one thread and
-// serves each caller, and the debugged program chooses how long one of its
+// serves each caller, and the debugged process chooses how long one of its
 // instructions takes: so no export waits longer than a stated bound. Each
 // bound is under the 5000 ms after which the service `remote` ends a call
 // and its connection (CALL_LIMIT in src/modules/system/remote), with room for the
@@ -133,7 +133,7 @@ FLAG_TRAP :: u64(1) << 8 // The trap flag: one instruction, then a Debug trap.
 PUSH_FRAME_POINTER :: 0x55 // The first byte of a procedure that keeps the frame pointer: push rbp.
 
 // One breakpoint of the debugger: the place `number` of the debug address
-// registers of each thread of the program.
+// registers of each thread of the process.
 Break :: struct {
 	kind:        op.Thread_Breakpoint_Kind, // None: the place is free.
 	address:     u64,
@@ -142,7 +142,7 @@ Break :: struct {
 	place_count: int,
 }
 
-// What the service holds of one thread of the program.
+// What the service holds of one thread of the process.
 Thread_Hold :: struct {
 	held:     bool, // The service stopped it (`hold`): its stop count has one stop of the debugger.
 	waits:    bool, // It waits for the answer of `record`: a breakpoint or a step stopped it.
@@ -168,15 +168,15 @@ Step_Over :: struct {
 	stack:  u64, // The stack address of the thread after the return: a return of a deeper call of the same procedure has a lower one.
 }
 
-// The program that the service debugs, and for whom.
+// The process that the service debugs, and for whom.
 Session :: struct {
 	attached:       bool,
-	program:        system.Handle, // The handle with the right Debug, from the root service.
-	caller_ring:    system.Handle, // The call ring of the connection of the caller: only this caller acts on the program.
+	process:        system.Handle, // The handle with the right Debug, from the root service.
+	caller_ring:    system.Handle, // The call ring of the connection of the caller: only this caller acts on the process.
 	name:           [32]u8,
 	name_count:     int,
-	slot:           u64, // The program slot, for the reports of Inspect.
-	program_serial: u64, // The serial of the program of the slot: another serial is another program.
+	slot:           u64, // The process slot, for the reports of Inspect.
+	process_serial: u64, // The serial of the process of the slot: another serial is another process.
 	breaks:         [BREAK_CAPACITY]Break,
 	threads:        [THREAD_CAPACITY]Thread_Hold, // By the number of the thread.
 	events:         [EVENT_CAPACITY]Event,
@@ -198,11 +198,11 @@ request_count: u32
 // that comes after the export stopped waiting is still taken.
 Root_Request :: struct {
 	tag:        u32, // The tag of the command. 0: the place is free.
-	name:       [32]u8, // The program.
+	name:       [32]u8, // The process.
 	name_count: int,
 	ring:       system.Handle, // The call ring of the caller.
 	end:        bool, // The command ends a debug access; else it asks for one.
-	store:      bool, // The command Debug_Store: the connection to the store of the debug object of a disk program.
+	store:      bool, // The command Debug_Store: the connection to the store of the debug object of a disk process.
 	kept:       bool, // With store: the connection is for the stop report that the root service kept, not for a debug access.
 	abandoned:  bool, // No export waits for the completion.
 	unsent:     bool, // The root ring was full: the loop of the entry sends it again.
@@ -210,7 +210,7 @@ Root_Request :: struct {
 
 root_requests: [ROOT_REQUEST_CAPACITY]Root_Request
 session: Session
-// The reports of the program of the session, read again at each export.
+// The reports of the process of the session, read again at each export.
 report_modules: op.Module_Report
 report_threads: op.Thread_Table_Report
 
@@ -242,12 +242,12 @@ refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Statu
 
 // root_request_send sends one command Debug to the root service and keeps
 // it until its completion comes. With `end`, the command tells the root
-// service that the debugging of the program ended for the caller: no
+// service that the debugging of the process ended for the caller: no
 // export waits for its completion, and a command that the ring has no room
 // for is sent again later. With `store`, the command is Debug_Store: the
-// connection to the store of the debug object of a disk program; with
+// connection to the store of the debug object of a disk process; with
 // `kept` too, the connection and the stop report that the root service
-// kept of that program. tag is 0 when the table of the requests is full,
+// kept of that process. tag is 0 when the table of the requests is full,
 // or when a command that asks for an access or a connection was not sent.
 root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool, store := false, kept := false) -> (tag: u32) {
 	if requests.head == nil {
@@ -289,7 +289,7 @@ root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
 // access after its export stopped waiting: the handle is closed, and the
 // root service is told that the access ended, so that no handle and no
 // record of the root service stays; it is not told when a newer debugging
-// or a newer request of the same caller for the same program exists.
+// or a newer request of the same caller for the same process exists.
 root_completion_take :: proc "contextless" (record: ring.Record) {
 	for &item in root_requests {
 		if item.tag == 0 || item.tag != record.tag {
@@ -308,7 +308,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 				count := request.kept ? 4 : 3
 				for word in answered[:count] {
 					handle := system.Handle(word)
-					if kind, _, through := system.handle_state(handle, requests_memory); (kind == .Program || kind == .Memory) && through {
+					if kind, _, through := system.handle_state(handle, requests_memory); (kind == .Process || kind == .Memory) && through {
 						system.close(handle)
 					}
 				}
@@ -331,14 +331,14 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 			return
 		}
 		handle := system.Handle(record.values[0])
-		if kind, _, through := system.handle_state(handle, requests_memory); kind == .Program && through {
+		if kind, _, through := system.handle_state(handle, requests_memory); kind == .Process && through {
 			system.close(handle)
 		}
 		name := string(request.name[:request.name_count])
-		// The same caller can have asked again for the same program since:
+		// The same caller can have asked again for the same process since:
 		// the root service keeps one record for the two handles, and an
-		// end command ends each handle of the program in this service.
-		// So, with a session or another request for that program and that
+		// end command ends each handle of the process in this service.
+		// So, with a session or another request for that process and that
 		// ring, only the late handle is closed: the kernel ends a
 		// debugging at the close of the last handle with Debug, and the
 		// session holds another one.
@@ -390,7 +390,7 @@ root_requests_send_again :: proc "contextless" () {
 	}
 }
 
-// root_debug asks the root service for the handle of a program with the
+// root_debug asks the root service for the handle of a process with the
 // right Debug, on behalf of the caller of the connection with a call ring,
 // and waits for the answer at most ROOT_ANSWER_MILLISECONDS. answered is
 // false when no completion came in that time: the request stays, and its
@@ -425,42 +425,42 @@ root_answer_wait :: proc "contextless" (tag: u32, limit: u64) -> (completion: ri
 	}
 }
 
-// root_debug_end tells the root service that the debugging of a program
+// root_debug_end tells the root service that the debugging of a process
 // ended for a caller. It does not wait for the answer.
 root_debug_end :: proc "contextless" (name: string, connection_ring: system.Handle) {
 	root_request_send(name, connection_ring, true)
 }
 
-// slot_find gives the slot of the program with a name whose module records
-// hold the module with a hash: the program that the root service named.
-// `matches` is the count of such programs: the service acts only on one.
-slot_find :: proc "contextless" (name: string, hash: [32]u8) -> (slot: u64, program_serial: u64, matches: int) {
+// slot_find gives the slot of the process with a name whose module records
+// hold the module with a hash: the process that the root service named.
+// `matches` is the count of such processes: the service acts only on one.
+slot_find :: proc "contextless" (name: string, hash: [32]u8) -> (slot: u64, process_serial: u64, matches: int) {
 	system_report: op.System_Report
 	if !inspect_call(.System, 0, &system_report, size_of(system_report)) {
 		return 0, 0, 0
 	}
-	for candidate in 1 ..< min(system_report.program_slots, PROGRAM_SLOTS_SEARCHED) {
-		program: op.Program_Report
-		if !inspect_call(.Program, candidate, &program, size_of(program)) || program.state == .None || program.state == .Stopped || system.name_of(program.name[:]) != name {
+	for candidate in 1 ..< min(system_report.process_slots, PROCESS_SLOTS_SEARCHED) {
+		process: op.Process_Report
+		if !inspect_call(.Process, candidate, &process, size_of(process)) || process.state == .None || process.state == .Stopped || system.name_of(process.name[:]) != name {
 			continue
 		}
-		if !inspect_call(.Modules, candidate, &report_modules, size_of(report_modules)) || report_modules.program_serial != program.program_serial {
+		if !inspect_call(.Modules, candidate, &report_modules, size_of(report_modules)) || report_modules.process_serial != process.process_serial {
 			continue
 		}
-		for &record in report_modules.modules[:min(report_modules.count, op.PROGRAM_MODULE_CAPACITY)] {
+		for &record in report_modules.modules[:min(report_modules.count, op.PROCESS_MODULE_CAPACITY)] {
 			if record.hash == hash {
 				matches += 1
 				if matches == 1 {
-					slot, program_serial = candidate, program.program_serial
+					slot, process_serial = candidate, process.process_serial
 				}
 				break
 			}
 		}
 	}
-	return slot, program_serial, matches
+	return slot, process_serial, matches
 }
 
-// session_end forgets the program of the session, after the debugging
+// session_end forgets the process of the session, after the debugging
 // ended. The records of the fault ring that nobody read are dropped: their
 // threads run again, by the end of the debugging in the kernel.
 session_end :: proc "contextless" (why: string) {
@@ -468,9 +468,9 @@ session_end :: proc "contextless" (why: string) {
 		return
 	}
 	system.log("debugger: the debugging of ", system.Module_Name{session_name()}, " ended: ", why)
-	system.close(session.program)
+	system.close(session.process)
 	// The root service forgets the debug access: another caller can then
-	// ask for this program.
+	// ask for this process.
 	root_debug_end(session_name(), session.caller_ring)
 	disk_debug_object_forget()
 	session = {}
@@ -482,18 +482,18 @@ session_end :: proc "contextless" (why: string) {
 }
 
 // session_of_caller checks that the caller of the export that runs is the
-// caller that attached, and that the program and the debug access are
-// still there; it reads the reports of the program again, and takes the
+// caller that attached, and that the process and the debug access are
+// still there; it reads the reports of the process again, and takes the
 // records of the fault ring. A failure gives the result of the export.
 // `needs_the_grant` is false for the detach: a caller that lost the grant
 // to act for the principal can still end its debugging, so that no thread
-// of the program stays stopped.
+// of the process stays stopped.
 session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_grant := true) -> (failure: i64) {
 	if session.attached {
 		// The root service revokes the handle when the grant `debug` of
 		// the caller is revoked, when another revocation takes the debug
 		// access away, and when the caller disconnects or stops.
-		if kind, _, _ := system.handle_state(session.program); kind != .Program {
+		if kind, _, _ := system.handle_state(session.process); kind != .Process {
 			session_end("the debug access was revoked")
 		}
 	}
@@ -502,25 +502,25 @@ session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if !session.attached || session.caller_ring != caller.ring_memory {
-		return errors.fail(error, ERROR_NOT_ATTACHED, .Absent, .Debugged_Programs)
+		return errors.fail(error, ERROR_NOT_ATTACHED, .Absent, .Debugged_Processes)
 	}
-	program: op.Program_Report
-	if !inspect_call(.Program, session.slot, &program, size_of(program)) || program.program_serial != session.program_serial || program.state == .None || program.state == .Stopped {
-		session_end("the program stopped")
-		return errors.fail(error, ERROR_ENDED, .Absent, .Programs)
+	process: op.Process_Report
+	if !inspect_call(.Process, session.slot, &process, size_of(process)) || process.process_serial != session.process_serial || process.state == .None || process.state == .Stopped {
+		session_end("the process stopped")
+		return errors.fail(error, ERROR_ENDED, .Absent, .Processes)
 	}
 	reports_read()
 	records_take()
 	return 0
 }
 
-// reports_read reads the module records and the threads of the program of
-// the session. A report of another program in the slot is dropped.
+// reports_read reads the module records and the threads of the process of
+// the session. A report of another process in the slot is dropped.
 reports_read :: proc "contextless" () {
-	if !inspect_call(.Modules, session.slot, &report_modules, size_of(report_modules)) || report_modules.program_serial != session.program_serial {
+	if !inspect_call(.Modules, session.slot, &report_modules, size_of(report_modules)) || report_modules.process_serial != session.process_serial {
 		report_modules = {}
 	}
-	if !inspect_call(.Threads, session.slot, &report_threads, size_of(report_threads)) || report_threads.program_serial != session.program_serial {
+	if !inspect_call(.Threads, session.slot, &report_threads, size_of(report_threads)) || report_threads.process_serial != session.process_serial {
 		report_threads = {}
 	}
 	// A thread that ended holds nothing.
@@ -541,8 +541,8 @@ thread_report :: proc "contextless" (number: u64) -> ^op.Thread_Report {
 	return nil
 }
 
-// any_thread gives the number of a live thread of the program: the read of
-// its memory names the program through one of its threads.
+// any_thread gives the number of a live thread of the process: the read of
+// its memory names the process through one of its threads.
 any_thread :: proc "contextless" () -> (number: u64, ok: bool) {
 	if report_threads.count == 0 {
 		return 0, false
@@ -592,9 +592,9 @@ record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := fals
 	hold.record = record
 	if hold.stepping {
 		hold.stepping = false
-		if registers, status := system.thread_registers_read(session.program, record.thread); status == .Ok {
+		if registers, status := system.thread_registers_read(session.process, record.thread); status == .Ok {
 			registers.rflags &~= FLAG_TRAP
-			system.thread_registers_write(session.program, record.thread, registers)
+			system.thread_registers_write(session.process, record.thread, registers)
 		}
 	}
 	// The breakpoint of a step over a call, alone: the export waits for it,
@@ -646,7 +646,7 @@ thread_stopped :: proc "contextless" (number: u64) -> bool {
 }
 
 // thread_of_argument checks the number of a thread that a caller gave: a
-// live thread of the program. With `stopped`, also a thread whose
+// live thread of the process. With `stopped`, also a thread whose
 // registers can be read. A failure gives the result of the export.
 thread_of_argument :: proc "contextless" (thread: i64, stopped: bool, error: ^errors.Error_Record) -> (number: u64, failure: i64) {
 	if thread < 0 || thread >= THREAD_CAPACITY || thread_report(u64(thread)) == nil {
@@ -664,11 +664,11 @@ thread_release :: proc "contextless" (number: u64) -> (status: system.Status) {
 	hold := &session.threads[number]
 	status = .Ok
 	if hold.waits {
-		status = system.debug_fault_answer(session.program, hold.record)
+		status = system.debug_fault_answer(session.process, hold.record)
 		hold.waits = false
 	}
 	if hold.held {
-		_, resumed := system.thread_control_resume(session.program, number)
+		_, resumed := system.thread_control_resume(session.process, number)
 		hold.held = false
 		if status == .Ok {
 			status = resumed
@@ -678,8 +678,8 @@ thread_release :: proc "contextless" (number: u64) -> (status: system.Status) {
 }
 
 // breaks_apply writes the breakpoints of the debugger in each thread of
-// the program: the debug registers belong to a thread, and a thread that
-// the program made later has none until this write. A thread that runs is
+// the process: the debug registers belong to a thread, and a thread that
+// the process made later has none until this write. A thread that runs is
 // held for the write, then released.
 breaks_apply :: proc "contextless" () -> (status: system.Status) {
 	written: op.Thread_Breakpoints
@@ -696,26 +696,26 @@ breaks_apply :: proc "contextless" () -> (status: system.Status) {
 		}
 		stopped := thread_stopped(number)
 		if !stopped {
-			if _, held := system.thread_control_stop(session.program, number); held != .Ok {
+			if _, held := system.thread_control_stop(session.process, number); held != .Ok {
 				status = held
 				continue
 			}
 		}
-		if wrote := system.thread_breakpoints_write(session.program, number, written); wrote != .Ok {
+		if wrote := system.thread_breakpoints_write(session.process, number, written); wrote != .Ok {
 			status = wrote
 		}
 		if !stopped {
-			system.thread_control_resume(session.program, number)
+			system.thread_control_resume(session.process, number)
 		}
 	}
 	return status
 }
 
-// A place of the program: the module that holds an address, and what the
+// A place of the process: the module that holds an address, and what the
 // debug object of that module says of it.
 Address_Place :: struct {
 	has_module: bool, // A module record holds the address.
-	module:     string, // The name of the module in the boot image, the name of a disk program for its module, or "".
+	module:     string, // The name of the module in the boot image, the name of a disk process for its module, or "".
 	base:       u64, // Where the module is mapped.
 	offset:     u64, // The address less the base.
 	object:     []u8, // The debug object of the module, or nil.
@@ -724,7 +724,7 @@ Address_Place :: struct {
 
 // module_of_address gives the module record that holds an address.
 module_of_address :: proc "contextless" (address: u64) -> ^op.Module_Record {
-	for &record in report_modules.modules[:min(report_modules.count, op.PROGRAM_MODULE_CAPACITY)] {
+	for &record in report_modules.modules[:min(report_modules.count, op.PROCESS_MODULE_CAPACITY)] {
 		if record.size != 0 && address >= record.base && address - record.base < record.size {
 			return &record
 		}
@@ -732,9 +732,9 @@ module_of_address :: proc "contextless" (address: u64) -> ^op.Module_Record {
 	return nil
 }
 
-// module_name gives the name of a module of the program: its name in the
-// boot image, or, for the module of a disk program, which the boot image
-// does not hold, the name of the program.
+// module_name gives the name of a module of the process: its name in the
+// boot image, or, for the module of a disk process, which the boot image
+// does not hold, the name of the process.
 module_name :: proc "contextless" (hash: [32]u8) -> string {
 	if entry := system.image_entry_of(image, hash); entry != nil {
 		return system.name_of(entry.name[:])
@@ -745,7 +745,7 @@ module_name :: proc "contextless" (hash: [32]u8) -> string {
 	return ""
 }
 
-// place_of_address names an address of the program. `looked` is the
+// place_of_address names an address of the process. `looked` is the
 // address whose procedure and line are taken: the byte before a return
 // address.
 place_of_address :: proc "contextless" (looked: u64) -> (found: Address_Place) {
@@ -784,8 +784,8 @@ hex_column :: proc "contextless" (column: []u8, address: u64) {
 	system.format(column, "0x", system.Hex(address))
 }
 
-// The memory of the program, for the package debugging.
-program_memory_read :: proc "contextless" (state: rawptr, address: u64, into: []u8) -> bool {
+// The memory of the process, for the package debugging.
+process_memory_read :: proc "contextless" (state: rawptr, address: u64, into: []u8) -> bool {
 	thread, has_thread := any_thread()
 	if !has_thread {
 		return false
@@ -793,7 +793,7 @@ program_memory_read :: proc "contextless" (state: rawptr, address: u64, into: []
 	done := 0
 	for done < len(into) {
 		part := into[done:][:min(len(into) - done, op.THREAD_MEMORY_READ_LIMIT)]
-		count, status := system.thread_memory_read(session.program, thread, address + u64(done), part)
+		count, status := system.thread_memory_read(session.process, thread, address + u64(done), part)
 		if status != .Ok || count != u64(len(part)) {
 			return false
 		}
@@ -803,7 +803,7 @@ program_memory_read :: proc "contextless" (state: rawptr, address: u64, into: []
 }
 
 memory_reader :: proc "contextless" () -> debugging.Memory_Reader {
-	return {read = program_memory_read}
+	return {read = process_memory_read}
 }
 
 // global_at gives the global of a debug object that holds an offset of its
@@ -868,7 +868,7 @@ thread_stack: Stack
 stack_read :: proc "contextless" (thread: u64) -> (walked: ^Stack, status: system.Status) {
 	walked = &thread_stack
 	walked^ = {}
-	walked.registers, status = system.thread_registers_read(session.program, thread)
+	walked.registers, status = system.thread_registers_read(session.process, thread)
 	if status != .Ok {
 		return nil, status
 	}
@@ -881,7 +881,7 @@ stack_read :: proc "contextless" (thread: u64) -> (walked: ^Stack, status: syste
 			walked.entry = .At_First_Instruction
 		case 1:
 			first: [1]u8
-			if program_memory_read(nil, walked.registers.rip - 1, first[:]) && first[0] == PUSH_FRAME_POINTER {
+			if process_memory_read(nil, walked.registers.rip - 1, first[:]) && first[0] == PUSH_FRAME_POINTER {
 				walked.entry = .After_Frame_Pointer_Push
 			}
 		}
@@ -910,7 +910,7 @@ frame_has_its_pointer :: proc "contextless" (walked: ^Stack, frame: int) -> bool
 // service and its service ring; with no service ring it writes "debugger:
 // no service ring" and stops with the code 1. Then it writes "debugger:
 // serves its exports", and waits for calls and runs them for ever, in this
-// thread, which is also the debug handler of the program that it debugs.
+// thread, which is also the debug handler of the process that it debugs.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
@@ -929,7 +929,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("debugger: serves its exports")
 	own := system.thread_record()
 	for {
-		// The stops of the debugged program wake this thread as the calls
+		// The stops of the debugged process wake this thread as the calls
 		// do: a stop is taken, and written on the log, when it comes.
 		wait: system.Wait
 		system.service_wait(&wait, &service)
@@ -950,7 +950,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if session.attached {
 			records_take()
 		} else {
-			// No program is debugged: a record is of a debugging that ended.
+			// No process is debugged: a record is of a debugging that ended.
 			for _ in 0 ..< op.FAULT_RECORD_CAPACITY {
 				if _, more := record_next_ready(); !more {
 					break

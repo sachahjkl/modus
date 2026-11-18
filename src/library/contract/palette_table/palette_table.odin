@@ -6,9 +6,9 @@
 // provider, the console, gives it entries of its own: one for each of its
 // commands. The provider writes them in one memory object, the entry
 // table, which the compositor maps read-only. One ring goes between the two
-// programs: the compositor names the entry that the input chose (`Choose`),
+// processes: the compositor names the entry that the input chose (`Choose`),
 // and the provider answers what the entry gave (`Result`). No text of a
-// line goes from one program to the other: an entry is a record, a choice
+// line goes from one process to the other: an entry is a record, a choice
 // is a number, and a result is runs of text with what each run is.
 //
 // **The memory object**: `TABLE_PAGES` pages. A `Header` at byte 0, the
@@ -16,7 +16,7 @@
 // `CANDIDATES_OFFSET`, then `ENTRY_CAPACITY` records `Entry` at
 // `ENTRIES_OFFSET`.
 //
-// **The reader trusts nothing.** The provider is another program: the
+// **The reader trusts nothing.** The provider is another process: the
 // reader copies the table (`snapshot_take`), then checks each count, each
 // length, each kind and each byte of the copy. It never reads the shared
 // memory again for a value that it checked. A table that fails is no
@@ -185,7 +185,7 @@ Candidate :: struct {
 // What the candidates of a parameter are: the list says it in words.
 Candidate_Kind :: enum u64 {
 	None    = 0, // The provider gives no candidate for the parameter.
-	Program = 1, // The programs that run.
+	Process = 1, // The processes that run.
 	Module  = 2, // The modules of the boot image.
 	Grant   = 3, // The grants that the root service can revoke.
 	Strategy = 4, // The scheduling strategies of the kernel, as the command `strategy` takes them.
@@ -200,7 +200,7 @@ TABLE_BYTES :: ENTRIES_OFFSET + ENTRY_CAPACITY * size_of(Entry)
 TABLE_PAGES :: (TABLE_BYTES + 4095) / 4096
 #assert(size_of(Header) <= RESULT_OFFSET)
 
-// The ring between the two programs. A command goes from the panel to the
+// The ring between the two processes. A command goes from the panel to the
 // provider; a completion comes back with the tag of its command.
 Command :: enum u32 {
 	None   = 0, // Not a command.

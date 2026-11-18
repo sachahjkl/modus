@@ -1,21 +1,21 @@
-// A program that writes lines to its terminal as fast as it can.
+// A process that writes lines to its terminal as fast as it can.
 //
 // Each line has four runs of text with four styles: a number, a level, a
-// name, a text. The program sends no escape sequence: the style of a run
+// name, a text. The process sends no escape sequence: the style of a run
 // is a field of its record. The status has the count of lines.
 //
-// The program has no surface. It reads the keys of the input from its
+// The process has no surface. It reads the keys of the input from its
 // terminal: the key Space stops the lines, and starts them again. While
-// the lines do not move, the program waits for a key and uses no processor.
+// the lines do not move, the process waits for a key and uses no processor.
 //
-// **What it is for.** It shows that a program needs no standard output: it
+// **What it is for.** It shows that a process needs no standard output: it
 // writes typed records to a [terminal](term:terminal) that the root
 // service gave it, each with its runs and their styles, and the terminal
-// draws them. A program that writes as fast as it can shows how the
-// terminal keeps up, and that the program waits with no processor use when
+// draws them. A process that writes as fast as it can shows how the
+// terminal keeps up, and that the process waits with no processor use when
 // it has nothing to do.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("flood")` in the console. The root service starts its terminal
 // with it: a window whose lines scroll fast, with the count of lines in
 // its status. Space stops the lines and starts them again; the log gets
@@ -31,7 +31,7 @@ import terminal "modus:support/terminal"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 1, threads = 1}
 
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
 KEY_LINES :: 256 // The lines between two looks at the keys.
@@ -58,8 +58,8 @@ texts := [?]string {
 	"  the packet 7 of the connection 12 arrived in order",
 	"  the module has 14 exports and 3 imports: each import has a type",
 	"  the line left the view: the terminal draws only what the window shows",
-	"  a program gave a handle with the right Read",
-	"  the page table of the program has no page that is write and execute",
+	"  a process gave a handle with the right Read",
+	"  the page table of the process has no page that is write and execute",
 	"  the queue was full: the writer waited for the reader",
 }
 

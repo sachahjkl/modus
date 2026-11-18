@@ -155,7 +155,7 @@ a_cell_glyph_on_demand_is_the_glyph_of_the_build :: proc(t: ^testing.T) {
 // Each face of the subset fits one demand cache, as the font service draws
 // it at its start: each character of the subset of each face, face after
 // face, is drawn, in the limits of the contract, with no refusal. So no
-// program can fill the cache, as the font service publishes no character
+// process can fill the cache, as the font service publishes no character
 // that is not in a subset. This test needs the subsets of
 // resources/fonts that hold the characters on demand: modustool
 // vector_fonts writes them.

@@ -35,7 +35,7 @@ Vendor :: enum u8 {
 
 // The bits of an event select register that the kernel sets, the same on
 // both vendors: the event in bits 0 to 7, the mask in bits 8 to 15.
-SELECT_USER_MODE :: u64(1) << 16 // Count while the processor runs at the privilege of a program.
+SELECT_USER_MODE :: u64(1) << 16 // Count while the processor runs at the privilege of a process.
 SELECT_ENABLE :: u64(1) << 22 // The counter counts.
 
 // The registers of Intel.

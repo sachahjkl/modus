@@ -9,8 +9,8 @@ package modustool
 // Then the worker films, and each scene opens the panel with the key super:
 //
 //  1. the desktop;
-//  2. the panel opens, with the windows and the programs;
-//  3. letters of a program: the list narrows, Enter starts plasma;
+//  2. the panel opens, with the windows and the processes;
+//  3. letters of a process: the list narrows, Enter starts plasma;
 //  4. "@" and letters of a title: Enter brings the monitor to the front;
 //  5. a command with no parameter: memory() gives a record in the panel;
 //  6. a command with a parameter: the form of start, Tab takes "life";
@@ -31,7 +31,7 @@ package modustool
 // Film_Type and Film_Hold are the times of the film, for its viewer.
 @(rodata)
 scenario_palette_film := [?]Step {
-	// The boot, and the console as the palette provider. The programs
+	// The boot, and the console as the palette provider. The processes
 	// write in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
@@ -63,10 +63,10 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 
-	// Scene 3: letters of a program. The list narrows at each key, and
-	// Enter starts the program.
+	// Scene 3: letters of a process. The list narrows at each key, and
+	// Enter starts the process.
 	{kind = .Film_Type, text = "pla"},
-	{kind = .Wait, text = " for \"pla\": plasma (program)"},
+	{kind = .Wait, text = " for \"pla\": plasma (module)"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts plasma"},
@@ -135,7 +135,7 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
-	// Scene 7: two fields, and a command that destroys. The programs that
+	// Scene 7: two fields, and a command that destroys. The processes that
 	// run for the first field, the grants for the second one, then the
 	// question on its red row. Escape goes back to the form, to the search,
 	// and closes the panel: the film revokes nothing.
@@ -231,7 +231,7 @@ scenario_palette_film := [?]Step {
 	// Scene 10: a field with a few closed values is a row of buttons in the
 	// band. The command strategy takes one of three names: the form shows
 	// them as buttons, Right moves the choice, a press on the button
-	// round_robin takes it, and Escape leaves with no change: the program
+	// round_robin takes it, and Escape leaves with no change: the process
 	// scheduler that serves it does not run here.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},

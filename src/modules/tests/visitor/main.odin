@@ -1,20 +1,20 @@
-// A program that is not in the boot image: the test of a disk program
-// (docs/MODULE_CONTRACT.md, "A program from a disk").
+// A module that is not in the boot image: the test of a disk process
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
-// **What it is for.** The root service starts a program from a module file
+// **What it is for.** The root service starts a process from a module file
 // that the storage service holds, when the hash of the bytes is the hash
-// that the principal named. Such a program has no row in the tables by name
+// that the principal named. Such a process has no row in the tables by name
 // of the root service, so it receives no grant but the grants of its
-// nickname in the disk grant table. This program says what it received, and
+// nickname in the disk grant table. This process says what it received, and
 // uses the store of its nickname when it has one.
 //
 // **Start**: `start_from_disk("visitor", hash)` in the console, on a
-// machine whose data disk holds the store `programs` with its file. The
-// modus tool writes that disk for the test part `disk_programs`, and
+// machine whose data disk holds the store `module_files` with its file. The
+// modus tool writes that disk for the test part `disk_processes`, and
 // prints the hash. `start("visitor")` is refused: the boot image has no
 // such module.
 //
-// **Grants**: none by its name. It has no row in `program_roles`. After
+// **Grants**: none by its name. It has no row in `process_roles`. After
 // `allow("visitor", "store")`, its next start has the store of its
 // nickname, `disk-visitor`.
 //
@@ -50,14 +50,14 @@ FAULTS_AFTER_THE_START :: #config(FAULTS_AFTER_THE_START, false)
 //    compositor, the log, its budget or a store: each one would be a grant
 //    that no command gives. The count must be 0.
 // 2. It opens the handle of the root ring. The handle is 0, so the open
-//    gives `Bad_Handle`: the program can ask the root service for nothing.
+//    gives `Bad_Handle`: the process can ask the root service for nothing.
 // 3. With a store: it reads the count of its starts, adds one, writes it,
 //    and reads it again.
 // 4. In the copy built with FAULTS_AFTER_THE_START: it writes to the
 //    address 0, three calls deep (fault_one).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log("visitor: ok, a program that the boot image does not hold")
+	system.log("visitor: ok, a module that the boot image does not hold")
 	when BUILT_OUTSIDE {
 		system.log("visitor: built outside the sources of the system")
 	}
@@ -93,10 +93,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sleep_for_ever()
 }
 
-// sleep_for_ever sleeps until the program is stopped. It and sleep_once are
+// sleep_for_ever sleeps until the process is stopped. It and sleep_once are
 // never inlined, so the entry keeps a frame at its call of sleep_for_ever,
-// in the source of this program: the test of the debug object of a disk
-// program waits for that frame of the entry, with its line.
+// in the source of this module: the test of the debug object of a disk
+// process waits for that frame of the entry, with its line.
 sleep_for_ever :: #force_no_inline proc "contextless" () -> ! {
 	for {
 		sleep_once()
@@ -151,13 +151,13 @@ fault_depth: u64
 // fault_one writes a line, then writes to the address 0 three calls deep.
 // The address comes from a value of the context that no starter writes, so
 // the compiler cannot prove that it is 0 and drop the write. A write that
-// does not stop the program is a fault of the kernel: the line after it
+// does not stop the process is a fault of the kernel: the line after it
 // says so.
 fault_one :: #force_no_inline proc "contextless" (ctx: ^system.Context) {
 	system.log("visitor: writes to the address 0, three calls deep: its stop report names the frames of its source")
 	fault_two(uintptr(ctx.values[14]))
 	intrinsics.volatile_store(&fault_depth, 1)
-	system.log("visitor: the write did not stop the program: WRONG")
+	system.log("visitor: the write did not stop the process: WRONG")
 }
 
 fault_two :: #force_no_inline proc "contextless" (address: uintptr) {

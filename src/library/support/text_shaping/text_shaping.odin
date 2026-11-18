@@ -4,7 +4,7 @@
 // is UTF-8 (src/library/contract/text_encoding). No ligature and no other
 // script: one placed glyph for each character, and one for each invalid sequence.
 //
-// A program that links this package calls it directly, over the spacing of
+// A module that links this package calls it directly, over the spacing of
 // a glyph cache that it validated (spacing_of). The module text_shaping
 // gives the same functions as exports over tables of the caller.
 //
@@ -85,7 +85,7 @@ Spacing :: struct {
 }
 
 // spacing_of gives the spacing of one scale of a valid glyph cache, with
-// the fallback face of the cache when the program opened the outlines. ok
+// the fallback face of the cache when the process opened the outlines. ok
 // is false for a scale that the cache does not have.
 spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spacing: Spacing, ok: bool) {
 	if cache.header.character_count != CHARACTER_COUNT {

@@ -43,15 +43,15 @@ The numbers come from the code of the terminal and of the window layer.
 
 ## The refused forms
 
-- **The compare of the cells compiled in.** The program compares the cells of its grids and joins its rectangles to the damage of the module; the module skips the grids that it cannot read. The rule of the damage of one table is then in two bodies of code, and the export gives a damage that is too small for a table with a grid.
+- **The compare of the cells compiled in.** The process compares the cells of its grids and joins its rectangles to the damage of the module; the module skips the grids that it cannot read. The rule of the damage of one table is then in two bodies of code, and the export gives a damage that is too small for a table with a grid.
 - **A second damage export for a grid**, with the cells of the two frames and a record of the shape: five parameters. It is one more crossing in each frame, and its result is joined with the result of the other export: the same split of the rule. The draw export also needed the cells as a seventh parameter, past the bound of six of that time, or a second draw export.
-- **The cells of the two frames in one `Bytes` of the program, with their offsets in a record.** The window layer owns the table before; this form makes the program keep the copy of the frame before in its own memory, at a place that the table names. Under the bound of six, the draw export also had no parameter left for the cells.
+- **The cells of the two frames in one `Bytes` of the process, with their offsets in a record.** The window layer owns the table before; this form makes the process keep the copy of the frame before in its own memory, at a place that the table names. Under the bound of six, the draw export also had no parameter left for the cells.
 - **An export for one run of cells.** It is the export that the count above refuses for the terminal: up to 3,328 calls in one frame, and the window layer must cut the table at each grid to keep the order of the draw.
 - **The cells by an address in the record.** The value means nothing in another address space, and an isolated caller cannot give it.
 
 ## The subtle points
 
-- **The cells hold 4-byte colors, so their place is aligned.** `draw_text_grid` puts the cells at a place whose address is a multiple of 4, and leaves at most 3 bytes unused before it. The text table of a program with a grid starts at an address that is a multiple of 4: the terminal declares its text tables as arrays of 32-bit words. `grid_of` refuses a place whose address is not a multiple of 4: such a record draws nothing, and the difference damages it whole.
+- **The cells hold 4-byte colors, so their place is aligned.** `draw_text_grid` puts the cells at a place whose address is a multiple of 4, and leaves at most 3 bytes unused before it. The text table of a process with a grid starts at an address that is a multiple of 4: the terminal declares its text tables as arrays of 32-bit words. `grid_of` refuses a place whose address is not a multiple of 4: such a record draws nothing, and the difference damages it whole.
 - **One place holds the check.** `grid_of` checks a Text_Grid record against its text table, and both the package and the module run it: at least one column, a count of bytes that is a whole count of rows, a range inside the text table, each in 64 bits from values below 2^32.
 - **A cell holds no count and no address.** A cell of a hostile caller draws some characters in some colors. No read passes the range that `grid_of` checked.
 - **A frame shows the cells of the moment of the copy.** The reader thread of the terminal can change its view after `draw_text_grid`, and the frame stays the frame that was built.
@@ -61,4 +61,4 @@ The numbers come from the code of the terminal and of the window layer.
 
 Built: the cells in the text table, the draw record of version 15, and the terminal through the module.
 
-Left: an export for one run of cells, for the programs that draw cell text themselves with no draw table. The count above shows that it is not the border of the terminal. See [library_modules.md](library_modules.md), "What is left, and what blocks it".
+Left: an export for one run of cells, for the processes that draw cell text themselves with no draw table. The count above shows that it is not the border of the terminal. See [library_modules.md](library_modules.md), "What is left, and what blocks it".

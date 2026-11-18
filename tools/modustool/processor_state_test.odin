@@ -36,9 +36,9 @@ MANAGEMENT_PROCESSOR :: "\r\nCPU#2\r\n" +
 	"RIP=ffffffffffffffff RFL=00000002 [-------] CPL=0 II=0 A20=1 SMM=1 HLT=0\r\n" +
 	"CS =0038 0000000000000000 ffffffff 00af9b00 DPL=0 CS64 [-RA]\r\n"
 
-// A processor that runs a program.
+// A processor that runs a process.
 @(private = "file")
-PROGRAM_PROCESSOR :: "\r\nCPU#3\r\n" +
+PROCESS_PROCESSOR :: "\r\nCPU#3\r\n" +
 	"RIP=0000000000401000 RFL=00000202 [-------] CPL=3 II=0 A20=1 SMM=0 HLT=0\r\n" +
 	"CS =002b 0000000000000000 ffffffff 00a0fb00 DPL=3 CS64 [-RA]\r\n"
 
@@ -181,7 +181,7 @@ addresses_name_their_code_at_the_edges :: proc(t: ^testing.T) {
 	// With no sizes of the flash files, the flash is not known.
 	testing.expect_value(t, code_place_kind(at(FLASH_START), Known_Code{}), Code_Place_Kind.No_Known_Code)
 	// The privilege level and system management mode come before the address.
-	testing.expect_value(t, code_place_kind({instruction_address = u64(info.KERNEL_BASE), privilege_level = PROGRAM_PRIVILEGE_LEVEL}, known), Code_Place_Kind.Program)
+	testing.expect_value(t, code_place_kind({instruction_address = u64(info.KERNEL_BASE), privilege_level = PROCESS_PRIVILEGE_LEVEL}, known), Code_Place_Kind.Process)
 	testing.expect_value(t, code_place_kind({instruction_address = u64(info.KERNEL_BASE), system_management_mode = true}, known), Code_Place_Kind.Firmware_System_Management_Mode)
 }
 
@@ -189,7 +189,7 @@ addresses_name_their_code_at_the_edges :: proc(t: ^testing.T) {
 // its address, its halt and its code. This case comes last.
 @(test)
 the_processors_of_a_machine_are_read_and_named :: proc(t: ^testing.T) {
-	states, fault, _ := processors_read(KERNEL_PROCESSOR + WAITING_PROCESSOR + MANAGEMENT_PROCESSOR + PROGRAM_PROCESSOR, PROCESSOR_LIST)
+	states, fault, _ := processors_read(KERNEL_PROCESSOR + WAITING_PROCESSOR + MANAGEMENT_PROCESSOR + PROCESS_PROCESSOR, PROCESSOR_LIST)
 	testing.expect_value(t, fault, Processor_Read_Fault.None)
 	if !testing.expect_value(t, len(states), 4) {
 		return
@@ -214,9 +214,9 @@ the_processors_of_a_machine_are_read_and_named :: proc(t: ^testing.T) {
 	testing.expect(t, !states[2].halted)
 	testing.expect_value(t, processor_line(states[2], known), "processor 2, running, at 0xffffffffffffffff: the firmware, in system management mode")
 
-	testing.expect_value(t, states[3].privilege_level, PROGRAM_PRIVILEGE_LEVEL)
+	testing.expect_value(t, states[3].privilege_level, PROCESS_PRIVILEGE_LEVEL)
 	testing.expect_value(t, states[3].host_thread, 4245)
-	testing.expect_value(t, processor_line(states[3], known), "processor 3, running, at 0x401000: a program, at privilege level 3")
+	testing.expect_value(t, processor_line(states[3], known), "processor 3, running, at 0x401000: a process, at privilege level 3")
 
 	// An address that no known range holds.
 	testing.expect_value(t, processor_line({number = 1, instruction_address = 0x7e8c2a0}, known), "processor 1, running, at 0x7e8c2a0: no known code")
@@ -224,7 +224,7 @@ the_processors_of_a_machine_are_read_and_named :: proc(t: ^testing.T) {
 	// module, and the line says so.
 	testing.expect_value(t, processor_line(states[0], Known_Code{}), "processor 0, halted, at 0xffffffff80012345: the kernel, at the offset 0x12345: the table of the volumes names no kernel module for this volume")
 	// An older QEMU marks a halt in the list.
-	halted, halted_fault, _ := processors_read(PROGRAM_PROCESSOR, "  CPU #3: (halted) thread_id=9\n")
+	halted, halted_fault, _ := processors_read(PROCESS_PROCESSOR, "  CPU #3: (halted) thread_id=9\n")
 	testing.expect_value(t, halted_fault, Processor_Read_Fault.None)
 	if testing.expect_value(t, len(halted), 1) {
 		testing.expect(t, halted[0].halted)

@@ -1,15 +1,15 @@
 # Glossary
 
-The glossary defines each term of the system. Each concept has one term, and one term names one concept: the documents, the code and the names of the programs use that term and no synonym. A reader who knows another system finds here the word that this system uses, and why it does not use the word that the reader expects.
+The glossary defines each term of the system. Each concept has one term, and one term names one concept: the documents, the code and the names of the processes use that term and no synonym. A reader who knows another system finds here the word that this system uses, and why it does not use the word that the reader expects.
 
-An entry starts with one sentence that says what the term is. The paragraphs after it explain it, in at most 100 words: what it is for, how a program gets it and uses it, the terms next to it, what it is not, an example from the system, and where its full design is. The last line, "Do not use", lists the words of other systems that the term replaces here.
+An entry starts with one sentence that says what the term is. The paragraphs after it explain it, in at most 100 words: what it is for, how a process gets it and uses it, the terms next to it, what it is not, an example from the system, and where its full design is. The last line, "Do not use", lists the words of other systems that the term replaces here.
 
 ## The groups
 
 - [Code](code.md): the module, its exports and imports, and what describes them.
-- [Running code](running_code.md): the program, its threads, the processors and the scheduler.
+- [Running code](running_code.md): the process, its threads, the processors and the scheduler.
 - [Access](access.md): the handle, its rights, the memory objects, the budgets and the grants.
-- [Communication](communication.md): the rings, the calls between programs and the source library.
+- [Communication](communication.md): the rings, the calls between processes and the source library.
 - [Devices](devices.md): the device memory, the interrupts and the IOMMU.
 - [Network](network.md): the network service, its endpoints and its protocols.
 - [Sound](sound.md): the sound service, the frames and the time of a timed stream.

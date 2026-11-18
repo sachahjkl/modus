@@ -1,6 +1,6 @@
 # The links of a page of the manual
 
-The documentation text of a module is Markdown, and its links name terms of the glossary, headings of the guides, modules, exports and records ([`docs/SITE.md`](../../../docs/SITE.md), "The links of a comment"). The site opens each of them. The program `manual` opened only a link to a module or to an export: a link to a term, a guide or a declaration of a support package was a colored word that did nothing. This file records how the manual opens each link, how a principal reaches a link with the keyboard, and how a principal goes back.
+The documentation text of a module is Markdown, and its links name terms of the glossary, headings of the guides, modules, exports and records ([`docs/SITE.md`](../../../docs/SITE.md), "The links of a comment"). The site opens each of them. The process `manual` opened only a link to a module or to an export: a link to a term, a guide or a declaration of a support package was a colored word that did nothing. This file records how the manual opens each link, how a principal reaches a link with the keyboard, and how a principal goes back.
 
 The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "The links of a page of the manual".
 

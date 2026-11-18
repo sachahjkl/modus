@@ -330,7 +330,7 @@ sorted_copy :: proc(list: []string) -> []string {
 Build_Key_Inputs :: struct {
 	subject:       string, // What is built: "module console".
 	tool_identity: blake3.Hash, // The sources of the tool (tool_identity_of).
-	// The programs that build, the commands with each flag, the values of
+	// The host programs that build, the commands with each flag, the values of
 	// the environment that the build reads: in the order of the list.
 	settings:      []string,
 	// Files of the repository that the build reads and that the compiler
@@ -838,10 +838,10 @@ tool_identity_of :: proc(table: ^Input_File_Table, tool_folder: string) -> (iden
 	return blake3.hash(text[:]), complete
 }
 
-// program_identity names the file of a program of the path: where it is
+// host_program_identity names the file of a host program of the path: where it is
 // after each link, its size and its time. In the store of Nix, the path
 // holds the hash of the package: another version is another path.
-program_identity :: proc(name: string) -> string {
+host_program_identity :: proc(name: string) -> string {
 	search := os.get_env("PATH", context.temp_allocator)
 	for folder in strings.split(search, ":", context.temp_allocator) {
 		if folder == "" {
@@ -856,9 +856,9 @@ program_identity :: proc(name: string) -> string {
 		if resolve_error != nil {
 			resolved = candidate
 		}
-		return fmt.tprintf("program %s: %s, %d bytes, time %d", name, resolved, information.size, time.to_unix_nanoseconds(information.modification_time))
+		return fmt.tprintf("host program %s: %s, %d bytes, time %d", name, resolved, information.size, time.to_unix_nanoseconds(information.modification_time))
 	}
-	return fmt.tprintf("program %s: not on the path", name)
+	return fmt.tprintf("host program %s: not on the path", name)
 }
 
 // What the incremental build knows for the whole of one build.
@@ -897,10 +897,10 @@ build_inputs_prepare :: proc() {
 	build_inputs.table = input_file_table_make(root, folders[:])
 	build_inputs.tool_identity, build_inputs.usable = tool_identity_of(build_inputs.table, TOOL_SOURCE_FOLDER)
 	for name, index in ([4]string{"odin", "llc", "nasm", "ld.lld"}) {
-		build_inputs.module_programs[index] = strings.clone(program_identity(name))
+		build_inputs.module_programs[index] = strings.clone(host_program_identity(name))
 	}
 	for name, index in ([5]string{"odin", "nasm", "lld-link", "sbsign", "virt-fw-vars"}) {
-		build_inputs.volume_programs[index] = strings.clone(program_identity(name))
+		build_inputs.volume_programs[index] = strings.clone(host_program_identity(name))
 	}
 	if !build_inputs.usable {
 		fmt.println("modustool: a source of the tool cannot be read: the build keeps no output and writes no build record")
@@ -1230,7 +1230,7 @@ Build_Measure :: struct {
 	volumes_built:        int,
 	volumes_kept:         int,
 	volumes_not_needed:   int, // The volumes that the command does not boot: not checked, not built.
-	volume_processes:     int, // The volume processes at once.
+	volume_host_processes:     int, // The volume processes at once.
 	volume_times:         [dynamic]Build_Step_Time, // The whole time of the process of each built volume.
 	// The request of each module that has a table Budget, from its file,
 	// in the order of the table of the modules: a reader sees an amount
@@ -1294,7 +1294,7 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 		append(&lines, fmt.tprintf("the build: %8.2f s: %s", seconds(step.duration), step.name))
 	}
 	if measure.volumes_built + measure.volumes_kept + measure.volumes_not_needed > 0 {
-		append(&lines, fmt.tprintf("the build: the boot volumes: %d built, %d kept, %d not needed by this command; %d volume processes at once", measure.volumes_built, measure.volumes_kept, measure.volumes_not_needed, measure.volume_processes))
+		append(&lines, fmt.tprintf("the build: the boot volumes: %d built, %d kept, %d not needed by this command; %d volume processes at once", measure.volumes_built, measure.volumes_kept, measure.volumes_not_needed, measure.volume_host_processes))
 	}
 	for volume_time in measure.volume_times {
 		append(&lines, fmt.tprintf("the build: %8.2f s: the process of the boot volume %s", seconds(volume_time.duration), volume_time.name))
@@ -1303,7 +1303,7 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 	if len(measure.budget_requests) > 0 {
 		requests := strings.builder_make(context.temp_allocator)
 		for item, index in measure.budget_requests {
-			fmt.sbprintf(&requests, "%s%s %d pages, %d programs, %d threads", index > 0 ? "; " : "", item.name, item.request.pages, item.request.programs, item.request.threads)
+			fmt.sbprintf(&requests, "%s%s %d pages, %d processes, %d threads", index > 0 ? "; " : "", item.name, item.request.pages, item.request.processes, item.request.threads)
 		}
 		append(&lines, fmt.tprintf("the build: the budget that each module asks for, its stated budget and its counted parts: %s", strings.to_string(requests)))
 	}

@@ -3,7 +3,7 @@ package server
 // The window, by the rules of docs/DESIGN.md: rectangles only, the grid of
 // 8 pixels, a card for each subject with a caption that names its record,
 // the colors of the concepts. Each value is a field of a record of the
-// connection table (tcp.Table, tcp.Connection) or a count of this program.
+// connection table (tcp.Table, tcp.Connection) or a count of this process.
 
 import "modus:support/display"
 import "modus:support/graphics"
@@ -19,7 +19,7 @@ HEIGHT :: 680
 // The colors of the concepts (src/library/support/graphics/rules.odin, docs/DESIGN.md
 // section 4) that this window uses for TCP:
 //   boot program  a connection that starts: the handshake.
-//   program       a connection that runs.
+//   process       a connection that runs.
 //   kernel        the end of a connection: the FIN states and TIME-WAIT.
 //   memory        bytes and windows.
 //   machine       the remote machines and the link.
@@ -103,7 +103,7 @@ state_color :: proc "contextless" (state: tcp.State) -> graphics.Color {
 	case .Syn_Sent, .Syn_Received:
 		return graphics.colors.boot_program
 	case .Established, .Close_Wait:
-		return graphics.colors.program
+		return graphics.colors.process
 	case .Closed:
 		return graphics.colors.not_usable
 	case .Fin_Wait_1, .Fin_Wait_2, .Closing, .Time_Wait, .Last_Ack:
@@ -172,7 +172,7 @@ connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, conn
 status_color :: proc "contextless" (status: int) -> graphics.Color {
 	switch {
 	case status < 300:
-		return graphics.colors.program
+		return graphics.colors.process
 	case status < 500:
 		return graphics.colors.boot_program
 	}
@@ -226,8 +226,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	open := tcp_open_count()
 
 	// The listen grant and the table.
-	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.colors.program)
-	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.colors.program)
+	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.colors.process)
+	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.colors.process)
 	graphics.text(inside, after + 8, 24, open == 1 ? "connection" : "connections", graphics.colors.dim)
 	fact(inside, 56, "port", system.format(buffer[:], u64(listen_port), ", any host"))
 	fact(inside, 76, "most at once", system.format(buffer[:], u64(most_open), " of ", u64(CAPACITY)))
@@ -240,7 +240,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	total := max(requests_answered, 1)
 	classes := [3]int{2, 4, 5}
 	names := [3]string{"2xx", "4xx", "5xx"}
-	colors := [3]graphics.Color{graphics.colors.program, graphics.colors.boot_program, graphics.colors.failed}
+	colors := [3]graphics.Color{graphics.colors.process, graphics.colors.boot_program, graphics.colors.failed}
 	for class, row in classes {
 		y := 56 + row * 20
 		graphics.text(inside, 0, y, names[row], graphics.colors.dim)
@@ -259,10 +259,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
 	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
 	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.colors.text, MEASURES_VALUE_COLUMN)
-	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", program_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
+	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", process_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
 
 	// The connection table, live, then the connections that ended.
-	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.colors.program)
+	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.colors.process)
 	graphics.text(inside, 0, 0, "remote", graphics.colors.dim)
 	graphics.text(inside, COLUMN_STATE, 0, "state", graphics.colors.dim)
 	right(inside, COLUMN_IN, 0, "in", graphics.colors.dim)

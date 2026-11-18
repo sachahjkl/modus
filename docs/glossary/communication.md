@@ -2,9 +2,9 @@
 
 ### Ring
 
-A ring is a pair of queues of fixed records in shared memory, between two programs or between a program and the kernel: one queue carries command records, the other carries completion records.
+A ring is a pair of queues of fixed records in shared memory, between two processes or between a process and the kernel: one queue carries command records, the other carries completion records.
 
-A ring is the one way that two programs communicate, and the base interface of the kernel. Each queue has one writer and one reader, so no queue operation takes a lock or enters the kernel; a side that must wait uses the word wait. The receiver checks each record as hostile data. Examples: the kernel ring of each thread, the call ring of a call host, the terminal ring. A ring is not a pipe or a socket: it carries typed records, not a stream of bytes.
+A ring is the one way that two processes communicate, and the base interface of the kernel. Each queue has one writer and one reader, so no queue operation takes a lock or enters the kernel; a side that must wait uses the word wait. The receiver checks each record as hostile data. Examples: the kernel ring of each thread, the call ring of a call host, the terminal ring. A ring is not a pipe or a socket: it carries typed records, not a stream of bytes.
 
 The design: `docs/ARCHITECTURE.md`, "K4. Rings and wait".
 
@@ -20,11 +20,11 @@ Do not use: buffer size, queue depth, backlog.
 
 ### Terminal
 
-A terminal is a program that shows the text records of one other program, keeps its lines, and gives its keys to that program.
+A terminal is a process that shows the text records of one other process, keeps its lines, and gives its keys to that process.
 
-The root service starts a program and its terminal, and gives the two a terminal ring and a text region. The terminal starts no program. It reads records as fast as the program writes them and draws at the rate of the screen, so the display does not slow the program. The kernel has no concept of a terminal.
+The root service starts a process and its terminal, and gives the two a terminal ring and a text region. The terminal starts no process. It reads records as fast as the process writes them and draws at the rate of the screen, so the display does not slow the process. The kernel has no concept of a terminal.
 
-A terminal is not a TTY: no escape sequence and no line discipline exist. The program edits its own line and sends records with a kind and typed fields.
+A terminal is not a TTY: no escape sequence and no line discipline exist. The process edits its own line and sends records with a kind and typed fields.
 
 The contract: `src/library/support/terminal/terminal.odin`.
 
@@ -44,7 +44,7 @@ Do not use: MPMC queue, channel, work queue, mailbox.
 
 An event is a count in memory that several threads wait on (`system.Event`): a thread adds 1 to it and wakes all the threads that wait.
 
-A waiter reads the count, reads the state that the event changes, then waits while the count holds the value that it read: an event between the read and the wait ends the wait at once. The zero value is an event that never happened. An event in shared memory works between programs.
+A waiter reads the count, reads the state that the event changes, then waits while the count holds the value that it read: an event between the read and the wait ends the wait at once. The zero value is an event that never happened. An event in shared memory works between processes.
 
 Do not use: condition variable, semaphore, signal, barrier.
 
@@ -62,7 +62,7 @@ Do not use: collection, SDK, libc, static library.
 
 A private part is a package of the source library that one module alone compiles in, with its host tests.
 
-A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole program for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
+A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
@@ -92,7 +92,7 @@ Do not use: role (the term is program role, the grants of a program), category, 
 
 A test module is a module that only a machine test starts or imports, and that is wrong on purpose or shows nothing of its own.
 
-Examples: `test_callee` and `test_caller`, the loader test of an import; `hostile_exports`, exports that are wrong on purpose; `lonely`, a module whose import is not in the boot image; `debug_target`, the program that the test of the debugger debugs. A test module is in the module group `tests`. A program that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
+Examples: `test_callee` and `test_caller`, the loader test of an import; `hostile_exports`, exports that are wrong on purpose; `lonely`, a module whose import is not in the boot image; `debug_target`, the module that the test of the debugger debugs. A test module is in the module group `tests`. A module that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
@@ -108,11 +108,11 @@ The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
 Do not use: third-party module, external module, plugin.
 
-### Rich program
+### Rich module
 
-A rich program is an outside module whose interface is built with `gui_toolkit`, the toolkit of rich programs.
+A rich module is an outside module whose interface is built with `gui_toolkit`, the toolkit of rich modules.
 
-It imports `gt:` packages and the core library of Odin on the target modus, which a source of `src/` never does. It still draws through the draw table, and later through the WebGPU subset. A program of the system in `src/modules` uses the `interface` package instead. Examples: an editor, the browser `wren` once it is ported.
+It imports `gt:` packages and the core library of Odin on the target modus, which a source of `src/` never does. It still draws through the draw table, and later through the WebGPU subset. A module of the system in `src/modules` uses the `interface` package instead. Examples: an editor, the browser `wren` once it is ported.
 
 The design: `src/md/features/desktop_to_browser.md`.
 
@@ -132,7 +132,7 @@ Do not use: manifest, build script, project file.
 
 The documentation of a module is the text that the module carries in its file for a reader: one line that says what the module is, a text for the module, and a text for each export.
 
-The build tool takes it from the comments of the source. It is part of the file, so it has the hash of the module: a text cannot describe another version of the code. With the description of each export, it is all that a reader needs to use the module: `help()` in the console and the pages of the site show it. A documentation text keeps the Markdown of its comment, which the program `manual` reads.
+The build tool takes it from the comments of the source. It is part of the file, so it has the hash of the module: a text cannot describe another version of the code. With the description of each export, it is all that a reader needs to use the module: `help()` in the console and the pages of the site show it. A documentation text keeps the Markdown of its comment, which the process `manual` reads.
 
 The design: `docs/MODULE_CONTRACT.md`, "1. The module file".
 
@@ -140,9 +140,9 @@ Do not use: man page, help file, docstring, README.
 
 ### Time page
 
-The time page is one page that the kernel writes and that each program can only read, at a fixed address (`TIME_ADDRESS`).
+The time page is one page that the kernel writes and that each process can only read, at a fixed address (`TIME_ADDRESS`).
 
-It holds the milliseconds since boot, the frequency of the cycle counter and the cycle counter at the time 0. A program reads the time with one load from memory, with no kernel entry; a finer time comes from the cycle counter.
+It holds the milliseconds since boot, the frequency of the cycle counter and the cycle counter at the time 0. A process reads the time with one load from memory, with no kernel entry; a finer time comes from the cycle counter.
 
 Do not use: vDSO, vsyscall, clock system call.
 
@@ -150,7 +150,7 @@ Do not use: vDSO, vsyscall, clock system call.
 
 The real-time clock is the clock of the machine that keeps the date when the machine is off.
 
-On a PC it is the CMOS clock, at the ports 0x70 and 0x71. The program `date` reads it at its start and each 10 s, and writes the date page.
+On a PC it is the CMOS clock, at the ports 0x70 and 0x71. The process `date` reads it at its start and each 10 s, and writes the date page.
 
 Do not use: RTC (in text), hardware clock, BIOS clock.
 
@@ -164,9 +164,9 @@ Do not use: timestamp, wall clock, epoch time, Unix time (in text).
 
 ### Date page
 
-The date page is one page that the root service creates and maps read-only into each program that it starts, at its fixed range.
+The date page is one page that the root service creates and maps read-only into each process that it starts, at its fixed range.
 
-The program `date` writes there the date of the time 0 of the system. So a program reads the date with no kernel entry: that date plus the milliseconds of the time page. The page also holds the time zone, which the program `date` copies from the settings page, so the local time is in one page.
+The process `date` writes there the date of the time 0 of the system. So a process reads the date with no kernel entry: that date plus the milliseconds of the time page. The page also holds the time zone, which the process `date` copies from the settings page, so the local time is in one page.
 
 Do not use: wall-clock page, vDSO, clock page.
 
@@ -174,7 +174,7 @@ Do not use: wall-clock page, vDSO, clock page.
 
 The time zone is the fixed offset from UTC, in minutes, that the principal chooses with the setting `time_zone`: the local time is the date of UTC and this offset.
 
-Its text is the form of ISO 8601: `+08:00`, `-03:30`. It goes from `-12:00` to `+14:00` by quarters of an hour, and `+00:00`, UTC, is the default. It has no summer time. The program `settings` writes it on the settings page; the program `date` copies it into the date page. The bar shows the local time, and the date of the system stays in UTC. It is not a named zone with rules (`Europe/Paris`): the system has no tz database.
+Its text is the form of ISO 8601: `+08:00`, `-03:30`. It goes from `-12:00` to `+14:00` by quarters of an hour, and `+00:00`, UTC, is the default. It has no summer time. The process `settings` writes it on the settings page; the process `date` copies it into the date page. The bar shows the local time, and the date of the system stays in UTC. It is not a named zone with rules (`Europe/Paris`): the system has no tz database.
 
 The design: `src/md/features/time_zone.md`.
 
@@ -184,7 +184,7 @@ Do not use: timezone (one word), TZ, locale, UTC offset (for the setting).
 
 Back pressure is the rule of a queue whose writer waits while the queue is full, so that no record is lost.
 
-It is the first form of the rule of the path of a key: the input service takes no byte of the keyboard from the controller while the input ring has no room, and the console takes no key from the terminal ring while 128 keys wait for the end of a line. The writer waits with `system.wait_room`. A writer that cannot wait (the compositor for a window, the terminal for its program) uses the second form: a stated capacity, and a loss period for each refusal.
+It is the first form of the rule of the path of a key: the input service takes no byte of the keyboard from the controller while the input ring has no room, and the console takes no key from the terminal ring while 128 keys wait for the end of a line. The writer waits with `system.wait_room`. A writer that cannot wait (the compositor for a window, the terminal for its process) uses the second form: a stated capacity, and a loss period for each refusal.
 
 The design: `docs/ARCHITECTURE.md`, "The path of a key".
 
@@ -194,15 +194,15 @@ Do not use: writer stall, push back.
 
 A loss period is the time from the first record that a full queue refuses to the moment when the queue takes a record again.
 
-A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its program, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`src/library/support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
+A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its process, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`src/library/support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
 
 Do not use: drop window, loss burst.
 
 ### Terminal ring
 
-The terminal ring is the ring between a program and its terminal.
+The terminal ring is the ring between a process and its terminal.
 
-In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record; it holds 4096 keys. The terminal never waits for a program: a key that finds the queue full is lost and counted. A record whose kind names no record is refused and counted, with one line at the first one.
+In the command queue, a record from the process has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record; it holds 4096 keys. The terminal never waits for a process: a key that finds the queue full is lost and counted. A record whose kind names no record is refused and counted, with one line at the first one.
 
 The contract: `src/library/support/terminal/terminal.odin`.
 
@@ -210,17 +210,17 @@ Do not use: escape sequence, control character, stream.
 
 ### Key record
 
-A key record is a record from a terminal to its program: the code of one key that was pressed, its character, and the modifiers that were held (Shift, Control).
+A key record is a record from a terminal to its process: the code of one key that was pressed, its character, and the modifiers that were held (Shift, Control).
 
-The character is a code point, or 0 for a key with no character: é of the layout of France is 233. A program that keeps the character writes its UTF-8. The program decides what a key does. The terminal keeps Page Up and Page Down for its own view.
+The character is a code point, or 0 for a key with no character: é of the layout of France is 233. A process that keeps the character writes its UTF-8. The process decides what a key does. The terminal keeps Page Up and Page Down for its own view.
 
 Do not use: standard input, character device, raw mode, cooked mode.
 
 ### Edit line
 
-The edit line is the one line that a program changes: its line of input with a cursor, or a line that says what the program does now.
+The edit line is the one line that a process changes: its line of input with a cursor, or a line that says what the process does now.
 
-The program sends the text and the place of the cursor; the terminal draws it after the last line. The program owns the editing, so the terminal needs no knowledge of a line of input.
+The process sends the text and the place of the cursor; the terminal draws it after the last line. The process owns the editing, so the terminal needs no knowledge of a line of input.
 
 Do not use: line discipline, readline, cursor addressing, prompt.
 
@@ -228,13 +228,13 @@ Do not use: line discipline, readline, cursor addressing, prompt.
 
 The line editor is the procedures of `src/library/support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
 
-They have no state of their own: the line is a record of the program. The line is UTF-8, and each key moves the caret over a whole character, or inserts or removes a whole character. The caret is a place in bytes, always before a whole character.
+They have no state of their own: the line is a record of the process. The line is UTF-8, and each key moves the caret over a whole character, or inserts or removes a whole character. The caret is a place in bytes, always before a whole character.
 
 Do not use: readline, line discipline.
 
 ### Hint line
 
-A hint line is one dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open.
+A hint line is one dim line that a process shows under its edit line: the signature of the call at the caret, or how to use the list that is open.
 
 It has a long form and a short form; the terminal shows the long one when it fits in its columns. The terminal draws it in the free row. A new one replaces the one before.
 
@@ -254,7 +254,7 @@ Do not use: spacer, padding line.
 
 A completion list is the names that can take the place of the name at the caret, best first, with one chosen row.
 
-The program gives the rows, at most 8 at a time; its terminal draws them over its text, at the edit line. In the console the fuzzy match orders the names. With more names than rows the list has a scroll bar, which takes the pointer: the terminal tells the program the first row that the pointer asks for, and the program moves its view and its chosen row.
+The process gives the rows, at most 8 at a time; its terminal draws them over its text, at the edit line. In the console the fuzzy match orders the names. With more names than rows the list has a scroll bar, which takes the pointer: the terminal tells the process the first row that the pointer asks for, and the process moves its view and its chosen row.
 
 The design: `docs/CONSOLE.md`, "5. Who draws the list, and the line under the edit line".
 
@@ -310,9 +310,9 @@ Do not use: reverse-i-search, incremental search.
 
 ### Text region
 
-The text region is the shared memory beside a terminal ring where the program writes the bytes of its text, in order (4 MiB).
+The text region is the shared memory beside a terminal ring where the process writes the bytes of its text, in order (4 MiB).
 
-A record gives only a count of bytes: the terminal keeps its own place, so a program cannot make the terminal read another place. The terminal has the right Read only on it.
+A record gives only a count of bytes: the terminal keeps its own place, so a process cannot make the terminal read another place. The terminal has the right Read only on it.
 
 Do not use: scrollback (for this), pipe buffer.
 
@@ -336,7 +336,7 @@ Do not use: attribute, SGR, escape code.
 
 A tone is what a run of text means: default, dim, strong, good, warning, bad, accent or number.
 
-The program gives the meaning; the terminal chooses the color of each tone, so one table changes the colors of every program.
+The process gives the meaning; the terminal chooses the color of each tone, so one table changes the colors of every process.
 
 Do not use: color code, severity (for text).
 
@@ -352,7 +352,7 @@ Do not use: lexeme, word (for this).
 
 A code kind is what a part of a line of the console or of a row of its list is: a function, a module, a type, a parameter, a variable, a number, a text, an unfinished text, an operator, the arrow, words that are not code, or unknown.
 
-A program sends kinds, not colors; the terminal maps each kind to a code class (`src/library/support/terminal/code_runs.odin`).
+A process sends kinds, not colors; the terminal maps each kind to a code class (`src/library/support/terminal/code_runs.odin`).
 
 The design: `docs/CONSOLE.md`, "7. The colors of the code".
 
@@ -378,9 +378,9 @@ Do not use: span (for this), highlight range.
 
 ### Status
 
-A status is one line that a program replaces at any time, with a value and a total.
+A status is one line that a process replaces at any time, with a value and a total.
 
-The terminal shows it apart from the lines: no line is drawn again. A program shows its progress this way, with no carriage return in a stream.
+The terminal shows it apart from the lines: no line is drawn again. A process shows its progress this way, with no carriage return in a stream.
 
 Do not use: progress bar hack, carriage return.
 
@@ -406,9 +406,9 @@ Do not use: in-process call, local call.
 
 ### Isolated call
 
-An isolated call is a call of an export of a module that runs in another program: the arguments travel in a ring.
+An isolated call is a call of an export of a module that runs in another process: the arguments travel in a ring.
 
-An isolated call lets a program call a module that it does not trust: the module runs in a call host, or in a service, with no handle but those that the call lends. The caller writes the argument record in the call region and a command record in the call ring; the receiver copies the record once, checks it, and calls the export. A fault of the module stops the call host only. An isolated call costs a wake of the other program and its answer.
+An isolated call lets a process call a module that it does not trust: the module runs in a call host, or in a service, with no handle but those that the call lends. The caller writes the argument record in the call region and a command record in the call ring; the receiver copies the record once, checks it, and calls the export. A fault of the module stops the call host only. An isolated call costs a wake of the other process and its answer.
 
 The design: `docs/MODULE_CONTRACT.md`, "The isolated call, as implemented".
 
@@ -426,9 +426,9 @@ Do not use: struct type, schema, class.
 
 ### Call host
 
-A call host is the program that loads one module and executes the isolated calls of its exports (`src/modules/system/host`).
+A call host is the process that loads one module and executes the isolated calls of its exports (`src/modules/system/host`).
 
-The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: Ok, or `Load_Failed` with its load error. A call has no time limit: the caller ends it by closing the program handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
+The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: Ok, or `Load_Failed` with its load error. A call has no time limit: the caller ends it by closing the process handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
 
 The design: `docs/MODULE_CONTRACT.md`, "The isolated call, as implemented".
 
@@ -490,7 +490,7 @@ Do not use: system call table.
 
 A record is a block of bytes of a fixed layout with typed fields, in which all-zero bytes are a valid value.
 
-All data between programs, and between a program and the kernel, is records: a ring record, a context, an error record, a row of a table. A record holds no address that the other side must follow, and no text that it must parse. A new field at the end is zero for an old writer.
+All data between processes, and between a process and the kernel, is records: a ring record, a context, an error record, a row of a table. A record holds no address that the other side must follow, and no text that it must parse. A new field at the end is zero for an old writer.
 
 The rule: `docs/PROPERTIES.md`, "Zero is initialization (ZII)".
 
@@ -516,7 +516,7 @@ Do not use: response, reply, event.
 
 A device queue is the queue that a device defines for its own commands, such as a virtio queue.
 
-The kernel maps it into one program, and is then off the path of the data: the program and the device exchange records with no kernel entry.
+The kernel maps it into one process, and is then off the path of the data: the process and the device exchange records with no kernel entry.
 
 The rule: `docs/PROPERTIES.md`, "5. Kernel off the data path".
 
@@ -544,7 +544,7 @@ Do not use: printer, formatter, renderer, pretty-printer.
 
 ### Short name of an export
 
-A short name of an export is a built-in name of the console that calls one export of a service: `programs()` calls `monitor.programs()`.
+A short name of an export is a built-in name of the console that calls one export of a service: `processes()` calls `monitor.processes()`.
 
 The fact that the command gives is a fact of the service, and the console holds no copy of it. The command connects to the service when the console has no connection to it yet, then calls the export through the connection, as any call of `service.export`. When the service does not run, the line fails with the error of the connection. It is not a second implementation of the command in the console.
 

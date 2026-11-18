@@ -222,7 +222,7 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 	html := strings.to_string(b)
 	testing.expect_value(t, strings.count(html, "<article class=\"card measure-chart "), 1)
 	testing.expect_value(t, strings.count(html, "<li class=\"measure-row\">"), 3)
-	testing.expect(t, strings.contains(html, "<li class=\"measure-row\"><span class=\"measure-label\">1 program</span><svg class=\"measure-bar\" aria-hidden=\"true\"><rect class=\"measure-bar-fill\" width=\"40.0%\" height=\"100%\"/></svg><code class=\"value value-number measure-value\">4 487 253</code></li>"), html)
+	testing.expect(t, strings.contains(html, "<li class=\"measure-row\"><span class=\"measure-label\">1 process</span><svg class=\"measure-bar\" aria-hidden=\"true\"><rect class=\"measure-bar-fill\" width=\"40.0%\" height=\"100%\"/></svg><code class=\"value value-number measure-value\">4 487 253</code></li>"), html)
 	testing.expect(t, strings.contains(html, "<p class=\"measure-unit\">In kernel entries in one second. Each bar starts at zero.</p>"))
 	testing.expect(t, strings.contains(html, "#number-kernel-entries-in-one-second"))
 	// The measure that is not a chart is not on the home.

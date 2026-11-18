@@ -14,10 +14,10 @@ import "core:strings"
 // 1. The count of the kernel operations. docs/PROPERTIES.md states it, and
 //    the contract of the operations declares them: a new operation with no
 //    change of the property is refused.
-// 2. No source of the system calls an allocator. A program has no heap: its
+// 2. No source of the system calls an allocator. A process has no heap: its
 //    memory is a mapping that it asks the kernel for, or a variable of its
 //    module. The compiler gets `-default-to-nil-allocator`, which turns a
-//    call of an allocator into a failure when the program runs; this check
+//    call of an allocator into a failure when the process runs; this check
 //    refuses the call when the tool builds.
 
 // The file that declares the operations, and the document that states

@@ -1,21 +1,21 @@
 // The remote service: the calls of the host (docs/MODULE_CONTRACT.md,
 // section 4, "A call from the host"; docs/QUIC.md, section 7).
 //
-// QUIC in the program (src/library/support/quic), over a datagram endpoint with a
+// QUIC in the process (src/library/support/quic), over a datagram endpoint with a
 // listen grant of UDP on the port remote.LISTEN_PORT that admits the
 // address of the host only (remote.HOST_ADDRESS): the network service drops
-// a datagram of another address before this program sees it. Each call is
+// a datagram of another address before this process sees it. Each call is
 // one bidirectional stream: the request (a remote.Request header and the
 // bytes of the call region), then the end of the stream; the answer (a
 // remote.Answer header and the bytes of the result), then the end of the
 // stream. A call that fails before its answer is reset with a code of
 // remote.Stream_Error.
 //
-// The key of the service: an Ed25519 key that this program makes at its
+// The key of the service: an Ed25519 key that this process makes at its
 // start from its own generator (fill_for_a_key, the strength "processor" at
 // least). Its public key goes on the log and in the window: the host pins
 // it. A new start makes a new key. A seed weaker than "processor" makes no
-// key: the program says so, and listens on nothing.
+// key: the process says so, and listens on nothing.
 //
 // The key of the client: the handshake asks each client for its own
 // Ed25519 key, as a raw public key with its signature (mutual TLS 1.3), and
@@ -39,13 +39,13 @@
 // resets, the connections to services with their principals, and the last
 // calls.
 //
-// **What it is for.** A program on the host calls an export of a service of
+// **What it is for.** A process on the host calls an export of a service of
 // the machine as the console calls it: the same descriptions, the same
 // isolated call, the same error records. The tool of the project uses it
 // to test and to measure a running machine from outside, with no screen:
 //
 // ```
-// modustool call <the public key, 64 hexadecimal digits> "monitor.programs()"
+// modustool call <the public key, 64 hexadecimal digits> "monitor.processes()"
 // ```
 //
 // **Start**: `start("remote")` in the console, or the bar of the desktop.
@@ -56,11 +56,11 @@
 // **Grants**, as the root service gives them:
 //
 // - **Network**: a listen grant of UDP on port 7100 for the address
-//   10.0.2.2 only. The program refuses any other grant.
+//   10.0.2.2 only. The process refuses any other grant.
 // - **Remote_Clients**: the client table, read-only: the key of each
 //   client that a principal allowed, and that principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
-//   to the services of its role (`program_roles`): compositor, date, debugger, inspect,
+//   to the services of its role (`process_roles`): compositor, date, debugger, inspect,
 //   log, manual, monitor, settings and storage, each for one row of the
 //   client table. A call to another service fails with the refusal of the
 //   root service.
@@ -91,9 +91,9 @@ import "modus:support/system"
 
 // 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
 // each, and a buffer of a request or an answer of about 64 KiB for each
-// stream: about 820 pages, in one mapping of the program (docs/QUIC.md,
+// stream: about 820 pages, in one mapping of the process (docs/QUIC.md,
 // section 7), and the call regions of its connections to services.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3067, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3067, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -121,7 +121,7 @@ CALL_COUNT :: CAPACITY * STREAMS_PER_CONNECTION
 CALL_BUFFER_SIZE :: remote.ANSWER_LIMIT
 #assert(remote.REQUEST_LIMIT <= CALL_BUFFER_SIZE)
 // The memory of the connections, of their streams and of their buffers: one
-// mapping of this program, never a stack.
+// mapping of this process, never a stack.
 CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CALL_COUNT * size_of(quic.Stream)
 BUFFER_BYTES :: CALL_COUNT * CALL_BUFFER_SIZE
@@ -141,7 +141,7 @@ ANSWER_TIME_LIMIT :: 10_000
 // long after; else the connection ends (CONNECTION_CLOSE, Timeout): a
 // stream record that the host never ends would hold one call of the 8.
 RELEASE_TIME_LIMIT :: 10_000
-// An isolated call blocks the QUIC of this program. After a call that took
+// An isolated call blocks the QUIC of this process. After a call that took
 // SLOW_CALL_MILLISECONDS or more, the next call waits
 // EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS, in which the loop only moves
 // datagrams: a handshake of a second connection, or the next flight of a
@@ -170,8 +170,8 @@ HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
 
 CALL_LIMIT :: 5000 // Milliseconds: an isolated call that takes longer ends the connection to its service.
 CONNECT_LIMIT :: 10_000 // Milliseconds for the root service to make a connection: it can start the service first.
-LOG_REFUSALS :: 16 // The refusals that this program writes on the log; it counts the others.
-LOG_LIMIT :: 50 // Lines of connections and of streams in one second at most: a host that opens many must not fill the log limit of the program.
+LOG_REFUSALS :: 16 // The refusals that this process writes on the log; it counts the others.
+LOG_LIMIT :: 50 // Lines of connections and of streams in one second at most: a host that opens many must not fill the log limit of the process.
 
 cryptography := quic.Cryptography {
 	seal_with_aes_128_gcm                = seal_with_aes_128_gcm,
@@ -190,7 +190,7 @@ cryptography := quic.Cryptography {
 	ed25519_verify                       = ed25519_verify,
 }
 
-program_generator: random.Generator
+process_generator: random.Generator
 server: quic.Server
 records: [CAPACITY]quic.Server_Record
 quic_connections: []quic.Connection
@@ -226,7 +226,7 @@ Call :: struct {
 calls: [CALL_COUNT]Call
 next_order: u64
 
-// What this program logged of each record.
+// What this process logged of each record.
 Record_Log :: struct {
 	generation: u64,
 	end_logged: bool,
@@ -234,7 +234,7 @@ Record_Log :: struct {
 record_logs: [CAPACITY]Record_Log
 
 // The client table that the root service writes (remote.Client_Table), and
-// the copy of its rows that this program read at the start of the pass.
+// the copy of its rows that this process read at the start of the pass.
 client_table: ^remote.Client_Table
 client_rows: [remote.CLIENT_CAPACITY]remote.Client
 client_table_version_seen: u32 // The version of the table before the copy of the last pass.
@@ -260,7 +260,7 @@ Service_Connection :: struct {
 	row:           int, // The row of the client table that the connection is for.
 	serial:        u64, // The serial of that row: the grant that the connection carries.
 	principal:     u64, // The principal of that row: the root service gave it to the connection.
-	program:       system.Handle, // The service, with the right Read: its state.
+	process:       system.Handle, // The service, with the right Read: its state.
 	ring_memory:   system.Handle,
 	region_memory: system.Handle,
 	calls:         ring.Ring,
@@ -270,7 +270,7 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-// The 9 services of the row of "remote" in program_roles in the root service, for each of
+// The 9 services of the row of "remote" in process_roles in the root service, for each of
 // the CAPACITY connections, each of which can have a key of another row.
 SERVICE_CONNECTION_CAPACITY :: 24
 
@@ -281,16 +281,16 @@ Counts :: struct {
 	requests:    u64, // The whole requests.
 	calls:       u64, // The isolated calls that ran.
 	failed:      u64, // The calls whose export gave a negative result with an error record.
-	refused:     u64, // The requests that this program refused with its error record.
+	refused:     u64, // The requests that this process refused with its error record.
 	too_large:   u64, // Streams reset with Too_Large.
 	timeouts:    u64, // Streams reset with Timeout.
 	cancelled:   u64, // Calls that the host gave up before their turn.
-	closed_held: u64, // Connections that this program closed for a stream that the host did not end.
+	closed_held: u64, // Connections that this process closed for a stream that the host did not end.
 	bytes_in:    u64, // The bytes of whole requests.
 	bytes_out:   u64, // The bytes of answers.
 	sends_refused: u64, // Sends that the network service refused.
 	keys_refused: u64, // Client keys that the handshake refused: no row, or a session that is locked.
-	revoked:     u64, // Connections that this program ended because the grant of their key ended.
+	revoked:     u64, // Connections that this process ended because the grant of their key ended.
 }
 counts: Counts
 
@@ -369,7 +369,7 @@ data_bytes :: proc "contextless" (place: u32) -> []u8 {
 }
 
 // send sends length bytes of data that are at data_bytes(place). This
-// program writes the UDP header and a real checksum: the network service
+// process writes the UDP header and a real checksum: the network service
 // computes none, and a remote can refuse a datagram with no checksum.
 send :: proc "contextless" (place: u32, length: int, peer: quic.Remote) {
 	whole := network.udp_header_write(place_bytes(place), local_address, peer.address, listen_port, peer.port, length)
@@ -443,7 +443,7 @@ log_allowed :: proc "contextless" () -> bool {
 }
 
 // bound_verdict gives the words of a log line of a bound: held when the
-// time is at least the bound. The program learns that a deadline passed
+// time is at least the bound. The process learns that a deadline passed
 // when its wait ends, and a busy or slow machine, or an isolated call
 // (CALL_LIMIT), wakes it late: how late depends on the host, so the line
 // gives the time and no verdict checks an upper side.
@@ -663,7 +663,7 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 // service_connections_of_ended_grants ends each connection to a service
 // whose row no longer holds its serial: a revocation, a lock or an unlock
 // ended its grant. The root service ended its side already, so this
-// program tells it nothing. It runs whatever the state of the QUIC
+// process tells it nothing. It runs whatever the state of the QUIC
 // connections: a grant can end while no client of its row is connected,
 // and its slot must not stay taken, or the table of connections fills.
 service_connections_of_ended_grants :: proc "contextless" () {
@@ -725,7 +725,7 @@ calls_work :: proc "contextless" () {
 			}
 		}
 		// Each stream is read to its end, or to the reset of the host: a
-		// stream record is freed only when this program read that end
+		// stream record is freed only when this process read that end
 		// (quic.stream_read), so a stream left unread would keep its record,
 		// and the host would get no stream in its place.
 		for &stream, slot in connection.streams {
@@ -846,7 +846,7 @@ exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 
 // call_bounds_pause moves the start of the bound of each call whose stream
 // moves (reading, answering, discarding) later by the time of an isolated
-// call: during it this program runs no QUIC, so the host could not move the
+// call: during it this process runs no QUIC, so the host could not move the
 // stream, and a bound counts only the time in which the stream could move.
 call_bounds_pause :: proc "contextless" (place_calls: []Call, paused: u64) {
 	for &call in place_calls {
@@ -926,7 +926,7 @@ answer_put :: proc "contextless" (buffer: []u8, header: remote.Answer, result: [
 	return len(bytes)
 }
 
-// refuse answers a request that this program refused, and writes the
+// refuse answers a request that this process refused, and writes the
 // sentence of its error record on the log while the log has room for it.
 refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) -> int {
 	counts.refused += 1
@@ -961,7 +961,7 @@ recent_add :: proc "contextless" (service: string, export: u32, answer: remote.A
 }
 
 // connection_find gives the connection to a service for the row of the
-// client of a call, and asks the root service for one when this program
+// client of a call, and asks the root service for one when this process
 // has none: the root service gives it the principal of the row. On a
 // failure it gives the error record of the answer.
 connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, error: errors.Error_Record) {
@@ -1017,7 +1017,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 				row           = client.row,
 				serial        = client.serial,
 				principal     = client.principal,
-				program       = system.Handle(record.values[0]),
+				process       = system.Handle(record.values[0]),
 				ring_memory   = system.Handle(record.values[1]),
 				region_memory = system.Handle(record.values[2]),
 				hash          = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]},
@@ -1044,7 +1044,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 	}
 }
 
-// connection_end closes what this program holds of a connection to a
+// connection_end closes what this process holds of a connection to a
 // service. tell: ask the root service to end it too (the service still
 // runs).
 connection_end :: proc "contextless" (connection: ^Service_Connection, tell: bool) {
@@ -1059,7 +1059,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 	if connection.region != nil {
 		system.memory_unmap(raw_data(connection.region))
 	}
-	for handle in ([3]system.Handle{connection.program, connection.ring_memory, connection.region_memory}) {
+	for handle in ([3]system.Handle{connection.process, connection.ring_memory, connection.region_memory}) {
 		if handle != 0 {
 			system.close(handle)
 		}
@@ -1069,7 +1069,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 
 // isolated_call_make makes the isolated call of a request through a
 // connection, and gives the completion. On a failure of the connection it gives an error record.
-// While it waits, this program runs no QUIC: an isolated call is bounded by
+// While it waits, this process runs no QUIC: an isolated call is bounded by
 // CALL_LIMIT, and a peer of QUIC sends again what it does not see
 // acknowledged.
 isolated_call_make :: proc "contextless" (connection: ^Service_Connection, request: remote.Request, arguments: []u8) -> (completion: ring.Record, error: errors.Error_Record, ok: bool) {
@@ -1097,7 +1097,7 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 				return record, {}, true
 			}
 		}
-		if state, _ := system.program_state(connection.program); state == .Stopped || state == .None {
+		if state, _ := system.process_state(connection.process); state == .Stopped || state == .None {
 			system.log("remote: the service ", remote.name_text(&connection.name), " stopped during a call")
 			connection_end(connection, false)
 			return {}, errors.error_make(.State, .None, remote.FIELD_SERVICE, 0, 0, i64(state)), false
@@ -1169,11 +1169,11 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 }
 
 // key_make makes the Ed25519 key of this service from the generator of the
-// program, with the strength "processor" at least. false: the seed is
+// process, with the strength "processor" at least. false: the seed is
 // weaker; nothing is made.
 key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -> bool {
 	error: errors.Error_Record
-	if !random.fill_for_a_key(&program_generator, configuration.tls.server_private_key[:], .Processor, &error) {
+	if !random.fill_for_a_key(&process_generator, configuration.tls.server_private_key[:], .Processor, &error) {
 		return false
 	}
 	secret := string(configuration.tls.server_private_key[:])
@@ -1192,7 +1192,7 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 // 1. takes the random generator of its context, and opens its window (it
 //    runs with no window too);
 // 2. makes its Ed25519 key. With a seed under the strength "processor" it
-//    writes "remote: the random seed of this program is weak" and then only
+//    writes "remote: the random seed of this process is weak" and then only
 //    draws its window: it listens on nothing;
 // 3. writes "remote: the public key of this service: " and 64 hexadecimal
 //    digits;
@@ -1214,7 +1214,7 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 // window, the next deadline of QUIC, or the bound of a call.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		fail("no random seed in the context")
 	}
 	window, has_window := display.open(ctx, WIDTH, HEIGHT, "remote")
@@ -1222,10 +1222,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	configuration.tls = {role = .Server, least_seed_strength = .Processor}
 	configuration.tls.application_protocol_length = copy(configuration.tls.application_protocol[:], remote.APPLICATION_PROTOCOL)
 	if !key_make(&configuration) {
-		// A seed under the least strength is an error that the program
+		// A seed under the least strength is an error that the process
 		// shows: no key, and no endpoint.
 		weak_seed = true
-		system.log("remote: the random seed of this program is weak: it makes no key, and listens on nothing")
+		system.log("remote: the random seed of this process is weak: it makes no key, and listens on nothing")
 		for {
 			if has_window {
 				draw(&window)
@@ -1243,7 +1243,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("remote: the public key of this service: ", hex_text(key_text[:], public_key[:]))
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		fail("no endpoint: the program has no grant of the network")
+		fail("no endpoint: the process has no grant of the network")
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	region_pages, size_status := system.memory_size(ctx.handles[datagram.GRANT_REGION])
@@ -1255,10 +1255,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no ring to the root service")
 	}
 	// The client table, read-only: the root service writes it, and this
-	// program cannot give a key a row.
+	// process cannot give a key a row.
 	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})
 	if client_table_status != .Ok {
-		fail("no client table: the program has no grant Remote_Clients")
+		fail("no client table: the process has no grant Remote_Clients")
 	}
 	client_table = (^remote.Client_Table)(client_table_address)
 	// The handshake asks each client for its key, and takes it only when
@@ -1301,7 +1301,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	limits.handshakes_per_remote_address = CAPACITY
 	limits.handshakes_at_once = CAPACITY
 	error: errors.Error_Record
-	if !quic.server_init(&server, quic_connections, records[:], streams, &configuration, &cryptography, &program_generator, limits, &error) {
+	if !quic.server_init(&server, quic_connections, records[:], streams, &configuration, &cryptography, &process_generator, limits, &error) {
 		fail("the server refused its configuration")
 	}
 	// The server keeps its own copy of the key. A plain store of zeros to a

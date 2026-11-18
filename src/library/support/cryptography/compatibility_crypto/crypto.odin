@@ -4,7 +4,7 @@
 // origin; the package has its own name.
 //
 // Not here: rand_bytes and random_generator of the origin, which ask the
-// operating system for entropy. A program of this system has its own
+// operating system for entropy. A process of this system has its own
 // generator (src/library/support/random), seeded by the root service.
 package compatibility_crypto
 
@@ -62,12 +62,12 @@ is_zero_constant_time :: proc "contextless" (b: []byte) -> int {
 COMPACT_IMPLS :: false
 
 // HAS_RAND_BYTES: the origin asks the operating system for entropy. A
-// program of this system draws from its own generator (src/library/support/random) and
+// process of this system draws from its own generator (src/library/support/random) and
 // gives the bytes: so the procedures of the origin that draw by themselves
 // (ed25519.private_key_generate) say false.
 HAS_RAND_BYTES :: false
 
-// rand_bytes stops the program: a module of this system draws its bytes
+// rand_bytes stops the process: a module of this system draws its bytes
 // from src/library/support/random, never from here.
 rand_bytes :: proc "contextless" (dst: []byte) {
 	ensure_contextless(false, "cryptography: no system entropy source here: draw from modus:support/random")

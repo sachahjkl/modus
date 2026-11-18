@@ -1,5 +1,5 @@
 #+build !freestanding
-package disk_program
+package disk_process
 
 import "core:testing"
 import op "modus:contract/operation"
@@ -18,7 +18,7 @@ test_report :: proc() -> (report: op.Stop_Report) {
 	report.frames[1] = {address = 0x401100, base = 0x400000}
 	report.frames[2] = {address = 0x7fff_1234_5678, base = 0}
 	report.frames[3] = {address = 0x401200, base = 0x400000}
-	report.program_serial = 9
+	report.process_serial = 9
 	return
 }
 
@@ -34,7 +34,7 @@ a_hidden_report_keeps_the_frames_of_the_modules :: proc(t: ^testing.T) {
 	testing.expect(t, report.frames[2] == op.Stop_Frame{}, "the word of the stack is hidden")
 	testing.expect_value(t, report.frames[3].address, u64(0x401200))
 	testing.expect_value(t, report.hidden_value_count, u64(1))
-	testing.expect_value(t, report.program_serial, u64(0))
+	testing.expect_value(t, report.process_serial, u64(0))
 }
 
 // The address of a page fault outside the first page and outside the

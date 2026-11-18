@@ -56,7 +56,7 @@ a_plan_with_no_trial_fails :: proc(t: ^testing.T) {
 	testing.expect_value(t, missing, THREAD_COUNTERS_TRIAL_PASSED)
 }
 
-// A machine whose kernel found its counters and whose program said
+// A machine whose kernel found its counters and whose process said
 // Unsupported fails, and names the first line that did not come; so does
 // a log with no boot line.
 @(test)

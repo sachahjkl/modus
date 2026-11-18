@@ -49,7 +49,7 @@ mark_animations_picture_write :: proc() -> bool {
 	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (" + MARK_SOURCE_FOLDER + "): frame 0 is the still heron; cells of 8 pixels", graphics.DARK_TEXT)
 	y += MARK_ANIMATIONS_LINE
 	for animation in mark.Animation {
-		moves := "" if !mark.animation_moves(animation) else "; the home of the site and the program heron move the heron"
+		moves := "" if !mark.animation_moves(animation) else "; the home of the site and the process heron move the heron"
 		heading := fmt.tprintf("%s: %d frames, %d ms%s", mark.animation_names[animation], mark.animation_frame_count(animation), mark.animation_duration(animation), moves)
 		graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, heading, graphics.DARK_KERNEL)
 		count := mark.animation_frame_count(animation)

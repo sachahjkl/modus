@@ -1,28 +1,28 @@
-// A disk program that imports a library module of the store `programs`:
-// the test of the import scan (docs/MODULE_CONTRACT.md, "A program from a
+// A disk process that imports a library module of the store `module_files`:
+// the test of the import scan (docs/MODULE_CONTRACT.md, "A module from a
 // disk").
 //
 // **What it is for.** Its import names the hash of the module
 // `store_library`, which no boot image holds. The root service finds that
-// file in the store `programs` of the principal by the hash of its bytes,
-// and the loader binds the import slot to it. This program calls the
-// export and writes the result. It is also the disk program of the test
+// file in the store `module_files` of the principal by the hash of its bytes,
+// and the loader binds the import slot to it. This process calls the
+// export and writes the result. It is also the disk process of the test
 // that has a window: the menu of the windows and the monitor show it by its
 // nickname, with the hash prefix of its file.
 //
 // **Start**: `start_from_disk("store_importer", hash)` in the console, on a
-// machine whose data disk holds the store `programs` with this file and the
+// machine whose data disk holds the store `module_files` with this file and the
 // file of `store_library`. The modus tool writes that disk for the test
-// part `disk_programs`, and prints the hashes.
+// part `disk_processes`, and prints the hashes.
 //
-// **Grants**: none by its name, as each disk program.
+// **Grants**: none by its name, as each disk process.
 //
 // **What a reader sees.** One line on the log: the result of `triple(14)`
 // from the module of the store. A window with the same result. The window
 // asks for the title `console`: the compositor names it `store_importer`,
-// the nickname that the root service gave, so the window of a disk program
-// cannot have the title of a program of the system. Its budget holds one
-// program, so it starts no child under such a name either.
+// the nickname that the root service gave, so the window of a disk process
+// cannot have the title of a process of the system. Its budget holds one
+// process, so it starts no child under such a name either.
 package store_importer
 
 import "modus:support/display"
@@ -36,7 +36,7 @@ foreign _ {
 
 WIDTH :: 320
 HEIGHT :: 48
-// The title that the program asks for. The compositor does not take it.
+// The title that the process asks for. The compositor does not take it.
 TITLE_ASKED :: "console"
 
 window_memory: interface.Window_Memory(8, 256)
@@ -48,7 +48,7 @@ window_memory: interface.Window_Memory(8, 256)
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	result := triple(14)
 	if result == 42 {
-		system.log("store_importer: triple(14) of the module store_library of the store programs gives 42: as it must")
+		system.log("store_importer: triple(14) of the module store_library of the store module_files gives 42: as it must")
 	} else {
 		system.log("store_importer: triple(14) gives ", u64(result), ", and 42 is the answer: WRONG")
 	}

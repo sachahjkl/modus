@@ -347,7 +347,7 @@ the_types_and_the_variables_come_from_the_entries :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(information.globals), 1) // fault::GONE has no address in the module.
 	testing.expect_value(t, len(information.variables), 9) // With the scope of address, where it is visible.
 	procedures := []Debug_Procedure{{start = 0x1000, size = 0x40, name = "fault::three"}}
-	rows := []Debug_Row{{address = 0x1000, path = "programs/fault/main.odin", line = 14}, {address = 0x1040}}
+	rows := []Debug_Row{{address = 0x1000, path = "processes/fault/main.odin", line = 14}, {address = 0x1040}}
 	object, encode_error := debug_object_encode(procedures, rows, 0x2000, {}, nil, information)
 	testing.expect_value(t, encode_error, "")
 	testing.expect_value(t, debug_object.check(object), debug_object.Fault.None)
@@ -522,7 +522,7 @@ slice_fill :: proc(bytes: []u8, value: u8) {
 a_changed_byte_of_a_section_never_breaks_the_reader :: proc(t: ^testing.T) {
 	sample := sample_sections()
 	procedures := []Debug_Procedure{{start = 0x1000, size = 0x40, name = "fault::three"}}
-	rows := []Debug_Row{{address = 0x1000, path = "programs/fault/main.odin", line = 14}, {address = 0x1040}}
+	rows := []Debug_Row{{address = 0x1000, path = "processes/fault/main.odin", line = 14}, {address = 0x1040}}
 	outcomes: [3]int
 	run :: proc(changed: Sample_Sections, procedures_of_run: []Debug_Procedure, rows_of_run: []Debug_Row, counts: ^[3]int) {
 		information, error := debug_information_from_dwarf(changed.units, changed.abbreviations, changed.debug_strings, changed.locations, changed.ranges, changed.sections)
@@ -622,9 +622,9 @@ round_trip_information :: proc(place: [Round_Trip_Type]int, reversed: bool) -> D
 @(private = "file")
 round_trip_object :: proc(information: Debug_Information) -> (object: []u8, error: string) {
 	procedures := []Debug_Procedure{{start = 0x1000, size = 0x40, name = "fault::three"}, {start = 0x1040, size = 0x20, name = "fault::two"}}
-	rows := []Debug_Row{{address = 0x1000, path = "programs/fault/main.odin", line = 14}, {address = 0x1060}}
+	rows := []Debug_Row{{address = 0x1000, path = "processes/fault/main.odin", line = 14}, {address = 0x1060}}
 	hashes := make(map[string][32]u8, context.temp_allocator)
-	hashes["programs/fault/main.odin"] = {0 = 0x5A, 31 = 0xA5}
+	hashes["processes/fault/main.odin"] = {0 = 0x5A, 31 = 0xA5}
 	return debug_object_encode(procedures, rows, 0x2000, {0 = 1}, hashes, information)
 }
 
@@ -754,8 +754,8 @@ a_list_of_types_that_is_wrong_is_an_error :: proc(t: ^testing.T) {
 	// With no type, the table has the type 0.
 	empty, _, empty_error := debug_types_in_fixed_order(nil, nil, nil)
 	testing.expect(t, empty_error == "" && len(empty) == 1)
-	testing.expect_value(t, debug_host_path("/build/source/programs/fault", "main.odin"), "/build/source/programs/fault/main.odin")
-	testing.expect_value(t, debug_host_path("programs/fault", "/nix/store/odin/share/base/runtime/core.odin"), "/nix/store/odin/share/base/runtime/core.odin")
+	testing.expect_value(t, debug_host_path("/build/source/processes/fault", "main.odin"), "/build/source/processes/fault/main.odin")
+	testing.expect_value(t, debug_host_path("processes/fault", "/nix/store/odin/share/base/runtime/core.odin"), "/nix/store/odin/share/base/runtime/core.odin")
 }
 
 // The ranges of the merge rules, in one procedure from 0x1000 to 0x31000.
@@ -804,7 +804,7 @@ merge_information :: proc(reversed: bool) -> Debug_Information {
 @(private = "file")
 merge_object :: proc(reversed: bool) -> (object: []u8, error: string) {
 	procedures := []Debug_Procedure{{start = 0x1000, size = 0x30000, name = "fault::long"}}
-	rows := []Debug_Row{{address = 0x1000, path = "programs/fault/main.odin", line = 14}, {address = 0x31000}}
+	rows := []Debug_Row{{address = 0x1000, path = "processes/fault/main.odin", line = 14}, {address = 0x31000}}
 	return debug_object_encode(procedures, rows, 0x40000, {}, nil, merge_information(reversed))
 }
 

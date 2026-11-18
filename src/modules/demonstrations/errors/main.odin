@@ -1,22 +1,22 @@
-// A program that shows the errors of the system: one case for each kind of error. Each case makes the error for real, and shows the sentence of the error record that the system gave (docs/MODULE_CONTRACT.md, section 8).
+// A process that shows the errors of the system: one case for each kind of error. Each case makes the error for real, and shows the sentence of the error record that the system gave (docs/MODULE_CONTRACT.md, section 8).
 //
-// The cases: kernel operations that the kernel refuses (a right, a handle that was revoked or closed, a budget that cannot pay, an address, a size, a flag); loads that fail (a missing import, a replacement that fails its check); a direct call of a module export that fails; isolated calls of the storage service that fail; and a program that faults three calls deep, with its stack trace.
+// The cases: kernel operations that the kernel refuses (a right, a handle that was revoked or closed, a budget that cannot pay, an address, a size, a flag); loads that fail (a missing import, a replacement that fails its check); a direct call of a module export that fails; isolated calls of the storage service that fail; and a process that faults three calls deep, with its stack trace.
 //
-// The program runs each case at its start. A key from a to y, or a click on a case, runs it again.
+// The process runs each case at its start. A key from a to y, or a click on a case, runs it again.
 //
 // **What it is for.** In this system an error is a value, not a number to
 // look up: each failed call gives an [error record](term:error-record) with
 // an [error kind](term:error-kind), the argument that caused it, the value
 // that it had and the limit that it passed, and the console writes it as a
-// sentence. This program makes 25 real errors, one of each family, and
+// sentence. This process makes 25 real errors, one of each family, and
 // checks that each one gives the record that the contract states
 // (docs/MODULE_CONTRACT.md, "8. Errors that diagnose"). There is no global
 // last error: the record comes back with the call.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("errors")` in the console. The window lists the cases on pages
 // (Tab shows the next page; a page holds the cases that fit in its height):
-// for each one, what the program does, the kind that it expects, and the
+// for each one, what the process does, the kind that it expects, and the
 // whole sentence of the record that it got, on as many lines as it needs,
 // in the color "failed" when the answer is not the expected one. The log has
 // one line for each case (`errors: a map the boot image to write: ...`),
@@ -30,7 +30,7 @@
 //   revoked or closed, a handle of the wrong kind, a number that names no
 //   handle, a budget that cannot pay, an address in the kernel half, a name
 //   too long, an unknown flag, an unknown operation, the pages of another
-//   program;
+//   process;
 // - [load errors](term:load-error): a missing import, a
 //   [replacement](term:replacement) that fails its check;
 // - a [direct call](term:direct-call) of a module export that fails
@@ -53,7 +53,7 @@
 // one log line for each; a command with a table that succeeds leaves the
 // table empty; `Log`, whose last value is an argument, refuses a table.
 //
-// **A full completion queue.** The program fills the completion queue of
+// **A full completion queue.** The process fills the completion queue of
 // its kernel ring and leaves it unread: the kernel keeps the next command
 // unrun in the command queue and ends the entry with no wait, also on the
 // word of a `Word_Wait` of the same entry; a kernel call of the library is
@@ -65,19 +65,19 @@
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
 // call that succeeds and one that fails; a refused `Log` over the limit of
-// a budget, measured by a child (a copy of this program with no log
+// a budget, measured by a child (a process of this module with no log
 // records in its budget); a refused `Memory_Create`, with the takes of the
 // locks of the kernel; a kernel command that succeeds and one that is
 // refused, each with no table of error details and with one.
 //
 // **Its grants**, one for each family: **Store** (the cases of the storage
-// service), **Image** (load modules, and start its child and the program
+// service), **Image** (load modules, and start its child and the process
 // `fault`), **Inspect** (the counts of the locks, the pages of another
-// program), **Connect** (ask the root service for a connection that it
+// process), **Connect** (ask the root service for a connection that it
 // refuses: the root service lets it call no service), and **Debug_Image**
 // (the names of the stack trace). Its log handle has the right Give, for
 // its child.
-package errors_program
+package errors_process
 
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
@@ -96,7 +96,7 @@ import "modus:support/system"
 import "base:intrinsics"
 
 // It starts fault and its child, and 3 threads under contention.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1476, programs = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1476, processes = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)
@@ -126,7 +126,7 @@ SENTENCE_ROOM :: WIDTH - 40 // The width of the box of a sentence, in pixels: fr
 // answer is in the color "failed". The colors are the table of
 // src/library/support/graphics (rules.odin).
 
-// One case: what the program does, the error kind that it expects, and the
+// One case: what the process does, the error kind that it expects, and the
 // sentence of the error record that the system gave.
 Case :: struct {
 	text:     string,
@@ -145,7 +145,7 @@ cases := [CASE_CAPACITY]Case {
 	{text = "a number that names no handle", expected = "Handle_Absent"},
 	{text = "64 pages from a budget of 8", expected = "Budget"},
 	{text = "log a text in the kernel half", expected = "Bad_Address"},
-	{text = "a program name of 40 bytes", expected = "Too_Long"},
+	{text = "a process name of 40 bytes", expected = "Too_Long"},
 	{text = "memory with an unknown flag", expected = "Bad_Flags"},
 	{text = "an operation past the last", expected = "Unknown_Operation"},
 	{text = "load lonely: its import is absent", expected = "load: Find"},
@@ -158,7 +158,7 @@ cases := [CASE_CAPACITY]Case {
 	{text = "storage.size(\"nothing\")", expected = "Absent"},
 	{text = "a fault three calls deep", expected = "stack trace"},
 	// The second page.
-	{text = "the pages of another program (Inspect, Pages)", expected = "Bad_Value"},
+	{text = "the pages of another process (Inspect, Pages)", expected = "Bad_Value"},
 	{text = "the pages past the end of the user half", expected = "Bad_Value"},
 	// One case for each family of calls that gave a status or a bool only
 	// (MODULE_CONTRACT.md, section 8, "The other calls").
@@ -187,7 +187,7 @@ kernel_good, kernel_failed, direct_good, direct_failed: u64
 
 // The kernel cases use the wrappers of src/library/support/system with their last
 // parameter `error`: the record is a value of the call, in memory of this
-// program. An operation with no wrapper that gives a status uses
+// process. An operation with no wrapper that gives a status uses
 // system.call_with_error.
 
 // kernel_text writes the sentence of a record and says if the call failed
@@ -197,10 +197,10 @@ kernel_text :: proc "contextless" (writer: ^system.Writer, record: ^errors.Error
 	return status != .Ok && record.kind == i64(expected)
 }
 
-// The pages of another program: Inspect_Kind.Pages answers for the program
+// The pages of another process: Inspect_Kind.Pages answers for the process
 // that asks only (a side channel otherwise): the slot 1, the root service,
 // is refused with the argument index.
-case_pages_of_another_program :: proc "contextless" (writer: ^system.Writer) -> bool {
+case_pages_of_another_process :: proc "contextless" (writer: ^system.Writer) -> bool {
 	record: errors.Error_Record
 	report: op.Page_Report
 	_, status := system.call_with_error(&record, .Inspect, u64(machine), u64(op.Inspect_Kind.Pages), 1, u64(uintptr(&report)), size_of(report))
@@ -209,7 +209,7 @@ case_pages_of_another_program :: proc "contextless" (writer: ^system.Writer) -> 
 }
 
 // The pages past the end of the user half: the 64 pages from the first page
-// of the report must be addresses of programs.
+// of the report must be addresses of processes.
 case_pages_past_the_user_half :: proc "contextless" (writer: ^system.Writer) -> bool {
 	record: errors.Error_Record
 	report := op.Page_Report{address = op.USER_END - system.PAGE_SIZE}
@@ -279,18 +279,18 @@ case_address :: proc "contextless" (writer: ^system.Writer) -> bool {
 // log_filter_check calls the operation Log itself, past the support
 // library, with control characters and a broken sequence of UTF-8: the
 // kernel writes "?" for each of their bytes, and the scenario waits for
-// the line with each "?" in its place. Then it asks for a program whose
+// the line with each "?" in its place. Then it asks for a process whose
 // name starts with an escape byte: the name would start each line of that
-// program on the serial port, and the kernel refuses it.
+// process on the serial port, and the kernel refuses it.
 log_filter_check :: proc "contextless" () {
 	text := "errors: a log line with control bytes: \x1b[2J\r\xc2\x85\xc3( as it must"
 	system.call(.Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0, 0)
 	name := "\x1b[2J"
-	_, status := system.call(.Program_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
+	_, status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
 	if status == .Bad_Operation {
-		system.log("errors: a name of a program with an escape byte is refused: as it must")
+		system.log("errors: a name of a process with an escape byte is refused: as it must")
 	} else {
-		system.log("errors: WRONG: a name of a program with an escape byte gave ", status)
+		system.log("errors: WRONG: a name of a process with an escape byte gave ", status)
 	}
 }
 
@@ -487,7 +487,7 @@ kernel_details_measure :: proc "contextless" () {
 case_name :: proc "contextless" (writer: ^system.Writer) -> bool {
 	name := "a name of forty bytes, nine more than 31"
 	record: errors.Error_Record
-	_, status := system.call_with_error(&record, .Program_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
+	_, status := system.call_with_error(&record, .Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
 	return kernel_text(writer, &record, status, .Too_Long) && record.value == 40 && record.limit == 31
 }
 
@@ -546,7 +546,7 @@ case_replacement :: proc "contextless" (writer: ^system.Writer) -> bool {
 	return load_case(writer, "agenda", changed, .Check)
 }
 
-// The module math, loaded in this program: a direct call of its export
+// The module math, loaded in this process: a direct call of its export
 // square_root, with the address of an error record.
 math_space: system.Module_Space
 square_root: proc "c" (value: i64, error: ^errors.Error_Record) -> i64
@@ -639,7 +639,7 @@ case_display_open :: proc "contextless" (writer: ^system.Writer) -> bool {
 	return errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == 0
 }
 
-// case_terminal_open opens the terminal of a program that has none.
+// case_terminal_open opens the terminal of a process that has none.
 case_terminal_open :: proc "contextless" (writer: ^system.Writer) -> bool {
 	error: errors.Error_Record
 	if _, opened := terminal.open(the_context, &error); opened {
@@ -650,7 +650,7 @@ case_terminal_open :: proc "contextless" (writer: ^system.Writer) -> bool {
 }
 
 // case_root_connect asks the root service for a connection that the grant
-// Connect of this program does not give: the completion holds the record.
+// Connect of this process does not give: the completion holds the record.
 case_root_connect :: proc "contextless" (writer: ^system.Writer) -> bool {
 	completion, answered := root_connect("storage")
 	if !answered {
@@ -764,33 +764,33 @@ case_size :: proc "contextless" (writer: ^system.Writer) -> bool {
 	return storage_case(writer, "size", .Absent, "nothing")
 }
 
-last_fault: system.Handle // The program fault of the last run of its case.
+last_fault: system.Handle // The process fault of the last run of its case.
 
-// case_fault starts the program fault, which writes to address 0 three
+// case_fault starts the process fault, which writes to address 0 three
 // calls deep, and reads its stop report: the stack trace.
 case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault"), "fault", {}, random.values_with_seed(&program_generator, {}), {pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}, nil, nil, {image = image}, &error)
+	process, status := system.process_start(system.image_find(image, "fault"), "fault", {}, random.values_with_seed(&process_generator, {}), {pages = 256, processes = 1, threads = 1, processor = 100_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Ok {
-		system.write_part(writer, "the program fault did not start")
+		system.write_part(writer, "the process fault did not start")
 		return false
 	}
-	// The stopped program stays until the next run of this case: a
+	// The stopped process stays until the next run of this case: a
 	// developer tool shows it, with its stop report (docs/TOOLS.md).
 	if last_fault != 0 {
 		system.close(last_fault)
 	}
-	last_fault = program
+	last_fault = process
 	// The bound only ends a hang.
 	limit := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
-		if state, _ := system.program_state(program); state == .Stopped || system.time() > limit {
+		if state, _ := system.process_state(process); state == .Stopped || system.time() > limit {
 			break
 		}
 		system.wait_end(&wait, limit)
 	}
-	report := system.program_stop_report(program)
+	report := system.process_stop_report(process)
 	system.write_part(writer, report.vector == 14 ? "page fault at " : "a fault at ")
 	frames := report.frames[:min(report.frame_count, op.STOP_FRAME_CAPACITY)]
 	fault_hash := hash_of("fault")
@@ -846,7 +846,7 @@ case_run :: proc "contextless" (index: int, writer: ^system.Writer) -> bool {
 	case 18:
 		return case_fault(writer)
 	case 19:
-		return case_pages_of_another_program(writer)
+		return case_pages_of_another_process(writer)
 	case 20:
 		return case_pages_past_the_user_half(writer)
 	case 21:
@@ -933,13 +933,13 @@ measure :: proc "contextless" () {
 }
 
 // The refusals that read a budget: a Log over the limit of the budget of the
-// program, and a Memory_Create that a budget cannot pay. A refused Log needs
-// a program with a log limit of 0: this program starts a copy of itself as
+// process, and a Memory_Create that a budget cannot pay. A refused Log needs
+// a process with a log limit of 0: this process starts its own module as
 // a child (VALUE_CHILD), with a budget of 0 log records, which measures and
 // writes its time in a page that the two map. The locks: System_Report.locks
 // before and after each loop, for all the processors.
 VALUE_CHILD :: 8
-// A page that this program places by its own choice: outside the band of
+// A page that this process places by its own choice: outside the band of
 // the addresses that the system fixes.
 MEASURE_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0400_0000_0000
 REFUSALS :: 100_000
@@ -964,9 +964,9 @@ CHILD_STOP_CODE :: 7
 
 // child runs REFUSALS refused Log operations, writes their time, and stops
 // on a kernel ring that holds records: a full completion queue, unread, and
-// one command held behind it. A stop must end the program whatever its ring
+// one command held behind it. A stop must end the process whatever its ring
 // holds (src/md/api/kernel_ring_completion_room.md, "The stop of a
-// program").
+// process").
 child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	page := (^Child_Page)(uintptr(MEASURE_ADDRESS))
 	log := u64(ctx.handles[op.CONTEXT_LOG])
@@ -1006,34 +1006,34 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	// The child is this module: its start pays for the private pages of the
 	// module, which grow with its cases, so the budget keeps room past them.
 	// A start that the budget cannot pay is a WRONG line below, not silence.
-	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
+	process, status := system.process_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
 	if status == .Ok {
 		for intrinsics.atomic_load(&page.done) == 0 {
-			if state, _ := system.program_state(program); state == .Stopped {
+			if state, _ := system.process_state(process); state == .Stopped {
 				break
 			}
 			system.sleep(system.time() + 10)
 		}
 		// The child then stops on a kernel ring that holds records. The
-		// event word of this thread changes when a program that it holds
+		// event word of this thread changes when a process that it holds
 		// stops; the hang bound only ends a stop that never comes.
 		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-		child_state: op.Program_State
+		child_state: op.Process_State
 		child_code: u32
 		for {
 			wait := system.wait_begin()
-			child_state, child_code = system.program_state(program)
+			child_state, child_code = system.process_state(process)
 			if child_state == .Stopped || system.time() >= deadline {
 				break
 			}
 			system.wait_end(&wait, deadline)
 		}
 		if child_state == .Stopped && child_code == CHILD_STOP_CODE {
-			system.log("errors: a stop on a kernel ring that holds records ends the program with its own stop code: as it must")
+			system.log("errors: a stop on a kernel ring that holds records ends the process with its own stop code: as it must")
 		} else {
 			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
 		}
-		system.close(program)
+		system.close(process)
 	} else {
 		// A child that does not start measures nothing: the case says so,
 		// and does not pass in silence.
@@ -1197,11 +1197,11 @@ contend :: proc "contextless" () -> bool {
 key_names := "abcdefghijklmnopqrstuvwxyz0123456789"
 FAULT_CASE :: 18
 
-// The random generator of this program (src/library/support/random).
-program_generator: random.Generator
+// The random generator of this process (src/library/support/random).
+process_generator: random.Generator
 
 // entry runs every case once, then the measures, then shows the cases in
-// a window until the program is stopped.
+// a window until the process is stopped.
 //
 // **When it is the child** (the value `VALUE_CHILD` of its context is not
 // 0), it only runs the refused `Log` operations of the measure (`child`)
@@ -1227,9 +1227,9 @@ program_generator: random.Generator
 // `WRONG:` before the sentence.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The random generator of this program, from the seed that its starter
-	// gave: it gives the seed of each program that this one starts.
-	if !random.generator_from_context(&program_generator, ctx) {
+	// The random generator of this process, from the seed that its starter
+	// gave: it gives the seed of each process that this one starts.
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("errors: no random seed in the context")
 		system.stop(1)
 	}
@@ -1323,7 +1323,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 // case_height gives the height of a case in the window: the line of what
-// the program does, then each line of the sentence (interface.draw_text_wrapped).
+// the process does, then each line of the sentence (interface.draw_text_wrapped).
 case_height :: proc "contextless" (index: int) -> int {
 	return (1 + max(cases[index].lines, 1)) * LINE
 }

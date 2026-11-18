@@ -8,17 +8,17 @@ import "modus:support/system"
 
 // The compositor is also a service: its exports give the place of the
 // pointer and the windows, as tables of records that a caller in another
-// program reads with no code of the compositor. The test
+// process reads with no code of the compositor. The test
 // tool reads them through the remote service before each press of the
 // pointer, so that a press lands where the scenario wants it.
 //
 // The place of the pointer and the windows are facts of the screen: another
-// program must not learn where the input goes. The exports give them only
+// process must not learn where the input goes. The exports give them only
 // to a caller that acts for the principal. A Record result has no error record, so it cannot
 // refuse (docs/MODULE_CONTRACT.md, section 4): pointer() is a Table of one
 // row.
 
-// The values of the context that name the file of this program: 0 to 3 are
+// The values of the context that name the file of this process: 0 to 3 are
 // the screen (VALUE_WIDTH ...). The root service writes the same numbers.
 VALUE_FILE_ADDRESS :: 4
 VALUE_FILE_SIZE :: 5
@@ -32,7 +32,7 @@ Pointer :: struct {
 	keys:    i64, // The key records that the input service sent since the start: each press and each release is one. The palette takes some of them, and a record goes to no window when none is open.
 	keys_waiting: i64, // The key records that wait in the compositor for a window whose ring is full.
 	keys_refused: i64, // The key records that the compositor lost since the start: the ring of the window and the queue of the compositor for it were full. 0 on a system that works.
-	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
+	menu:    [16]u8, // The menu of the bar that is open: "start", "windows", or empty.
 	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result; 5 it has the form of a command. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
 	form:     [8]u8, // The pointer form on the screen: "dark" or "light", from the appearance in force (docs/POINTERS.md).
@@ -48,22 +48,22 @@ Window :: struct {
 	order:    i64, // 0: the front window; 1: the one under it; ...
 	focus:    i64, // 1: the window has the focus: the front one.
 	keyboard: i64, // 1: the keys go to the window: the one with the focus, while the palette is closed.
-	presents: i64, // The Present records that the program of the window sent since it created its surface.
-	waits:    i64, // 1: a Present of the program changed a part of the screen, and no frame drew it yet.
+	presents: i64, // The Present records that the process of the window sent since it created its surface.
+	waits:    i64, // 1: a Present of the process changed a part of the screen, and no frame drew it yet.
 	events_sent: i64, // The event records that the ring of the window took since the window opened: keys, pointer records, changes of the settings.
-	events_unread: i64, // The event records in the ring that the program did not read yet. The program writes the count of its reads: it says this of itself.
+	events_unread: i64, // The event records in the ring that the process did not read yet. The process writes the count of its reads: it says this of itself.
 	events_waiting: i64, // The event records that wait in the compositor, because the ring of the window is full.
 	keys_refused: i64, // The key records of this window that the compositor lost: the ring and the queue were full.
 	frames:   i64, // The frames of the screen that read a picture of this window.
-	pictures_drawn_again: i64, // The Present records that named the picture that the compositor already read: the program drew in a picture on the screen. 0 for a program that shows whole frames.
-	presents_refused: i64, // The Present records that the compositor refused: their picture number names no picture of the surface. 0 for a program of the system.
-	due:      i64, // 1: the program said that a change of the window waits for its next picture, which it draws at a time of its own clock. The window does not show the last state of the program yet. The program says this of itself.
+	pictures_drawn_again: i64, // The Present records that named the picture that the compositor already read: the process drew in a picture on the screen. 0 for a process that shows whole frames.
+	presents_refused: i64, // The Present records that the compositor refused: their picture number names no picture of the surface. 0 for a process of the system.
+	due:      i64, // 1: the process said that a change of the window waits for its next picture, which it draws at a time of its own clock. The window does not show the last state of the process yet. The process says this of itself.
 }
 
 // What the screen shows against what the compositor received: screen().
 Screen :: struct {
 	frames:   i64, // The frames that the compositor drew since the start.
-	presents: i64, // The Present records of all the programs since the start.
+	presents: i64, // The Present records of all the processes since the start.
 	damage:   i64, // The damage rectangles that wait for the next frame.
 	desktop:  i64, // 1: a change of the desktop itself waits for the next frame: the pointer, the bar, a menu, the palette, a window that appeared, moved or closed.
 	page_flips: i64, // The page flips since the start: each one showed a frame whole.
@@ -76,7 +76,7 @@ service: system.Service
 pointer_moves: u64
 key_records: u64
 
-// service_start opens the service ring. The file of this program is at
+// service_start opens the service ring. The file of this process is at
 // values 4 and 5, not at the places of a service that system.service_open
 // reads (values 1 and 2 are the screen here): it reads a copy of the
 // context with the two values at their places.
@@ -116,7 +116,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   start, because the ring of a window and the queue of the compositor
 //   for it were both full. It is 0 on a system that works; the log has a
 //   line for each loss period.
-// - `menu`: `programs`, `windows`, or empty.
+// - `menu`: `start`, `windows`, or empty.
 // - `palette`: the state of the palette: 0 while it is closed; 1 while it
 //   is open and the input searches; 2 while it asks for a second Enter; 3
 //   while it waits for what its provider gives; 4 while it shows a result;
@@ -147,8 +147,8 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		switch menu_open {
 		case .None:
 			// No menu: the field stays empty.
-		case .Programs:
-			copy(result[0].menu[:], "programs")
+		case .Start:
+			copy(result[0].menu[:], "start")
 		case .Windows:
 			copy(result[0].menu[:], "windows")
 		}
@@ -164,7 +164,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 //
 // **A row** (`Window`):
 //
-// - `title`: the name of the program of the window.
+// - `title`: the name of the process of the window.
 // - `x`, `y`, `width`, `height`: the window with its frame and its title
 //   bar, in pixels of the screen. The title bar is the top 24 pixels; the
 //   close button is the square of 24 pixels at its right end.
@@ -172,13 +172,13 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 // - `focus`: 1 for the window in front.
 // - `keyboard`: 1 when the keys go to the window: the window in front,
 //   while the palette is closed.
-// - `presents`: the `Present` records that the program of the window sent
+// - `presents`: the `Present` records that the process of the window sent
 //   since it created its surface.
-// - `waits`: 1 while a `Present` of the program changed a part of the
+// - `waits`: 1 while a `Present` of the process changed a part of the
 //   screen and no frame drew it yet. 0: the screen shows the last picture
-//   that the program sent before the call.
+//   that the process sent before the call.
 // - `events_sent`, `events_unread`: the event records that the ring of the
-//   window took, and the ones in the ring that the program did not read
+//   window took, and the ones in the ring that the process did not read
 //   yet.
 // - `events_waiting`: the event records that wait in the compositor while
 //   the ring of the window is full (256 at most).
@@ -187,17 +187,17 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 // - `frames`: the frames of the screen that read a picture of the window.
 // - `pictures_drawn_again`: the `Present` records that named the picture
 //   that the compositor already read. A surface has two pictures, and a
-//   program draws the one that the compositor does not read: each
-//   `Present` names the other picture. A program that names the same
+//   process draws the one that the compositor does not read: each
+//   `Present` names the other picture. A process that names the same
 //   picture again drew in a picture on the screen, and the screen could
-//   show it half drawn. It is 0 for a program that shows
+//   show it half drawn. It is 0 for a process that shows
 //   [whole frames](term:whole-frame).
 // - `presents_refused`: the `Present` records that the compositor refused,
 //   because their picture number names no picture of the surface (it is 0
 //   or 1). Such a record changes nothing on the screen and is not in
 //   `presents`.
 //
-// Only a program that created its surface has a window. If the table of
+// Only a process that created its surface has a window. If the table of
 // the caller has fewer places than windows, the rows of the windows at the
 // back are missing, and the result still gives the count of all windows.
 //
@@ -255,12 +255,12 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 // **The row** (`Screen`):
 //
 // - `frames`: the frames drawn since the start.
-// - `presents`: the `Present` records of all the programs since the start.
+// - `presents`: the `Present` records of all the processes since the start.
 // - `damage`: the damage rectangles that wait for the next frame, of the
-//   desktop and of the programs.
+//   desktop and of the processes.
 // - `desktop`: 1 while a change of the desktop itself waits for the next
 //   frame: the pointer, the bar, a menu, the palette, a window that
-//   appeared, moved or closed. The `Present` of a program is not in it:
+//   appeared, moved or closed. The `Present` of a process is not in it:
 //   `windows()` gives it for each window, in `waits`.
 // - `page_flips`: the [page flips](term:page-flip) since the start. With
 //   two [screen pages](term:screen-page), each frame goes into the page
@@ -270,11 +270,11 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 //   in part. It is 0 on a display with two screen pages. With one, or after
 //   a flip that the display refused, it counts each frame.
 //
-// The row counts each record that a program sent before the call: the
+// The row counts each record that a process sent before the call: the
 // compositor reads the ring of each window before it answers. It does not
-// say that a program sent its last picture: a program that still computes
-// has sent nothing yet. The state of the threads of the program says that
-// (`monitor.programs()`).
+// say that a process sent its last picture: a process that still computes
+// has sent nothing yet. The state of the threads of the process says that
+// (`monitor.processes()`).
 //
 // **Grant**: the caller must **act for the principal**; else the error
 // kind `No_Grant`, with the result -1.

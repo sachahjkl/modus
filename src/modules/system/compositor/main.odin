@@ -1,41 +1,41 @@
 // The compositor (docs/ARCHITECTURE.md, "U8. Graphics: the draw table and the compositor"): the service that owns the
-// display. It combines the surfaces of programs into the framebuffer, and it
-// sends input to the program that has focus. It is also the desktop shell of
-// this first version: a bar with the menu of the programs and the menu of
+// display. It combines the surfaces of processes into the framebuffer, and it
+// sends input to the process that has focus. It is also the desktop shell of
+// this first version: a bar with the start menu and the menu of
 // the windows, and windows that the input moves. It follows the design
 // rules (docs/DESIGN.md): rectangles only, the grid of 8 pixels, the colors
 // of src/library/support/graphics.
 //
-// **What it is for.** No program writes to the screen. A program asks the
-// compositor for a [surface](term:surface): memory that the program and the
-// compositor share. The program draws into it and sends `Present`; the
+// **What it is for.** No process writes to the screen. A process asks the
+// compositor for a [surface](term:surface): memory that the process and the
+// compositor share. The process draws into it and sends `Present`; the
 // compositor copies the changed rectangle into its frame, then the frame to
 // the screen page that the display does not show, and flips
 // (src/md/infrastructure/whole_frame.md). The compositor is the only holder of the framebuffer and
-// of the ring of the [input service](term:input-service), so no program
+// of the ring of the [input service](term:input-service), so no process
 // reads the keys of another window or draws over it.
 //
 // **What a reader sees.** The whole screen: the background with its grid
 // of points, the [bar](term:bar) at the top (the
-// [menu of the programs](term:menu-of-the-programs), the
+// [start menu](term:start-menu), the
 // [menu of the windows](term:menu-of-the-windows), the hint of the
 // [palette](term:palette), the date and the time), the windows with their
 // [title bar](term:title-bar) and their close button, and the
 // [pointer](term:pointer). The input can:
 //
-// - press a line of the menu of the programs: the compositor asks the root
-//   service to start that program;
+// - press a line of the start menu: the compositor asks the root
+//   service to start that module;
 // - press the key super: the palette opens; typed letters narrow one list
-//   of the programs and of the windows, and Enter starts the chosen
-//   program or brings the chosen window to the front (palette.odin);
+//   of the modules and of the windows, and Enter starts the chosen
+//   module or brings the chosen window to the front (palette.odin);
 // - drag a title bar: the window moves; a press on a window brings it to the
 //   front and gives it the [focus](term:focus);
 // - drag an edge or a corner of a
-//   [resizable window](term:resizable-window): its program draws it at
+//   [resizable window](term:resizable-window): its process draws it at
 //   the new size (window_resize.odin);
 // - press Control+C and Control+V: the [clipboard](term:clipboard) copies
 //   from the window in front and pastes into it (clipboard.odin);
-// - press the close button: the root service stops the program.
+// - press the close button: the root service stops the process.
 //
 // The keys go to the window in front, unless the palette is open.
 //
@@ -54,7 +54,7 @@
 //
 // **How it starts.** The root service starts it at each boot, after the
 // input service and before the console. Its context is not the context of
-// the other programs: the handles 0 to 2 are the framebuffer, the ring of
+// the other processes: the handles 0 to 2 are the framebuffer, the ring of
 // the input service, and a control ring to the root service; on the
 // standard VGA of the test machine, the handle 0 holds two
 // [screen pages](term:screen-page) and the handle 3 is the memory of the
@@ -63,7 +63,7 @@
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
 // [settings page](term:settings-page), the glyph caches and the
-// [date page](term:date-page). Its row of `program_roles` has the grants
+// [date page](term:date-page). Its row of `process_roles` has the grants
 // Serve and System_Part: the root service gives these handles by name.
 //
 // **Its exports**: `pointer` and `windows`, to a caller that
@@ -78,7 +78,7 @@
 //
 // **How it draws.** The windows, the bar and the palette are draw tables,
 // drawn by the [drawing module](term:drawing-module), which the compositor
-// imports as each program with a window does. A call of the module takes
+// imports as each process with a window does. A call of the module takes
 // one picture memory, and each surface is a memory of its own, so the
 // screen table is in parts: one for each window, with its surface, and one
 // for the bar, with its heron. A damage rectangle is one call for each
@@ -105,7 +105,7 @@ import "modus:contract/ring"
 import "modus:support/key_path"
 import "modus:support/system"
 import "modus:contract/pointer_pictures"
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
@@ -121,7 +121,7 @@ import "base:intrinsics"
 // 2 page directories (it can cross a 1 GiB edge): 19 pages. Each of the 32
 // clients can hold one such second mapping: 32 x 19 = 608 pages, and
 // 3803 + 608 = 4411.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4411, programs = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4411, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -150,7 +150,7 @@ PLACE_X :: 64
 PLACE_Y :: 56
 PLACE_STEP_X :: 40
 PLACE_STEP_Y :: 32
-CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
+CLIENT_CAPACITY :: 32 // The root service starts 32 processes at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
 // The hint of the palette in the bar, at the left of the time: "palette: super".
@@ -160,12 +160,12 @@ PALETTE_HINT_KEY :: "super"
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
 	ring:        ring.Ring,
-	surface:     graphics.Canvas, // pixels is nil until the program creates its surface.
+	surface:     graphics.Canvas, // pixels is nil until the process creates its surface.
 	pictures:    [^]graphics.Color, // The memory of the surface: two pictures. surface is one of them.
 	shown:       int, // The picture that surface is: the one that the last Present named.
 	// The proof that the window shows whole frames: the frames that read a
 	// picture of the window, and the Present records that named the
-	// picture that the compositor already read. A program that draws in
+	// picture that the compositor already read. A process that draws in
 	// the picture on the screen has no other complete picture to name.
 	frames:      u64,
 	pictures_drawn_again: u64,
@@ -173,18 +173,18 @@ Client :: struct {
 	commands_refused: u64, // The records whose kind names no command, or None: the first one writes a line.
 	x, y:        int,
 	title:       system.Name,
-	// A disk program: the root service gave its nickname and the first
+	// A disk process: the root service gave its nickname and the first
 	// bytes of the hash of its file in Client_Add. The window has the
 	// nickname as its title, and the menu of the windows shows the hash
 	// prefix beside it.
 	from_disk:   bool,
 	nickname:    system.Name,
-	hash_prefix: [program_page.HASH_PREFIX_DIGITS]u8,
-	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the program asked for over its surface (pointer_picture.odin).
-	pointer_over: bool, // The last pointer event of the program was over its surface, or with a button down: the program gets one event more when the pointer leaves.
-	presents:    u64, // The Present records that the program sent since it created its surface.
+	hash_prefix: [process_page.HASH_PREFIX_DIGITS]u8,
+	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the process asked for over its surface (pointer_picture.odin).
+	pointer_over: bool, // The last pointer event of the process was over its surface, or with a button down: the process gets one event more when the pointer leaves.
+	presents:    u64, // The Present records that the process sent since it created its surface.
 	present_waits: bool, // A Present changed a part of the screen, and no frame drew it yet.
-	picture_due:   bool, // The program said that a change waits for its next picture (display.Command.Picture_Due), and no Present came after.
+	picture_due:   bool, // The process said that a change waits for its next picture (display.Command.Picture_Due), and no Present came after.
 	// The act names of the window, as the last checked record Act_Names
 	// gave them: the palette offers to go there (palette.odin). They go with
 	// the window: client_remove clears the slot.
@@ -196,7 +196,7 @@ Client :: struct {
 	resizable:   bool,
 	size_limits: display.Size_Limits,
 	resizable_refusal_logged: bool, // The line of a refused Resizable is on the log: a window writes it one time.
-	// The surface of a new size that the program gave with Surface_Resize:
+	// The surface of a new size that the process gave with Surface_Resize:
 	// nil until then, and again from the first Present after it, when it
 	// becomes the surface of the window.
 	resize_pictures: [^]graphics.Color,
@@ -217,7 +217,7 @@ Client :: struct {
 	start:           quality.Window_Start,
 	start_due:       bool,
 	key_serial_sent: u64,
-	clipboard: clipboard_rules.Window_State, // What waits for an answer of the program to a key of the clipboard (clipboard.odin).
+	clipboard: clipboard_rules.Window_State, // What waits for an answer of the process to a key of the clipboard (clipboard.odin).
 	clipboard_refused: u64, // The Copy, Copy_Declined and Paste_Taken records that the compositor refused.
 }
 
@@ -256,7 +256,7 @@ dragging := -1
 // A menu of the bar.
 Menu :: enum {
 	None,
-	Programs, // The menu of the programs: a press on a line starts the program.
+	Start, // The start menu: a press on a line starts the module.
 	Windows, // One line for each window, in the order of the client table: a press brings the window to the front.
 }
 
@@ -273,7 +273,7 @@ RESIZE_OUTLINE_THICKNESS :: 2
 damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next frame draws again.
 damage_count: int
 frames: u64
-presents: u64 // The Present records of all the programs since the start.
+presents: u64 // The Present records of all the processes since the start.
 // A change of the desktop itself (the pointer, the bar, a menu, the
 // palette, a window that appeared, moved or closed) is damage that no
 // frame drew yet. The damage of a Present is counted for its window, not
@@ -289,7 +289,7 @@ move_frames, move_time, move_longest: u64 // Nanoseconds.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
 // damage_add records that the desktop itself changed a rectangle of the
-// screen: each change but the Present of a program.
+// screen: each change but the Present of a process.
 damage_add :: proc "contextless" (x, y, width, height: int) {
 	if damage_rectangle_add(x, y, width, height) {
 		desktop_change_waits = true
@@ -370,7 +370,7 @@ bar_layout_known: bool
 bar_in_interface_font: bool
 
 // bar_measure writes once in the log the time of one whole frame of the
-// bar with the menu of the programs open, built and drawn, in the font of
+// bar with the start menu open, built and drawn, in the font of
 // the cells and in the interface font: the least of 20 rounds, so that a
 // round that the host stops in its middle does not count. It runs before
 // the first frame, which draws the whole screen after it.
@@ -378,7 +378,7 @@ bar_measure :: proc "contextless" () {
 	ROUNDS :: 20
 	font := display.interface_font_of()
 	saved_layout, saved_menu := bar_layout, menu_open
-	menu_open = .Programs
+	menu_open = .Start
 	fonts := [2]^display.Interface_Font{nil, font}
 	least := [2]u64{max(u64), max(u64)}
 	measured := 0
@@ -399,10 +399,10 @@ bar_measure :: proc "contextless" () {
 	}
 	bar_layout, menu_open = saved_layout, saved_menu
 	if measured < 2 {
-		system.log("compositor: the bar and the menu of the programs, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
+		system.log("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
 		return
 	}
-	system.log("compositor: the bar and the menu of the programs, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
+	system.log("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
 }
 
 // bar_layout_update measures the bar in the font that draws it now, and
@@ -423,7 +423,7 @@ bar_layout_update :: proc "contextless" () {
 	damage_add(0, 0, screen.width, BAR_HEIGHT)
 	damage_menu_of(bar_layout)
 	if in_interface_font {
-		system.log("compositor: the bar is in the interface font: programs ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
+		system.log("compositor: the bar is in the interface font: start ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
 	} else {
 		system.log("compositor: the bar is in the font of the cells")
 	}
@@ -459,11 +459,11 @@ windows_log :: proc "contextless" () {
 		count += copy(buffer[count:], system.name_of(client.title[:]))
 	}
 	system.log_in("surfaces", .Info, "compositor: windows: ", string(buffer[:count]))
-	// The line of a disk program shows the hash prefix that the root
+	// The line of a disk process shows the hash prefix that the root
 	// service gave, faded beside its nickname.
 	for &client in clients {
 		if client.surface.pixels != nil && client.from_disk {
-			system.log_in("surfaces", .Info, "compositor: the menu of the windows shows the disk program ", system.name_of(client.title[:]), " with the hash prefix ", string(client.hash_prefix[:]), ", from the root service")
+			system.log_in("surfaces", .Info, "compositor: the menu of the windows shows the disk process ", system.name_of(client.title[:]), " with the hash prefix ", string(client.hash_prefix[:]), ", from the root service")
 		}
 	}
 }
@@ -566,7 +566,7 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 //    to add or to remove.
 // 3. The input ring: a key goes to the palette, or to the window in
 //    front; a move or a button of the pointer moves the pointer, drags a
-//    window, opens a menu or starts a program. Before the new records, the
+//    window, opens a menu or starts a process. Before the new records, the
 //    records that wait for a window whose ring was full go to it, in order
 //    (window_events.odin).
 // 4. The ring of each window: `Surface_Create`, `Present` (the changed
@@ -574,7 +574,7 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 //    `Surface_Resize`.
 // 5. The calls of `pointer`, `windows` and `screen`, after the input and
 //    after the rings of the windows, so that they give the place of now
-//    and count each `Present` that a program sent before the call.
+//    and count each `Present` that a process sent before the call.
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer or no ring, the compositor writes
@@ -720,13 +720,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// The palette took the key.
 				case clipboard_key(character, u32(record.values[3]), record.values[2] != 0):
-					// A key of the clipboard goes to no program (clipboard.odin).
+					// A key of the clipboard goes to no process (clipboard.odin).
 				case order_count > 0:
 					in_front := order[order_count - 1]
 					send(&clients[in_front], .Key, quality_key_values(in_front, record.values))
 				}
 			case .Pointer:
-				// The input service is a program: a count of notches far
+				// The input service is a process: a count of notches far
 				// past a hand is cut, as the window layer cuts it.
 				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 				pointer_moved(int(i64(record.values[0])), int(i64(record.values[1])), u32(record.values[2]), wheel)
@@ -738,7 +738,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				continue
 			}
 			// One turn takes the records that the ring holds at its start,
-			// and no more: a program that writes records as fast as this
+			// and no more: a process that writes records as fast as this
 			// loop reads them must not keep this loop from the frame, the
 			// input and the other windows. The records that come during
 			// the turn end the next wait at once.
@@ -747,7 +747,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				record := system.receive(&client.ring.commands) or_break
 				taken = true
 				quality_record_read()
-				// A program writes the word: a word of no command, and None,
+				// A process writes the word: a word of no command, and None,
 				// are counted, and the first one of a window writes a line,
 				// so a window that writes many cannot fill the log of the
 				// compositor.
@@ -768,9 +768,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// The picture that was due comes with this Present.
 					client.picture_due = false
 					if client.surface.pixels != nil {
-						// The program names the picture that is complete.
+						// The process names the picture that is complete.
 						// From here on the compositor reads only that one,
-						// and the program draws the other. A number that
+						// and the process draws the other. A number that
 						// names no picture is refused and counted: the
 						// window keeps the last picture that was named,
 						// and shows none before a first one.
@@ -790,7 +790,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 						client.shown = int(picture)
 						client.surface.pixels = client.pictures[client.shown * client.surface.width * client.surface.height:]
-						// The program can name the rectangle that changed; the
+						// The process can name the rectangle that changed; the
 						// numbers are its own: they are cut to the surface.
 						left, top := int(min(record.values[1], u64(client.surface.width))), int(min(record.values[2], u64(client.surface.height)))
 						// The first picture of the window: the screen shows
@@ -841,7 +841,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					clipboard_answer_take(index, .Paste_Taken, record)
 				}
 			}
-			// The program can wait until this loop took its last picture
+			// The process can wait until this loop took its last picture
 			// (display.canvas_wait): it draws the next one in the picture
 			// that this loop read until now. No frame is drawn between
 			// the record and this wake.
@@ -851,9 +851,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		palette_turn() // A list of the ranking thread, an answer of the palette provider.
 		// The calls read the place of the pointer after the input records,
-		// and the state of the screen after each Present that a program
+		// and the state of the screen after each Present that a process
 		// sent before the call: a caller that reads "nothing waits" then
-		// knows that the screen shows what the programs sent.
+		// knows that the screen shows what the processes sent.
 		system.service_run(&service)
 		pointer_update(now) // After each change of what is under the pointer.
 		if second_of_bar(now) != shown_second {
@@ -872,7 +872,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 // settings_changed gives the new font to the text of the desktop, draws the
-// whole screen again, and tells each window: its program draws again
+// whole screen again, and tells each window: its process draws again
 // (src/library/support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
@@ -921,10 +921,10 @@ send :: proc "contextless" (client: ^Client, kind: display.Event_Kind, values: [
 	window_event_send(client, kind, values)
 }
 
-// client_add takes the ring of a new program from the root service. For a
-// disk program the record also holds its nickname and the first bytes of
+// client_add takes the ring of a new process from the root service. For a
+// disk process the record also holds its nickname and the first bytes of
 // the hash of its file: the window takes that nickname, not the title that
-// the program sends.
+// the process sends.
 client_add :: proc "contextless" (record: ring.Record) {
 	memory := system.Handle(record.values[0])
 	for &client in clients {
@@ -936,11 +936,11 @@ client_add :: proc "contextless" (record: ring.Record) {
 			break
 		}
 		client = {ring_memory = memory, ring = opened}
-		nickname := program_page.nickname_of({record.values[1], record.values[2], record.values[3]})
+		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
 		if nickname.length > 0 {
 			client.from_disk = true
-			copy(client.nickname[:len(client.nickname) - 1], program_page.nickname_text(&nickname))
-			program_page.hash_prefix_write(&client.hash_prefix, record.values[4])
+			copy(client.nickname[:len(client.nickname) - 1], process_page.nickname_text(&nickname))
+			process_page.hash_prefix_write(&client.hash_prefix, record.values[4])
 		}
 		return
 	}
@@ -990,25 +990,25 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 
 surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client := &clients[index]
-	// The program wrote the number of the handle: it can name any handle of
+	// The process wrote the number of the handle: it can name any handle of
 	// the compositor, among them the surface or the ring of another client.
-	// The kernel proves that this program gave the handle through its own
+	// The kernel proves that this process gave the handle through its own
 	// ring (src/library/support/system, handle_state). A number with no proof is not a
-	// gift of this program: the compositor neither uses it nor closes it.
+	// gift of this process: the compositor neither uses it nor closes it.
 	memory := system.Handle(record.values[0])
 	kind, rights, through := system.handle_state(memory, client.ring_memory)
-	// No log line: a program could send this command without end.
+	// No log line: a process could send this command without end.
 	if !through {
 		return
 	}
-	// The handle is a gift of this program: each return below closes it.
+	// The handle is a gift of this process: each return below closes it.
 	defer system.close(memory)
 	width, height := record.values[1], record.values[2]
-	// The program chose these numbers: check them against the memory itself.
+	// The process chose these numbers: check them against the memory itself.
 	if kind != .Memory || .Read not_in rights || client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
 		return
 	}
-	// A surface has two pictures: the program draws one while this service
+	// A surface has two pictures: the process draws one while this service
 	// reads the other. Memory for less is refused.
 	pages, size_status := system.memory_size(memory)
 	size := pages * system.PAGE_SIZE
@@ -1021,7 +1021,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	client.pictures = ([^]graphics.Color)(address)
 	client.surface = {pixels = client.pictures, width = int(width), height = int(height), stride = int(width)}
-	// A disk program could title its window as a program of the system: its
+	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.
 	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
@@ -1058,10 +1058,10 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 
 // pointer_moved takes one pointer record of the input service: a move, the
 // buttons, and the notches of the wheel. The wheel goes where the pointer
-// goes: to the palette while it is open, else to the program of the window
+// goes: to the palette while it is open, else to the process of the window
 // in front when the pointer is over its surface. A window behind gets no
-// notch: the input goes only to the program that has the focus, so no
-// program reads input that the principal gave to another one.
+// notch: the input goes only to the process that has the focus, so no
+// process reads input that the principal gave to another one.
 pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, wheel: int) {
 	close_before := close_button_under_pointer()
 	pointer_x = clamp(pointer_x + motion_x, 0, screen.width - 1)
@@ -1116,12 +1116,12 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		resize_pointer_moved(buttons & display.BUTTON_LEFT != 0) // window_resize.odin
 		return
 	}
-	// The menu of the programs: its button opens it. A press on a line
-	// starts the program. Any press closes the menu.
+	// The start menu: its button opens it. A press on a line
+	// starts the process. Any press closes the menu.
 	// The menu of the windows: its button opens it, and a press on a line
 	// brings the window to the front.
 	if menu_open != .None {
-		over := menu_open == .Programs ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
+		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
 		if over != menu_line {
 			menu_line = over
 			damage_menu()
@@ -1130,7 +1130,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	if pressed {
 		was_open := menu_open
 		if menu_open != .None {
-			if menu_open == .Programs && menu_line >= 0 {
+			if menu_open == .Start && menu_line >= 0 {
 				packed := system.name_pack(bar.names[menu_line])
 				system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 			}
@@ -1148,9 +1148,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			damage_menu()
 		}
 		under := bar.button_at(bar_layout, pointer_x, pointer_y)
-		if under == .Programs && was_open != .Programs {
-			menu_open = .Programs
-			system.log_in("surfaces", .Info, "compositor: the menu of the programs is open")
+		if under == .Start && was_open != .Start {
+			menu_open = .Start
+			system.log_in("surfaces", .Info, "compositor: the start menu is open")
 			damage_menu()
 		}
 		if under == .Windows && was_open != .Windows {
@@ -1186,13 +1186,13 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			break
 		}
 	}
-	// The program with focus receives the pointer when it is over its surface,
+	// The process with focus receives the pointer when it is over its surface,
 	// and while a button is down.
 	if order_count > 0 {
 		client := &clients[order[order_count - 1]]
 		x := pointer_x - client.x - BORDER
 		y := pointer_y - client.y - TITLE_HEIGHT
-		// One event more when the pointer leaves the surface: the program
+		// One event more when the pointer leaves the surface: the process
 		// then draws at rest what the pointer was over (a scroll bar).
 		on_surface := inside(x, y, 0, 0, client.surface.width, client.surface.height)
 		over := held || on_surface
@@ -1207,9 +1207,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	}
 }
 
-// pointer_leaves_front tells the program of the window in front that the
+// pointer_leaves_front tells the process of the window in front that the
 // pointer is no longer over its surface, before another window takes the
-// front: that program receives no pointer event after it. The place of the
+// front: that process receives no pointer event after it. The place of the
 // event is the corner outside the surface, with no button.
 pointer_leaves_front :: proc "contextless" () {
 	if order_count == 0 {
@@ -1388,10 +1388,10 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	// The title: a name, cut in its font to the room before the close button.
 	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), outer_width - CLOSE_SIZE - 16)
 	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
-	base := graphics.Color(graphics.colors.stop_program_quiet)
-	cross_color := graphics.Color(graphics.colors.stop_program_quiet_mark)
+	base := graphics.Color(graphics.colors.stop_process_quiet)
+	cross_color := graphics.Color(graphics.colors.stop_process_quiet_mark)
 	if focus || pointer_over {
-		base = pointer_over ? graphics.colors.stop_program_pointer_over : graphics.colors.stop_program
+		base = pointer_over ? graphics.colors.stop_process_pointer_over : graphics.colors.stop_process
 		cross_color = graphics.COLOR_WHITE
 	}
 	close_x := x + outer_width - BORDER - CLOSE_SIZE
@@ -1533,7 +1533,7 @@ screen_table := interface.Draw_Table{}
 
 // A part of the screen table: the records of one window, or of the bar and
 // its menus, and the one picture memory that their Picture record names as
-// number 0. Each surface is a memory object of another program, mapped at
+// number 0. Each surface is a memory object of another process, mapped at
 // its own address, and a call of the drawing module takes one picture
 // memory: so the compositor draws each part with a call of its own.
 Screen_Part :: struct {
@@ -1677,8 +1677,8 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		focus := position == order_count - 1
 		first := table.record_count
 		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
-		// A window shows a picture that its program presented, or none:
-		// before the first Present, the program draws in the memory of
+		// A window shows a picture that its process presented, or none:
+		// before the first Present, the process draws in the memory of
 		// the surface, and the window has the background color.
 		memory: []graphics.Color
 		if client.presents > 0 {
@@ -1691,7 +1691,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		screen_part_end(first, memory, outer, true)
 	}
 	// The outline of the frame that a drag of the edges gives, over the
-	// windows: the window keeps its picture until its program draws the
+	// windows: the window keeps its picture until its process draws the
 	// new size.
 	if resizing >= 0 {
 		first := table.record_count
@@ -1711,7 +1711,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 	}
 	left, top, button_width, button_height := bar.button(bar_layout)
-	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Programs)
+	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Start)
 	left, top, button_width, button_height = bar.windows_button(bar_layout)
 	bar_button_records(table, left, top, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
 	// The hint of the palette: a name, in the interface font, measured in
@@ -1762,7 +1762,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 				// The window that has the focus: a square, and its title in white.
 				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.colors.title)
 			}
-			// A disk program keeps the room of its hash prefix at the end of
+			// A disk process keeps the room of its hash prefix at the end of
 			// the line: the nickname ends before it.
 			room := line_width - bar.WINDOWS_TITLE_X - bar.PADDING
 			if clients[index].from_disk {
@@ -1777,9 +1777,9 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			}
 		}
 	}
-	if menu_open == .Programs {
+	if menu_open == .Start {
 		menu_left, menu_top, menu_width, menu_height := bar.menu(bar_layout)
-		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROGRAMS", "bar.names", graphics.colors.kernel, interface.number_text(&count, len(bar.names)))
+		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROCESSES", "bar.names", graphics.colors.kernel, interface.number_text(&count, len(bar.names)))
 		for name, index in bar.names {
 			line_x, line_y, line_width, line_height := bar.line(bar_layout, index)
 			if index == menu_line {

@@ -6,7 +6,7 @@ import "core:testing"
 import "modus:support/sentence"
 
 // Memory that a test made by hand, in the place of the memory of a
-// debugged program.
+// debugged process.
 @(private = "file")
 Fake_Memory :: struct {
 	base:  u64,
@@ -95,8 +95,8 @@ a_text_that_is_not_a_path_is_refused_with_its_byte :: proc(t: ^testing.T) {
 the_place_of_a_breakpoint_is_a_procedure_or_a_file_and_a_line :: proc(t: ^testing.T) {
 	kind, name, line, ok := place_parse("fault::three")
 	testing.expect(t, ok && kind == .Procedure && name == "fault::three" && line == 0)
-	kind, name, line, ok = place_parse("programs/fault/main.odin:15")
-	testing.expect(t, ok && kind == .Line && name == "programs/fault/main.odin" && line == 15)
+	kind, name, line, ok = place_parse("processes/fault/main.odin:15")
+	testing.expect(t, ok && kind == .Line && name == "processes/fault/main.odin" && line == 15)
 	// A name that ends with a digit, after "::", is a procedure.
 	kind, name, _, ok = place_parse("fault::three9")
 	testing.expect(t, ok && kind == .Procedure && name == "fault::three9")
@@ -171,7 +171,7 @@ at_the_start_of_a_procedure_the_return_address_is_at_the_stack_pointer :: proc(t
 	count = frames_walk(reader_of(memory), 0x40_2001, 0x7010, 0x7000, .After_Frame_Pointer_Push, frames[:])
 	testing.expect_value(t, count, 5)
 	testing.expect_value(t, frames[0].return_address, u64(0x40_1050))
-	// A stack pointer that the program does not map: the one frame.
+	// A stack pointer that the process does not map: the one frame.
 	count = frames_walk(reader_of(memory), 0x40_2000, 0x7010, 0x9000, .At_First_Instruction, frames[:])
 	testing.expect_value(t, count, 1)
 }
@@ -180,7 +180,7 @@ at_the_start_of_a_procedure_the_return_address_is_at_the_stack_pointer :: proc(t
 the_walk_of_the_frames_ends :: proc(t: ^testing.T) {
 	frames: [FRAME_CAPACITY]Frame
 	// A frame pointer of 0, one that is not a multiple of 8, one that the
-	// program does not map: the frame of the instruction only.
+	// process does not map: the frame of the instruction only.
 	for pointer in ([]u64{0, 0x7011, 0x9000, 0x70F8}) {
 		count := frames_walk(reader_of(stack_make()), 0x40_1000, pointer, 0x6FF0, .In_Body, frames[:])
 		testing.expectf(t, count == 1, "the frame pointer %x gives %d frames", pointer, count)
@@ -254,7 +254,7 @@ object_make :: proc(t: ^testing.T) -> []u8 {
 	procedures[0] = {start = 0x1000, size = 0x40, name_offset = name_put(names, "test::one"), name_count = 9, package_count = 4}
 	procedures[1] = {start = 0x1100, size = 0x20, name_offset = name_put(names, "test::two"), name_count = 9, package_count = 4}
 	files := make([]debug_object.File, 2, context.temp_allocator)
-	files[1] = {path_offset = name_put(names, "programs/test/main.odin"), path_count = 23, content_hash = {0 = 1}}
+	files[1] = {path_offset = name_put(names, "processes/test/main.odin"), path_count = len("processes/test/main.odin"), content_hash = {0 = 1}}
 	lines := make([]debug_object.Line, 5, context.temp_allocator)
 	lines[0] = {offset = 0x1000, place = debug_object.row_place(1, 10)}
 	lines[1] = {offset = 0x1010, place = debug_object.row_place(1, 11)}
@@ -372,7 +372,7 @@ a_value_is_written_by_the_kind_of_its_type :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_of(&ctx, at(TYPE_SLICE, 0x1_0050)), "3 elements at 0x0000000000010020")
 	testing.expect_value(t, text_of(&ctx, at(TYPE_OTHER, 0x1_0000)), "a value of 3 bytes")
 	testing.expect_value(t, text_of(&ctx, at(0, 0x1_0000)), "no type")
-	// Memory that the program does not map.
+	// Memory that the process does not map.
 	testing.expect_value(t, text_of(&ctx, at(TYPE_U64, 0x9_0000)), "not readable")
 	testing.expect_value(t, text_of(&ctx, at(TYPE_PAIR, 0x9_0000)), "{first = not readable, next = not readable}")
 	// A value in a register: its low bytes.
@@ -494,19 +494,19 @@ a_procedure_and_a_line_are_found_in_the_tables :: proc(t: ^testing.T) {
 	_, found = procedure_start_by_name(object, "")
 	testing.expect(t, !found)
 	// A line with two rows: the lowest instruction.
-	offset, found = line_first_offset(object, "programs/test/main.odin", 10)
+	offset, found = line_first_offset(object, "processes/test/main.odin", 10)
 	testing.expect(t, found && offset == 0x1000)
-	offset, found = line_first_offset(object, "programs/test/main.odin", 11)
+	offset, found = line_first_offset(object, "processes/test/main.odin", 11)
 	testing.expect(t, found && offset == 0x1010)
-	offset, found = line_first_offset(object, "programs/test/main.odin", 20)
+	offset, found = line_first_offset(object, "processes/test/main.odin", 20)
 	testing.expect(t, found && offset == 0x1100)
-	_, found = line_first_offset(object, "programs/test/main.odin", 12)
+	_, found = line_first_offset(object, "processes/test/main.odin", 12)
 	testing.expect(t, !found, "a line with no instruction")
-	_, found = line_first_offset(object, "programs/other/main.odin", 10)
+	_, found = line_first_offset(object, "processes/other/main.odin", 10)
 	testing.expect(t, !found, "a file that the module does not have")
-	_, found = line_first_offset(object, "programs/test/main.odin", 0)
+	_, found = line_first_offset(object, "processes/test/main.odin", 0)
 	testing.expect(t, !found)
-	_, found = line_first_offset(nil, "programs/test/main.odin", 10)
+	_, found = line_first_offset(nil, "processes/test/main.odin", 10)
 	testing.expect(t, !found, "no debug object")
 }
 

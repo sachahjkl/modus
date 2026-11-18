@@ -963,7 +963,7 @@ NV_WRITTEN :: u32(1 << 29) // The TPM sets it at the first write.
 // a policy session writes it. Its policy is PCR 7 with Secure Boot on and
 // PCR 11 before the measure (32 zero bytes): only a boot program that the
 // certificate of the publisher verified, before it measures the system,
-// raises it, and no kernel or program after the measure can. The owner
+// raises it, and no kernel or process after the measure can. The owner
 // hierarchy defined it: the TPM refuses TPMA_NV_POLICY_DELETE for an index
 // of that hierarchy.
 FLOOR_ATTRIBUTES :: NV_POLICY_WRITE | NV_TYPE_BITS | NV_AUTHORIZATION_READ | NV_NO_DICTIONARY_ATTACK

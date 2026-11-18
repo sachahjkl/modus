@@ -13,8 +13,8 @@ import "modus:support/system"
 // this service creates the settings page, checks the hashes and the format
 // of the glyph caches of the boot image once, draws the boot display with the
 // default one, and maps the page and the caches read-only into each
-// program with a surface, into each terminal and into the compositor. The
-// program `settings` receives the page with Write.
+// process with a surface, into each terminal and into the compositor. The
+// process `settings` receives the page with Write.
 //
 // The boot display is drawn before the storage service runs: it uses the
 // defaults (the vector font with the grid fit, red green blue). At the end
@@ -46,8 +46,8 @@ settings_boot_pass: bool
 // Each cache is given only when its hash is right (resource_mapping) and
 // its format is valid: a resource shorter than the header of a cache, or
 // whose header states another size than the resource, is not given, so a
-// program that reads the size in the header reads only mapped bytes. With
-// no cache of the text of cells, each program draws with Spleen 8x16, and
+// process that reads the size in the header reads only mapped bytes. With
+// no cache of the text of cells, each process draws with Spleen 8x16, and
 // the log says why.
 text_settings_create :: proc "contextless" () {
 	status: system.Status
@@ -63,7 +63,7 @@ text_settings_create :: proc "contextless" () {
 	caches: [settings.Glyph_Cache]glyph_cache.Cache
 	for name, cache in glyph_cache_resources {
 		place := fixed_addresses.range_of(settings.glyph_cache_ranges[cache])
-		mapping, _, given := resource_mapping(name, place.address, "each program with a surface")
+		mapping, _, given := resource_mapping(name, place.address, "each process with a surface")
 		if !given {
 			continue
 		}
@@ -71,35 +71,35 @@ text_settings_create :: proc "contextless" () {
 		problem: glyph_cache.Problem
 		caches[cache], problem = glyph_cache.validate(image[entry.offset:][:entry.size])
 		if problem.kind != .None {
-			system.log_in("programs", .Warning, "root: the glyph cache ", name, " is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ": it is not given")
+			system.log_in("processes", .Warning, "root: the glyph cache ", name, " is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ": it is not given")
 			continue
 		}
 		glyph_cache_mappings[cache] = mapping
 	}
 	// The font outlines, given only when their hash is right and their
 	// format valid, as a glyph cache; and the demand cache beside them.
-	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each program with a surface"); given {
+	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
 		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
 			font_outlines_mapping = mapping
 		} else {
-			system.log_in("programs", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
+			system.log_in("processes", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
 		}
 	}
 	demand_cache_create()
 	if glyph_cache_mappings[.With_Grid_Fit].page_count == 0 {
-		system.log_in("programs", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
+		system.log_in("processes", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
 		return
 	}
 	// The boot display: the caches in the image that this service maps.
 	if problem := graphics.text_cache_use(caches[.With_Grid_Fit]); problem.kind != .None {
-		system.log_in("programs", .Warning, "root: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the boot display is Spleen 8x16")
+		system.log_in("processes", .Warning, "root: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the boot display is Spleen 8x16")
 	}
 	if glyph_cache_mappings[.Bold].page_count != 0 {
 		graphics.text_bold_cache_use(caches[.Bold])
 	}
 	// The boot display: its titles and the names of its facts in the
-	// interface font, from the same caches that the programs receive.
+	// interface font, from the same caches that the processes receive.
 	interface_given := glyph_cache_mappings[.Interface].page_count != 0 && glyph_cache_mappings[.Interface_Bold].page_count != 0
 	if interface_given && caches[.Interface].header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 && caches[.Interface_Bold].header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 {
 		boot_interface_font = {regular = caches[.Interface], bold = caches[.Interface_Bold]}
@@ -108,10 +108,10 @@ text_settings_create :: proc "contextless" () {
 }
 
 // text_settings_give adds the settings page, the glyph caches, the font
-// outlines and the demand cache, read-only, to the mappings of a program
+// outlines and the demand cache, read-only, to the mappings of a process
 // that has a surface or a terminal, and sets the bit of each range in its
 // values. A cache mapping has no flag: the right Read only, for every
-// program, the program `settings` included. The pages of the caches and of
+// process, the process `settings` included. The pages of the caches and of
 // the outlines come from the boot image, whose one handle (of this
 // service) has no right Write.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
@@ -152,6 +152,6 @@ settings_boot_pass_start :: proc "contextless" () {
 	status := start("settings")
 	settings_boot_pass = false
 	if status != .Ok {
-		system.log_in("programs", .Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
+		system.log_in("processes", .Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
 	}
 }

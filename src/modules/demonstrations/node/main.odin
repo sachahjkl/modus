@@ -2,14 +2,14 @@
 // objects and no other handle: it cannot draw, and it cannot see the other
 // nodes. It communicates only through its rings.
 //
-// **What it is for.** It shows that a program with no grant but four memory
+// **What it is for.** It shows that a process with no grant but four memory
 // objects is still useful, and still contained: it passes records from the
 // ring before it to the ring after it, and it can do nothing else. The
-// program `rings` starts six nodes in a circle from the boot image and
+// process `rings` starts six nodes in a circle from the boot image and
 // draws what each one holds.
 //
 // **Start**: `rings` starts it from the boot image and gives it its four
-// handles. Its row of `program_roles` has no grant: a start by the root
+// handles. Its row of `process_roles` has no grant: a start by the root
 // service does not give it these handles, so it has no use there.
 //
 // **Its context**, as the package relay names the places:

@@ -144,7 +144,7 @@ host_tests_run :: proc(folders: []string) -> bool {
 	at_once := host_tests_at_once(len(folders), processors)
 	fmt.printfln("modustool: the host tests of %d folders, at most %d at once: %d processors", len(folders), at_once, processors)
 	started := time.tick_now()
-	outcomes := build_processes_run(commands, at_once, context.temp_allocator)
+	outcomes := build_host_processes_run(commands, at_once, context.temp_allocator)
 	whole := time.tick_since(started)
 	passed := true
 	not_started := 0

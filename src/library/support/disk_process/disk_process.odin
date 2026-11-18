@@ -1,10 +1,10 @@
 // What the root service, the console and the modus tool agree on for a
-// disk program: a program whose module file is an object of the store
-// `programs` of the storage service, and not a file of the boot image
-// (docs/MODULE_CONTRACT.md, "A program from a disk").
+// disk process: a process whose module file is an object of the store
+// `module_files` of the storage service, and not a file of the boot image
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // No allocator and no kernel operation: the host tests run each procedure
-// (disk_program_test.odin).
+// (disk_process_test.odin).
 //
 // The parts:
 //
@@ -13,7 +13,7 @@
 //   whose private store it is.
 //   `TABLE_OBJECT_NAME`: the object of that store that holds the
 //   persisted disk grant table.
-// - `name_problem`, `name_pack`, `name_unpack`: the name of a disk program,
+// - `name_problem`, `name_pack`, `name_unpack`: the name of a disk process,
 //   in three values of a record of the root ring.
 // - `hash_parse`, `hash_write`: the hash of the command, as 64 hexadecimal
 //   digits.
@@ -32,42 +32,42 @@
 //   `table_client_key_remove`, `table_client_key_find`: the client keys of
 //   `remote` that the principal allowed, which the table keeps across a
 //   restart.
-// - `PROGRAMS_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
-//   pays all disk programs, and the most that one of them gets.
+// - `PROCESSES_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
+//   pays all disk processes, and the most that one of them gets.
 // - `Import_Scan`, `scan_want`, `scan_entry_add`, `scan_next`,
 //   `scan_read_done`, `scan_skip` (import_scan.odin): the account of the
-//   import scan that finds an import of a disk program in the store
-//   `programs` by the hash of its bytes, with its bounds.
+//   import scan that finds an import of a disk process in the store
+//   `module_files` by the hash of its bytes, with its bounds.
 // - `Kept_Stop_Reports`, `stop_report_hide`, `kept_stop_report_keep`,
 //   `kept_stop_report_find` (kept_stop_report.odin): the stop report of a
-//   disk program that stopped on a fault, which the root service keeps
+//   disk process that stopped on a fault, which the root service keeps
 //   after the reap and gives to the debugger service.
 //
-// See [disk program](term:disk-program).
-package disk_program
+// See [disk process](term:disk-process).
+package disk_process
 
 // The store whose root tree holds the module files: one entry for each
-// program, its name the name of the program. For a named principal the
+// module, its name the name of the module. For a named principal the
 // root service adds the principal to this name, as for each store.
-STORE_NAME :: "programs"
+STORE_NAME :: "module_files"
 
-// The object of the root tree of the store `programs` that holds the
+// The object of the root tree of the store `module_files` that holds the
 // persisted disk grant table of its principal (grant_table.odin). No disk
-// program has this name.
+// process has this name.
 TABLE_OBJECT_NAME :: "grant_table"
 
-// The limit of blocks of the store `programs`, as the root service grants
+// The limit of blocks of the store `module_files`, as the root service grants
 // it and as the modus tool writes it: 16 MiB. The two numbers are one
 // constant, so the grant of a read never differs from the limit on the
 // disk.
 STORE_BLOCKS_LIMIT :: 4096
 
-// The bytes of the name of a disk program: three values of a record of
+// The bytes of the name of a disk process: three values of a record of
 // the root ring, with a zero byte after it. The other four values of the
 // record hold the hash.
 NAME_LIMIT :: 23
 
-// The most bytes of the module file of a disk program. The root service
+// The most bytes of the module file of a disk process. The root service
 // reads the file into memory of its own budget before it checks the hash:
 // the limit bounds what a file of a disk takes from that budget.
 FILE_BYTES_LIMIT :: 4 << 20
@@ -79,14 +79,14 @@ FILE_BYTES_LIMIT :: 4 << 20
 // procedures, the line table, the types and the variables.
 DEBUG_OBJECT_BYTES_LIMIT :: 8 << 20
 
-// The deadline of one load, from the command to the start of the program.
+// The deadline of one load, from the command to the start of the process.
 // It frees the one place of the load when the storage service gives no
 // answer; it is not a measure of the disk.
 LOAD_DEADLINE_MILLISECONDS :: 30_000
 
-// The value of the context of the module file service, the program
-// `programs`, that holds the number of its principal: its private store
-// is the store `programs` of that principal, and it serves the callers
+// The value of the context of the module file service, the module
+// `module_files`, that holds the number of its principal: its private store
+// is the store `module_files` of that principal, and it serves the callers
 // that act for that principal only. The other values of 0 to 15 that a
 // service with a store and an endpoint receives are 1, 2 and 3.
 SERVICE_VALUE_PRINCIPAL :: 4
@@ -94,20 +94,20 @@ SERVICE_VALUE_PRINCIPAL :: 4
 HASH_SIZE :: 32 // The bytes of a hash.
 HASH_DIGITS :: 2 * HASH_SIZE // The hexadecimal digits of a hash.
 
-// Why a text cannot be the name of a disk program: the result of
+// Why a text cannot be the name of a disk process: the result of
 // `name_problem`.
 Name_Problem :: enum u8 {
 	None, // The name is valid.
 	Empty, // The name has no byte.
 	Too_Long, // More than NAME_LIMIT bytes.
-	Bad_Byte, // A byte that is no visible character of ASCII, or a byte '/', or the name is "." or "..": no name of a program.
+	Bad_Byte, // A byte that is no visible character of ASCII, or a byte '/', or the name is "." or "..": no name of a process.
 	Store_Name, // The name of the store of the module files: its private store would be that store.
 	Table_Name, // The name of the object of the disk grant table in that store: the table would be read as a module file, and written over one.
 }
 
-// name_problem says why a text cannot be the name of a disk program, or
+// name_problem says why a text cannot be the name of a disk process, or
 // None. The name is the name of an entry of a tree, so it follows the rule
-// of such a name, and the name of a program, so it is ASCII; offset is the
+// of such a name, and the name of a process, so it is ASCII; offset is the
 // place of the byte of Bad_Byte.
 name_problem :: proc "contextless" (name: string) -> (problem: Name_Problem, offset: int) {
 	if len(name) == 0 {
@@ -116,7 +116,7 @@ name_problem :: proc "contextless" (name: string) -> (problem: Name_Problem, off
 	if len(name) > NAME_LIMIT {
 		return .Too_Long, 0
 	}
-	// The name of a program is an identifier of the system, as the name of
+	// The name of a process is an identifier of the system, as the name of
 	// a module: visible characters of ASCII, which each layout types and
 	// each log shows the same (src/md/data/text_encoding.md).
 	for index in 0 ..< len(name) {
@@ -201,7 +201,7 @@ hash_write :: proc "contextless" (out: ^[HASH_DIGITS]u8, hash: [HASH_SIZE]u8) {
 // holds the debug object of a module: the 64 hexadecimal digits of the hash
 // of the module, in lower case. The module names it, not the principal: one
 // file can have two nicknames, and a nickname can move to another file
-// (src/md/features/debug_object_of_a_disk_program.md).
+// (src/md/features/debug_object_of_a_disk_process.md).
 debug_object_name_write :: proc "contextless" (out: ^[HASH_DIGITS]u8, module_hash: [HASH_SIZE]u8) {
 	hash_write(out, module_hash)
 }

@@ -1,13 +1,13 @@
 // A check and a measure of one ring: the ring is the base interface of the
-// kernel and the one way that programs communicate.
+// kernel and the one way that processes communicate.
 //
 // One thread writes records in a ring as fast as it can. A second thread
 // reads them. No queue operation enters the kernel: a thread enters the
 // kernel only to wait, and to wake the other thread. The check sends a
 // fixed count of records and counts the records that did not arrive in
 // order. In a [measure run](term:measure-run) the threads go on for one
-// second, and the program writes the records in one second. In the two
-// runs it asks the kernel how many times the program entered it.
+// second, and the process writes the records in one second. In the two
+// runs it asks the kernel how many times the process entered it.
 //
 // It runs four rings: two capacities, and two ways to wait. A thread
 // that waits at once enters the kernel each time the queue is full or
@@ -20,7 +20,7 @@
 // entry, and the count of kernel entries for one million records shows
 // how rarely a thread must wait.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("flow")` in the console. The window shows the four rings: the
 // records read in order, and the kernel entries for one million records.
 // The log gets one line for each ring (`flow: capacity 32, wait at once:
@@ -29,7 +29,7 @@
 // measure flow`) the window and the lines have the records in one second.
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
-// of this program, which the measure counts.
+// of this process, which the measure counts.
 //
 // **What it does not prove.** The rates are measures of the host of the
 // run, printed and never compared to a bound.
@@ -45,7 +45,7 @@ import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1475, programs = 1, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1475, processes = 1, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -72,7 +72,7 @@ Measure :: struct {
 	done:     bool,
 	received: u64, // The records that the reader read.
 	rate:     u64, // Records in one second: a measure run only.
-	entries:  u64, // Kernel entries of the program for one million records.
+	entries:  u64, // Kernel entries of the process for one million records.
 	lost:     u64, // Records that did not arrive in order.
 }
 
@@ -87,7 +87,7 @@ received: u64
 lost: u64
 
 machine: system.Handle
-slot: u64 // The slot of this program in the kernel.
+slot: u64 // The slot of this process in the kernel.
 
 // wait waits for a queue: for room if this thread writes it, for a record
 // if this thread reads it.
@@ -141,10 +141,10 @@ read_records :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// entries gives the times that this program entered the kernel.
+// entries gives the times that this process entered the kernel.
 entries :: proc "contextless" () -> u64 {
-	report: op.Program_Report
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&report)), size_of(report))
+	report: op.Process_Report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 	return report.entries
 }
 
@@ -220,7 +220,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.cell_text(&frame, cells[0], interface.number_text(&number, u64(measure.capacity)), graphics.colors.text)
 		interface.cell_text(&frame, cells[1], measure.spin ? "read counters" : "nothing", graphics.colors.text)
 		if measure.done {
-			interface.bar_with_value(&frame, cells[2], BAR_WIDTH, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? graphics.colors.program : graphics.colors.failed)
+			interface.bar_with_value(&frame, cells[2], BAR_WIDTH, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? graphics.colors.process : graphics.colors.failed)
 			interface.bar_with_value(&frame, cells[3], BAR_WIDTH, measure.entries, most_entries, graphics.colors.kernel)
 		} else {
 			interface.cell_text(&frame, cells[2], "...", graphics.colors.dim)
@@ -235,8 +235,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 
 // entry finds its own slot with the machine handle, runs the four rings
 // (`run`), and writes the summary line. A ring is wrong when a record is
-// lost, when the check did not read each record, or when the program found
-// no slot. The program then keeps its
+// lost, when the check did not read each record, or when the process found
+// no slot. The process then keeps its
 // window open until it is stopped; with no window, it stops with the code
 // 1.
 @(export, link_name = "entry")
@@ -248,10 +248,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-	for index in 1 ..< report.program_slots {
-		program: op.Program_Report
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), index, u64(uintptr(&program)), size_of(program))
-		if program.state != .None && program.state != .Stopped && system.name_of(program.name[:]) == "flow" {
+	for index in 1 ..< report.process_slots {
+		process: op.Process_Report
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&process)), size_of(process))
+		if process.state != .None && process.state != .Stopped && system.name_of(process.name[:]) == "flow" {
 			slot = index
 		}
 	}

@@ -1,4 +1,4 @@
-// The addresses of a program as a developer tool shows them (docs/TOOLS.md):
+// The addresses of a process as a developer tool shows them (docs/TOOLS.md):
 // the kind of each mapping, an address as "module + offset", the near
 // export of an address, and the band of an address space with its gaps
 // folded. Pure code: no kernel operation, no allocation, so the modus tool
@@ -11,13 +11,13 @@ import op "modus:contract/operation"
 // What a mapping is, from the facts of the kernel: its flags, and the
 // module record that holds its address.
 Kind :: enum u8 {
-	Memory           = 0, // Memory of the program: its stacks, its tables, what it made.
+	Memory           = 0, // Memory of the process: its stacks, its tables, what it made.
 	Module_Code      = 1, // The executable pages of a module.
 	Module_Constants = 2, // The read-only pages of a module.
 	Module_Data      = 3, // The writable pages of a module.
 	Thread_Area      = 4, // The thread record and the kernel ring of a thread.
 	Device           = 5, // A framebuffer, boot data, the registers of a device.
-	Shared           = 6, // Memory that another program or handle also names: a ring, a region.
+	Shared           = 6, // Memory that another process or handle also names: a ring, a region.
 }
 
 // The name of each kind in a developer tool.
@@ -46,7 +46,7 @@ module_of :: proc "contextless" (address: u64, modules: []op.Module_Record) -> (
 // kind_of gives the kind of a mapping: Device, Thread_Area, a part of a
 // module when a module record holds its address (by its flags), Shared, or
 // Memory.
-kind_of :: proc "contextless" (mapping: op.Program_Mapping, modules: []op.Module_Record) -> Kind {
+kind_of :: proc "contextless" (mapping: op.Process_Mapping, modules: []op.Module_Record) -> Kind {
 	switch {
 	case .Device in mapping.flags:
 		return .Device
@@ -97,7 +97,7 @@ Segment :: struct {
 // order of their addresses. A gap between two mappings is a folded gap of
 // gap_width pixels; each mapping has least_width pixels and a part of the
 // rest in proportion to its pages. It gives the count of segments.
-band :: proc "contextless" (mappings: []op.Program_Mapping, width, gap_width, least_width: int, segments: []Segment) -> int {
+band :: proc "contextless" (mappings: []op.Process_Mapping, width, gap_width, least_width: int, segments: []Segment) -> int {
 	gaps := 0
 	pages := u64(0)
 	for &item, index in mappings {

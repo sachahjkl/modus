@@ -1,6 +1,6 @@
 // The information of the modules: functions, and no query language, that read the flat tables of module files and fill tables of rows in memory of the caller.
 //
-// A function takes the catalog (the modules that the program can see) and a slice of rows. It writes the rows that fit, and gives the count of rows of the full answer: a count larger than the slice means "give more memory". It allocates nothing and keeps no state. It copies no truth: a row holds numbers and short texts that it reads from the tables, and the module file stays the one source.
+// A function takes the catalog (the modules that the process can see) and a slice of rows. It writes the rows that fit, and gives the count of rows of the full answer: a count larger than the slice means "give more memory". It allocates nothing and keeps no state. It copies no truth: a row holds numbers and short texts that it reads from the tables, and the module file stays the one source.
 //
 // The tables of a module are input that nobody checked. Each read is checked against the size of the file and of its tables. A function never faults on a malformed module: it gives a Problem, with the table, the record and the byte of the file that break a rule.
 //
@@ -16,7 +16,7 @@ Module :: struct {
 	constants: i64, // The bytes of memory of the segments that are read-only, from the start or after the load.
 	data:      i64, // The bytes of the writable segments that the file gives.
 	zero:      i64, // The bytes of the writable segments that start as zero: the file does not hold them.
-	entry:     i64, // 1: the module has an entry, so it can run as a program. 0: no entry.
+	entry:     i64, // 1: the module has an entry, so it can run as a process. 0: no entry.
 	exports:   i64, // The exports with a description: each export but the entry.
 	imports:   i64, // The modules that it imports.
 	records:   i64, // The record descriptions of its exports.
@@ -70,30 +70,30 @@ Segment :: struct {
 	file_size:     i64, // The bytes in the file; the rest is zero.
 }
 
-// One row for each module that runs in a program, from the module records
+// One row for each module that runs in a process, from the module records
 // of the kernel (operation.Module_Record): running().
 Running :: struct {
-	program:  [32]u8, // The name of the program.
-	slot:     i64, // The place of the program in the kernel: programs() of the console shows it.
+	process:  [32]u8, // The name of the process.
+	slot:     i64, // The place of the process in the kernel: processes() of the console shows it.
 	module:   [32]u8, // The name of the module in the catalog. Empty: the catalog has no module with this hash.
 	hash:     [64]u8, // The hash of the module that runs, in hexadecimal.
 	replaces: [64]u8, // The hash that an import names and that a replacement changed to `hash`. Empty: no replacement.
-	base:     i64, // The address of the module in the program.
+	base:     i64, // The address of the module in the process.
 	size:     i64, // The bytes of addresses of the module.
-	writer:   [8]u8, // starter: the starter wrote the record, and the program cannot change it; program: the program wrote it for itself.
+	writer:   [8]u8, // starter: the starter wrote the record, and the process cannot change it; process: the process wrote it for itself.
 }
 
-// One row for each import edge of each program that runs: edges(). An
-// edge links a module that runs in a program to the module of the same
-// program that imports it. A module that no module of its program imports
-// has one row with `imported_by` empty: the module of the program, or a
-// module that the program loaded by its name.
+// One row for each import edge of each process that runs: edges(). An
+// edge links a module that runs in a process to the module of the same
+// process that imports it. A module that no module of its process imports
+// has one row with `imported_by` empty: the module of the process, or a
+// module that the process loaded by its name.
 Edge :: struct {
-	program:     [32]u8, // The name of the program.
-	slot:        i64, // The place of the program in the kernel: programs() of the console shows it.
+	process:     [32]u8, // The name of the process.
+	slot:        i64, // The place of the process in the kernel: processes() of the console shows it.
 	module:      [32]u8, // The module that runs: its name in the catalog, or the first 16 digits of its hash when the catalog has no module with this hash.
 	hash:        [64]u8, // The hash of the module that runs, in hexadecimal.
-	imported_by: [32]u8, // The module of the same program that imports it, named as `module`. Empty: no module of the program imports it.
+	imported_by: [32]u8, // The module of the same process that imports it, named as `module`. Empty: no module of the process imports it.
 	replaces:    [32]u8, // The module that the import names and that a replacement changed to this one, named as `module`. Empty: no replacement.
 }
 

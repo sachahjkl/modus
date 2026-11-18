@@ -39,7 +39,7 @@ copy_of_test :: proc() -> Copy_Facts {
 }
 
 // Each rule that a Copy can break, from the edges: a handle that this
-// program did not give, a copy that no key asked for, a handle that is no
+// process did not give, a copy that no key asked for, a handle that is no
 // memory, with no Read or no Give, a kind that names no member, a count of
 // 0, one past the limit and the largest word, and memory one byte too
 // small. The copies that hold come last: one byte, and the limit.
@@ -111,7 +111,7 @@ answer_take_refuses_an_answer_that_no_key_started :: proc(t: ^testing.T) {
 	testing.expect_value(t, state, Window_State{})
 }
 
-// A Copy_Asked that the program lost does not block the copies: the next
+// A Copy_Asked that the process lost does not block the copies: the next
 // key replaces it, the answer to the lost one is refused, and the answer to
 // the newest is taken, once.
 @(test)

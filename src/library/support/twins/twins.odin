@@ -1,4 +1,4 @@
-// What the program `frames` and its program `twin` agree on (paging,
+// What the process `frames` and its process `twin` agree on (paging,
 // second part). `frames` starts each twin with one mode, and reads what the
 // twin did.
 package twins

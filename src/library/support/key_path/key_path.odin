@@ -1,5 +1,5 @@
 // The path of a key: the rules of the queues between the keyboard and the
-// program that reads a key, as code with no kernel entry, so that a test
+// process that reads a key, as code with no kernel entry, so that a test
 // of the host runs them (docs/ARCHITECTURE.md, "The path of a key").
 //
 // The rule of the path: the system never loses a key in silence. A full
@@ -76,7 +76,7 @@ Pointer_Packet :: struct {
 // The most notches of the wheel that one pointer record carries, in each
 // direction. A sum of notches is cut to it: so many notches already move a
 // view to its end, and the rest would move nothing more. A value past it
-// from another program is false. The input service, the compositor and the
+// from another process is false. The input service, the compositor and the
 // window layer cut to it, so a sum of the notches of a frame stays far
 // inside an int.
 WHEEL_NOTCHES_LIMIT :: 1 << 16
@@ -382,7 +382,7 @@ window_queue_loss_close :: proc "contextless" (queue: ^Window_Queue) -> (lost: [
 
 // queue_is_exactly_full says if the counters of a queue give exactly a full
 // queue: the one state in which a writer can wait for room. The reader
-// writes one of the two counters, and a reader that is another program can
+// writes one of the two counters, and a reader that is another process can
 // write any number: a count above the capacity is a false count, and a
 // writer that waited on it would never sleep.
 queue_is_exactly_full :: proc "contextless" (target: ^ring.Queue) -> bool {

@@ -6,8 +6,8 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The bytes of the memory of this program itself (docs/TOOLS.md): the
-// reports of the kernel give no byte of another program, and this tool has
+// The bytes of the memory of this process itself (docs/TOOLS.md): the
+// reports of the kernel give no byte of another process, and this tool has
 // no right to read one. 16 bytes in each row, the address as "module +
 // offset" in a module, the ASCII at the right, the boundary of each page
 // marked. A page with no page frame is shown as such: the tool asks the
@@ -35,7 +35,7 @@ hex_start :: proc "contextless" () {
 }
 
 // hex_present gives which pages from an address have a frame, from the
-// page table of this program.
+// page table of this process.
 hex_present :: proc "contextless" (address: u64) -> (present, mapped: u64) {
 	report := op.Page_Report{address = address &~ (system.PAGE_SIZE - 1)}
 	if !inspect_call(.Pages, 0, &report, size_of(report)) {
@@ -98,9 +98,9 @@ draw_hex :: proc "contextless" (frame: ^interface.Frame) {
 	own: op.Module_Report
 	own_slot := slot_of("inspect")
 	inspect_call(.Modules, own_slot, &own, size_of(own))
-	modules := own.modules[:min(own.count, op.PROGRAM_MODULE_CAPACITY)]
+	modules := own.modules[:min(own.count, op.PROCESS_MODULE_CAPACITY)]
 	y := 0
-	// The first bytes of the code of the export entry of this program.
+	// The first bytes of the code of the export entry of this process.
 	code := u64(0)
 	if len(modules) > 0 {
 		if file := module_file(modules[0].hash); file != nil {
@@ -114,7 +114,7 @@ draw_hex :: proc "contextless" (frame: ^interface.Frame) {
 		base := code
 		present, _ := hex_present(base)
 		fill(inside, 0, y + 7, inside.width, 1, graphics.colors.track)
-		text(inside, 0, y, graphics.colors.program, "the code of the export entry of inspect: ", present & 1 != 0 ? "it has a page frame" : "no page frame: not read")
+		text(inside, 0, y, graphics.colors.process, "the code of the export entry of inspect: ", present & 1 != 0 ? "it has a page frame" : "no page frame: not read")
 		y += LINE
 		if present & 1 != 0 {
 			for row in 0 ..< 3 {

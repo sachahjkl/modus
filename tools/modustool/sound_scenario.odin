@@ -9,7 +9,7 @@ import "modus:contract/timed_stream"
 
 // Sound, the first timed stream: one machine with a virtio sound device
 // whose output goes to a wave file (src/md/features/timed_stream.md, "The
-// proof"). The program `tone` asks for a tone of 440 Hz at 500 ms after the
+// proof"). The process `tone` asks for a tone of 440 Hz at 500 ms after the
 // frame 0 of the stream, checks six refusals of the sound service, and
 // writes the frame where the tone played. A second `tone` is refused while
 // the first one holds the device. After the machine, the tool reads the
@@ -44,10 +44,10 @@ scenario_sound := [?]Step {
 	{kind = .Wait, text = "tone: a record past the end of the region is refused with Out_Of_Range: as it must"},
 	{kind = .Wait, text = TONE_FRAME_LINE + "24000 of the stream for 24000 frames; underruns before its end: "},
 	{kind = .Wait, text = "tone: the tone played at the frame of its time: as it must"},
-	// One program plays at a time.
+	// One process plays at a time.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"tone\")"},
-	{kind = .Wait, text = "root: cannot start tone: the sound device plays for another program; one program plays at a time"},
+	{kind = .Wait, text = "root: cannot start tone: the sound device plays for another process; one process plays at a time"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},

@@ -3,16 +3,16 @@
 // past the glyph caches of the boot image,
 // which the font service draws whole at its start, in a fixed order,
 // before it ends. The root service creates the memory; the font service
-// (the program `glyphs`) is its one writer; each program that gets the
+// (the process `glyphs`) is its one writer; each process that gets the
 // glyph caches maps it read-only at ADDRESS. So its entries are the same
-// whatever the programs draw. A character past it is drawn by the program
+// whatever the processes draw. A character past it is drawn by the process
 // itself, into its private glyph cache (src/library/support/fallback_glyphs).
 //
 // A face is one glyph cache that the demand cache stands beside (Face): a
 // font file in one form. An entry is keyed by its face and its code point,
 // so the glyphs of each face stay apart.
 //
-// The cache changes while a program reads it: the font service publishes
+// The cache changes while a process reads it: the font service publishes
 // one entry after the other. So a reader copies each entry once and checks
 // it against the constants of this contract, never against a field of the
 // shared memory (find). A wrong entry draws the replacement glyph; it is
@@ -60,7 +60,7 @@ PAGE_COUNT :: SIZE / PAGE_SIZE
 #assert(SIZE <= fixed_addresses.RANGE_SPAN)
 #assert(HEADER_SIZE <= PAGE_SIZE)
 
-ADDRESS :: fixed_addresses.DEMAND_CACHE_ADDRESS // Where a program maps the demand cache, read-only.
+ADDRESS :: fixed_addresses.DEMAND_CACHE_ADDRESS // Where a process maps the demand cache, read-only.
 
 // The scales and the places of the glyphs of one entry: three positions
 // at scale 1 and one at the scales 2 and 3, the most that a face has.
@@ -210,7 +210,7 @@ Header :: struct {
 Entry_State :: enum u32 {
 	Empty  = 0, // No character: a free place, or a character that a reader does not find yet.
 	Drawn  = 1, // The glyphs and the advances of the character.
-	Absent = 2, // A wrong entry: find gives it for an entry that its check refuses, and the program draws the glyph itself. The font service publishes no such entry.
+	Absent = 2, // A wrong entry: find gives it for an entry that its check refuses, and the process draws the glyph itself. The font service publishes no such entry.
 }
 
 // One character of one face of the demand cache. The font service writes
@@ -311,7 +311,7 @@ glyph_of_entry :: proc "contextless" (face: Face, entry: ^Entry, scale, position
 	return entry.glyphs[place], true
 }
 
-// Reader: the side of a program, for one face. reader_of makes it;
+// Reader: the side of a process, for one face. reader_of makes it;
 // reader_frame_begin starts each frame; find gives an entry.
 Reader :: struct {
 	header:           ^Header,
@@ -363,7 +363,7 @@ reader_of :: proc "contextless" (base: uintptr, face: Face, font_hash: [32]u8, f
 // that value. The measure does not read the cache: the advance of a
 // character comes from its font file. A cache with no magic yet, another
 // version, or another font file or flags for the face of the reader gives
-// the limit 0: no entry is found, and the program draws the glyph itself.
+// the limit 0: no entry is found, and the process draws the glyph itself.
 reader_frame_begin :: proc "contextless" (reader: ^Reader) {
 	reader.generation_limit = 0
 	if reader.header == nil || intrinsics.atomic_load_explicit(&reader.header.magic, .Acquire) != MAGIC {
@@ -379,7 +379,7 @@ reader_frame_begin :: proc "contextless" (reader: ^Reader) {
 // find gives the entry of a character of the face of the reader, copied
 // and checked. The state is Empty when the cache does not hold the
 // character at the generation of the frame. Absent: the entry is wrong.
-// In both cases the program draws the glyph itself.
+// In both cases the process draws the glyph itself.
 find :: proc "contextless" (reader: ^Reader, character: rune) -> (entry: Entry, state: Entry_State) {
 	if reader.generation_limit == 0 || character <= 0 || character > text_encoding.CODE_POINT_LAST {
 		return {}, .Empty

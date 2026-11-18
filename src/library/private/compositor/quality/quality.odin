@@ -157,7 +157,7 @@ key_sent :: proc "contextless" (table: ^Key_Table, window: int, read_at, now: u6
 // that window up to that serial is shown by the frame that draws the
 // Present. sent_to_window is the newest serial that the compositor sent to
 // that window: a serial past it names no key of the window, and is refused
-// and counted, so a program cannot name the keys of a later window or a
+// and counted, so a process cannot name the keys of a later window or a
 // serial that no key has. 0 names no key. It gives the keys tied.
 key_shown :: proc "contextless" (table: ^Key_Table, window: int, serial: u64, sent_to_window: u64) -> (tied: int) {
 	if serial == 0 {
@@ -192,7 +192,7 @@ keys_flipped :: proc "contextless" (table: ^Key_Table, flipped_at: u64, samples:
 	return measured
 }
 
-// window_gone frees the keys of a window that closed: a program that takes
+// window_gone frees the keys of a window that closed: a process that takes
 // its place in the table never ties them.
 window_gone :: proc "contextless" (table: ^Key_Table, window: int) {
 	for &key in table.keys {
@@ -213,11 +213,11 @@ frame_span_start :: proc "contextless" (turn_read_at, draw_started: u64) -> u64 
 	return draw_started
 }
 
-// The two times of the start of a window, from two programs in either
+// The two times of the start of a window, from two processes in either
 // order: the root service sends the start, the compositor flips the first
 // frame. The line comes when both are known, once.
 Window_Start :: struct {
-	started_at:      u64, // When the root service called system.program_start; 0: not known.
+	started_at:      u64, // When the root service called system.process_start; 0: not known.
 	first_flip_at:   u64, // The flip of the first frame that drew a picture of the window; 0: not yet.
 	done:            bool, // The span was given, or can never be.
 }
@@ -245,7 +245,7 @@ window_start_flipped :: proc "contextless" (start: ^Window_Start, flipped_at: u6
 }
 
 // window_start_span gives the span when both times are known, once. A
-// first flip before the start belongs to no start of this program: no
+// first flip before the start belongs to no start of this process: no
 // span, and none later.
 @(private)
 window_start_span :: proc "contextless" (start: ^Window_Start) -> (span: u64, ready: bool) {

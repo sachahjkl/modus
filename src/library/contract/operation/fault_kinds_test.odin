@@ -23,7 +23,7 @@ the_delivered_kinds_are_the_values_of_the_enumeration :: proc(t: ^testing.T) {
 }
 
 // The class of each vector below 32, as the processor defines it for an
-// instruction of a program in 64-bit mode, and the vectors that the kernel
+// instruction of a process in 64-bit mode, and the vectors that the kernel
 // never delivers.
 @(test)
 the_class_of_each_vector :: proc(t: ^testing.T) {

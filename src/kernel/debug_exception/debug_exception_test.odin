@@ -4,10 +4,10 @@ package debug_exception
 import op "modus:contract/operation"
 import "core:testing"
 
-INT1 :: Program_Byte{value = INT1_OPCODE, readable = true}
-NO_BYTE :: Program_Byte{} // A byte that the program cannot read.
+INT1 :: Process_Byte{value = INT1_OPCODE, readable = true}
+NO_BYTE :: Process_Byte{} // A byte that the process cannot read.
 
-byte_of :: proc(value: u8) -> Program_Byte {
+byte_of :: proc(value: u8) -> Process_Byte {
 	return {value = value, readable = true}
 }
 
@@ -22,7 +22,7 @@ a_status_bit_keeps_the_exception :: proc(t: ^testing.T) {
 	}
 }
 
-// An address that holds no int1 is kept, also when the program cannot read
+// An address that holds no int1 is kept, also when the process cannot read
 // it, and when the byte before cannot be read either.
 @(test)
 no_int1_at_the_address_keeps_the_exception :: proc(t: ^testing.T) {
@@ -30,8 +30,8 @@ no_int1_at_the_address_keeps_the_exception :: proc(t: ^testing.T) {
 		testing.expectf(t, !int1_given_again(0, byte_of(value), byte_of(0x90)), "the byte %x was taken for an int1", value)
 		testing.expectf(t, !int1_given_again(0, byte_of(value), NO_BYTE), "the byte %x was taken for an int1 with no byte before", value)
 	}
-	// A byte at the address that the program cannot read, whatever its value.
-	unreadable_int1 := Program_Byte{value = INT1_OPCODE, readable = false}
+	// A byte at the address that the process cannot read, whatever its value.
+	unreadable_int1 := Process_Byte{value = INT1_OPCODE, readable = false}
 	testing.expect(t, !int1_given_again(0, unreadable_int1, byte_of(0x90)))
 	testing.expect(t, !int1_given_again(0, NO_BYTE, NO_BYTE))
 }
@@ -48,12 +48,12 @@ a_byte_f1_before_keeps_the_exception :: proc(t: ^testing.T) {
 // not read.
 @(test)
 an_unreadable_byte_before_is_not_f1 :: proc(t: ^testing.T) {
-	unreadable_int1 := Program_Byte{value = INT1_OPCODE, readable = false}
+	unreadable_int1 := Process_Byte{value = INT1_OPCODE, readable = false}
 	testing.expect(t, int1_given_again(0, INT1, unreadable_int1))
 }
 
 // The success cases last: an int1 with no status, and a byte before that
-// is not F1, or that the program cannot read (the first byte of a page
+// is not F1, or that the process cannot read (the first byte of a page
 // whose page before is not mapped, or the address 0).
 @(test)
 an_int1_given_again_is_dropped :: proc(t: ^testing.T) {

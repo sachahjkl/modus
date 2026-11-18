@@ -12,7 +12,7 @@ package quic
 //
 // The language has no private field, so a hand-made record can still hold a `length` over
 // `CONNECTION_ID_LIMIT`. `connection_identifier_bytes` slices the array with it, and the check of
-// the bounds of the slice stops the program: such a record never reaches the network.
+// the bounds of the slice stops the process: such a record never reaches the network.
 Connection_Identifier :: struct {
 	bytes:  [CONNECTION_ID_LIMIT]u8, // The identifier is the first `length` bytes. Each byte after them is 0.
 	length: u8, // 0 to `CONNECTION_ID_LIMIT`.

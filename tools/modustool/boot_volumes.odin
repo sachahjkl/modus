@@ -70,7 +70,7 @@ boot_volumes :: proc() -> []Boot_Volume {
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_FAILS, image = BOOT_IMAGE_FAILS, kernel = "kernel"})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SHORTAGE, image = BOOT_IMAGE_SHORTAGE, kernel = "kernel"})
 	// The operation sequences on the kernel that ships: the image that
-	// holds the program operation_fuzzing and its runner.
+	// holds the module operation_fuzzing and its runner.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_SEQUENCES, image = BOOT_IMAGE_OPERATION_SEQUENCES, kernel = "kernel"})
 	// A measure run: the modules of the test, and the resource that tells
 	// the root service that the machine runs for a measure.
@@ -232,7 +232,7 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		"-disable-red-zone",
 		"-o:speed",
 		"-vet",
-		"-source-code-locations:filename", // No path of the folder of the build in the program.
+		"-source-code-locations:filename", // No path of the folder of the build in the boot program.
 		// The list of the files that the compiler read: the inputs of the
 		// build key of the volume.
 		"-export-dependencies:json",
@@ -346,24 +346,24 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 	link := boot_program_link_command(volume)
 	append(&link, ..objects)
 	run(link[:]) or_return
-	program_path := boot_volume_program_path(volume)
+	process_path := boot_volume_program_path(volume)
 	if volume.firmware_signature != .None {
-		boot_program_sign(volume.firmware_signature, program_path, boot_volume_signed_program_path(volume)) or_return
-		program_path = boot_volume_signed_program_path(volume)
+		boot_program_sign(volume.firmware_signature, process_path, boot_volume_signed_program_path(volume)) or_return
+		process_path = boot_volume_signed_program_path(volume)
 	}
 	if volume.with_secure_boot_variables {
 		secure_boot_variables_write() or_return
 	}
 	link_time := time.tick_since(step_started)
 	step_started = time.tick_now()
-	program := read_file(program_path) or_return
+	process := read_file(process_path) or_return
 	// The debug image is a file of its own beside the boot program: the boot
 	// program and the boot image are the same bytes with and without it.
 	debug_image := read_file(DEBUG_IMAGE) or_return
 	files := make([]Volume_File, 2, context.temp_allocator)
 	files[0] = {
 		path = BOOT_PROGRAM_PATH,
-		data = program,
+		data = process,
 	}
 	files[1] = {
 		path = DEBUG_IMAGE_VOLUME_PATH,
@@ -428,7 +428,7 @@ run_volume :: proc(args: []string) -> int {
 // volume process starts.
 Boot_Volume_Shared_Inputs :: struct {
 	tool_identity: blake3.Hash,
-	// The programs that build and sign, and the values of the environment
+	// The host programs that build and sign, and the values of the environment
 	// that the build of a volume reads.
 	settings:      []string,
 	// The outputs of the earlier steps of the build that a volume reads:
@@ -470,7 +470,7 @@ boot_volume_shared_inputs_read :: proc(volumes: []Boot_Volume) -> Boot_Volume_Sh
 // the boot image of the build that it is made from, its kernel, the debug
 // image and the public key of the system as they are now, each command of
 // its build with each flag, what the volume is (its self test, its change,
-// its firmware signature), the assembly files, the test keys, the programs
+// its firmware signature), the assembly files, the test keys, the host programs
 // that build and sign, the tool, and the sources of the boot program (the
 // list of its compiler). ok is false when a built file cannot be read.
 boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs, source_files, load_files: []string) -> (inputs: Build_Key_Inputs, ok: bool) {
@@ -666,17 +666,17 @@ boot_volume_is_ready_with_the_lock :: proc(path: string) -> bool {
 // thread (the one LLVM module that holds the image), so one process for
 // each processor is the right count on a small host; the bound keeps the
 // memory of all the processes under a few gigabytes on a large one.
-MOST_BOOT_VOLUME_PROCESSES :: 8
+MOST_BOOT_VOLUME_HOST_PROCESSES :: 8
 
-// boot_volume_processes gives the count of volume processes at once: the
-// count of `build <processes>`, or the count of the processors, at most
-// MOST_BOOT_VOLUME_PROCESSES.
-boot_volume_processes :: proc(volume_count: int, asked: int, processors: int) -> int {
-	processes := asked
-	if processes <= 0 {
-		processes = min(processors, MOST_BOOT_VOLUME_PROCESSES)
+// boot_volume_host_processes gives the count of volume processes at once: the
+// count of `build <host_processes>`, or the count of the processors, at most
+// MOST_BOOT_VOLUME_HOST_PROCESSES.
+boot_volume_host_processes :: proc(volume_count: int, asked: int, processors: int) -> int {
+	host_processes := asked
+	if host_processes <= 0 {
+		host_processes = min(processors, MOST_BOOT_VOLUME_HOST_PROCESSES)
 	}
-	return max(1, min(processes, volume_count))
+	return max(1, min(host_processes, volume_count))
 }
 
 // The names of the built volumes that the line of the kept volumes prints.
@@ -759,9 +759,9 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 		command[2] = boot_volume_name(volume.path)
 		commands[place] = command
 	}
-	processes := boot_volume_processes(len(to_build), module_build_processes, os.get_processor_core_count())
-	build_measure.volume_processes = processes
-	outcomes := build_processes_run(commands, processes, context.temp_allocator)
+	host_processes := boot_volume_host_processes(len(to_build), module_build_host_processes, os.get_processor_core_count())
+	build_measure.volume_host_processes = host_processes
+	outcomes := build_host_processes_run(commands, host_processes, context.temp_allocator)
 	defer {
 		for outcome in outcomes {
 			delete(outcome.output)
@@ -831,9 +831,9 @@ MEASURE_COMMAND :: "measure"
 MEASURE_SHORTAGE_COMMAND :: "measure shortage"
 command_volumes := [?]Volumes_Of_Part {
 	{part = "run", procedures = {"run_machine"}, volumes = {BOOT_VOLUME}},
-	{part = MEASURE_COMMAND, procedures = {"run_measure", "measure_windows", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
+	{part = MEASURE_COMMAND, procedures = {"run_measure", "measure_windows", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
-	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
+	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
 	{part = OPERATION_REPLAY_COMMAND, procedures = {"operation_sequences_replay"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 	{part = OPERATION_FUZZING_COMMAND, procedures = {"operation_machine_start", "operation_machine_kernel_object"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},

@@ -5,7 +5,7 @@
 // its place with one compare-and-exchange. The last run uses a queue with
 // one lock, for comparison. In the check, each writer writes a fixed count
 // of records. In a [measure run](term:measure-run) the writers go on for
-// one second, and the program writes the records in one second.
+// one second, and the process writes the records in one second.
 //
 // The threads of each run wait on one event. The first thread wakes
 // the event one time: all of them start together.
@@ -21,7 +21,7 @@
 // starts many threads at once. The queue with one lock gives the measure
 // to compare.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("crowd")` in the console. The window has one row for each run:
 // the writers, the readers, the records that were read. The log gets one
 // line for each run (`crowd: shared queue, 2 writers, 2 readers: ...`),
@@ -31,7 +31,7 @@
 // the records in one second.
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
-// of this program, which the measure counts.
+// of this process, which the measure counts.
 //
 // **What it does not prove.** The rates are measures of the host of the
 // run. The check is of order and of count, not of speed.
@@ -47,7 +47,7 @@ import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1390, programs = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1390, processes = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -80,7 +80,7 @@ Measure :: struct {
 	done:      bool,
 	read:      u64, // The records that the readers read.
 	rate:      u64, // Records in one second: a measure run only.
-	entries:   u64, // Kernel entries of the program for one million records.
+	entries:   u64, // Kernel entries of the process for one million records.
 	wrong:     u64, // Records that are lost, that arrived two times, or that arrived before an older record of the same writer.
 	together:  u64, // The threads that the event started.
 }
@@ -112,7 +112,7 @@ records_wanted: u64 // The records that each writer writes; 0: it goes on until 
 members: [THREAD_LIMIT]Member
 
 machine: system.Handle
-slot: u64 // The slot of this program in the kernel.
+slot: u64 // The slot of this process in the kernel.
 
 // put writes a record. If the queue is full, the thread waits.
 put :: proc "contextless" (record: ring.Record) {
@@ -215,10 +215,10 @@ read_records :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// entries gives the times that this program entered the kernel.
+// entries gives the times that this process entered the kernel.
 entries :: proc "contextless" () -> u64 {
-	report: op.Program_Report
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&report)), size_of(report))
+	report: op.Process_Report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 	return report.entries
 }
 
@@ -339,10 +339,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.cell_text(&frame, cells[2], interface.number_text(&number, u64(measure.readers)), graphics.colors.text)
 		if measure.done {
 			interface.cell_text(&frame, cells[3], interface.number_text(&number, measure.wrong), measure.wrong == 0 ? graphics.colors.dim : graphics.colors.failed)
-			// The records that the program moves, in its color; the run
+			// The records that the process moves, in its color; the run
 			// with one lock is the comparison, of less weight: the dim
 			// color. The kernel entries in the color of the kernel.
-			interface.bar_with_value(&frame, cells[4], BAR_WIDTH, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.colors.failed : measure.with_lock ? graphics.colors.dim : graphics.colors.program)
+			interface.bar_with_value(&frame, cells[4], BAR_WIDTH, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.colors.failed : measure.with_lock ? graphics.colors.dim : graphics.colors.process)
 			interface.bar_with_value(&frame, cells[5], BAR_WIDTH, measure.entries, most_entries, graphics.colors.kernel)
 		} else {
 			interface.cell_text(&frame, cells[4], "...", graphics.colors.dim)
@@ -357,7 +357,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 
 // entry finds its own slot with the machine handle, runs each queue
 // (`run`), and writes the summary line: it is wrong when a record is lost,
-// read two times, or out of the order of its writer. The program then keeps
+// read two times, or out of the order of its writer. The process then keeps
 // its window open until it is stopped; with no window, it stops with the
 // code 1.
 @(export, link_name = "entry")
@@ -369,10 +369,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-	for index in 1 ..< report.program_slots {
-		program: op.Program_Report
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), index, u64(uintptr(&program)), size_of(program))
-		if program.state != .None && program.state != .Stopped && system.name_of(program.name[:]) == "crowd" {
+	for index in 1 ..< report.process_slots {
+		process: op.Process_Report
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&process)), size_of(process))
+		if process.state != .None && process.state != .Stopped && system.name_of(process.name[:]) == "crowd" {
 			slot = index
 		}
 	}

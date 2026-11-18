@@ -141,7 +141,7 @@ site_gallery_table_of_a_damaged_table :: proc(t: ^testing.T) {
 }
 
 // The home shows at most SITE_HOME_PICTURE_LIMIT pictures, 8, each a row of
-// the table, and the program heron is one of them.
+// the table, and the process heron is one of them.
 @(test)
 site_gallery_home_pictures_are_few :: proc(t: ^testing.T) {
 	testing.expect_value(t, SITE_HOME_PICTURE_LIMIT, 8)
@@ -154,7 +154,7 @@ site_gallery_home_pictures_are_few :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, home_count >= 1 && home_count <= SITE_HOME_PICTURE_LIMIT, "the home shows no picture, or more than its bound")
-	testing.expect(t, heron_shown, "the home does not show the picture of the program heron")
+	testing.expect(t, heron_shown, "the home does not show the picture of the process heron")
 }
 
 // A caption is one sentence of plain text, at most

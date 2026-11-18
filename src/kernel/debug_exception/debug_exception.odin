@@ -1,4 +1,4 @@
-// The decision of the kernel on a debug exception of a program that a
+// The decision of the kernel on a debug exception of a process that a
 // hypervisor gave again: an int1 whose delivery was cut, given as a fault
 // before the int1 ran. It is a kernel part: the kernel alone compiles it
 // in, and it reads what the processor that the hypervisor shows gives. The
@@ -14,15 +14,15 @@ package debug_exception
 // INT1_OPCODE is the one byte of the instruction int1 (icebp).
 INT1_OPCODE :: 0xF1
 
-// A byte of a program, as the kernel read it. readable false: the program
+// A byte of a process, as the kernel read it. readable false: the process
 // cannot read it now (no mapping, no frame, no access, device memory), or
 // it has no address (the byte before the address 0).
-Program_Byte :: struct {
+Process_Byte :: struct {
 	value:    u8,
 	readable: bool,
 }
 
-// int1_given_again says if a debug exception of a program, with the debug
+// int1_given_again says if a debug exception of a process, with the debug
 // status `status` (the bits of the contract: the breakpoints and the single
 // step), is an int1 that the hypervisor gave again before it ran. `at` is
 // the byte at the instruction address of the exception, `before` the byte
@@ -40,7 +40,7 @@ Program_Byte :: struct {
 // others. Linux 7.3 intercepts int1 and gives its trap at the right address
 // (the KVM commit ec9a16c6aeba), and this test can then go.
 //
-// On a processor, a debug exception of a program with no status bit comes
+// On a processor, a debug exception of a process with no status bit comes
 // only from int1, after it: the byte before its address is F1. So an
 // address that holds F1 with a byte before it that is not F1 is no true
 // trap, and nothing true is dropped. The rule keeps every exception whose
@@ -48,9 +48,9 @@ Program_Byte :: struct {
 // instruction whose last byte is F1 (`89 F1`, mov ecx, esi): that one gives
 // its record two times. A cut int1 with a prefix (`66 F1`) is given again at
 // the prefix, which is not F1: it gives its record two times too. A byte
-// before that the program cannot read is no int1 that ended there: the
+// before that the process cannot read is no int1 that ended there: the
 // exception is dropped.
-int1_given_again :: proc "contextless" (status: u64, at: Program_Byte, before: Program_Byte) -> bool {
+int1_given_again :: proc "contextless" (status: u64, at: Process_Byte, before: Process_Byte) -> bool {
 	switch {
 	case status != 0:
 		return false // A breakpoint or a single step: their bit names them.

@@ -240,7 +240,7 @@ registers_enter_repeatedly:
 
 ; registers_upper_halves_in_use(expected: ^Register_Image)
 ; Loads ymm0 to ymm15 from the image and leaves them so: the compiled code
-; of the program uses legacy SSE instructions only, which keep the high
+; of the process uses legacy SSE instructions only, which keep the high
 ; halves; so the AVX component stays in use until
 ; registers_upper_halves_clean, and each switch of threads saves and
 ; restores it.
@@ -261,14 +261,14 @@ registers_upper_halves_clean:
 	ret
 
 ; The parts of a save and a restore of the extended state, each alone, in
-; this program on its own area.
-; fxsave, xsave, xsaveopt and xrstor are not privileged: a program runs them
+; this process on its own area.
+; fxsave, xsave, xsaveopt and xrstor are not privileged: a process runs them
 ; with the mask of the kernel (edx:eax all ones: every component of XCR0),
 ; so the kernel is not changed for the measure. Each routine is
 ; (area: rawptr, count: u64) -> u64: the cycles of the cycle counter for
 ; `count` loops. The area has 4096 bytes on 64 bytes. Between a save and a
 ; restore the routine changes xmm0, as the kernel's copies do; after a
-; restore it changes xmm0 (or ymm0) again, as a program does: so the save
+; restore it changes xmm0 (or ymm0) again, as a process does: so the save
 ; of the next loop has a modified component, as at a real entry.
 
 %macro TIME_START 0
@@ -338,7 +338,7 @@ measure_xsaveopt_and_xrstor:
 	TIME_END
 	ret
 
-; The pair of the branch with AVX, for a program that uses only SSE:
+; The pair of the branch with AVX, for a process that uses only SSE:
 ; xsaveopt64, vzeroupper, xrstor64.
 global measure_xsaveopt_vzeroupper_and_xrstor
 measure_xsaveopt_vzeroupper_and_xrstor:
@@ -358,7 +358,7 @@ measure_xsaveopt_vzeroupper_and_xrstor:
 	TIME_END
 	ret
 
-; The same for a program whose ymm registers have their high halves in use.
+; The same for a process whose ymm registers have their high halves in use.
 global measure_xsaveopt_vzeroupper_and_xrstor_with_avx
 measure_xsaveopt_vzeroupper_and_xrstor_with_avx:
 	vxorps ymm0, ymm0, ymm1

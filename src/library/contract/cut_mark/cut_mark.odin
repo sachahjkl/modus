@@ -2,7 +2,7 @@
 // fit in a place of a fixed size (docs/ARCHITECTURE.md, "A text is never
 // cut in silence"). The place holds the start of the text, then the mark
 // "... and N bytes more", where N is each byte of the text that the place
-// does not hold. The kernel and the programs share this package, so one
+// does not hold. The kernel and the processes share this package, so one
 // mark reads the same in each log line and each record.
 package cut_mark
 

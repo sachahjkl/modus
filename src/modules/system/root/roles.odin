@@ -1,37 +1,37 @@
 package root
 
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import terminal "modus:support/terminal"
 
-// The role of a program of the boot image: what this service gives it at
+// The role of a process of the boot image: what this service gives it at
 // its start, by its name. role_of reads it one time, at the start; the
-// program keeps it in Started.role, and each rule after the start reads it
-// there and never by the name of the program. A disk program has a
+// process keeps it in Started.role, and each rule after the start reads it
+// there and never by the name of the process. A disk process has a
 // nickname that it chose: its role comes from the disk grant table of its
-// principal, never from this table (disk_programs.odin).
+// principal, never from this table (disk_processes.odin).
 //
-// The role of each program is one row of the table `program_roles`: its
+// The role of each process is one row of the table `process_roles`: its
 // start grants and the other terms of its role. The site reads the table
-// for its table "The grants of each program", and the tool stops each build
-// when a program of the boot image has no row (program_roles_check.odin).
-Program_Role :: struct {
+// for its table "The grants of each process", and the tool stops each build
+// when a module of the boot image has no row (process_roles_check.odin).
+Process_Role :: struct {
 	grants:      bit_set[Grant],
-	using terms: Program_Role_Terms,
+	using terms: Process_Role_Terms,
 }
 
-// The services that a program with the grant Connect and not Root_Ring can
+// The services that a process with the grant Connect and not Root_Ring can
 // connect to: the list of its row, an empty text after the last one.
 CALLABLE_LIMIT :: 9
 
 // The parts of a role that are not start grants. Zero is the role of a
-// program that needs none of them.
-Program_Role_Terms :: struct {
+// process that needs none of them.
+Process_Role_Terms :: struct {
 	callable:         [CALLABLE_LIMIT]string, // With the grant Connect: the services that it can connect to.
 	store_blocks:     u64, // With the grant Store: the blocks of its private store. 0: STORE_BLOCKS_DEFAULT.
-	log_gives:        bool, // The log with the right Give: it gives the log to the programs that it starts.
+	log_gives:        bool, // The log with the right Give: it gives the log to the processes that it starts.
 	terminal_columns: u64, // With the grant Terminal: the columns of its terminal. 0: TERMINAL_COLUMNS_DEFAULT.
 	terminal_rows:    u64, // 0: TERMINAL_ROWS_DEFAULT.
-	terminal_measure: bool, // Its terminal shows the rates of the program.
+	terminal_measure: bool, // Its terminal shows the rates of the process.
 	on_demand:        bool, // A service that starts at the first connection to it.
 }
 
@@ -39,34 +39,34 @@ STORE_BLOCKS_DEFAULT :: 64
 TERMINAL_COLUMNS_DEFAULT :: 96
 TERMINAL_ROWS_DEFAULT :: 26
 
-// A row of the table: the whole role of one program, by its name.
-Program_Role_Row :: struct {
+// A row of the table: the whole role of one process, by its name.
+Process_Role_Row :: struct {
 	name:   string,
 	grants: bit_set[Grant],
-	terms:  Program_Role_Terms,
+	terms:  Process_Role_Terms,
 }
 
-// The role of each program of the boot image, with the reason of each
+// The role of each module of the boot image, with the reason of each
 // grant and each term. The table is whole: the tool refuses a build where a
-// program of the boot image has no row, or a row names no module of it, so
-// a new program never starts with a role that nobody wrote. The form of a
+// module of the boot image has no row, or a row names no module of it, so
+// a new module never starts with a role that nobody wrote. The form of a
 // row is the form that the site reads: a record literal with no type, its
 // name a string, its grants a set of members, its terms a record, and the
 // reason in the comment lines above it.
 //
-// The rows come in three groups: the programs with grants; the parts of
+// The rows come in three groups: the processes with grants; the parts of
 // the system that this service starts itself (the grant System_Part, and
 // the names of system_part_names), each with handles that no other grant
-// names, which a command Start does not start; and the programs whose role
-// holds no grant: the log and a window, or the handles of the program that
+// names, which a command Start does not start; and the processes whose role
+// holds no grant: the log and a window, or the handles of the process that
 // starts them.
 @(rodata)
-program_roles := [?]Program_Role_Row {
+process_roles := [?]Process_Role_Row {
 	// The console is the shell of the machine, and its commands need
 	// each grant:
 	// - **Root_Ring**: `start`, `stop`, `grants`, `revoke`, `connect`
 	//   and the commands of the principals ask this service.
-	// - **Inspect**: `memory`, `locks` and `program_modules` read the
+	// - **Inspect**: `memory`, `locks` and `process_modules` read the
 	//   reports of the machine.
 	// - **Stop**: `shutdown` stops the machine.
 	// - **Image**: `load` and `isolate` map the modules of the boot image.
@@ -82,11 +82,11 @@ program_roles := [?]Program_Role_Row {
 	//   it holds for all callers.
 	// - **Palette**: its commands show in the palette of the desktop,
 	//   and the palette names the one that the input chose.
-	// It gives the log to the programs that it starts, which write on it.
+	// It gives the log to the processes that it starts, which write on it.
 	{name = "console", grants = {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette}, terms = {store_blocks = 3, log_gives = true}},
 	// It writes its lines to a terminal and reads the key Space from it:
 	// it has no surface and needs nothing else. It shows the rates of the
-	// program in a terminal as large as a terminal can be.
+	// process in a terminal as large as a terminal can be.
 	{name = "flood", grants = {.Terminal}, terms = {terminal_columns = terminal.COLUMNS_LIMIT, terminal_rows = terminal.ROWS_LIMIT, terminal_measure = true}},
 	// The test of the records of a terminal ring whose kind names no
 	// record: it writes them to its terminal, as flood writes lines.
@@ -94,16 +94,16 @@ program_roles := [?]Program_Role_Row {
 	// A developer tool: it reads the reports of the machine and the names
 	// of the modules, and serves the same facts (docs/TOOLS.md).
 	{name = "inspect", grants = {.Inspect, .Image, .Serve, .Debug_Image}},
-	// It serves programs() and counts() to a caller that acts for the
+	// It serves processes() and counts() to a caller that acts for the
 	// principal.
 	{name = "monitor", grants = {.Inspect, .Serve}},
 	// The debugger service (docs/TOOLS.md, "The debugger"):
 	// - **Serve**: its exports are the commands of the debugger.
-	// - **Debugger**: it asks this service for the handle of a program
+	// - **Debugger**: it asks this service for the handle of a process
 	//   with the right Debug, on behalf of one of its callers, and, for
-	//   a disk program that it debugs, for a connection that reads only
+	//   a disk process that it debugs, for a connection that reads only
 	//   to the store of its debug object (Debug_Store).
-	// - **Inspect**: the threads and the module records of the program
+	// - **Inspect**: the threads and the module records of the process
 	//   that it debugs.
 	// - **Debug_Image**: the debug objects, which name the procedures,
 	//   the lines, the types and the variables.
@@ -114,11 +114,11 @@ program_roles := [?]Program_Role_Row {
 	{name = "processors", grants = {.Inspect}},
 	// It shows the page tables.
 	{name = "pages", grants = {.Inspect}},
-	// It reads the kernel entries of the program for its measures.
+	// It reads the kernel entries of the process for its measures.
 	{name = "flow", grants = {.Inspect}},
-	// It reads the kernel entries of the program for its measures.
+	// It reads the kernel entries of the process for its measures.
 	{name = "crowd", grants = {.Inspect}},
-	// It reads the kernel entries of the program for its measures.
+	// It reads the kernel entries of the process for its measures.
 	{name = "clock", grants = {.Inspect}},
 	// It shows what the kernel refuses.
 	{name = "rights", grants = {.Inspect, .Image}},
@@ -167,7 +167,7 @@ program_roles := [?]Program_Role_Row {
 	{name = "counters", grants = {.Counters}},
 	// It reads the counts of the scheduler, changes the strategy and
 	// writes the weight of each thread (the share policy). It starts the
-	// four programs of its case of the shares from the boot image, and
+	// four processes of its case of the shares from the boot image, and
 	// serves strategy_set(), share() and policy() to the console.
 	{name = "scheduler", grants = {.Inspect, .Schedule, .Image, .Serve}},
 	// A service: the console calls its exports through a connection.
@@ -176,7 +176,7 @@ program_roles := [?]Program_Role_Row {
 	{name = "life", grants = {.Serve}},
 	// A service: the console calls its exports through a connection.
 	{name = "tally", grants = {.Serve}},
-	// The module of the tables, started as a program when a caller
+	// The module of the tables, started as a process when a caller
 	// connects.
 	{name = "sample", grants = {.Serve}, terms = {on_demand = true}},
 	// A service: the console calls its exports through a connection.
@@ -187,10 +187,10 @@ program_roles := [?]Program_Role_Row {
 	// It reads the real-time clock, writes the date page, and serves now().
 	{name = "date", grants = {.Clock, .Serve}},
 	// It reads the documentation of each module of the boot image, and the
-	// module records of each program.
+	// module records of each process.
 	{name = "manual", grants = {.Serve, .Image, .Replacements, .Inspect}},
 	// It measures the block service on the disk of the measures, which
-	// holds no data of a program: its writes destroy nothing.
+	// holds no data of a process: its writes destroy nothing.
 	{name = "disk", grants = {.Scratch_Disk}},
 	// The client of the test of the IOMMU: its device service on the disk
 	// of the measures is the test device service iommu_device.
@@ -235,27 +235,27 @@ program_roles := [?]Program_Role_Row {
 	{name = "server", grants = {.Network, .Serve, .Store}},
 	// A client grant of TCP to one web server, 10.0.2.100 port 80.
 	{name = "fetch", grants = {.Network}},
-	// The module file service: its private store is the store `programs`
-	// of its principal, as a private store has the name of its program,
+	// The module file service: its private store is the store `module_files`
+	// of its principal, as a private store has the name of its process,
 	// with the limit with which this service reads it and the tool writes
 	// it, so no grant differs from the limit on the disk; a client grant
 	// of TCP to one web server, 10.0.2.100 port 80; and its exports for the
 	// console. It starts nothing: this service checks the hash of each file
-	// that a principal starts (docs/MODULE_CONTRACT.md, "A program from a
+	// that a principal starts (docs/MODULE_CONTRACT.md, "A module from a
 	// disk"). It starts when a principal connects to it.
-	{name = "programs", grants = {.Store, .Network, .Serve}, terms = {store_blocks = disk_program.STORE_BLOCKS_LIMIT, on_demand = true}},
-	// A listen grant of UDP: QUIC in the program, the module cryptography
+	{name = "module_files", grants = {.Store, .Network, .Serve}, terms = {store_blocks = disk_process.STORE_BLOCKS_LIMIT, on_demand = true}},
+	// A listen grant of UDP: QUIC in the process, the module cryptography
 	// through its imports.
 	{name = "quic_echo", grants = {.Network}},
 	// It plays a tone through the sound service of the sound device, its
 	// one client while it runs (src/md/features/timed_stream.md).
 	{name = "tone", grants = {.Sound_Device}},
 	// It is the one client of the frame service of the network device, and
-	// it receives from this service the endpoint of each program with the
+	// it receives from this service the endpoint of each process with the
 	// grant Network.
 	{name = "network", grants = {.Network_Device}},
 	// The calls of another machine: a listen grant of UDP that admits the
-	// address of the host only (QUIC in the program, the module
+	// address of the host only (QUIC in the process, the module
 	// cryptography through its imports), the client table, which names the
 	// key of each client that a principal allowed, connections to the
 	// services of its list, each for one row of that table, and the grant
@@ -269,18 +269,18 @@ program_roles := [?]Program_Role_Row {
 	// to no other service, the boot image for the description of the
 	// exports of that service, and the grant to act for the principal,
 	// which the service asks of each caller. It holds no right over a
-	// program (docs/TOOLS.md, "The window of the debugger").
+	// process (docs/TOOLS.md, "The window of the debugger").
 	{name = "debugger_window", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "debugger"}}},
 	// It loads sample, starts a call host of it from the boot image, and
 	// connects to the service sample (docs/MODULE_CONTRACT.md, "Tables and
 	// bytes as parameters").
 	{name = "tables", grants = {.Image, .Connect}, terms = {callable = {0 = "sample"}}},
 	// The screen, the input ring and the control ring of this service
-	// (compositor_start); its exports serve the programs.
+	// (compositor_start); its exports serve the processes.
 	{name = "compositor", grants = {.Serve, .System_Part}},
 	// The ports and the two interrupts of the PS/2 controller (input_start).
 	{name = "input", grants = {.System_Part}},
-	// The text of the program that writes in it (terminal_start).
+	// The text of the process that writes in it (terminal_start).
 	{name = "terminal", grants = {.System_Part}},
 	// One block device and the ring of its one client (driver_start).
 	{name = "block", grants = {.System_Part}},
@@ -334,7 +334,7 @@ program_roles := [?]Program_Role_Row {
 	{name = "randomness"},
 	// The extended state of its own threads.
 	{name = "extended_state"},
-	// The program that the test of the debugger debugs.
+	// The process that the test of the debugger debugs.
 	{name = "debug_target"},
 	// A guest in its own memory.
 	{name = "guest_demo"},
@@ -357,14 +357,14 @@ program_roles := [?]Program_Role_Row {
 	{name = "arena"},
 }
 
-// The programs that this service starts itself, each in its own way and
+// The processes that this service starts itself, each in its own way and
 // with its own handles: a command Start does not start them, and a disk
-// program does not take one of their names. Each one but root has a row of
-// program_roles whose grants are System_Part, and Serve beside it for the
-// compositor, whose exports serve the programs: the tool refuses another
+// process does not take one of their names. Each one but root has a row of
+// process_roles whose grants are System_Part, and Serve beside it for the
+// compositor, whose exports serve the processes: the tool refuses another
 // set, and the grant System_Part on another row
-// (tools/modustool/program_roles_check.odin), because the debug access to
-// a program reads that grant. The names are strings that the tool reads.
+// (tools/modustool/process_roles_check.odin), because the debug access to
+// a process reads that grant. The names are strings that the tool reads.
 @(rodata)
 system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "glyphs"}
 #assert(FONT_SERVICE_NAME == "glyphs")
@@ -379,12 +379,12 @@ name_is_a_system_part :: proc "contextless" (name: string) -> bool {
 	return false
 }
 
-// role_of gives the role of a program of the boot image by its name: the
+// role_of gives the role of a process of the boot image by its name: the
 // grants and the terms of its row. A name with no row has the zero role:
-// it names no program of the boot image, as the tool checks. Only a start
+// it names no module of the boot image, as the tool checks. Only a start
 // reads it.
-role_of :: proc "contextless" (name: string) -> (role: Program_Role) {
-	for &row in program_roles {
+role_of :: proc "contextless" (name: string) -> (role: Process_Role) {
+	for &row in process_roles {
 		if row.name == name {
 			role.grants = row.grants
 			role.terms = row.terms
@@ -394,31 +394,31 @@ role_of :: proc "contextless" (name: string) -> (role: Program_Role) {
 	return role
 }
 
-// role_names_the_program says if the table of this service gives the name
-// a grant or a term: a disk program does not take such a nickname, as the
+// role_names_the_process says if the table of this service gives the name
+// a grant or a term: a disk process does not take such a nickname, as the
 // name would carry an authority that the principal did not give. A row
 // with no grant and no term carries none, so it reserves no nickname: a
 // nickname of a module of the boot image is refused for that module
-// (disk_programs.odin), and a nickname of a program that this image does
+// (disk_processes.odin), and a nickname of a module that this image does
 // not hold is free.
-role_names_the_program :: proc "contextless" (name: string) -> bool {
-	for &row in program_roles {
+role_names_the_process :: proc "contextless" (name: string) -> bool {
+	for &row in process_roles {
 		if row.name == name {
-			return row.grants != {} || row.terms != (Program_Role_Terms{})
+			return row.grants != {} || row.terms != (Process_Role_Terms{})
 		}
 	}
 	return false
 }
 
 // role_store_blocks gives the blocks of the private store of a role.
-role_store_blocks :: proc "contextless" (role: ^Program_Role) -> u64 {
+role_store_blocks :: proc "contextless" (role: ^Process_Role) -> u64 {
 	return role.store_blocks == 0 ? STORE_BLOCKS_DEFAULT : role.store_blocks
 }
 
-// role_may_connect says if a program with a role can ask this service for a
-// connection to the service with a name. A program with the grant
+// role_may_connect says if a process with a role can ask this service for a
+// connection to the service with a name. A process with the grant
 // Root_Ring connects to each service.
-role_may_connect :: proc "contextless" (role: ^Program_Role, service: string) -> bool {
+role_may_connect :: proc "contextless" (role: ^Process_Role, service: string) -> bool {
 	if .Root_Ring in role.grants {
 		return true
 	}
@@ -438,13 +438,13 @@ role_may_connect :: proc "contextless" (role: ^Program_Role, service: string) ->
 
 // role_terminal gives the size of the terminal of a role, and what it
 // shows.
-role_terminal :: proc "contextless" (role: ^Program_Role) -> (columns, rows: u64, measure: bool) {
+role_terminal :: proc "contextless" (role: ^Process_Role) -> (columns, rows: u64, measure: bool) {
 	columns = role.terminal_columns == 0 ? TERMINAL_COLUMNS_DEFAULT : role.terminal_columns
 	rows = role.terminal_rows == 0 ? TERMINAL_ROWS_DEFAULT : role.terminal_rows
 	return columns, rows, role.terminal_measure
 }
 
-// on_demand says if the service with a name starts when a program asks for
+// on_demand says if the service with a name starts when a process asks for
 // a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
 	return role_of(name).on_demand

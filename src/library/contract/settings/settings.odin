@@ -1,9 +1,9 @@
 // The settings of the owner (docs/FONTS.md, "The setting"): one page that
-// the root service creates. The program `settings` is the one writer of the
-// values; each program with a surface or a terminal, and the compositor,
+// the root service creates. The process `settings` is the one writer of the
+// values; each process with a surface or a terminal, and the compositor,
 // map it with the right Read only, at PAGE_ADDRESS. The bit of the range Settings_Page in
 // the context value op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is
-// mapped (clear: the program has no page, and its text is Spleen).
+// mapped (clear: the process has no page, and its text is Spleen).
 //
 // Each setting is one value of the page and one row of `descriptions`: its
 // name and the names of its values. Value 0 of each setting is its default
@@ -13,16 +13,16 @@
 // The page holds the choices only. The glyph caches (the three of the font
 // of the cells, the two of the interface font) are not on the page: the
 // root service maps these resources of the boot image read-only in the
-// same programs, after it checked their hashes and their format, at the
+// same processes, after it checked their hashes and their format, at the
 // fixed ranges of modus:contract/fixed_addresses, and sets the bit of each range
-// in the context of each program (glyph_cache_open). The program
+// in the context of each process (glyph_cache_open). The process
 // `settings` writes the page, so a field of the page can only change a
-// look: no program reads an address or a size from it.
+// look: no process reads an address or a size from it.
 //
 // A change: the writer makes change_count odd, writes the values and the
 // appearance in force, makes it even again, and wakes the threads that
 // wait on it (the compositor, the root service). The compositor then sends
-// the display event Settings_Changed to each window, and each program draws
+// the display event Settings_Changed to each window, and each process draws
 // again. A reader copies the values while change_count stays even and the
 // same (read).
 //
@@ -34,11 +34,11 @@
 //
 // The time zone (src/md/features/time_zone.md) is one more choice of the
 // page, zone_offset_minutes, outside the enumeration Setting: a zone is a
-// number of minutes, not one of a list of names. The program `settings`
-// writes it with the values; the program `date` copies it into the date
+// number of minutes, not one of a list of names. The process `settings`
+// writes it with the values; the process `date` copies it into the date
 // page, where each reader of the local time reads it.
 //
-// The program `settings` keeps the values in its private store, as one
+// The process `settings` keeps the values in its private store, as one
 // record (Kept_Settings) in one object: one write is one commit, so a loss
 // of power gives the old record or the new one, never a mix. At boot the
 // root service starts `settings` for one pass with no window: it reads the
@@ -51,9 +51,9 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/glyph_cache"
 import op "modus:contract/operation"
 
-PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a program maps the settings page.
-GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
-VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The program `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
+PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a process maps the settings page.
+GRANT_PAGE :: 12 // The handle of the context of the process `settings`: the page, with Read and Write.
+VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The process `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
 KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.
 
 // The settings, in the order of the page and of the window.
@@ -106,7 +106,7 @@ Appearance :: enum u32 {
 	Light = 2, // The light appearance at each hour.
 }
 
-// The appearance that each program draws now: the word appearance_in_force
+// The appearance that each process draws now: the word appearance_in_force
 // of the page. With the setting Dark or Light it is that value; with Auto,
 // the value of the rule at this moment.
 Appearance_In_Force :: enum u32 {
@@ -209,18 +209,18 @@ appearance_in_force_names := [Appearance_In_Force]string {
 	.Light = "light",
 }
 
-// The settings page: what the program `settings` writes and each program
+// The settings page: what the process `settings` writes and each process
 // with a surface reads, at PAGE_ADDRESS. A reader copies it while
 // change_count stays even and the same.
 Page :: struct {
 	change_count:        u32, // Even when the page is stable. Each change adds 2.
-	appearance_in_force: u32, // The word of an Appearance_In_Force. The program `settings` and the root service write it.
+	appearance_in_force: u32, // The word of an Appearance_In_Force. The process `settings` and the root service write it.
 	values:              [SETTING_CAPACITY]u32, // By Setting. A reader takes them through choice_of_values, which refuses a word that names no value.
 	zone_offset_minutes: i32, // The time zone. A reader keeps it through zone_offset_minutes_valid.
 }
 #assert(size_of(Page) <= 4096)
 
-// The glyph caches that a program with a surface or a terminal can
+// The glyph caches that a process with a surface or a terminal can
 // receive: the three of the font of the cells, and the two of the
 // interface font (docs/FONTS.md, section 12).
 Glyph_Cache :: enum u8 {
@@ -240,12 +240,12 @@ glyph_cache_ranges := [Glyph_Cache]fixed_addresses.Fixed_Range {
 	.Interface_Bold   = .Interface_Glyph_Cache_Bold,
 }
 
-// glyph_cache_open validates a glyph cache of this program at its fixed
+// glyph_cache_open validates a glyph cache of this process at its fixed
 // range. With the bit of the range clear in the context (the starter did
 // not map it), nothing is read and the problem is Not_Mapped. Else the
 // size comes from the header of the cache, bounded by the span of the
 // range (glyph_cache.validate_at). The bytes there are pages of the boot
-// image, mapped read-only, that no program can write (docs/FONTS.md,
+// image, mapped read-only, that no process can write (docs/FONTS.md,
 // section 5, "Who can write a cache").
 glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: Glyph_Cache) -> (glyph_cache.Cache, glyph_cache.Problem) {
 	range := glyph_cache_ranges[cache]
@@ -266,7 +266,7 @@ Choice :: struct {
 	grid_fit:            Grid_Fit,
 	keyboard_layout:     Keyboard_Layout,
 	appearance:          Appearance, // The setting of the appearance: Auto, Dark or Light.
-	appearance_in_force: Appearance_In_Force, // The appearance that each program draws now.
+	appearance_in_force: Appearance_In_Force, // The appearance that each process draws now.
 	zone_offset_minutes: i32, // The time zone that the principal chose, kept valid.
 	change_count:        u32, // The change count of the page at the copy.
 }
@@ -348,7 +348,7 @@ values_of :: proc "contextless" (choice: Choice) -> (values: [Setting]u32) {
 // values_differ tells whether two choices have different values, a
 // different time zone, or a different appearance in force. The count of
 // changes is not compared: the
-// program `settings` can change the count with no end and leave the values
+// process `settings` can change the count with no end and leave the values
 // as they were, and a reader that acts on each new count then does work for
 // nothing (the compositor tells every window, and a window ring that is
 // full loses the keys of the input).
@@ -361,15 +361,15 @@ values_differ :: proc "contextless" (first, second: Choice) -> bool {
 // for the writer.
 READ_TRIES :: 64
 
-// read copies the choice of a page that another program writes. It reads
+// read copies the choice of a page that another process writes. It reads
 // again while the page changes, at most READ_TRIES times. ok is false when
 // no copy was whole (a writer that stops in a change, or changes the page
 // with no end), and when a whole copy holds a word that names no value of
 // its setting, or no appearance in force: the page is refused, not read as
 // the defaults for that word. The choice is then the defaults with the
 // count that the read saw, so a broken writer changes the look of the other
-// programs and never stops them, and a reader that acts on the page (the
-// root service, the program `date`) acts on nothing.
+// processes and never stops them, and a reader that acts on the page (the
+// root service, the process `date`) acts on nothing.
 read :: proc "contextless" (page: ^Page) -> (choice: Choice, ok: bool) {
 	before: u32
 	for _ in 0 ..< READ_TRIES {
@@ -403,7 +403,7 @@ read :: proc "contextless" (page: ^Page) -> (choice: Choice, ok: bool) {
 }
 
 // write changes the values of the page, the time zone and the appearance in
-// force, in one change. The one writer of the values is the program
+// force, in one change. The one writer of the values is the process
 // `settings`; it wakes the waiters after (it owns the kernel calls, this
 // package has none). The choice holds members only, so the page never holds
 // a word that names no value.

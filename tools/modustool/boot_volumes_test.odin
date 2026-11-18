@@ -430,7 +430,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 	append(&built_files, Record_Output{path = DEBUG_IMAGE, hash = hash_of_text("the debug image")})
 	append(&built_files, Record_Output{path = SYSTEM_KEY_FILE, hash = hash_of_text("the public key")})
 	settings := make([]string, 1, context.temp_allocator)
-	settings[0] = "program odin: /store/odin"
+	settings[0] = "host program odin: /store/odin"
 	return {settings = settings, built_files = built_files[:]}
 }
 
@@ -465,7 +465,7 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	first := volume_key_of_a_new_build(t, root, main_volume, shared)
 	testing.expect_value(t, volume_key_of_a_new_build(t, root, main_volume, shared), first)
 
-	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, shared_inputs_of_a_test("the boot image with one changed program")) != first, "another boot image changes the key")
+	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, shared_inputs_of_a_test("the boot image with one changed module")) != first, "another boot image changes the key")
 
 	other_kernel := shared_inputs_of_a_test("the boot image")
 	for &file in other_kernel.built_files {
@@ -479,11 +479,11 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	other_tool.tool_identity[0] = 1
 	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, other_tool) != first, "another identity of the tool changes the key")
 
-	other_program := shared
-	programs := make([]string, 1, context.temp_allocator)
-	programs[0] = "program odin: /store/another_odin"
-	other_program.settings = programs
-	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, other_program) != first, "another compiler changes the key")
+	other_compiler := shared
+	compiler_settings := make([]string, 1, context.temp_allocator)
+	compiler_settings[0] = "host program odin: /store/another_odin"
+	other_compiler.settings = compiler_settings
+	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, other_compiler) != first, "another compiler changes the key")
 
 	// The same volume file with the flag of a self test: one flag of the
 	// compiler differs.
@@ -577,7 +577,7 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	kept, reason = decision(root, record_file, inputs, {volume_file, image_file, fmt.tprintf("%s/BOOTX64.EFI", root)})
 	testing.expect(t, !kept, "an output that the record does not name forces a build")
 
-	other_image, other_readable := boot_volume_key_inputs(main_volume, shared_inputs_of_a_test("the boot image with one changed program"), nil, nil)
+	other_image, other_readable := boot_volume_key_inputs(main_volume, shared_inputs_of_a_test("the boot image with one changed module"), nil, nil)
 	testing.expect(t, other_readable)
 	kept, reason = decision(root, record_file, other_image, {volume_file, image_file})
 	testing.expect(t, !kept, "a volume whose boot image changed is built again")
@@ -654,13 +654,13 @@ file_with_a_hole_at_its_end_reads_as_its_whole_bytes :: proc(t: ^testing.T) {
 // The count of volume processes at once: the count that the command gives,
 // or the processors up to the bound, and never more than the volumes.
 @(test)
-boot_volume_processes_follow_the_processors_up_to_the_bound :: proc(t: ^testing.T) {
-	testing.expect_value(t, boot_volume_processes(18, 0, 4), 4)
-	testing.expect_value(t, boot_volume_processes(18, 0, 16), MOST_BOOT_VOLUME_PROCESSES)
-	testing.expect_value(t, boot_volume_processes(2, 0, 16), 2)
-	testing.expect_value(t, boot_volume_processes(18, 3, 16), 3)
-	testing.expect_value(t, boot_volume_processes(18, 12, 16), 12)
-	testing.expect_value(t, boot_volume_processes(1, 0, 0), 1)
+boot_volume_host_processes_follow_the_processors_up_to_the_bound :: proc(t: ^testing.T) {
+	testing.expect_value(t, boot_volume_host_processes(18, 0, 4), 4)
+	testing.expect_value(t, boot_volume_host_processes(18, 0, 16), MOST_BOOT_VOLUME_HOST_PROCESSES)
+	testing.expect_value(t, boot_volume_host_processes(2, 0, 16), 2)
+	testing.expect_value(t, boot_volume_host_processes(18, 3, 16), 3)
+	testing.expect_value(t, boot_volume_host_processes(18, 12, 16), 12)
+	testing.expect_value(t, boot_volume_host_processes(1, 0, 0), 1)
 }
 
 // A machine starts only from a volume that the build of the process built
@@ -681,17 +681,17 @@ only_a_volume_of_this_build_is_ready :: proc(t: ^testing.T) {
 // The pool gives one outcome for each command, in the order of the
 // commands; a command that cannot start is a failure.
 @(test)
-build_processes_keep_the_outcome_of_each_command :: proc(t: ^testing.T) {
+build_host_processes_keep_the_outcome_of_each_command :: proc(t: ^testing.T) {
 	commands := make([][]string, 1, context.temp_allocator)
 	command := make([]string, 1, context.temp_allocator)
 	command[0] = "/a program that is not there"
 	commands[0] = command
-	outcomes := build_processes_run(commands, 4, context.temp_allocator)
+	outcomes := build_host_processes_run(commands, 4, context.temp_allocator)
 	testing.expect_value(t, len(outcomes), 1)
 	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
-	testing.expect(t, outcomes[0].duration >= time.Duration(0), "the time of a process is a measure")
+	testing.expect(t, outcomes[0].duration >= time.Duration(0), "the time of a host process is a measure")
 	// The output is memory of the worker thread, outside the memory that
 	// the test runner follows: the test does not free it.
-	none := build_processes_run(nil, 4, context.temp_allocator)
+	none := build_host_processes_run(nil, 4, context.temp_allocator)
 	testing.expect_value(t, len(none), 0)
 }

@@ -1,14 +1,14 @@
 # Principals
 
-A principal is a key pair and the root handles that the key unlocks (`PROPERTIES.md`, property 21; `glossary/access.md`, "Principal"). The kernel has no concept of who executes: a program acts with the handles that it holds. The root service holds the records of the principals, and names the principal of each program that it starts. Storage holds the data of a principal.
+A principal is a key pair and the root handles that the key unlocks (`PROPERTIES.md`, property 21; `glossary/access.md`, "Principal"). The kernel has no concept of who executes: a process acts with the handles that it holds. The root service holds the records of the principals, and names the principal of each process that it starts. Storage holds the data of a principal.
 
 This guide says what is built, how it works, and what is not built.
 
 ## About this guide
 
-**The idea in plain words.** Current systems ask "which user runs this program?" and give the program every right of that user. This system asks two other questions. *Who executes?* Always a program, with the handles that it holds: the kernel knows nothing more. *For whom does it run?* A principal: a key pair, and the stores and grants that its key unlocks. A program does not inherit a principal; it only runs in the session of one, and that fact is recorded, visible and limited to what the root service grants.
+**The idea in plain words.** Current systems ask "which user runs this process?" and give the process every right of that user. This system asks two other questions. *Who executes?* Always a process, with the handles that it holds: the kernel knows nothing more. *For whom does it run?* A principal: a key pair, and the stores and grants that its key unlocks. A process does not inherit a principal; it only runs in the session of one, and that fact is recorded, visible and limited to what the root service grants.
 
-**For whom.** A reader who wants to know how the system separates the data of the machine from the data of a named principal, how the unlock works, and which program can see which store.
+**For whom.** A reader who wants to know how the system separates the data of the machine from the data of a named principal, how the unlock works, and which process can see which store.
 
 **Read before.** `PROPERTIES.md`, "21. Principals: who acts, without users" (the rule and its layers) and "20. No ambient access: the other holes to close". The terms principal, named principal, session, unlock, lock of a session, passphrase and acts for the principal are in `glossary/access.md`.
 
@@ -17,15 +17,15 @@ This guide says what is built, how it works, and what is not built.
 | Section | What it says |
 |---|---|
 | "1. The layers, and what is built" | The five layers of the design, and the state of each |
-| "2. Principal 0: the machine" | The principal that the system programs belong to |
+| "2. Principal 0: the machine" | The principal that the system processes belong to |
 | "3. A named principal" | Its keys, its file, the key derivation and the passphrase |
 | "4. The unlock and the lock" | How a session starts and ends |
-| "5. The session" | Which principal each program runs for, and the grant of a connection |
+| "5. The session" | Which principal each process runs for, and the grant of a connection |
 | "6. The store of a principal" | How storage names and separates the stores of each principal |
 | "7. The commands" | The commands of the root ring and of the console |
 | "8. The tests", "9. Not built" | What the tests prove, and what remains |
 
-**An example.** At the console, `principal_create("alice")` starts the program `unlock`, whose window asks for the passphrase two times. After it, `notes` started from the menu of the desktop runs in the session of alice, and the log says "root: started notes, in the session of principal 1 "alice"". Its store is `notes.principal.1`, which the console, acting for principal 0, cannot open.
+**An example.** At the console, `principal_create("alice")` starts the process `unlock`, whose window asks for the passphrase two times. After it, `notes` started from the menu of the desktop runs in the session of alice, and the log says "root: started notes, in the session of principal 1 "alice"". Its store is `notes.principal.1`, which the console, acting for principal 0, cannot open.
 
 ![The window of unlock: the passphrase of a named principal, shown as dots](screenshots/principals_unlock.png)
 
@@ -45,9 +45,9 @@ With no named principal, the system runs as principal 0 only, with no unlock: th
 
 ## 2. Principal 0: the machine
 
-The machine itself is a principal, number 0. The programs of the system run for it, and its data are the data of the system, such as the settings. It needs no unlock, and it is not an administrator: it cannot see the data of a named principal.
+The machine itself is a principal, number 0. The processes of the system run for it, and its data are the data of the system, such as the settings. It needs no unlock, and it is not an administrator: it cannot see the data of a named principal.
 
-The root service makes the record of principal 0 at each boot, before the first program starts, from the trust record of the boot program (`TRUSTED_BOOT.md`). The record holds:
+The root service makes the record of principal 0 at each boot, before the first process starts, from the trust record of the boot program (`TRUSTED_BOOT.md`). The record holds:
 
 - the name `machine`;
 - the measure of the system: the value of PCR 11, when the boot program measured the system description into the TPM;
@@ -57,7 +57,7 @@ Principal 0 can have a machine key, which signs the disk grant table of principa
 
 The log says which: "root: principal 0 is the machine: the system is measured, PCR 11 = ..." or "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built".
 
-The programs of the system belong to principal 0: the services, the console, and each program that the console starts. The stores of the system (the settings, the line history of the console) are stores of principal 0, and keep their names.
+The processes of the system belong to principal 0: the services, the console, and each process that the console starts. The stores of the system (the settings, the line history of the console) are stores of principal 0, and keep their names.
 
 The key that signs the system description is the key of a principal like any other: the principal that signs the system. It is not principal 0, and it is not in the TPM.
 
@@ -74,11 +74,11 @@ A named principal has the number 1. The root service holds two records: principa
 | The signing key | Ed25519 | Signs the grants of the principal. No signed grant is built yet |
 | The unlock key | X25519 | Unlocks the documents of the principal. No store is encrypted yet |
 
-The program `unlock` makes the two secret keys from its random generator, which the root service seeded from the sources of the processor (`RANDOMNESS.md`). A seed weaker than the generator of the processor is refused, and no principal is made.
+The process `unlock` makes the two secret keys from its random generator, which the root service seeded from the sources of the processor (`RANDOMNESS.md`). A seed weaker than the generator of the processor is refused, and no principal is made.
 
 ### The file of the principal
 
-The program `unlock` keeps the record in its private store (a store of principal 0), as the object `principal`. Its format is in `src/library/support/principals`. Each number is little-endian. The object has one of two forms, by its first 8 bytes: `PRINCIPL`, under the passphrase alone, below, or `PRINCIPT`, sealed by the TPM ("The keys sealed by the TPM").
+The process `unlock` keeps the record in its private store (a store of principal 0), as the object `principal`. Its format is in `src/library/support/principals`. Each number is little-endian. The object has one of two forms, by its first 8 bytes: `PRINCIPL`, under the passphrase alone, below, or `PRINCIPT`, sealed by the TPM ("The keys sealed by the TPM").
 
 | Offset | Bytes | Field |
 |---|---|---|
@@ -96,7 +96,7 @@ The program `unlock` keeps the record in its private store (a store of principal
 
 The additional data of the seal is each byte before the sealed keys. So a change of the name, of a public key, of the salt or of a parameter makes the open fail.
 
-The file is data from the disk. `file_decode` copies it once and checks the copy: the size, the magic, the format, the name, and the zero bytes after it. A file with other parameters of Argon2id is refused: a file cannot ask for a cheaper derivation, or for more memory than the program has.
+The file is data from the disk. `file_decode` copies it once and checks the copy: the size, the magic, the format, the name, and the zero bytes after it. A file with other parameters of Argon2id is refused: a file cannot ask for a cheaper derivation, or for more memory than the process has.
 
 ### The key derivation
 
@@ -118,7 +118,7 @@ On a machine with the TPM service and Secure Boot on, the TPM seals the keys of 
 
 **The count of the TPM.** The sealed object has the attribute `noDA` clear: each wrong passphrase is a failure that the TPM counts. After too many (three on the software TPM of the test machines), the TPM refuses each try for a time (1000 seconds of the time of the TPM there), even the right passphrase; the recovery key still opens the keys. After the lockout the TPM forgives one failure for each 1000 seconds there: about 86 tries a day while the machine runs. The TPM service sends `TPM2_Shutdown` after each use of the passphrase that is not a counted failure: the system has no orderly stop, and with no `TPM2_Shutdown` the TPM counts one failure at each start that follows an unlock. After a counted failure it sends none, so a cut of the power cannot lose a failure that the TPM kept in its RAM; a stop of the machine after a wrong passphrase then counts one more failure at the next start.
 
-**The lockout authorization value.** The count of the TPM and its limits are set by its lockout hierarchy: `TPM2_DictionaryAttackLockReset` and `TPM2_DictionaryAttackParameters` need only the lockout authorization value, not the PCRs. A new or cleared TPM has an empty one. At each start, before it serves its ring, the TPM service reads the count limits of the TPM and writes them on the log; this read changes nothing. Once in a run, just before the first seal or unseal with a passphrase, it reads the bit `lockoutAuthSet`. When the bit is clear, it sets a random value of 32 bytes with `TPM2_HierarchyChangeAuth` and erases it: no program, file or store keeps it. So no system resets the count of the wrong passphrases or changes its limits, this one included. When the bit is set, the service changes nothing: an earlier start of this system set the value, or another system did, and the bit does not say which. A start that uses no passphrase with the TPM (a trial boot, a machine with the machine key only) leaves the lockout hierarchy as it found it. On the test machines, each start writes:
+**The lockout authorization value.** The count of the TPM and its limits are set by its lockout hierarchy: `TPM2_DictionaryAttackLockReset` and `TPM2_DictionaryAttackParameters` need only the lockout authorization value, not the PCRs. A new or cleared TPM has an empty one. At each start, before it serves its ring, the TPM service reads the count limits of the TPM and writes them on the log; this read changes nothing. Once in a run, just before the first seal or unseal with a passphrase, it reads the bit `lockoutAuthSet`. When the bit is clear, it sets a random value of 32 bytes with `TPM2_HierarchyChangeAuth` and erases it: no process, file or store keeps it. So no system resets the count of the wrong passphrases or changes its limits, this one included. When the bit is set, the service changes nothing: an earlier start of this system set the value, or another system did, and the bit does not say which. A start that uses no passphrase with the TPM (a trial boot, a machine with the machine key only) leaves the lockout hierarchy as it found it. On the test machines, each start writes:
 
 ```
 tpm: the count limits of the TPM: a lockout after 3 wrong authorization values, one forgiven each 1000 seconds; 0 counted now; the lockout hierarchy waits 1000 seconds after a wrong value of its own
@@ -237,13 +237,13 @@ root: the change in the window of unlock ends: the new recovery key is kept; the
 
 **When a change is refused.** `unlock` writes why and stops before its window opens, and the console gives the cause: a new recovery key for the form `PRINCIPL`, which has none; the form `PRINCIPT` with no TPM service; a new passphrase for the form `PRINCIPT` with Secure Boot off, as a seal then trusts a boot program that nothing verified. A new recovery key needs no seal by the TPM, so Secure Boot off allows it.
 
-**What an old copy of the file still opens.** The keys never change: they are the principal. So a change replaces the file and revokes no copy of it. The write makes the file from before a version, and `unlock` then asks the store to erase the versions of the file: the store ends them and writes zeros over their blocks (`STORAGE.md`, "4.8 The erase of versions"). Only `unlock` holds the grant for it, `Versions_Erase`. Each unlock whose current file opens the keys asks again, so a stop between the write and the erase is repaired at the next unlock; the erase waits for that, so a current file that does not open never loses the version before it. In the form `PRINCIPL`, which has no copy under a recovery key, `unlock` opens the new file with the new passphrase before it erases, and keeps the versions when it does not open. The creation of a principal erases nothing. The new seal after a recovery erases the same way, and so does the new seal of the machine key. After the erase, the old passphrase and the old recovery key open nothing that the storage service reads on this disk, under the limits of the erase (`src/md/features/version_erase.md`, "Limits"). A copy of the old file still opens with the old secret: the old passphrase on this TPM and system, and the old recovery key anywhere. Such a copy is a copy of the disk made before the change, a sector that the device or the host kept under the block (a flash disk, a snapshot of the image), a free block whose zeros a loss of power or a failed write cut, a damaged version that the erase ended with no zeros, or a clone or a restore that a program acting for principal 0 made of the version before the erase.
+**What an old copy of the file still opens.** The keys never change: they are the principal. So a change replaces the file and revokes no copy of it. The write makes the file from before a version, and `unlock` then asks the store to erase the versions of the file: the store ends them and writes zeros over their blocks (`STORAGE.md`, "4.8 The erase of versions"). Only `unlock` holds the grant for it, `Versions_Erase`. Each unlock whose current file opens the keys asks again, so a stop between the write and the erase is repaired at the next unlock; the erase waits for that, so a current file that does not open never loses the version before it. In the form `PRINCIPL`, which has no copy under a recovery key, `unlock` opens the new file with the new passphrase before it erases, and keeps the versions when it does not open. The creation of a principal erases nothing. The new seal after a recovery erases the same way, and so does the new seal of the machine key. After the erase, the old passphrase and the old recovery key open nothing that the storage service reads on this disk, under the limits of the erase (`src/md/features/version_erase.md`, "Limits"). A copy of the old file still opens with the old secret: the old passphrase on this TPM and system, and the old recovery key anywhere. Such a copy is a copy of the disk made before the change, a sector that the device or the host kept under the block (a flash disk, a snapshot of the image), a free block whose zeros a loss of power or a failed write cut, a damaged version that the erase ended with no zeros, or a clone or a restore that a process acting for principal 0 made of the version before the erase.
 
-**A lock during a change.** `lock()` stops the `unlock` of a change with the session, as each window of `unlock` that a session asked for (section 4). After each stop of a program, the root service starts `unlock` when a named principal is locked and no `unlock` runs, so a close of its window gives it back at once. A stop that the root service asked (a close of the window, a stop at a lock) never counts. After 3 other stops while a principal is locked, whatever their code, or failed starts other than a full table, since the last lock or session, it starts it no more until the machine starts again: "root: unlock stopped 3 times while a principal is locked, with no stop that the root service asked: it starts no more until the machine starts again". A lock during the write of a change ends it with "unlock stopped before the end: the old or the new secret opens": the file can be the old or the new one.
+**A lock during a change.** `lock()` stops the `unlock` of a change with the session, as each window of `unlock` that a session asked for (section 4). After each stop of a process, the root service starts `unlock` when a named principal is locked and no `unlock` runs, so a close of its window gives it back at once. A stop that the root service asked (a close of the window, a stop at a lock) never counts. After 3 other stops while a principal is locked, whatever their code, or failed starts other than a full table, since the last lock or session, it starts it no more until the machine starts again: "root: unlock stopped 3 times while a principal is locked, with no stop that the root service asked: it starts no more until the machine starts again". A lock during the write of a change ends it with "unlock stopped before the end: the old or the new secret opens": the file can be the old or the new one.
 
 ## 4. The unlock and the lock
 
-A session of a named principal starts when its passphrase opens its file, and ends with a lock. One program, `unlock`, handles the passphrase and the keys; it tells the root service the result and stops.
+A session of a named principal starts when its passphrase opens its file, and ends with a lock. One process, `unlock`, handles the passphrase and the keys; it tells the root service the result and stops.
 
 The root service starts `unlock` at boot, after the boot pass of `settings`.
 
@@ -253,12 +253,12 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 
 **The keys are not kept after the unlock.** `unlock` gives the root service one key, derived from the unlock key: the key of the tag of the disk grant table of the principal (section 5, "The disk grant table of a named principal"). Then it erases the secret keys: no store is encrypted, and no grant is signed. A key that is held with no use is only a target. When storage encrypts the stores of a principal, the unlock gives the unlock key to the storage service, and the lock erases it there.
 
-**The lock** (`lock()` in the console): the root service stops each program of the session and its terminals, marks the principal locked, and starts `unlock` again. The programs stop; they are not frozen: a frozen program needs a kernel operation that does not exist. A program that keeps its state in its store at each change (`notes`) loses nothing.
+**The lock** (`lock()` in the console): the root service stops each process of the session and its terminals, marks the principal locked, and starts `unlock` again. The processes stop; they are not frozen: a frozen process needs a kernel operation that does not exist. A process that keeps its state in its store at each change (`notes`) loses nothing.
 
 **No window of `unlock` outlives a lock.** A console of the session can start `unlock` for a change of the passphrase, a new recovery key, the machine passphrase or the seal of the machine key. The lock stops that `unlock`, whatever it shows: anyone at the keyboard of the locked machine then reads no recovery key and sets no machine passphrase. Each window that shows a new recovery key writes its file or its record only after Enter, so the stop loses no key that nobody wrote down: the disk stays as it was, and the owner asks again. The log says what the stopped window ran for:
 
 ```
-root: the session of principal 1 "alice" ends: 2 programs stopped
+root: the session of principal 1 "alice" ends: 2 processes stopped
 root: the lock stops the window of unlock, which ran for the machine passphrase that is set; unlock asks for the passphrase when it stopped
 root: unlock stopped with code ...
 unlock: principal 1 "alice" is locked: its passphrase opens its session
@@ -268,23 +268,23 @@ The design is `src/md/features/tpm_sealed_principal_keys.md`, "No window of `unl
 
 **The creation** (`principal_create("name")` in the console): the root service checks the name, and starts `unlock` with it. The passphrase is typed two times. `unlock` makes the keys, derives the key of the seal, seals the secret keys, writes the file, gives the record to the root service, and starts the session. With the TPM service and Secure Boot on, the TPM seals the keys with the passphrase, and the window shows the recovery key before the file is written ("The keys sealed by the TPM").
 
-The root service trusts `unlock` for the record and for the unlock, as the one program with the grant `Principals`, as it trusts `settings` as the one writer of the settings page. No other program can send these two commands.
+The root service trusts `unlock` for the record and for the unlock, as the one process with the grant `Principals`, as it trusts `settings` as the one writer of the settings page. No other process can send these two commands.
 
 ## 5. The session
 
-Each program runs for one principal, and the root service decides which when it starts the program. A service learns the principal of each caller from the grant of its connection, never from the caller itself.
+Each process runs for one principal, and the root service decides which when it starts the process. A service learns the principal of each caller from the grant of its connection, never from the caller itself.
 
-The root service records, for each program that it starts, the principal whose session the program belongs to:
+The root service records, for each process that it starts, the principal whose session the process belongs to:
 
-| Who asks for the start | The principal of the program |
+| Who asks for the start | The principal of the process |
 |---|---|
 | The root service itself (the services, the console, the boot passes) | 0, the machine |
 | A service that starts on demand (`storage`, `sample`) | 0 |
 | The desktop: the menu or the palette of the compositor | The named principal that is unlocked, else 0 |
-| A program, through its ring to the root service (`start("name")` in the console) | The principal of the program that asks |
-| The terminal of a program | The principal of that program |
+| A process, through its ring to the root service (`start("name")` in the console) | The principal of the process that asks |
+| The terminal of a process | The principal of that process |
 
-So a program that the console starts belongs to principal 0, and a program that the desktop starts during a session belongs to the named principal. The log says it: "root: started notes, in the session of principal 1 "alice"".
+So a process that the console starts belongs to principal 0, and a process that the desktop starts during a session belongs to the named principal. The log says it: "root: started notes, in the session of principal 1 "alice"".
 
 **The grant of a connection.** The root service gives each caller of a service a grant, in the Connect and Grant commands of the service ring (`src/library/contract/isolated`, values[6]):
 
@@ -292,19 +292,19 @@ So a program that the console starts belongs to principal 0, and a program that 
 |---|---|
 | 0 to 45 (`CALLER_AMOUNT_MASK`) | An amount: the limit of blocks of a store |
 | 46 (`CALLER_ERASES_VERSIONS`) | The storage service lets the caller erase the versions of the objects of its private store: the start grant `Versions_Erase`, which only `unlock` has (`STORAGE.md`, "4.8 The erase of versions") |
-| 47 (`CALLER_READS_ONLY`) | The connection reads only: the storage service refuses each change on it (`MODULE_CONTRACT.md`, "The debug object of a disk program") |
+| 47 (`CALLER_READS_ONLY`) | The connection reads only: the storage service refuses each change on it (`MODULE_CONTRACT.md`, "The debug object of a disk process") |
 | 48 to 62 (`CALLER_PRINCIPAL_MASK`) | The number of the principal of the session of the caller |
 | 63 (`CALLER_ACTS_FOR_PRINCIPAL`) | The caller acts for that principal |
 
 A caller acts for the principal when its role has the grant `acts_for_principal` (the console, `remote`) and the grant was not revoked. It acts for the principal of its own session only, but for `remote`, whose connections act for the principal of a client key ("The client keys of remote"). So the console, started at boot, acts for principal 0, never for principal 1: "root: connected console to the service storage, acting for principal 0". A console that the desktop starts during the session of alice belongs to that session: it acts for principal 1, never for principal 0.
 
-**The grant records name the principal.** `grants("notes")` in the console gives the grants of a program, then "notes runs for principal 1 "alice"". `revoke` works on a program of a session as on any other program.
+**The grant records name the principal.** `grants("notes")` in the console gives the grants of a process, then "notes runs for principal 1 "alice"". `revoke` works on a process of a session as on any other process.
 
 ### The client keys of remote
 
 A call from another machine acts for the principal that allowed its client, and for no other. The design is `src/md/features/remote_client_keys.md`.
 
-**The key of a client.** A client of the program `remote` proves an Ed25519 key of its own in the QUIC handshake: a raw public key and its signature, in mutual TLS 1.3 (`QUIC.md`, section 4, "The key of the client"). The tool prints the key of its client.
+**The key of a client.** A client of the process `remote` proves an Ed25519 key of its own in the QUIC handshake: a raw public key and its signature, in mutual TLS 1.3 (`QUIC.md`, section 4, "The key of the client"). The tool prints the key of its client.
 
 **The grant.** A principal allows a key from a console that acts for it: `remote_allow("<64 hexadecimal digits>")`. The root service keeps the grant as a row of the client table: the key, the principal, and a serial that names the grant. `remote` maps the table with the right Read only, by its start grant `Remote_Clients`; it cannot give a key a row. One key belongs to one principal: a key that another principal allowed is refused (`Exists`). The table holds 8 rows (`remote.CLIENT_CAPACITY`), 4 of them for one principal at most (`remote.CLIENT_ROWS_OF_ONE_PRINCIPAL`; one more is refused with `Full`). A row allowed while the session of its principal is locked holds no grant until the unlock. `remote_clients()` gives the keys of the principal of the console, each with its state: `holds`, `locked`, or `contested` (see "Across a restart").
 
@@ -314,7 +314,7 @@ remote: 10.0.2.2 port 43000 proved the client key 6a1f0c2d9e8b7a65: its calls ac
 root: connected remote to the service monitor, acting for principal 0, for the client key 6a1f0c2d9e8b7a65
 ```
 
-**A call.** `remote` binds each QUIC connection to the row of the key that its client proved, and asks the root service for each connection to a service for that row (`Connect` with the row and its serial). The root service gives that connection the principal of the row, with the flag to act for it. So two clients of two principals see each one the stores and the programs of its own principal.
+**A call.** `remote` binds each QUIC connection to the row of the key that its client proved, and asks the root service for each connection to a service for that row (`Connect` with the row and its serial). The root service gives that connection the principal of the row, with the flag to act for it. So two clients of two principals see each one the stores and the processes of its own principal.
 
 **A key with no row.** The handshake ends with access_denied, before any stream, and `remote` writes one line: "remote: refused the client key ...: no principal allowed it; the handshake ends before any call". The check comes after the signature of the client verified: a peer that does not hold the private key learns nothing.
 
@@ -328,10 +328,10 @@ remote: the grants of 4 connections to services ended (a revocation, or a lock o
 
 `remote` frees the slots of the connections of an ended grant at each pass, also when no client of the key is connected.
 
-**Across a restart.** Each allowed key is also a client key of the disk grant table of its principal, under the tag of that table (`MODULE_CONTRACT.md`, "The grants of a disk program"). The table keeps 4 keys at most. So a key lasts as the other grants of its principal do: across a restart for a named principal, and for principal 0 with a machine passphrase or a machine key sealed by the TPM; until the machine stops for principal 0 with neither, and when the global setting of the table is to forget (`disk_persistence("", "forget")`). The end of the line of an allow says which. After the read of the table, at the first unlock of a named principal or when principal 0 gets its machine key, each key holds again with a new serial:
+**Across a restart.** Each allowed key is also a client key of the disk grant table of its principal, under the tag of that table (`MODULE_CONTRACT.md`, "The grants of a disk process"). The table keeps 4 keys at most. So a key lasts as the other grants of its principal do: across a restart for a named principal, and for principal 0 with a machine passphrase or a machine key sealed by the TPM; until the machine stops for principal 0 with neither, and when the global setting of the table is to forget (`disk_persistence("", "forget")`). The end of the line of an allow says which. After the read of the table, at the first unlock of a named principal or when principal 0 gets its machine key, each key holds again with a new serial:
 
 ```
-root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal; 1 client keys of remote
+root: read the disk grant table of principal 1 from the store module_files: 1 rows, with the tag of the key of the principal; 1 client keys of remote
 root: the client key 6a1f0c2d9e8b7a65 of remote holds again for principal 1, from its disk grant table: each call of that client acts for it
 ```
 
@@ -353,7 +353,7 @@ root: the client key 6a1f0c2d9e8b7a65 of remote holds again for principal 0: pri
 
 ### Principal 0 and its machine passphrase
 
-Principal 0 stays the machine. A machine passphrase is optional: it guards the machine key, and it opens no session. With no machine passphrase, nothing is typed, and the disk grant table of principal 0 lasts until the machine stops (`MODULE_CONTRACT.md`, "The grants of a disk program").
+Principal 0 stays the machine. A machine passphrase is optional: it guards the machine key, and it opens no session. With no machine passphrase, nothing is typed, and the disk grant table of principal 0 lasts until the machine stops (`MODULE_CONTRACT.md`, "The grants of a disk process").
 
 **The record.** `unlock` keeps it in its store, as the object `machine`. Its format is in `src/library/support/principals`. Each number is little-endian. This is the form under the machine passphrase alone: a machine with no TPM service, or with Secure Boot off, gets it. A machine with the TPM service and Secure Boot on gets the form `MACHINEP` ("The machine passphrase with the TPM").
 
@@ -371,7 +371,7 @@ The additional data of the seal is each byte before the sealed key. The key deri
 
 **The setting.** `machine_passphrase()` in the console starts `unlock`, whose window asks for the passphrase two times. `unlock` makes the machine key from its generator, seals it, writes the record, and gives the root service the key of the tag of the table. The log says why the TPM does not seal it: "unlock: no TPM service: the machine key is sealed under the machine passphrase alone, with no recovery key". A machine with a machine passphrase refuses a second one. `unlock` writes one record in a run at most: when the root service does not take the key in time, `unlock` stops, and the passphrase opens that record at the next start.
 
-**A record that cannot be read.** `unlock` reads the record as absent, present, or unreadable: the store gave an error, or the record does not decode. Only an absent record lets a passphrase be set. An unreadable record gives no key: the disk programs of principal 0 start with no grant, and a change of the table and `machine_passphrase()` are refused, each with a line of the log:
+**A record that cannot be read.** `unlock` reads the record as absent, present, or unreadable: the store gave an error, or the record does not decode. Only an absent record lets a passphrase be set. An unreadable record gives no key: the disk processes of principal 0 start with no grant, and a change of the table and `machine_passphrase()` are refused, each with a line of the log:
 
 ```
 root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good
@@ -379,9 +379,9 @@ root: refused a machine passphrase: the record of the machine passphrase cannot 
 
 **The keys.** `unlock` gives the root service one key: the key of the tag of the disk grant table, keyed BLAKE2b of the machine key over a fixed text. It erases the key of the seal and the machine key, and stops. The root service holds the key of the tag until the machine stops; it cannot open the record with it.
 
-**At the start.** The root service starts `unlock` at boot, as before. With a record of the machine, `unlock` asks for the machine passphrase first, then for the passphrase of a named principal if a file of one exists. The window says which one it asks for. Until the machine passphrase is typed, the machine runs, the disk programs of principal 0 start with no grant, and a change of the table of principal 0 is refused. Enter with no passphrase skips it until the next start of `unlock`. After a lock, the root service tells `unlock` that it holds the key, and `unlock` does not ask again.
+**At the start.** The root service starts `unlock` at boot, as before. With a record of the machine, `unlock` asks for the machine passphrase first, then for the passphrase of a named principal if a file of one exists. The window says which one it asks for. Until the machine passphrase is typed, the machine runs, the disk processes of principal 0 start with no grant, and a change of the table of principal 0 is refused. Enter with no passphrase skips it until the next start of `unlock`. After a lock, the root service tells `unlock` that it holds the key, and `unlock` does not ask again.
 
-The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store programs: 1 rows, with the tag of the machine key".
+The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store module_files: 1 rows, with the tag of the machine key".
 
 ### The machine passphrase with the TPM
 
@@ -448,7 +448,7 @@ The additional data of the seal under the seal key is each byte before the PCRs.
 
 A machine with no machine passphrase can keep its disk grants across a restart with no typing: the TPM releases the machine key at each start, but only to the system whose measure it holds. A recovery key, shown one time, opens the key when the TPM refuses. The design is `src/md/features/tpm_sealed_machine_key.md`.
 
-**The TPM service.** The program `tpm` is the device service of the TPM. The root service starts it at boot when the trust record says `Measured` (`TRUSTED_BOOT.md`, "6. The measure"); with no TPM, or with a refused measure, it does not run. It seals 32 bytes to the values of PCR 7 (the state of Secure Boot) and PCR 11 (the measure of the system description), and unseals them only while those registers hold the same values. `unlock` is its one client. Before the first use of a passphrase in a run, it also sets a lockout authorization value when the TPM has an empty one ("The lockout authorization value").
+**The TPM service.** The process `tpm` is the device service of the TPM. The root service starts it at boot when the trust record says `Measured` (`TRUSTED_BOOT.md`, "6. The measure"); with no TPM, or with a refused measure, it does not run. It seals 32 bytes to the values of PCR 7 (the state of Secure Boot) and PCR 11 (the measure of the system description), and unseals them only while those registers hold the same values. `unlock` is its one client. Before the first use of a passphrase in a run, it also sets a lockout authorization value when the TPM has an empty one ("The lockout authorization value").
 
 **The setting.** `machine_seal()` in the console asks the root service (`Machine_Seal`), which starts `unlock`. It needs Secure Boot on: the trust record says that the firmware verified the boot program. With Secure Boot off, a replaced boot program can extend PCR 11 with the hash of a correct description, so the root service refuses: "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified". `unlock` makes the machine key and a recovery key from its generator, asks the TPM service for the seal, and seals a copy of the key under the recovery key. Its window then shows the recovery key until Enter; only then does `unlock` write the record and give the root service the key of the tag of the table, so a stop before Enter leaves no record ("4. The unlock and the lock"):
 
@@ -491,7 +491,7 @@ unlock: the TPM service refuses the unseal: this TPM did not make the sealed obj
 ```
 tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal
 unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only
-root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key
+root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key
 ```
 
 **When the TPM refuses.** After an update of the system, on another machine, after a change of Secure Boot, or with no TPM service, the TPM does not release the key. The window of `unlock` asks for the recovery key; it takes upper or lower case, with or without `-`. Enter with nothing skips it: the machine runs, and the disk grants of principal 0 stay absent. A wrong recovery key opens nothing. The right one gives the key, and with Secure Boot on `unlock` seals it again to the system that runs, so the next start of this system needs no recovery key. With Secure Boot off it does not seal it again: an attacker who turns Secure Boot off makes the TPM refuse as an update does, and a new seal would bind the key to a boot program that nothing verified:
@@ -509,19 +509,19 @@ unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that r
 - The form of the record is not pinned: the disk alone says whether the machine key is sealed by the TPM or under a passphrase. A system that writes the disk can replace or remove the record. This system then takes no table of another key, but the disk grants of principal 0 stay absent, and the window asks for a recovery key or a passphrase that the owner does not have. A pin in the TPM is not built (`ROADMAP.md`).
 - A replaced boot program that extends PCR 11 with a correct hash could open a key sealed with Secure Boot off; so no key is sealed with Secure Boot off.
 - The key crosses the interface of the TPM in clear at each seal and unseal: no session encrypts it. A reader of the bus of a hardware TPM gets it.
-- Each update of the system asks for the recovery key one time: no program of the system knows the measure of the next system before the update.
+- Each update of the system asks for the recovery key one time: no process of the system knows the measure of the next system before the update.
 
 ### The disk grant table of a named principal
 
-A named principal grants a disk program from its own session, and its grants last across a restart of the machine (`MODULE_CONTRACT.md`, "The grants of a disk program").
+A named principal grants a disk process from its own session, and its grants last across a restart of the machine (`MODULE_CONTRACT.md`, "The grants of a disk process").
 
-**Who changes it.** A program of the session that acts for the principal: a console that the desktop starts during the session, from the menu of the programs. Its `allow`, `disallow`, `nickname_move` and `disk_persistence` change the table of principal 1. The console that the machine starts at boot changes the table of principal 0 only.
+**Who changes it.** A process of the session that acts for the principal: a console that the desktop starts during the session, from the start menu. Its `allow`, `disallow`, `nickname_move` and `disk_persistence` change the table of principal 1. The console that the machine starts at boot changes the table of principal 0 only.
 
-**Where it is.** The object `grant_table` of the store `programs.principal.1`: the store of the module files of the principal, which the disk programs of its session start from.
+**Where it is.** The object `grant_table` of the store `module_files.principal.1`: the store of the module files of the principal, which the disk processes of its session start from.
 
 **Its key.** When the passphrase opens the seal, `unlock` derives the key of the tag from the secret unlock key: keyed BLAKE2b over the text `modus disk grant table of a named principal`. It gives this key with `Principal_Unlock`, and erases the secret keys. The root service keeps the key until the machine stops; after a lock, the next unlock must give the same key.
 
-**The read and the write.** The first unlock of a run reads the table, before any program of the session can change it. Then each change writes it. The rules are the rules of the table of principal 0:
+**The read and the write.** The first unlock of a run reads the table, before any process of the session can change it. Then each change writes it. The rules are the rules of the table of principal 0:
 
 - A table whose tag verifies gives its rows.
 - A table that does not verify gives no grant. At the creation of the principal it is written over: no key of this principal signed it. The root service takes a key "of a new principal" only for a record that a creation made since the machine started. At any other unlock the table is kept, and each change is refused until the machine starts again.
@@ -529,31 +529,31 @@ A named principal grants a disk program from its own session, and its grants las
 - A write that fails is tried again at once, 3 tries at most.
 - While the read runs, or while the session is locked, a change is refused.
 
-The log says each step: "root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal", "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal".
+The log says each step: "root: read the disk grant table of principal 1 from the store module_files: 1 rows, with the tag of the key of the principal", "root: the disk grant table of principal 1 is written in the store module_files: 1 rows, with the tag of the key of the principal".
 
 ## 6. The store of a principal
 
-One program run for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
+One module that runs for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
 
-The storage service names a store by the name that the root service gives to the connection. The root service builds that name in one procedure, `principals.store_name_write`, from the principal and the name of the program:
+The storage service names a store by the name that the root service gives to the connection. The root service builds that name in one procedure, `principals.store_name_write`, from the principal and the name of the process:
 
-| Principal | Program | Store |
+| Principal | Process | Store |
 |---|---|---|
 | 0 | `notes` | `notes` |
 | 0 | `console`, its line history | `console.history` |
 | 1 | `notes` | `notes.principal.1` |
 | 1 | `console`, its line history | `console.history.principal.1` |
-| 0 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor` |
-| 1 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor.principal.1` |
-| 1 | The module files of its disk programs, and its disk grant table | `programs.principal.1` |
+| 0 | The disk process of the nickname `visitor`, with the grant `store` | `disk-visitor` |
+| 1 | The disk process of the nickname `visitor`, with the grant `store` | `disk-visitor.principal.1` |
+| 1 | The module files of its disk processes, and its disk grant table | `module_files.principal.1` |
 
-So two principals that run one program have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
+So two principals that run one module have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 
 **Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "4.2 No way up"), from bits 48 to 62 of the grant of each connection:
 
 - A caller that acts for principal N sees the stores of principal N only: `stores()` lists them, and `open_store` gives a place on one of them; another store is refused with `No_Grant`, unit `Acts_For_Principal`.
 - Principal 0 sees the stores of principal 0 only. It does not see the stores of a named principal: the machine is not an administrator.
-- A caller that does not act for a principal, and a share of a store, see their own store only. A name that does not fit in 31 bytes is refused, never cut: a cut name can be the name of another store. The identity of the package of a program (the key of the principal that signs the package, and its name) enters in the same procedure when storage attaches data to it.
+- A caller that does not act for a principal, and a share of a store, see their own store only. A name that does not fit in 31 bytes is refused, never cut: a cut name can be the name of another store. The identity of the package of a process (the key of the principal that signs the package, and its name) enters in the same procedure when storage attaches data to it.
 
 ## 7. The commands
 
@@ -561,18 +561,18 @@ So two principals that run one program have two stores, and the stores of the sy
 
 | Command | Who sends it | What it does |
 |---|---|---|
-| `Principal_Create` | A program with the grant `Root_Ring` | Starts `unlock` to create the principal with the name of values[0..4] |
-| `Principal_Lock` | A program with the grant `Root_Ring` | Ends the session that runs; values[0] of the completion is the count of the programs stopped |
-| `Principals` | A program with the grant `Root_Ring` | Reads the record of the principal values[4]: its state, its name, the first 8 bytes of its public key; for principal 0 the first 8 bytes of the measure |
+| `Principal_Create` | A process with the grant `Root_Ring` | Starts `unlock` to create the principal with the name of values[0..4] |
+| `Principal_Lock` | A process with the grant `Root_Ring` | Ends the session that runs; values[0] of the completion is the count of the processes stopped |
+| `Principals` | A process with the grant `Root_Ring` | Reads the record of the principal values[4]: its state, its name, the first 8 bytes of its public key; for principal 0 the first 8 bytes of the measure |
 | `Principal_Record` | `unlock` only | Gives the public key (values[0..3]) and the name (values[4..6]) of the named principal; the completion has its number |
 | `Principal_Unlock` | `unlock` only | Starts the session of the principal values[4]; values[0..3] is the key of the tag of its disk grant table, values[5] its origin, a `Principal_Key_Origin`: `Opened` from the open of the file, `New` from the creation; another value is refused |
-| `Grants` | A program with the grant `Root_Ring` | Also gives the number (values[2]) and the name (values[3..6]) of the principal of the program |
-| `Machine_Passphrase` | A program with the grant `Root_Ring` | Starts `unlock` to set the machine passphrase; with the TPM service and Secure Boot on, the TPM seals the machine key with it |
+| `Grants` | A process with the grant `Root_Ring` | Also gives the number (values[2]) and the name (values[3..6]) of the principal of the process |
+| `Machine_Passphrase` | A process with the grant `Root_Ring` | Starts `unlock` to set the machine passphrase; with the TPM service and Secure Boot on, the TPM seals the machine key with it |
 | `Machine_Key` | `unlock` only | values[4] a `Machine_Key_State`. `Awaited`: the machine has a record of its machine key, not opened yet (values[5] a `Machine_Key_Form`: `Sealed_By_The_Tpm` or `Passphrase`). `Unreadable`: its record cannot be read. `Opened` or `New`: values[0..3] is the key of the tag of the disk grant table of principal 0, from the open of the record or from a new record. A value that names no member is refused with `Bad_Operation` |
-| `Machine_Seal` | A program with the grant `Root_Ring` | Starts `unlock` to make a machine key sealed by the TPM, with a recovery key; refused with Secure Boot off (`Refused`) |
-| `Principal_Change` | A program with the grant `Root_Ring` that acts for a named principal whose session runs | Starts `unlock` to change the passphrase of that principal (values[4] `Principal_Change.Passphrase`) or to make it a new recovery key (`Principal_Change.Recovery_Key`); another value is refused with `Bad_Value`; the completion comes at the end of the change, values[0] the end and values[1] the cause of a refusal; refused at once with `No_Grant` (unit `Acts_For_Principal`) to a caller that does not act for its principal, `Absent` (unit `Principals`) to a caller of principal 0 or of a locked session, `Busy` while `unlock` runs |
+| `Machine_Seal` | A process with the grant `Root_Ring` | Starts `unlock` to make a machine key sealed by the TPM, with a recovery key; refused with Secure Boot off (`Refused`) |
+| `Principal_Change` | A process with the grant `Root_Ring` that acts for a named principal whose session runs | Starts `unlock` to change the passphrase of that principal (values[4] `Principal_Change.Passphrase`) or to make it a new recovery key (`Principal_Change.Recovery_Key`); another value is refused with `Bad_Value`; the completion comes at the end of the change, values[0] the end and values[1] the cause of a refusal; refused at once with `No_Grant` (unit `Acts_For_Principal`) to a caller that does not act for its principal, `Absent` (unit `Principals`) to a caller of principal 0 or of a locked session, `Busy` while `unlock` runs |
 | `Principal_Change_End` | `unlock` only | The end of the change (values[4]) and the cause of a refusal (values[5]); the root service gives them to the caller of `Principal_Change` |
-| `Remote_Client` | A program with the grant `Root_Ring` that acts for its principal | values[0..3] a client key of `remote`, values[4] the action, a `Remote_Client_Action`: `Allow` allows it for the principal of the caller, `Revoke` revokes it, each one in the disk grant table of that principal too, `Read` reads the place values[5]: a row of the client table, then a contested key of the disk grant table (the key, the principal, 1 for a key of the principal of the caller, and its `Remote_Client_State` in values[6]: `Holds`, `Locked` or `Contested`); another action is refused with `Bad_Value`; the completion of a revocation has the count of the connections that ended in values[0], and 1 in values[1] when the key can come back from the disk ("The client keys of remote"). Refused with `No_Grant` (unit `Acts_For_Principal`), `Exists` (another principal allowed the key), `Full`, `Absent` (a revocation of a key that the principal did not allow), each with the unit `Grants`, and `Refused` (an allow while the disk grant table of the principal takes no change) |
+| `Remote_Client` | A process with the grant `Root_Ring` that acts for its principal | values[0..3] a client key of `remote`, values[4] the action, a `Remote_Client_Action`: `Allow` allows it for the principal of the caller, `Revoke` revokes it, each one in the disk grant table of that principal too, `Read` reads the place values[5]: a row of the client table, then a contested key of the disk grant table (the key, the principal, 1 for a key of the principal of the caller, and its `Remote_Client_State` in values[6]: `Holds`, `Locked` or `Contested`); another action is refused with `Bad_Value`; the completion of a revocation has the count of the connections that ended in values[0], and 1 in values[1] when the key can come back from the disk ("The client keys of remote"). Refused with `No_Grant` (unit `Acts_For_Principal`), `Exists` (another principal allowed the key), `Full`, `Absent` (a revocation of a key that the principal did not allow), each with the unit `Grants`, and `Refused` (an allow while the disk grant table of the principal takes no change) |
 
 A refusal is an error record with the unit `Principals`: a second named principal ("no free place: the table has its 1 named principals"), a lock with no session, a number with no record, a second record of the machine key (`Exists`), a machine key sealed by the TPM on a machine with no TPM service (`Unsupported`).
 
@@ -583,8 +583,8 @@ A refusal is an error record with the unit `Principals`: a second named principa
 - `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms; a round trip of the record sealed by the TPM, its offsets and its hostile forms; a round trip of the file `PRINCIPT`, its offsets, its two additional data and its hostile forms; the recovery key in base32 (the vector "fooba" of RFC 4648) and its parse; the key of the recovery seal and the key check; the authorization value, the seal key and the recovery seal key of a named principal, each with its own text; which change each form of the file takes, with and without the TPM service and Secure Boot; the words of each mode of `unlock` that the line of a lock names; which prompt of an unlock offers the recovery key with Ctrl+R; a new recovery key that keeps the two additional data, and a new salt that keeps the one of the copy under the recovery key; a round trip of the record `MACHINEP`, its offsets, its two additional data and its hostile forms, the authorization value and the seal key of the machine passphrase, each with its own text and not the one of a named principal, and a new machine passphrase that keeps the copy under the recovery key.
 - `odin test src/library/support/tpm2`: each command of TPM 2.0 that the TPM service sends, byte for byte, with and without an authorization value, `TPM2_PolicyPassword` and `TPM2_Shutdown`, and the read of the answers with their checks; the policy of PCR 7 and PCR 11, the same policy followed by `TPM2_PolicyPassword`, and the creation hash against digests of SHA-256 computed outside; a forged sealed object (the policy of this system, the creation data of another one), other attributes, a creation data and a ticket of another form, each refused; an object of a named principal with `noDA` set, or with the policy of the PCRs alone, refused; the codes of a counted failure, of a failure that is not counted, of the lockout and of a retry; `TPM2_GetCapability` of the properties, `TPM2_HierarchyChangeAuth` of the lockout hierarchy and `TPM2_DictionaryAttackLockReset`, byte for byte; the answer of the count limits and the bit `lockoutAuthSet`, and the hostile forms of that answer, each refused with no value: a property missing, one more, two in the wrong order, one twice, another capability, a count past the bytes, a cut answer, a byte after the list, a bad bit `moreData`, the tag of an answer with sessions.
 - `modustool test principals`, after its two machines below: twelve machines with one software TPM, then four with another. Each one but the sixth runs the firmware with Secure Boot on and starts a signed volume, whose root service is the root service of a release, so the rule of the seal holds in each test (`TRUSTED_BOOT.md`, "The machines of the TPM"). The first one, the signed main system: `machine_seal()` seals the machine key, and the tool reads the recovery key off the screen; a second `machine_seal()` is refused. The second one, the same system: the TPM proves the creation and releases the key with no typing, and the table that the first one wrote verifies. The third one, another system (another PCR 11): the TPM refuses, a wrong recovery key opens nothing, the recovery key opens the key, and `unlock` seals it again. The fourth one, that other system again: the TPM releases the key with no typing. The fifth one, that other system on a disk that the tool writes with the record of the fourth one and one byte of its creation ticket changed: the TPM refuses the ticket (`TPM_RC_TICKET`), nothing is unsealed, and the window asks for the recovery key. The sixth one, on the disk of the first four, starts that other system on the firmware with no Secure Boot: only PCR 7 differs from the seal of the third one, and the TPM refuses; the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests of `tpm2` refuse one. Then six machines on a disk of their own and the same TPM, for the keys of a named principal: the seventh, on the signed main system, creates alice, the TPM seals her keys with her passphrase, and the tool reads her recovery key off the screen; the eighth, the same system: a wrong passphrase, refused and counted by the TPM (`TPM_RC_AUTH_FAIL`), then the right one opens the session; the ninth, the other system: the TPM refuses the passphrase, a wrong recovery key opens nothing, the recovery key opens the keys, and a new passphrase seals them again; the tenth, the other system again: the passphrase opens the session, a console of the session changes the passphrase (the current one first, where Ctrl+R does nothing), then makes a new recovery key, which the tool reads off the screen, then asks for the machine passphrase and types it two times; `lock()` while the window shows its recovery key stops `unlock`, and the `unlock` of the lock finds no record of the machine; the passphrase before the change is refused and counted, and the changed one opens the keys; then the tool searches the image of the disk on the host for the salt, the keys under the seal key and the keys under the recovery key of the file that it read before the tenth machine, and finds none of them; the eleventh, the signed main system, where the TPM would refuse: Ctrl+R asks for the recovery key with no request to the TPM, Enter with nothing goes back to the passphrase, Ctrl+R asks again, the recovery key of the seventh machine opens nothing, and the new one opens the keys; the twelfth, the same system: one wrong passphrase, counted, makes three with the ones of the eighth and the tenth machines, the TPM refuses the right passphrase (`TPM_RC_LOCKOUT`), and the recovery key opens the keys. Each machine writes the count limits. The first six use no passphrase and leave the lockout hierarchy empty; the seventh sets the lockout authorization value at the creation of alice, the eighth, the ninth, the tenth and the twelfth find it at their first passphrase, and the eleventh at its new seal. After the twelfth, the tool starts the software TPM alone, as another system on the machine, and sends `TPM2_DictionaryAttackLockReset` with the empty value: a new TPM takes it, and the TPM of the twelve machines refuses it (`TPM_RC_AUTH_FAIL`). Then four machines with Secure Boot on, on a disk of their own and a new state of the software TPM, for the machine passphrase with the TPM: the thirteenth, the signed main system: `machine_passphrase()`, the TPM seals the machine key with the machine passphrase, sets the lockout authorization value, and the tool reads the recovery key off the screen; the fourteenth, the same system: a wrong machine passphrase, refused and counted by the TPM, then the right one gives the key, and the table of the thirteenth verifies; the fifteenth, the other system: the right machine passphrase, refused as PCR 11 differs, a wrong recovery key that opens nothing, the recovery key that opens the key, and a new machine passphrase that the TPM seals it again with, then the erase of the record of before; the sixteenth, the other system again: Ctrl+R asks for the recovery key with no try, Enter with nothing goes back to the passphrase, the passphrase before the new seal is refused and counted, and the new one gives the key, and the table verifies.
-- `modustool test disk_programs`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write. Then the principal alice is created: the table in her store that another key signed is refused and written over; a console of her session grants the store to the nickname `visitor`; at the next start her passphrase gives the grant back, and `visitor` finds its visit in the store of its nickname; the client key of the peer that she allowed holds again, and a call of the peer acts for her (`TOOLS.md`, "The disk of the disk programs").
-- The client keys of remote: `odin test src/library/support/quic` proves the key of a client in the handshake, allowed and refused (`QUIC.md`, section 4); `odin test src/library/contract/remote` reads the client table back. The machine test `main` allows the key of the client of the peer from the console, checks that each call acts for principal 0, revokes the key while its connection is open (`remote` ends it with the code Revoked and refuses the key in the next handshake), and refuses a key that no principal allowed (`QUIC.md`, section 7, "The tests of `remote`"). `odin test src/library/support/disk_program` keeps the client keys in the disk grant table: the bound of 4 keys, a removal, a round trip under the tag, the global setting to forget, and a key of zero bytes, a key two times and a byte after the last key, each refused; a table of the format 1 is named as an older format. `odin test src/library/contract/remote` decides each key of a table after its read: its own row, a free row, a contest with the row of another principal, a contested row, and no free row. The machine test `disk_programs` allows the key for alice; at the next start the key holds again after her unlock with no new allow, a call of the peer acts for her, and her revocation writes the table with no key and ends the open connection.
+- `modustool test disk_processes`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write. Then the principal alice is created: the table in her store that another key signed is refused and written over; a console of her session grants the store to the nickname `visitor`; at the next start her passphrase gives the grant back, and `visitor` finds its visit in the store of its nickname; the client key of the peer that she allowed holds again, and a call of the peer acts for her (`TOOLS.md`, "The disk of the disk processes").
+- The client keys of remote: `odin test src/library/support/quic` proves the key of a client in the handshake, allowed and refused (`QUIC.md`, section 4); `odin test src/library/contract/remote` reads the client table back. The machine test `main` allows the key of the client of the peer from the console, checks that each call acts for principal 0, revokes the key while its connection is open (`remote` ends it with the code Revoked and refuses the key in the next handshake), and refuses a key that no principal allowed (`QUIC.md`, section 7, "The tests of `remote`"). `odin test src/library/support/disk_process` keeps the client keys in the disk grant table: the bound of 4 keys, a removal, a round trip under the tag, the global setting to forget, and a key of zero bytes, a key two times and a byte after the last key, each refused; a table of the format 1 is named as an older format. `odin test src/library/contract/remote` decides each key of a table after its read: its own row, a free row, a contest with the row of another principal, a contested row, and no free row. The machine test `disk_processes` allows the key for alice; at the next start the key holds again after her unlock with no new allow, a call of the peer acts for her, and her revocation writes the table with no key and ends the open connection.
 - `odin test src/library/support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
 - `modustool test principals`: two machines on one data disk, then the sixteen machines of the TPM above. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 
@@ -596,6 +596,6 @@ A refusal is an error record with the unit `Principals`: a second named principa
 - **A seal to the measure of the next system.** A signed policy of the publisher of the system, with the version floor of the TPM (`TRUSTED_BOOT.md`, "10. The TPM floors") so that an older system opens nothing: an update then needs no recovery key.
 - **A change and a removal of the machine passphrase, and a change of the recovery key.**
 - **The encryption of the stores of a principal** with its unlock key. Today the data of a principal is on the disk in clear, as each store.
-- **The desktop while locked.** The desktop stays: programs of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.
-- **Several named principals (layer 4).** The design: one record for each principal in the root service; one file for each in the store of `unlock`; one session at a time on the desktop, or one desktop for each session. Each principal has disjoint stores by the name of the store, and disjoint grants by the principal of each program. No kernel change.
+- **The desktop while locked.** The desktop stays: processes of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.
+- **Several named principals (layer 4).** The design: one record for each principal in the root service; one file for each in the store of `unlock`; one session at a time on the desktop, or one desktop for each session. Each principal has disjoint stores by the name of the store, and disjoint grants by the principal of each process. No kernel change.
 - **One principal on several machines (layer 5).** The design: the signing key of the principal signs the key of each machine (principal 0 of that machine, its attestation key); a grant to another principal is a record that names its public key and that the signing key signs, with a short lifetime or a revocation list; a store of the principal on another machine is opened with its unlock key, given to that machine through a grant.

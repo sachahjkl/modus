@@ -7,7 +7,7 @@ import "base:intrinsics"
 // The wait: the one way for a thread to wait for something else than a
 // time. A thread waits while each word of a list holds a value. The words
 // are the counters of ring queues, the event word of the thread, and the
-// words of the program itself (a lock), the words of shared queues and of
+// words of the process itself (a lock), the words of shared queues and of
 // events.
 //
 //   for {
@@ -42,8 +42,8 @@ Wait :: struct {
 SPIN_COUNT :: 400 // The times that wait_spin reads the words: some microseconds.
 
 // events gives the address of the event word of the thread that runs. The
-// kernel adds 1 to it when an interrupt of the program arrives, when a
-// program that this program holds stops, and when another thread ends.
+// kernel adds 1 to it when an interrupt of the process arrives, when a
+// process that this process holds stops, and when another thread ends.
 events :: proc "contextless" () -> ^u32 {
 	return &thread_record().events
 }
@@ -188,7 +188,7 @@ wait_command :: proc "contextless" (words: ^[op.WORD_WAIT_CAPACITY]op.Word, coun
 
 // word_wait stops the thread while the word holds value, until word_wake
 // names the word or until the time is deadline. It gives the time.
-// The word can be in memory that another program maps.
+// The word can be in memory that another process maps.
 // Read the word again after the wait: the deadline also ends it.
 word_wait :: proc "contextless" (word: ^u32, value: u32, deadline: u64 = WAIT_FOREVER) -> u64 {
 	wait: Wait
@@ -227,7 +227,7 @@ wake_reader :: proc "contextless" (queue: ^ring.Queue) {
 
 // wake_writer wakes the writer of a queue if it waits on the count of the
 // records read. A reader calls it after it read each record of the queue,
-// when the writer can wait for that and not only for room: the program of
+// when the writer can wait for that and not only for room: the process of
 // a window waits until the compositor took its last picture
 // (display.canvas_wait). It enters the kernel only for that wake.
 wake_writer :: proc "contextless" (queue: ^ring.Queue) {
@@ -240,7 +240,7 @@ wake_writer :: proc "contextless" (queue: ^ring.Queue) {
 // records_of_turn gives the count of records that a reader takes from a
 // queue in one turn of its loop: the records that the queue holds now, at
 // most its capacity even when the writer wrote a false count. A reader of
-// a queue that another program writes takes that many with `receive`, and
+// a queue that another process writes takes that many with `receive`, and
 // no more: a writer that writes as fast as the reader reads then cannot
 // keep the reader in its loop. The records that come later end the next
 // wait of the reader at once (wait_records).
@@ -295,7 +295,7 @@ wake_one :: proc "contextless" (word: ^u32, waiters: ^ring.Waiters) {
 
 // An event: a count that several threads wait on. The zero value is an
 // event that never happened. An event in shared memory works between
-// programs.
+// processes.
 //
 //   seen := system.event_count(&event)
 //   ... read the state that the event changes ...

@@ -11,7 +11,7 @@ import "modus:support/mark"
 // frame of the heron, as it is, is stretched to the box of the form of the
 // key, and the box goes from a key to the next one pixel by pixel. So the
 // eye, the beak and the legs change their form with the box, and the heron
-// stands between two cells. It is in this program only, for a reader to
+// stands between two cells. It is in this process only, for a reader to
 // see why the forms are drawn.
 
 // The two ways to draw a move from the keys of src/library/support/mark.

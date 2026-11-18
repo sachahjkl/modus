@@ -5,7 +5,7 @@ package quic
 // (RFC 9001, sections 5.3 and 5.4).
 //
 // Each procedure works on one private copy of a datagram (datagram_take): a
-// datagram in a region that the network service or another program can
+// datagram in a region that the network service or another process can
 // write is copied once, and its header is read, unmasked and opened in that
 // copy only. So no byte is checked in one place and used from another.
 
@@ -80,7 +80,7 @@ Packet_Header :: struct {
 // datagram_take copies a datagram that came from the network into private memory of the caller, once, and gives the copy.
 //
 // A [datagram](term:datagram) arrives in a region that the network service writes, and that another
-// program can change at any time. A reader that checks a length there and uses it later can be
+// process can change at any time. A reader that checks a length there and uses it later can be
 // tricked between the two. So the first step of each receive is this copy, and each later step
 // (the header, the header protection, the open in place) works on the copy only: no byte is checked
 // in one place and used from another (docs/QUIC.md, "2. The form of the library").

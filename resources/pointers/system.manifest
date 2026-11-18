@@ -445,13 +445,13 @@ contour 15.266 19.839 curve 14.712 18.5 15.266 17.161 curve 15.821 15.821 17.161
 circle 17.448 15.959 0.75
 
 # A thin ring of 2 pixels of fill, and a thin slash in the red of "stop a
-# program" across the hole, from the upper left to the lower right.
+# process" across the hole, from the upper left to the lower right.
 shape forbidden hot 11 11
 layer fill
 circle 11.5 11.5 8.5
 layer clear
 circle 11.5 11.5 4.5
-layer accent stop_program
+layer accent stop_process
 contour 16.097 13.975 line 13.975 16.097 line 6.903 9.025 line 9.025 6.903
 
 # The arrow, and a question mark in the blue of the focus at its lower

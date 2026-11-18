@@ -1,12 +1,12 @@
 # The grant word of an endpoint
 
-The grant of a network endpoint (`datagram.Grant`) crosses two borders as one `u64`: the command `Endpoint_Add` or `Endpoint_Grant` of the control ring, from the root service to the network service, and the completion of `Info`, from the network service to the program. The rules of the grant are in [`docs/NETWORK.md`](../../../docs/NETWORK.md), "The grant of a segment endpoint".
+The grant of a network endpoint (`datagram.Grant`) crosses two borders as one `u64`: the command `Endpoint_Add` or `Endpoint_Grant` of the control ring, from the root service to the network service, and the completion of `Info`, from the network service to the process. The rules of the grant are in [`docs/NETWORK.md`](../../../docs/NETWORK.md), "The grant of a segment endpoint".
 
 ## Constraints
 
-- A network grant is an authority: who a program may reach, and on which port it may answer.
+- A network grant is an authority: who a process may reach, and on which port it may answer.
 - A word of transport becomes its record at one place only, and that place refuses a value that names no member.
-- The decision of the network service is tested on the host. The service is a program, and a program is not built for a host test.
+- The decision of the network service is tested on the host. The service is a module with an entry, and such a module is not built for a host test.
 
 ## The chosen form
 
@@ -21,7 +21,7 @@ The grant of a network endpoint (`datagram.Grant`) crosses two borders as one `u
 - **Ignore the unknown bits.** A word with a new flag then became a grant with fewer rights than its writer meant, in silence.
 - **Mask the word before the read.** The same loss, with one more step.
 - **The whole word, cast to `i64`, as the value of the record.** A word with bit 63 gave a negative value, which reads as a number that the word never held.
-- **The decision inside the program.** No host test could give it a refused word and check that nothing changed.
+- **The decision inside the process.** No host test could give it a refused word and check that nothing changed.
 
 ## State
 

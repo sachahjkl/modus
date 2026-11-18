@@ -1,58 +1,58 @@
-// The root service: the first program, and the centre of the grants.
+// The root service: the first process, and the centre of the grants.
 //
 // The kernel gives it every handle that exists at boot: the machine, the
-// boot image, the framebuffer, the devices. It starts the other programs,
+// boot image, the framebuffer, the devices. It starts the other processes,
 // and it gives each one only the handles of its role. It is the **only
-// program that creates access from nothing**: each other handle of the
-// system came from it, directly or through a chain of programs.
+// process that creates access from nothing**: each other handle of the
+// system came from it, directly or through a chain of processes.
 //
-// **What it is for.** A program never takes access for itself. It receives
+// **What it is for.** A process never takes access for itself. It receives
 // it at its start, or it asks this service on its *root ring*, and this
 // service answers by the tables of this file:
 //
-// - `program_roles` (roles.odin): the role of each program of the boot
+// - `process_roles` (roles.odin): the role of each module of the boot
 //   image, by its name, in one row: its start grants and the other terms
-//   of its role (the services that a program with the grant `Connect` can
+//   of its role (the services that a process with the grant `Connect` can
 //   reach, the blocks of a private store, the log with Give, the size of a
 //   terminal), with the reason of each. The site shows them in the table
-//   "The grants of each program", and the build stops when a program of
+//   "The grants of each process", and the build stops when a process of
 //   the boot image has no row.
-// - `budget_of` (budgets.odin): the budget that the module of a program
-//   asks for, accepted up to the largest budget of a program, and the table
+// - `budget_of` (budgets.odin): the budget that the module of a process
+//   asks for, accepted up to the largest budget of a process, and the table
 //   of the exceptions, each with its reason.
 //
-// A start reads the role of a program one time (`role_of`), and the
-// program keeps it in `Started.role`: each rule after the start reads it
-// there, never by the name. A program whose row has no grant receives the
-// log and a window. A disk program is never a row of these tables: this
+// A start reads the role of a process one time (`role_of`), and the
+// process keeps it in `Started.role`: each rule after the start reads it
+// there, never by the name. A process whose row has no grant receives the
+// log and a window. A disk process is never a row of these tables: this
 // service refuses a file of a disk whose name one of them names, or whose
-// name a module of the boot image has (disk_programs.odin).
+// name a module of the boot image has (disk_processes.odin).
 //
 // **The commands of the root ring** (`Root_Command` in the package
 // root_ring, root_ring.odin). The table `root_ring.ROOT_COMMAND_SENDERS`
-// says who sends each one: a program with the grant **Root_Ring** (the
-// console) sends most of them; a program with **Connect** sends `Connect`
-// to the services of its role, and `Disconnect`; the program with
+// says who sends each one: a process with the grant **Root_Ring** (the
+// console) sends most of them; a process with **Connect** sends `Connect`
+// to the services of its role, and `Disconnect`; the process with
 // **Principals** sends `Principal_Record`, `Principal_Unlock`,
-// `Machine_Key` and `Principal_Change_End`, and no other program can; the
-// program with **Debugger** sends `Debug` and `Debug_Store`.
+// `Machine_Key` and `Principal_Change_End`, and no other process can; the
+// process with **Debugger** sends `Debug` and `Debug_Store`.
 //
-// - `Start`, `Stop`: a program by name, in the session of the caller.
-// - `Start_From_Disk`: a disk program, by its name and the hash of its
-//   module file, which this service reads from the store `programs` of the
+// - `Start`, `Stop`: a process by name, in the session of the caller.
+// - `Start_From_Disk`: a disk process, by its name and the hash of its
+//   module file, which this service reads from the store `module_files` of the
 //   storage service. Its completion comes when the load ends
-//   (disk_programs.odin; docs/MODULE_CONTRACT.md, "A program from a disk").
+//   (disk_processes.odin; docs/MODULE_CONTRACT.md, "A module from a disk").
 // - `Disk_Grant`, `Nickname_Move`, `Disk_Grant_Persistence`: the disk
 //   grant table of the principal of the caller: a grant to the file that a
 //   nickname names, the move of a nickname to another file, and how long a
-//   row lasts (disk_programs.odin; docs/MODULE_CONTRACT.md, "The grants of
-//   a disk program").
+//   row lasts (disk_processes.odin; docs/MODULE_CONTRACT.md, "The grants of
+//   a disk process").
 // - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
 // - `Palette_Provide`: the entry table and the ring of the palette
-//   provider, for the program with the grant **Palette**.
-// - `Grants`, `Revoke`: read the grants of a program, end one of them.
+//   provider, for the process with the grant **Palette**.
+// - `Grants`, `Revoke`: read the grants of a process, end one of them.
 //   The kernel ends each handle that came from the grant, also in the
-//   programs that received it from that program.
+//   processes that received it from that process.
 // - `Replace`: change the replacement table of the machine.
 // - `Principal_Create`, `Principal_Lock`, `Principals`, `Principal_Change`:
 //   the named principals (docs/PRINCIPALS.md, "7. The commands").
@@ -60,17 +60,17 @@
 //   the disk grant table of principal 0 (persisted_grant_table.odin).
 // - `Machine_Seal`: a machine key that the TPM service seals to the
 //   measure of the system, with a recovery key (tpm.odin).
-// - `Debug`: the handle of a program with the right Debug, for the
+// - `Debug`: the handle of a process with the right Debug, for the
 //   debugger service, on behalf of a caller of that service that acts for
-//   the principal whose session runs that program (`debug`).
+//   the principal whose session runs that process (`debug`).
 // - `Debug_Store`: for that debugger service, a connection that reads only
-//   to the store `programs` of a disk program that it debugs, where the
-//   debug object of the program is (debug_store.odin); or that connection
-//   and the stop report that this service kept of a disk program that
+//   to the store `module_files` of a disk process that it debugs, where the
+//   debug object of the process is (debug_store.odin); or that connection
+//   and the stop report that this service kept of a disk process that
 //   stopped on a fault.
 //
 // A refused command has an error record in its completion: the console
-// prints it, for example after `revoke("notes", "store")` on a program
+// prints it, for example after `revoke("notes", "store")` on a process
 // that does not run. The border and the check of the sender write the
 // record of their refusal; after them, the procedure of the command writes
 // it (root_ring.odin).
@@ -78,14 +78,14 @@
 // **What a reader sees.** At boot the screen shows the boot display, with
 // each step, until the compositor takes the screen. The log has
 // "root: ok, N modules in the boot image", the strength of the random seed,
-// then one line "root: started NAME" for each program, and, when the
+// then one line "root: started NAME" for each process, and, when the
 // console is started, one measure: "root: the start is done: the budget of
 // this service holds N free pages, M at the lowest".
 //
-// **What it does not do.** It does not run the code of a program, and it
-// does not check what a program does with a grant. It checks only the
+// **What it does not do.** It does not run the code of a process, and it
+// does not check what a process does with a grant. It checks only the
 // identity of the boot image against the system description
-// (docs/TRUSTED_BOOT.md), and the budget of each program.
+// (docs/TRUSTED_BOOT.md), and the budget of each process.
 //
 // The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
@@ -110,21 +110,21 @@ import "modus:contract/log_scope"
 import "modus:contract/root_ring"
 import "modus:support/pci"
 import "modus:support/principals"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
 import "modus:contract/start_grant"
 
 ROOT_MARK :: "root: ok"
 
-// What a program receives, by name: a start grant. The list and the name of
+// What a process receives, by name: a start grant. The list and the name of
 // each one are a contract, because the reader of an error record names the
 // start grant that refused a debug access (src/library/contract/start_grant).
 Grant :: start_grant.Grant
 
 // The context of the input service: the slots that src/modules/system/input
 // names GRANT_RING, GRANT_PORTS, GRANT_KEYBOARD_INTERRUPT and
-// GRANT_MOUSE_INTERRUPT. A program is no package that this service
+// GRANT_MOUSE_INTERRUPT. The input service is no package that this service
 // imports, so the numbers are written on both sides.
 INPUT_GRANT_RING :: 0 // The input ring, which the compositor reads.
 INPUT_GRANT_PORTS :: 1 // The ports of the PS/2 controller.
@@ -165,31 +165,31 @@ POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is t
 // gives what runs only to such a caller).
 grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// The connection of this service itself, for the read of the module
-	// file of a disk program: the store of the module files, with its
+	// file of a disk process: the store of the module files, with its
 	// limit, and no grant to act for a principal.
 	if caller == &disk_reader {
-		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
+		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
 	// The connection of this service for the disk grant table of a
 	// principal, an object of the store of the module files of that
 	// principal (persisted_grant_table.odin).
 	if persisted_table_keeper_is(caller) {
-		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
+		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
 	// The connection of the debugger service to the same store, for the
-	// debug object of a disk program: it reads only (debug_store.odin).
+	// debug object of a disk process: it reads only (debug_store.odin).
 	if caller == &debug_store_reader {
-		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
+		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
-	// The log service: the own records of the caller, named by its program
-	// slot and its program serial; with the grant to act for the principal,
-	// the whole log (src/md/features/log_reader_scope.md). A disk program
+	// The log service: the own records of the caller, named by its process
+	// slot and its process serial; with the grant to act for the principal,
+	// the whole log (src/md/features/log_reader_scope.md). A disk process
 	// never acts for a principal.
 	if system.name_of(service.name[:]) == "log" {
 		whole_log := !caller.from_disk && .Acts_For_Principal in caller.role.grants && .Acts_For_Principal not_in caller.revoked
 		return isolated.caller_grant_make(own_records_amount_of(caller), caller.principal, whole_log)
 	}
-	// A disk program: the grants of its start, never the grants of a name,
+	// A disk process: the grants of its start, never the grants of a name,
 	// and never the grant to act for a principal.
 	if caller.from_disk {
 		return isolated.caller_grant_make(disk_store_limit(caller, service), caller.principal, false)
@@ -210,27 +210,27 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 }
 
 // own_records_amount_of gives the amount of the grant of a connection to
-// the log service: the program slot and the program serial of the caller,
-// which the kernel gives for its program handle. A slot that the kernel does
+// the log service: the process slot and the process serial of the caller,
+// which the kernel gives for its process handle. A slot that the kernel does
 // not give, or that does not fit, gives 0: the caller then reads no record,
-// never the records of another program.
+// never the records of another process.
 own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
-	results, status := system.call(.Program_State, u64(caller.program))
+	results, status := system.call(.Process_State, u64(caller.process))
 	if status != .Ok {
 		return 0
 	}
 	amount, ok := log_scope.own_records_amount(results[3], results[4])
 	if !ok {
-		system.log_in("calls", .Warning, "root: the program slot ", results[3], " or the program serial ", results[4], " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
+		system.log_in("calls", .Warning, "root: the process slot ", results[3], " or the process serial ", results[4], " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
 		return 0
 	}
 	return amount
 }
 
-// log_grant gives the grant of the log: each program that this service
-// starts can write on the log. A program whose role says so can also give
-// the log to the programs that it starts.
-log_grant :: proc "contextless" (role: Program_Role) -> system.Grant {
+// log_grant gives the grant of the log: each process that this service
+// starts can write on the log. A process whose role says so can also give
+// the log to the processes that it starts.
+log_grant :: proc "contextless" (role: Process_Role) -> system.Grant {
 	rights := system.Rights{.Write}
 	if role.log_gives {
 		rights += {.Give}
@@ -238,47 +238,47 @@ log_grant :: proc "contextless" (role: Program_Role) -> system.Grant {
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}
 }
 
-// A program that this service started.
+// A process that this service started.
 Started :: struct {
-	program:         system.Handle, // 0: the slot is free.
-	client:          system.Handle, // The ring of the program, as the compositor names it.
-	requests:        ring.Ring, // The ring from the program to this service, if it has one.
+	process:         system.Handle, // 0: the slot is free.
+	client:          system.Handle, // The ring of the process, as the compositor names it.
+	requests:        ring.Ring, // The ring from the process to this service, if it has one.
 	requests_memory: system.Handle,
-	service:         ring.Ring, // The service ring of the program, if it is a service.
+	service:         ring.Ring, // The service ring of the process, if it is a service.
 	service_memory:  system.Handle,
-	hash:            [32]u8, // The hash of the file of the program.
+	hash:            [32]u8, // The hash of the file of the process.
 	name:            system.Name,
-	// The role that this service gave the program when it started it: each
-	// rule after the start reads it here, in the state of the program that
-	// runs, and never in a table by the name of the program (the sender of
+	// The role that this service gave the process when it started it: each
+	// rule after the start reads it here, in the state of the process that
+	// runs, and never in a table by the name of the process (the sender of
 	// a command, the debug access, the grant of a connection).
-	role:            Program_Role,
-	granted:         system.Root_Grants, // What the program has from this service, of the grants that this service can revoke.
+	role:            Process_Role,
+	granted:         system.Root_Grants, // What the process has from this service, of the grants that this service can revoke.
 	revoked:         system.Root_Grants,
-	writer:          ^Started, // A terminal: the program that writes in it. nil after that program stopped.
+	writer:          ^Started, // A terminal: the process that writes in it. nil after that process stopped.
 	is_terminal:     bool,
-	driver:          ^Started, // The block service that serves this program. nil: none, or it stopped.
+	driver:          ^Started, // The block service that serves this process. nil: none, or it stopped.
 	is_driver:       bool, // A block service: it has the device at `device`.
 	device:          pci.Place,
 	bridge_group:    Bridge_Group, // A device behind a conventional bridge: the buses behind it, whose devices this service holds too (devices.odin). Zero: none.
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
 	network:         ring.Ring, // The network service: the control ring from this service.
 	network_memory:  system.Handle,
-	endpoint:        system.Handle, // A program with an endpoint: its datagram ring, as the network service names it.
+	endpoint:        system.Handle, // A process with an endpoint: its datagram ring, as the network service names it.
 	network_service: ^Started,
-	// The principal whose session the program belongs to (docs/PRINCIPALS.md):
-	// 0, the machine, for the programs of the system and each program that a
-	// program of the machine starts; the named principal whose session runs
-	// for a program that the desktop starts.
+	// The principal whose session the process belongs to (docs/PRINCIPALS.md):
+	// 0, the machine, for the processes of the system and each process that a
+	// process of the machine starts; the named principal whose session runs
+	// for a process that the desktop starts.
 	principal:       u64,
-	// The program that received the handle of this program with the right
+	// The process that received the handle of this process with the right
 	// Debug (Root_Command.Debug): the debugger service. nil: none, or it
 	// stopped, or the grant was revoked.
 	debugger:        ^Started,
-	// A disk program: its name is a nickname, which no table by name of
+	// A disk process: its name is a nickname, which no table by name of
 	// this service reads. Its grants are `role`, from the disk grant table
 	// of its principal at its start, and its store is the store of the
-	// nickname (disk_programs.odin).
+	// nickname (disk_processes.odin).
 	from_disk:       bool,
 	// The caller of the debugger service for which this service gave that
 	// handle: the grant `debug` is a grant of this caller. nil with no
@@ -289,16 +289,16 @@ Started :: struct {
 	// one caller `remote`, and the debugging of one must not be ended or
 	// taken through the connection of the other. 0: a caller with no row.
 	debug_for_row:   int,
-	// A start holds this place while it builds the program, before the
-	// program runs: a start that the start runs (a service on demand) takes
+	// A start holds this place while it builds the process, before the
+	// process runs: a start that the start runs (a service on demand) takes
 	// another place. release clears it with the place.
 	reserved:        bool,
 }
 
-// place_is_free says if a place of the table of the programs holds no
-// program and no start that builds one.
+// place_is_free says if a place of the table of the processes holds no
+// process and no start that builds one.
 place_is_free :: proc "contextless" (item: ^Started) -> bool {
-	return item.program == 0 && !item.reserved
+	return item.process == 0 && !item.reserved
 }
 
 // A connection: one caller can call the exports of one service.
@@ -346,21 +346,21 @@ machine: system.Handle
 image: []u8
 image_memory: system.Handle
 started: [STARTED_CAPACITY]Started
-// The shared code of the modules of the programs that this service starts.
+// The shared code of the modules of the processes that this service starts.
 prepared: system.Prepared_Modules
 compositor: system.Handle
 control: ring.Ring
 control_memory: system.Handle
 
 // The replacement table of the machine: this service writes it. Each
-// program that this service starts receives its records (a program cannot
+// process that this service starts receives its records (a process cannot
 // ask for a replacement and cannot refuse one: a replacement is not an
-// access that a program takes for itself).
+// access that a process takes for itself).
 replacement_memory: system.Handle
 replacement_table: ^system.Replacement_Table
 replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
 
-// load_source gives what the loader of a program that this service starts can
+// load_source gives what the loader of a process that this service starts can
 // read: the boot image, and the replacements of this time.
 load_source :: proc "contextless" () -> system.Load_Source {
 	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records)}
@@ -383,9 +383,9 @@ show :: proc "contextless" (text: string, state: bootscreen.State, step: bootscr
 	bootscreen.draw_screen(screen, &screen_data)
 }
 
-// shortage_start gives the program shortage nearly all the pages of this
-// service, and the machine; the program stops the machine at its end. This
-// service keeps SHORTAGE_KEEP pages: the module of the program is copied in
+// shortage_start gives the process shortage nearly all the pages of this
+// service, and the machine; the process stops the machine at its end. This
+// service keeps SHORTAGE_KEEP pages: the module of the process is copied in
 // memory that it pays.
 SHORTAGE_KEEP :: 24
 
@@ -400,12 +400,12 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	amounts := system.Budget_Amounts {
 		pages       = own.pages - SHORTAGE_KEEP,
-		programs    = 1,
+		processes    = 1,
 		threads     = 8,
 		processor   = own.processor,
-		log_records = LOG_RECORDS_OF_A_PROGRAM,
+		log_records = LOG_RECORDS_OF_A_PROCESS,
 	}
-	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&program_generator, values.values), amounts, nil, &prepared); status != .Ok {
+	if _, status := system.process_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared); status != .Ok {
 		system.log("root: cannot start shortage: status ", status)
 		shortage_failed()
 	}
@@ -415,7 +415,7 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 }
 
-// The program that runs the operation sequences (src/md/infrastructure/kernel_fuzzing.md).
+// The process that runs the operation sequences (src/md/infrastructure/kernel_fuzzing.md).
 OPERATION_FUZZING_NAME :: "operation_fuzzing"
 // Its budget: its mailbox, the shared code of its runners, and the budget
 // of each sequence, which it creates and ends for each one.
@@ -439,12 +439,12 @@ operation_fuzzing_start :: proc "contextless" () -> ! {
 	}
 	amounts := system.Budget_Amounts {
 		pages       = OPERATION_FUZZING_PAGES,
-		programs    = 16,
+		processes    = 16,
 		threads     = 32,
 		processor   = own.processor,
-		log_records = LOG_RECORDS_OF_A_PROGRAM,
+		log_records = LOG_RECORDS_OF_A_PROCESS,
 	}
-	if _, status := system.program_start(system.image_find(image, OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&program_generator, values.values), amounts, nil, &prepared); status != .Ok {
+	if _, status := system.process_start(system.image_find(image, OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared); status != .Ok {
 		fail("cannot start operation_fuzzing", status)
 	}
 	system.log("root: started operation_fuzzing with ", system.Size{amounts.pages, .Pages})
@@ -453,7 +453,7 @@ operation_fuzzing_start :: proc "contextless" () -> ! {
 	}
 }
 
-// shortage_failed ends the machine of the test of a shortage whose program
+// shortage_failed ends the machine of the test of a shortage whose process
 // did not start. The machine has nothing else to run: this service waits
 // whatever Machine_Stop gives, so the test ends on the stop code or on its
 // hang bound, and never on a start that went on after a refusal.
@@ -467,9 +467,9 @@ shortage_failed :: proc "contextless" () -> ! {
 // fail ends the start of the machine. The machine does not stop: the boot
 // display stays, with the failure, until the machine is stopped from outside.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log_in("programs", .Error, "root: ", text, ": status ", status)
+	system.log_in("processes", .Error, "root: ", text, ": status ", status)
 	if compositor != 0 {
-		system.call(.Program_Stop, u64(compositor), 0) // The screen returns to this service.
+		system.call(.Process_Stop, u64(compositor), 0) // The screen returns to this service.
 		// The compositor could leave the page 1 on the screen; the boot
 		// display is on the page 0, the framebuffer of the firmware.
 		if display_registers_address != nil {
@@ -490,12 +490,12 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 
 // The random generator of the root service: its seed comes from the
 // sources of the processor (src/library/support/random/entropy.odin), not from a
-// starter. It gives the seed of each program that root starts.
-program_generator: random.Generator
+// starter. It gives the seed of each process that root starts.
+process_generator: random.Generator
 entropy_report: random.Entropy_Report
 
 // The entry of the root service: it brings up the system, then answers the
-// root rings of the programs for the life of the machine.
+// root rings of the processes for the life of the machine.
 //
 // The kernel starts it with the context of the root service: the machine,
 // the boot image, the framebuffer and their values. The entry, in order:
@@ -504,11 +504,11 @@ entropy_report: random.Entropy_Report
 //    in the boot image";
 // 2. takes the screen for the boot display;
 // 3. checks the boot image against the system description (trust.odin);
-//    a failure stays on the screen and no program starts;
+//    a failure stays on the screen and no process starts;
 // 4. reads the principals, and seeds the random generator of the system
 //    from the sources of the processor; a seed of 32 zero bytes ends the
 //    boot;
-// 5. on the machine of the test of a shortage of frames, starts the program
+// 5. on the machine of the test of a shortage of frames, starts the process
 //    `shortage` and nothing else;
 // 6. creates the settings page, the date page and the replacement table;
 // 7. starts `input` with the ports and the interrupts of the PS/2
@@ -525,12 +525,12 @@ entropy_report: random.Entropy_Report
 //
 // Then one loop runs for ever. It waits on the control ring of the
 // compositor (a start or a stop from the desktop), on the root ring of each
-// program, and on the answers of the network service and of the entropy
+// process, and on the answers of the network service and of the entropy
 // service, whose bytes it mixes into its generator; every 30 seconds it
-// asks the entropy service for the fresh bytes of the running programs
+// asks the entropy service for the fresh bytes of the running processes
 // (entropy.odin). It checks each command
 // against the grants of the caller, runs it, and sends a completion. After
-// each pass, `reap` frees what this service held for the programs that
+// each pass, `reap` frees what this service held for the processes that
 // stopped. The root service never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -550,19 +550,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("root: Machine_Stop refused the codes ", refused_codes[0], " and ", refused_codes[1], " with Bad_Operation and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must")
 	// The screen first: a failure of the check below stays on it.
 	boot_display_take(ctx)
-	// The boot image against the system description, before any program
+	// The boot image against the system description, before any process
 	// starts (trust.odin).
 	trust_check()
 	principals_start()
-	// The random seed of the system: before the first program starts.
+	// The random seed of the system: before the first process starts.
 	random_seed_make()
 	// The machine of the operation sequences: only its boot image holds the
-	// program operation_fuzzing, and it starts nothing else.
+	// process operation_fuzzing, and it starts nothing else.
 	if len(system.image_find(image, OPERATION_FUZZING_NAME)) != 0 {
 		operation_fuzzing_start()
 	}
 	// The machine of the test of the shortage of frames: its boot image has
-	// the program shortage and no input service, so no desktop.
+	// the process shortage and no input service, so no desktop.
 	if len(system.image_find(image, "input")) == 0 && len(system.image_find(image, "shortage")) != 0 {
 		shortage_start(ctx)
 	}
@@ -570,7 +570,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	text_settings_create()
 	date_page_create()
 	appearance_open() // appearance_edge.odin
-	disk_program_page_create()
+	disk_process_page_create()
 	fresh_bytes_create() // fresh_bytes.odin
 	show("the root service starts input", .Running, .Input)
 	replacement_table_create()
@@ -578,7 +578,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input_memory := input_start()
 	show("the root service starts the compositor", .Running, .Compositor)
 	compositor_start(ctx, input_memory)
-	programs_of_the_boot_start()
+	processes_of_the_boot_start()
 	for {
 		root_loop_pass()
 	}
@@ -618,18 +618,18 @@ boot_display_take :: proc "contextless" (ctx: ^system.Context) {
 // sources of the processor, and writes the facts of the seed.
 random_seed_make :: proc "contextless" () {
 	seed := random.entropy_gather(random.sources_of_the_processor(), &entropy_report)
-	if !random.generator_seed(&program_generator, &seed, entropy_report.strength) {
+	if !random.generator_seed(&process_generator, &seed, entropy_report.strength) {
 		// BLAKE3 does not give 32 zero bytes in practice; if it does, root
-		// says why it cannot start a program, instead of a stop at its
+		// says why it cannot start a process, instead of a stop at its
 		// first draw.
-		fail("the random seed of the system is 32 zero bytes: no program can get a seed", .Bad_Operation)
+		fail("the random seed of the system is 32 zero bytes: no process can get a seed", .Bad_Operation)
 	}
 	report := &entropy_report
 	system.log("root: the random seed of the system, strength ", op.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
 }
 
 // replacement_table_create makes the replacement table of the machine,
-// which this service writes and each program reads.
+// which this service writes and each process reads.
 replacement_table_create :: proc "contextless" () {
 	table: rawptr
 	status: system.Status
@@ -681,7 +681,7 @@ input_start :: proc "contextless" () -> (input_memory: system.Handle) {
 	if context_refused("input", &context_grants, &input_values) {
 		fail("cannot start input", .Bad_State)
 	}
-	_, status = system.program_start(system.image_find(image, "input"), "input", context_grants.grants, random.values_with_seed(&program_generator, input_values.values), budget_of(system.image_find(image, "input"), "input"), input_mappings, &prepared)
+	_, status = system.process_start(system.image_find(image, "input"), "input", context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, "input"), "input"), input_mappings, &prepared)
 	if status != .Ok {
 		fail("cannot start input", status)
 	}
@@ -693,7 +693,7 @@ input_start :: proc "contextless" () -> (input_memory: system.Handle) {
 
 // compositor_start starts the compositor with the framebuffer, the input
 // ring and its control ring from this service. It takes the first place of
-// the table of the programs: a connection to it finds it there by its name.
+// the table of the processes: a connection to it finds it there by its name.
 compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: system.Handle) {
 	status: system.Status
 	control_memory, control, status = system.ring_create()
@@ -776,36 +776,36 @@ compositor_start :: proc "contextless" (ctx: ^system.Context, input_memory: syst
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	compositor_load_error: module.Load_Error
-	compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
+	compositor, status = system.process_start(system.image_find(image, "compositor"), "compositor", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 	if status != .Ok {
 		if compositor_load_error.stage != .None {
 			buffer: [512]u8
 			writer := system.Writer{buffer = buffer[:]}
 			system.load_error_text(&writer, &compositor_load_error)
-			system.log_in("programs", .Error, "root: cannot load the compositor: ", system.written(&writer))
+			system.log_in("processes", .Error, "root: cannot load the compositor: ", system.written(&writer))
 		}
 		fail("cannot start the compositor", status)
 	}
-	served.program = compositor
+	served.process = compositor
 	served.role = role
 	copy(served.name[:len(served.name) - 1], "compositor")
 }
 
-// programs_of_the_boot_start starts the programs of the boot, in their
+// processes_of_the_boot_start starts the processes of the boot, in their
 // order, then writes the measure of the free pages.
-programs_of_the_boot_start :: proc "contextless" () {
+processes_of_the_boot_start :: proc "contextless" () {
 	// The entropy device, after the compositor: the compositor takes the
-	// first place of the table of the programs. The loop mixes its bytes
+	// first place of the table of the processes. The loop mixes its bytes
 	// when they come (entropy.odin).
 	entropy_service_start()
 	// The font service draws the fixed subsets into the demand cache, which
-	// each program with a surface maps; a program that draws before it ends
+	// each process with a surface maps; a process that draws before it ends
 	// draws the same glyphs itself (font_service.odin).
 	font_service_start()
-	// The date: the program `date` reads the real-time clock. The programs
+	// The date: the process `date` reads the real-time clock. The processes
 	// that start before it writes the page read no date until then.
 	if status := start("date"); status != .Ok {
-		system.log_in("programs", .Warning, "root: cannot start date: the system has no date")
+		system.log_in("processes", .Warning, "root: cannot start date: the system has no date")
 	}
 	if status := start("console"); status != .Ok {
 		fail("cannot start the console", status)
@@ -821,21 +821,21 @@ programs_of_the_boot_start :: proc "contextless" () {
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start. This
 	// service holds the budget of the free memory of the machine, and each
-	// program that it starts takes its budget from it.
+	// process that it starts takes its budget from it.
 	budget_pages_note()
 	system.log("root: the start is done: the budget of this service holds ", budget_pages_now, " free pages, ", budget_pages_lowest, " at the lowest")
 }
 
 // root_loop_pass is one pass of the loop of this service: the control ring
-// of the compositor, the root ring of each program, the answers of the
-// services that it waits for, the reap of the programs that stopped, then
+// of the compositor, the root ring of each process, the answers of the
+// services that it waits for, the reap of the processes that stopped, then
 // one wait for the next event or deadline.
 root_loop_pass :: proc "contextless" () {
-	// The stop of a program is an event.
+	// The stop of a process is an event.
 	wait := system.wait_begin()
 	control_ring_serve()
 	for &item in started {
-		if item.program != 0 && item.requests.head != nil {
+		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
 	}
@@ -851,7 +851,7 @@ root_loop_pass :: proc "contextless" () {
 	network_answers(&wait)
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
-		if item.program != 0 && item.requests.head != nil {
+		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
 		}
 	}
@@ -872,28 +872,28 @@ control_ring_serve :: proc "contextless" () {
 	for record in system.receive(&control.completions) {
 		control_word, known := enum_word.member_of_word(display.Control, u64(record.kind))
 		if !known {
-			system.log_in("programs", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which names no control")
+			system.log_in("processes", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which names no control")
 			continue
 		}
 		switch control_word {
 		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started:
 			// This service sends these to the compositor, and takes none
 			// from it.
-			system.log_in("programs", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which this service sends and does not take")
+			system.log_in("processes", .Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which this service sends and does not take")
 		case .Start:
-			// The desktop starts a program in the session that runs.
+			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 			start(system.name_of(name[:]), desktop_principal())
 		case .Stop:
 			for &item in started {
-				if item.program != 0 && item.client == system.Handle(record.values[0]) {
+				if item.process != 0 && item.client == system.Handle(record.values[0]) {
 					// A close of the window of unlock is a stop that this
 					// service asked: it does not count toward the bound of
 					// its restarts.
 					if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 						unlock_stop_ask()
 					}
-					system.call(.Program_Stop, u64(item.program), 0)
+					system.call(.Process_Stop, u64(item.process), 0)
 				}
 			}
 		}
@@ -902,7 +902,7 @@ control_ring_serve :: proc "contextless" () {
 
 // The pages that the budget of this service can still pay: at the last
 // read, and the lowest count of each read. A read comes after each start
-// of a program, when the budget of the program left this budget.
+// of a process, when the budget of the process left this budget.
 budget_pages_now: u64
 budget_pages_lowest: u64 = max(u64)
 
@@ -918,24 +918,24 @@ budget_pages_note :: proc "contextless" () {
 started_log :: proc "contextless" (name: string, principal: u64, terminal: string) {
 	budget_pages_note()
 	if principal == principals.MACHINE {
-		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, terminal)
+		system.log_in("processes", .Info, "root: started ", system.Module_Name{name}, terminal)
 	} else {
-		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, terminal, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
+		system.log_in("processes", .Info, "root: started ", system.Module_Name{name}, terminal, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
 	}
 }
 
-// find gives the program with a name that this service started. A terminal
-// has the name of no program.
+// find gives the process with a name that this service started. A terminal
+// has the name of no process.
 find :: proc "contextless" (name: string) -> ^Started {
 	for &item in started {
-		if item.program != 0 && !item.is_terminal && system.name_of(item.name[:]) == name {
+		if item.process != 0 && !item.is_terminal && system.name_of(item.name[:]) == name {
 			return &item
 		}
 	}
 	return nil
 }
 
-// grants_held gives the grants of the start of a program that it still
+// grants_held gives the grants of the start of a process that it still
 // holds: a grant that was revoked from it is not a grant that it holds.
 // The revocation names a grant of system.Root_Grant; the machine is one
 // handle, so its revocation ends each right of the machine.
@@ -968,36 +968,36 @@ grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
 	return held
 }
 
-// debug_refusing_grant says if a grant of a program refuses the debug
+// debug_refusing_grant says if a grant of a process refuses the debug
 // access to it for a caller, and which one. A debugger acts with each
-// handle of the program that it debugs, and reads each byte of it: the
-// right Debug on a program is each grant of that program. So the rule is
-// one comparison of two sets of grants, with no name of a program in it:
+// handle of the process that it debugs, and reads each byte of it: the
+// right Debug on a process is each grant of that process. So the rule is
+// one comparison of two sets of grants, with no name of a process in it:
 //
-// - each grant that this service gave the program at its start
+// - each grant that this service gave the process at its start
 //   (Started.role) is a grant that the caller holds itself and that was not
 //   revoked from it (grants_held): the caller then gains nothing that this
 //   service did not give it;
 // - a grant refuses the debug access for each caller when what it reaches
-//   belongs to that one program (GRANTS_OF_ONE_PROGRAM): the same grant of
+//   belongs to that one process (GRANTS_OF_ONE_PROCESS): the same grant of
 //   the caller reaches another thing, so two holders of the grant do not
 //   hold the same thing.
 //
-// What follows, with no list: a program with no grant can be debugged, and
-// a program whose grants reach only what the caller reaches by the same
+// What follows, with no list: a process with no grant can be debugged, and
+// a process whose grants reach only what the caller reaches by the same
 // grants (the machine, the boot image); a service, a device service, the
-// compositor, a terminal, and a program with a private store, an endpoint
+// compositor, a terminal, and a process with a private store, an endpoint
 // of the network, a terminal or a device cannot.
-// The rule reads the state of the program that runs, so it holds for a
-// program that came from a disk as for one of the boot image.
+// The rule reads the state of the process that runs, so it holds for a
+// process that came from a disk as for one of the boot image.
 //
-// A window is not a grant: each program with no terminal has one. The
-// debugger of a program draws in its window and reads the input that the
+// A window is not a grant: each process with no terminal has one. The
+// debugger of a process draws in its window and reads the input that the
 // compositor sends to it.
 debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) -> (grant: Grant, refuses: bool) {
 	held := grants_held(caller)
 	for candidate in Grant {
-		if candidate in target.role.grants && (candidate in GRANTS_OF_ONE_PROGRAM || candidate not_in held) {
+		if candidate in target.role.grants && (candidate in GRANTS_OF_ONE_PROCESS || candidate not_in held) {
 			return candidate, true
 		}
 	}
@@ -1005,19 +1005,19 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 }
 
 // The grants that refuse the debug access for each caller: what the grant
-// reaches belongs to the one program that holds it, so two holders of the
+// reaches belongs to the one process that holds it, so two holders of the
 // grant do not hold the same thing.
 // - Serve: a service holds what its callers lent it and what it keeps for
 //   them;
 // - Terminal: a terminal of its own, with the keys typed in it;
 // - Store, History_Store: a store of its own. A caller that acts for the
 //   principal reads each store of that principal, and writes only its own:
-//   through the registers of the program, a debugger would write the store
-//   of the program;
+//   through the registers of the process, a debugger would write the store
+//   of the process;
 // - Data_Disk, Scratch_Disk, Network_Device, Sound_Device: a device service
-//   that this service started for the program alone, and its ring;
+//   that this service started for the process alone, and its ring;
 // - Network: an endpoint names its own remote and its own ports;
-// - Connect: the services that a program can connect to are its own list;
+// - Connect: the services that a process can connect to are its own list;
 // - Principals: a ring of its own, and the records of the principals;
 // - Tpm: the ring and the region of the TPM service, which hold the
 //   machine key during a request;
@@ -1030,39 +1030,39 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients}
+GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients}
 
-// debug gives the debugger service the handle of the program with a name,
+// debug gives the debugger service the handle of the process with a name,
 // with the right Debug and no other, on behalf of one of its callers:
-// debug access is a handle to one program, and the principal grants it.
+// debug access is a handle to one process, and the principal grants it.
 // `holder` is the debugger service, which sent the command;
 // `connection_ring` is the call ring of one of its connections, as the
 // service names it: this service made that connection, so it knows the
-// caller, and the service cannot name a program that is not one of its
+// caller, and the service cannot name a process that is not one of its
 // callers. values is the completion of Root_Command.Debug: the handle,
-// then the hash of the file of the program, then its principal. A refusal
+// then the hash of the file of the process, then its principal. A refusal
 // writes its error record there.
 //
 // The rule is applied to the caller, not to the service:
 //
-// - the caller acts for the principal whose session runs the program: the
+// - the caller acts for the principal whose session runs the process: the
 //   grant Acts_For_Principal, not revoked, and the same principal. So a
-//   program of the machine does not debug a program of a named principal,
-//   and a program of one principal does not debug a program of another;
-// - no grant of the program refuses (debug_refusing_grant).
+//   process of the machine does not debug a process of a named principal,
+//   and a process of one principal does not debug a process of another;
+// - no grant of the process refuses (debug_refusing_grant).
 //
 // This service records the grant of the caller (`debug` in Grants) and can
 // revoke it: the kernel then ends the handle, and the debugging with it.
 // The handle also ends when the connection of the caller to the service
 // ends, and when the caller stops.
 //
-// With `end`, the service says that it ended the debugging of the program
+// With `end`, the service says that it ended the debugging of the process
 // for that caller: this service forgets the debug access (debug_end).
 //
-// Bad_Handle: the ring names no connection of the service, or no program
-// has the name. Bad_State: a grant of the program refuses, the program is
+// Bad_Handle: the ring names no connection of the service, or no process
+// has the name. Bad_State: a grant of the process refuses, the process is
 // the caller or the service, or another caller debugs it. Bad_Operation:
-// the caller does not act for the principal of the program. No_Right: the
+// the caller does not act for the principal of the process. No_Right: the
 // grant `debug` was revoked from the caller.
 debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Debug)
@@ -1085,18 +1085,18 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	}
 	target := find(name)
 	if target == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Programs, 1)
+		values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
 		return .Bad_Handle
 	}
-	// The service ended the debugging of the program for this caller: this
+	// The service ended the debugging of the process for this caller: this
 	// service forgets the debug access, and another caller can ask for it.
 	if end {
 		if target.debugger != holder || target.debug_for != caller || target.debug_for_row != caller_row {
-			values^ = errors.ring_fail(kind, .Absent, .Debugged_Programs, 1)
+			values^ = errors.ring_fail(kind, .Absent, .Debugged_Processes, 1)
 			return .Bad_State
 		}
 		values[0] = debug_end(target)
-		system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(holder.name[:])}, " ended the debugging of ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])})
+		system.log_in("processes", .Info, "root: ", system.Module_Name{system.name_of(holder.name[:])}, " ended the debugging of ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])})
 		return .Ok
 	}
 	if target == caller || target == holder {
@@ -1113,15 +1113,15 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	}
 	if grant, refuses := debug_refusing_grant(caller, target); refuses {
 		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
-		system.log_in("programs", .Info, "root: refused ", system.Module_Name{system.name_of(caller.name[:])}, " the debug access to ", system.Module_Name{name}, ": the grant ", start_grant.GRANT_NAMES[grant], " of the program refuses it")
+		system.log_in("processes", .Info, "root: refused ", system.Module_Name{system.name_of(caller.name[:])}, " the debug access to ", system.Module_Name{name}, ": the grant ", start_grant.GRANT_NAMES[grant], " of the process refuses it")
 		return .Bad_State
 	}
-	// One debugger for one program: the kernel has the same rule.
+	// One debugger for one process: the kernel has the same rule.
 	if target.debugger != nil && (target.debugger != holder || target.debug_for != caller || target.debug_for_row != caller_row) {
-		values^ = errors.ring_fail(kind, .Full, .Debugged_Programs, 1, 0, 1)
+		values^ = errors.ring_fail(kind, .Full, .Debugged_Processes, 1, 0, 1)
 		return .Bad_State
 	}
-	given, status := system.give(holder.requests_memory, target.program, {.Debug})
+	given, status := system.give(holder.requests_memory, target.process, {.Debug})
 	if status != .Ok {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 		return status
@@ -1132,14 +1132,14 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	caller.granted += {.Debug}
 	hash := transmute([4]u64)target.hash
 	values^ = {u64(given), hash[0], hash[1], hash[2], hash[3], target.principal, 0}
-	system.log_in("programs", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the right to debug ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ", for principal ", caller_principal)
+	system.log_in("processes", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the right to debug ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ", for principal ", caller_principal)
 	return .Ok
 }
 
-// debug_end ends the debug access to one program: the handle that the
+// debug_end ends the debug access to one process: the handle that the
 // debugger service received ends there, and the kernel ends the debugging
-// of the program with its last handle. The caller keeps the grant `debug`
-// only while the service debugs another program for it. It gives the count
+// of the process with its last handle. The caller keeps the grant `debug`
+// only while the service debugs another process for it. It gives the count
 // of the holdings that ended.
 debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 	holder, caller := target.debugger, target.debug_for
@@ -1147,14 +1147,14 @@ debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 	// The connection to the store of the debug object is a part of the
 	// debug access, and ends with it.
 	debug_store_end(target)
-	if holder != nil && holder.program != 0 && target.program != 0 {
-		count, _ = system.handle_revoke(target.program, holder.program)
+	if holder != nil && holder.process != 0 && target.process != 0 {
+		count, _ = system.handle_revoke(target.process, holder.process)
 	}
 	if caller == nil {
 		return count
 	}
 	for &other in started {
-		if other.program != 0 && other.debug_for == caller {
+		if other.process != 0 && other.debug_for == caller {
 			return count
 		}
 	}
@@ -1162,11 +1162,11 @@ debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 	return count
 }
 
-// revoke ends one grant of a program that runs: access is never given for
+// revoke ends one grant of a process that runs: access is never given for
 // ever, and each grant can be revoked. Each grant
-// here is a handle that this service keeps: the handle of the program came
-// from it, and the kernel ends what came from it in that program
-// (Handle_Revoke). What the program gave to other programs ends too.
+// here is a handle that this service keeps: the handle of the process came
+// from it, and the kernel ends what came from it in that process
+// (Handle_Revoke). What the process gave to other processes ends too.
 // values is the completion of Root_Command.Revoke.
 revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
 	status := revoke_grant(name, grant, values)
@@ -1181,25 +1181,25 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 // debug_check_again ends each debugging that runs for a caller and that
 // the rule no longer gives it, after a grant of the caller was revoked: a
 // grant that the caller lost must not stay in its hands through the
-// registers of a program that holds it. The program is given back as on a
+// registers of a process that holds it. The process is given back as on a
 // detach: the kernel resumes each thread that the debugger held. The end
 // needs nothing of the caller, so a caller that lost the grant to act for
 // the principal leaves no thread stopped.
 debug_check_again :: proc "contextless" (caller: ^Started) {
 	for &other in started {
-		if other.program == 0 || other.debug_for != caller {
+		if other.process == 0 || other.debug_for != caller {
 			continue
 		}
 		_, refuses := debug_refusing_grant(caller, &other)
 		if refuses || .Acts_For_Principal not_in grants_held(caller) {
 			debug_end(&other)
-			system.log_in("programs", .Info, "root: ended the debugging of ", system.Module_Name{system.name_of(other.name[:])}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ": the rule no longer gives the debug access, after a revocation")
+			system.log_in("processes", .Info, "root: ended the debugging of ", system.Module_Name{system.name_of(other.name[:])}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ": the rule no longer gives the debug access, after a revocation")
 		}
 	}
 }
 
 // revoke_grant is revoke, before the check of the debuggings of the
-// program.
+// process.
 revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
 	item := find(name)
 	if item == nil {
@@ -1234,10 +1234,10 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant store of ", system.Module_Name{name}, ", connections changed: ", count)
+		system.log_in("processes", .Info, "root: revoked the grant store of ", system.Module_Name{name}, ", connections changed: ", count)
 		return .Ok
 	case .Acts_For_Principal:
-		// The grant is data of each service that the program is connected
+		// The grant is data of each service that the process is connected
 		// to: the root service tells each one that the grant of the
 		// connection changed. A new connection has no grant to act for the
 		// principal either (grant_for).
@@ -1249,7 +1249,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		// service is the one writer of a service ring, so the room cannot
 		// shrink between the check and the sends.
 		if service := grant_room_short(item); service != nil {
-			system.log_in("programs", .Warning, "root: refused the revocation of acts_for_principal of ", system.Module_Name{name}, ": the service ", system.Module_Name{system.name_of(service.name[:])}, " has no room for the new grants; nothing changed")
+			system.log_in("processes", .Warning, "root: refused the revocation of acts_for_principal of ", system.Module_Name{name}, ": the service ", system.Module_Name{system.name_of(service.name[:])}, " has no room for the new grants; nothing changed")
 			return .No_Slot
 		}
 		item.granted -= {which}
@@ -1264,12 +1264,12 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			}
 		}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant acts_for_principal of ", system.Module_Name{name}, ", connections changed: ", count)
+		system.log_in("processes", .Info, "root: revoked the grant acts_for_principal of ", system.Module_Name{name}, ", connections changed: ", count)
 		return .Ok
 	case .History:
 		// The store of the history is data of the storage service, as the
 		// private store: the storage service ends the grant of the
-		// connection, and the program keeps its history in its memory only.
+		// connection, and the process keeps its history in its memory only.
 		item.granted -= {which}
 		item.revoked += {which}
 		count: u64
@@ -1283,7 +1283,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			count += 1
 		}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant history of ", system.Module_Name{name}, ", connections changed: ", count)
+		system.log_in("processes", .Info, "root: revoked the grant history of ", system.Module_Name{name}, ", connections changed: ", count)
 		return .Ok
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
@@ -1292,15 +1292,15 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant network of ", system.Module_Name{name}, ", endpoints changed: ", count)
+		system.log_in("processes", .Info, "root: revoked the grant network of ", system.Module_Name{name}, ", endpoints changed: ", count)
 		return .Ok
 	case .Debug:
-		// One handle for each program that the command Debug named for
+		// One handle for each process that the command Debug named for
 		// this caller: each one ends in the debugger service, and the
-		// kernel ends the debugging of that program with its last handle.
+		// kernel ends the debugging of that process with its last handle.
 		count: u64
 		for &other in started {
-			if other.program == 0 || other.debug_for != item {
+			if other.process == 0 || other.debug_for != item {
 				continue
 			}
 			count += debug_end(&other)
@@ -1308,16 +1308,16 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant debug of ", system.Module_Name{name}, ", holdings ended: ", count)
+		system.log_in("processes", .Info, "root: revoked the grant debug of ", system.Module_Name{name}, ", holdings ended: ", count)
 		return .Ok
 	case .Palette:
-		// The table and the ring end in the program, and the compositor
-		// unmaps its side: the palette keeps the programs and the windows.
+		// The table and the ring end in the process, and the compositor
+		// unmaps its side: the palette keeps the modules and the windows.
 		count := palette_provider_end(item, true)
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant palette of ", system.Module_Name{name}, ", holdings ended: ", count)
+		system.log_in("processes", .Info, "root: revoked the grant palette of ", system.Module_Name{name}, ", holdings ended: ", count)
 		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
@@ -1328,25 +1328,25 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 	case .Log_Records:
 		handle = system.context_record().handles[op.ROOT_LOG_RECORDS]
 	}
-	count := system.handle_revoke(handle, item.program) or_return
+	count := system.handle_revoke(handle, item.process) or_return
 	item.granted -= {which}
 	item.revoked += {which}
 	values[0] = count
-	system.log_in("programs", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", system.Module_Name{name}, ", holdings ended: ", count)
+	system.log_in("processes", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", system.Module_Name{name}, ", holdings ended: ", count)
 	return .Ok
 }
 
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
-// program that gives the palette of the desktop entries of its own. This
+// process that gives the palette of the desktop entries of its own. This
 // service keeps a handle of the entry table and of the ring, so that a
 // revocation ends what the provider holds of them.
 palette_provider: ^Started // nil: no provider.
 palette_table_memory, palette_ring_memory: system.Handle
 palette_table_in_compositor, palette_ring_in_compositor: system.Handle
 
-// palette_provide makes a program with the grant Palette the palette
-// provider: a new entry table and a new ring, which the program and the
-// compositor receive. The program gets the table with Write; the
+// palette_provide makes a process with the grant Palette the palette
+// provider: a new entry table and a new ring, which the process and the
+// compositor receive. The process gets the table with Write; the
 // compositor gets it with Read only, and learns of both on its control
 // ring. values is the completion of Root_Command.Palette_Provide.
 palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> system.Status {
@@ -1387,13 +1387,13 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 	caller.granted += {.Palette}
 	values^ = {0 = u64(given_table), 1 = u64(given_ring)}
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
-	system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(caller.name[:])}, " is the palette provider")
+	system.log_in("processes", .Info, "root: ", system.Module_Name{system.name_of(caller.name[:])}, " is the palette provider")
 	return .Ok
 }
 
 // palette_provider_end ends the palette provider: the compositor unmaps
 // the table and the ring. With revoke, each handle and each mapping of
-// the two objects ends in the program, which runs on; without, the program
+// the two objects ends in the process, which runs on; without, the process
 // stopped. It gives the count of the holdings that ended.
 palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (count: u64) {
 	if palette_provider != item {
@@ -1401,7 +1401,7 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 	}
 	if revoke {
 		for handle in ([2]system.Handle{palette_table_memory, palette_ring_memory}) {
-			ended, _ := system.handle_revoke(handle, item.program)
+			ended, _ := system.handle_revoke(handle, item.process)
 			count += ended
 		}
 	}
@@ -1410,14 +1410,14 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 	system.close(palette_ring_memory)
 	palette_provider = nil
 	palette_table_memory, palette_ring_memory = 0, 0
-	system.log_in("programs", .Info, "root: no palette provider")
+	system.log_in("processes", .Info, "root: no palette provider")
 	return count
 }
 
-// terminal_start starts the terminal of a program that runs. The terminal
+// terminal_start starts the terminal of a process that runs. The terminal
 // receives a surface, the terminal ring, the text region with the right
-// Read, and a handle that reads the state of the program. It receives
-// nothing of the role of the program.
+// Read, and a handle that reads the state of the process. It receives
+// nothing of the role of the process.
 terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
 	view^ = {}
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
@@ -1430,7 +1430,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	columns, rows, measure := role_terminal(&writer.role)
-	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.program, log = log_grant(role)}
+	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(role)}
 	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
 	// The settings page, five glyph caches, the font outlines and the
 	// demand cache.
@@ -1444,26 +1444,26 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	process, status := system.process_start(system.image_find(image, "terminal"), "terminal", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
 			buffer: [512]u8
 			writer := system.Writer{buffer = buffer[:]}
 			system.load_error_text(&writer, &load_error)
-			system.log_in("programs", .Warning, "root: cannot load the terminal: ", system.written(&writer))
+			system.log_in("processes", .Warning, "root: cannot load the terminal: ", system.written(&writer))
 		}
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
 	}
-	view.program, view.client, view.writer, view.is_terminal = program, client, writer, true
+	view.process, view.client, view.writer, view.is_terminal = process, client, writer, true
 	view.role = role
-	view.principal = writer.principal // The lock stops the terminal of a program of the session with it.
+	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
 	copy(view.name[:len(view.name) - 1], "terminal")
 	return .Ok
 }
 
 // connect makes a connection from a caller to the service with a name: a
-// new call ring and a new call region, that the two programs receive. This
+// new call ring and a new call region, that the two processes receive. This
 // service pays for the two memory objects and does not keep them. values is
 // the completion of Root_Command.Connect. client: the row of the client
 // table that the connection is for, or none.
@@ -1474,11 +1474,11 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	// The caller receives its handles through its ring to this service.
 	status: system.Status
 	given: [3]system.Handle
-	// The program handle of the service, with Read only and never Give: a
-	// handle with Read and Give lends to log.program_records, and would give
+	// The process handle of the service, with Read only and never Give: a
+	// handle with Read and Give lends to log.process_records, and would give
 	// each client the log records of the service
 	// (src/md/features/log_reader_scope.md).
-	given[0], status = system.give(caller.requests_memory, service.program, {.Read})
+	given[0], status = system.give(caller.requests_memory, service.process, {.Read})
 	if status == .Ok {
 		given[1], status = system.give(caller.requests_memory, ring_memory, {.Read, .Write})
 	}
@@ -1511,7 +1511,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
 	for pass in 0 ..< 2 {
 		for &item in started {
-			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
+			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
 				service = &item
 			}
 		}
@@ -1549,22 +1549,22 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// it receives: the store of the history has the name of the caller and
 	// ".history", which no module of the boot image has, and the store of a
 	// named principal has its number after it (src/library/support/principals). Each
-	// other service receives the name of the program. A name that does not
+	// other service receives the name of the process. A name that does not
 	// fit is refused before anything is made: a cut name can be the name of
 	// another store.
 	store_name: system.Name
 	if system.name_of(service.name[:]) == "storage" {
-		// The store of a disk program is the store of its nickname, with a
-		// prefix that no module name has (disk_programs.odin).
-		program_of_the_store := system.name_of(caller.name[:])
+		// The store of a disk process is the store of its nickname, with a
+		// prefix that no module name has (disk_processes.odin).
+		process_of_the_store := system.name_of(caller.name[:])
 		disk_store_name: [32]u8
 		if caller.from_disk {
-			program_of_the_store = disk_program.store_program_name(&disk_store_name, program_of_the_store)
+			process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)
 		}
 		// A connection for a row of the client table belongs to the
 		// principal of the row.
 		principal_of_the_store := client.place != 0 ? client.principal : caller.principal
-		if !principals.store_name_write(&store_name, program_of_the_store, principal_of_the_store, history) {
+		if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
 			system.log_in("calls", .Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
 			return nil, nil, 0, 0, .Bad_Operation
 		}
@@ -1603,7 +1603,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		return nil, nil, 0, 0, .No_Slot
 	}
 	// An amount is a store for the storage service only: for the log
-	// service, it names the program of the caller.
+	// service, it names the process of the caller.
 	if grant & isolated.CALLER_AMOUNT_MASK != 0 && system.name_of(service.name[:]) == "storage" {
 		caller.granted += {history ? system.Root_Grant.History : system.Root_Grant.Store}
 	}
@@ -1619,7 +1619,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 }
 
 // grant_room_short gives the first service whose service ring cannot hold
-// one Grant record for each connection of a program to it, with the room
+// one Grant record for each connection of a process to it, with the room
 // for one Disconnect of each connection of that service still kept
 // (connection_open keeps it, so that an end of a connection always reaches
 // the service). nil: each ring holds them.
@@ -1652,16 +1652,16 @@ grant_room_short :: proc "contextless" (item: ^Started) -> ^Started {
 // service that gives a false count of records read keeps its own mappings.
 disconnect :: proc "contextless" (connection: ^Connection) {
 	// The debug access that the service has for this caller ends with the
-	// connection: the service debugs a program only for a caller that can
+	// connection: the service debugs a process only for a caller that can
 	// still call it.
 	if !connection.history {
 		for &other in started {
-			if other.program != 0 && other.debugger == connection.service && other.debug_for == connection.caller && other.debug_for_row == connection.client.place {
+			if other.process != 0 && other.debugger == connection.service && other.debug_for == connection.caller && other.debug_for_row == connection.client.place {
 				debug_end(&other)
 			}
 		}
 	}
-	if connection.service.program != 0 {
+	if connection.service.process != 0 {
 		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
 	}
 	system.log_in("calls", .Info, "root: disconnected ", system.Module_Name{system.name_of(connection.caller.name[:])}, " from the service ", system.Module_Name{system.name_of(connection.service.name[:])})
@@ -1677,26 +1677,26 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	connection^ = {}
 }
 
-// release frees what this service holds for a program, and tells the compositor.
+// release frees what this service holds for a process, and tells the compositor.
 release :: proc "contextless" (item: ^Started) {
 	// The row goes before the handle closes: the kernel can then give the
-	// slot to another program, which the row must not name.
-	disk_program_page_remove(item)
-	// The connections of the program end: those that it made, and those
+	// slot to another process, which the row must not name.
+	disk_process_page_remove(item)
+	// The connections of the process end: those that it made, and those
 	// that it served.
 	served := item.service.head != nil
-	// A terminal that stops: its program stops. A program that stops: its
-	// terminal stays, and shows what the program wrote.
-	if item.writer != nil && item.writer.program != 0 {
-		system.call(.Program_Stop, u64(item.writer.program), 0)
+	// A terminal that stops: its process stops. A process that stops: its
+	// terminal stays, and shows what the process wrote.
+	if item.writer != nil && item.writer.process != 0 {
+		system.call(.Process_Stop, u64(item.writer.process), 0)
 	}
-	// A debugged program that stops, a debugger service that stops, and a
+	// A debugged process that stops, a debugger service that stops, and a
 	// caller of the debugger service that stops: the debug access ends.
 	if item.debugger != nil {
 		debug_end(item)
 	}
 	for &other in started {
-		if other.program != 0 && (other.debugger == item || other.debug_for == item) {
+		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)
 		}
 		if other.writer == item {
@@ -1711,8 +1711,8 @@ release :: proc "contextless" (item: ^Started) {
 	debug_store_release(item)
 	// A client that stops: its block service stops. A block service that
 	// stops: the device stops using memory.
-	if item.driver != nil && item.driver.program != 0 {
-		system.call(.Program_Stop, u64(item.driver.program), 0)
+	if item.driver != nil && item.driver.process != 0 {
+		system.call(.Process_Stop, u64(item.driver.process), 0)
 	}
 	if item.is_driver {
 		driver_end(item)
@@ -1730,9 +1730,9 @@ release :: proc "contextless" (item: ^Started) {
 	if item.network.head != nil {
 		network_end(item)
 	}
-	if item.program != 0 {
-		system.close(item.program)
-		item.program = 0
+	if item.process != 0 {
+		system.close(item.process)
+		item.process = 0
 	}
 	for &connection in connections {
 		if connection.caller == item || connection.service == item {
@@ -1750,23 +1750,23 @@ release :: proc "contextless" (item: ^Started) {
 		system.ring_close(&item.requests)
 		system.close(item.requests_memory)
 	}
-	if item.program != 0 {
-		system.close(item.program)
+	if item.process != 0 {
+		system.close(item.process)
 	}
 	item^ = {}
 }
 
-// reap finds the programs that stopped.
+// reap finds the processes that stopped.
 reap :: proc "contextless" () {
 	for &item in started {
-		if item.program == 0 {
+		if item.process == 0 {
 			continue
 		}
-		state, code := system.program_state(item.program)
+		state, code := system.process_state(item.process)
 		if state == .Stopped {
-			system.log_in("programs", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+			system.log_in("processes", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
 			// The kernel forgets the stop report with the last handle,
-			// which release closes: a disk program keeps it here.
+			// which release closes: a disk process keeps it here.
 			stop_report_keep(&item)
 			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 				unlock_stopped()

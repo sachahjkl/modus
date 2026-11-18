@@ -37,9 +37,9 @@ VECTOR_SPURIOUS :: 63
 VECTOR_MESSAGE_BASE :: 64 // The message interrupts (operation.Device_Kind.Message): vectors 64 to 79.
 VECTOR_KERNEL_ENTER :: 128
 // Not a vector of the processor: interrupt_common writes it in the frame of
-// a program whose debug frame a second debug trap took the place of, after
+// a process whose debug frame a second debug trap took the place of, after
 // int1 with a held trap. The frame has no instruction address and no stack
-// address: the program stops (src/kernel/processor.asm, interrupt_common).
+// address: the process stops (src/kernel/processor.asm, interrupt_common).
 VECTOR_DEBUG_FRAME_LOST :: 255
 // The interrupt stacks of the task state, from 1 (0 in a gate: no stack of
 // its own).
@@ -54,8 +54,8 @@ INTERRUPT_CAPACITY :: INTERRUPT_LINES + op.MESSAGE_CAPACITY
 STUB_COUNT :: 80
 TICKS_PER_SECOND :: 1000
 MSR_GS_BASE :: 0xC000_0101
-MSR_KERNEL_GS_BASE :: 0xC000_0102 // In the kernel: the gs register of the program.
-TIME_SLICE :: 10 // Ticks that a program runs before another ready program gets the processor.
+MSR_KERNEL_GS_BASE :: 0xC000_0102 // In the kernel: the gs register of the process.
+TIME_SLICE :: 10 // Ticks that a process runs before another ready process gets the processor.
 
 foreign _ {
 	// sti, hlt, cli: wait for one interrupt. It stays in processor.asm: the
@@ -76,14 +76,14 @@ foreign _ {
 
 Task_State :: struct #packed {
 	reserved_0:  u32,
-	stack_0:     u64, // The stack of an interrupt that comes from a program.
+	stack_0:     u64, // The stack of an interrupt that comes from a process.
 	stacks:      [2]u64,
 	reserved_1:  u64,
 	interrupts:  [7]u64,
 	reserved_2:  u64,
 	reserved_3:  u16,
 	port_offset: u16,
-	ports:       [8192 + 1]u8, // One bit per port. 1: a program cannot use the port.
+	ports:       [8192 + 1]u8, // One bit per port. 1: a process cannot use the port.
 }
 
 Table_Descriptor :: struct #packed {
@@ -135,8 +135,8 @@ Processor :: struct {
 	// thread when it leaves it, and a 0 written by another processor would
 	// skip that save and lose the registers of the thread.
 	current:       u32,
-	record_thread: u32, // The thread whose thread record address is in the gs register of programs.
-	ports_loaded:  u32, // The program whose ports are open in the task state.
+	record_thread: u32, // The thread whose thread record address is in the gs register of processes.
+	ports_loaded:  u32, // The process whose ports are open in the task state.
 	pending:       u32, // Not 0: another processor waits in processor_sync.
 	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
 	extended_state_refused: bool, // At its start, the processor could not save the extended state that the first processor saves: it never runs a thread.
@@ -178,7 +178,7 @@ Processor :: struct {
 	// processor clears it (atomic).
 	look_first:    u32,
 	// 1 + time_milliseconds of the last wake preemption of this processor
-	// by a thread of another program (thread_ready_held). Run lock of this
+	// by a thread of another process (thread_ready_held). Run lock of this
 	// processor.
 	preempted_at:  u64,
 	// The cost of the preemptions by interrupt: from the handler of the
@@ -195,21 +195,21 @@ Processor :: struct {
 	first_use_faults: u64, // Page faults after which the page was present.
 	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
 	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.
-	programs_held: u64, // Bit n: the processor holds the lock of program n.
-	ports_serial:  u64, // The ports_serial of the program whose ports are open (ports_switch).
-	record_serial: u32, // The serial of the thread whose record address is in the gs register of programs.
+	processes_held: u64, // Bit n: the processor holds the lock of process n.
+	ports_serial:  u64, // The ports_serial of the process whose ports are open (ports_switch).
+	record_serial: u32, // The serial of the thread whose record address is in the gs register of processes.
 	// The kernel operation of the current thread that runs here (enter.odin).
 	operation:     Operation_In_Progress,
-	// The serial of program n when the operation stopped it: read only for
-	// a bit of operation.stopped_programs, so the reset of the record at
+	// The serial of process n when the operation stopped it: read only for
+	// a bit of operation.stopped_processes, so the reset of the record at
 	// each command does not write it.
-	stopped_serials: [PROGRAM_CAPACITY]u32,
+	stopped_serials: [PROCESS_CAPACITY]u32,
 	// The event ring of this processor (events.odin): only this processor
 	// writes these fields and the ring, while observed_kinds is not 0; the
 	// control path writes them only while it is 0 and after a
 	// processor_sync. The counts are the kernel's own: event_written and
 	// event_lost are what the head of the ring says, event_read_seen is the
-	// last `read` of the program that the kernel loaded.
+	// last `read` of the process that the kernel loaded.
 	event_ring:      ^op.Event_Ring,
 	event_records:   [^]op.Event_Record,
 	event_capacity:  u64, // A power of two.
@@ -230,14 +230,14 @@ Processor :: struct {
 	log_runs:       [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call,
 	// The copy of an own log ring that Log_Read makes under the log lock,
 	// then gives to the caller after the lock: a copy to memory of a
-	// program never lengthens the hold of the one log lock.
+	// process never lengthens the hold of the one log lock.
 	own_log_copy:   [op.OWN_LOG_RECORD_CAPACITY]op.Log_Record,
 	boot_report:    op.Boot_Report,
 	mapping_report: op.Mapping_Report,
 	module_report:  op.Module_Report,
 	// The reports of a developer tool (report.odin): built here under the
-	// locks, then copied to the caller with no lock of another program.
-	program_mapping_report: op.Program_Mapping_Report,
+	// locks, then copied to the caller with no lock of another process.
+	process_mapping_report: op.Process_Mapping_Report,
 	thread_table_report:    op.Thread_Table_Report,
 	stop_report:            op.Stop_Report,
 	// The extended state area that a Thread_Control on this processor
@@ -258,7 +258,7 @@ gates: [256]Interrupt_Gate
 machine_stopping: bool
 
 // processor_sync waits until each processor of the set (bit n: processor n)
-// passed a point where it has no address translation of a program from
+// passed a point where it has no address translation of a process from
 // before the call, and walks no chain of budgets: a kernel entry, the idle
 // wait, or the wait for a lock (sync_acknowledge). The caller uses it after
 // it removed a mapping (before the frames return), before it frees a page
@@ -294,16 +294,16 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	if intrinsics.atomic_load(&cpu.pending) == 0 {
 		return
 	}
-	// The page table of the program of the current thread; 0 with no thread.
+	// The page table of the process of the current thread; 0 with no thread.
 	// Between the pick of a thread and run, current names the thread while
-	// table is still the one of the program that the processor left, and a
+	// table is still the one of the process that the processor left, and a
 	// wait for a lock there (a refused return takes the control lock)
-	// answers here. That program can end meanwhile and free its tables: so
+	// answers here. That process can end meanwhile and free its tables: so
 	// the processor keeps a table only if it is the one of its thread, and
 	// run loads that one before the return.
 	current_table: u64
 	if current := intrinsics.atomic_load(&cpu.current); current != 0 {
-		current_table = programs[threads[current].program].table
+		current_table = processes[threads[current].process].table
 	}
 	if current_table == 0 || intrinsics.atomic_load(&cpu.table) != current_table {
 		intrinsics.atomic_store(&cpu.table, kernel_table)
@@ -334,8 +334,8 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 	// processor_start). A double fault arrives on its own stack: the kernel
 	// stack can be full. A debug exception, a non-maskable interrupt and a
 	// machine check can arrive in the first instructions of the entry of
-	// syscall, where the stack pointer is still the one of the program: on
-	// their own stacks, the processor never pushes a frame where a program
+	// syscall, where the stack pointer is still the one of the process: on
+	// their own stacks, the processor never pushes a frame where a process
 	// chose (docs/ARCHITECTURE.md, "The windows of the entry and of the
 	// return").
 	cpu.task_state.interrupts[INTERRUPT_STACK_DOUBLE_FAULT - 1] = tops.double_fault
@@ -371,10 +371,10 @@ CR0_MONITOR_COPROCESSOR :: 1 << 1 // wait and fwait obey the flag task switched,
 CR0_EXTENSION_TYPE :: 1 << 4
 // An x87 error is the exception 16 of the thread, at its next x87
 // instruction. Without it, the error goes out on line 13 of the interrupt
-// controller, a device interrupt of the program that owns that line.
+// controller, a device interrupt of the process that owns that line.
 CR0_NUMERIC_ERROR :: 1 << 5
 CR0_WRITE_PROTECT :: 1 << 16 // The kernel obeys read-only pages.
-// A program that sets the flag AC gets the exception 17 for an access that
+// A process that sets the flag AC gets the exception 17 for an access that
 // is not aligned. Every 64-bit processor has it, and it acts at level 3
 // only: the kernel, and its stac and clac, are not changed.
 CR0_ALIGNMENT_MASK :: 1 << 18
@@ -387,8 +387,8 @@ CR0_OF_THE_KERNEL :: u64(CR0_PROTECTED_MODE | CR0_MONITOR_COPROCESSOR | CR0_EXTE
 
 CR4_PHYSICAL_ADDRESS_EXTENSION :: 1 << 5
 CR4_MACHINE_CHECK :: 1 << 6 // A machine check is the exception 18, which stops the machine with a line; without it the processor shuts down with no line.
-// sgdt, sidt, sldt, smsw and str of a program give a protection fault: a
-// program reads no address of a table of the kernel.
+// sgdt, sidt, sldt, smsw and str of a process give a protection fault: a
+// process reads no address of a table of the kernel.
 CR4_USER_INSTRUCTION_PREVENTION :: 1 << 11
 // The fifth level of the page table. The boot program loads its tables of
 // four levels in cr3 and does not change cr4, and the processor cannot
@@ -397,8 +397,8 @@ CR4_USER_INSTRUCTION_PREVENTION :: 1 << 11
 // the kernel), and every walk of the kernel has four levels. The kernel
 // writes it 0, and the start code of the other processors too.
 CR4_FIVE_LEVEL_PAGING :: 1 << 12
-CR4_NO_EXECUTE_PROGRAM :: 1 << 20
-CR4_GUARD_PROGRAM :: 1 << 21
+CR4_NO_EXECUTE_PROCESS :: 1 << 20
+CR4_GUARD_PROCESS :: 1 << 21
 // The bits of CR4 that the kernel keeps from the value before
 // processor_setup: long mode needs the physical address extension, and the
 // setup of the extended state set the three others just before. Every
@@ -407,12 +407,12 @@ CR4_KEPT :: u64(CR4_PHYSICAL_ADDRESS_EXTENSION | CR4_OSFXSR | CR4_OSXMMEXCPT | C
 #assert(CR4_KEPT == 0x4_0620)
 #assert(CR4_KEPT & CR4_FIVE_LEVEL_PAGING == 0)
 // The bits of CR4 that processor_setup adds when CPUID has them.
-CR4_FROM_FEATURES :: u64(CR4_MACHINE_CHECK | CR4_USER_INSTRUCTION_PREVENTION | CR4_NO_EXECUTE_PROGRAM | CR4_GUARD_PROGRAM)
+CR4_FROM_FEATURES :: u64(CR4_MACHINE_CHECK | CR4_USER_INSTRUCTION_PREVENTION | CR4_NO_EXECUTE_PROCESS | CR4_GUARD_PROCESS)
 #assert(CR4_FROM_FEATURES == 0x30_0840)
 #assert(CR4_KEPT & CR4_FROM_FEATURES == 0)
-// The instructions that let a program write its own fs and gs bases. Off:
+// The instructions that let a process write its own fs and gs bases. Off:
 // interrupt_common (src/kernel/processor.asm) tells the gs base of the kernel
-// from the base of a program by its sign, and with them on a program could
+// from the base of a process by its sign, and with them on a process could
 // set a base in the kernel half.
 CR4_FS_GS_BASE :: 1 << 16
 #assert((CR4_KEPT | CR4_FROM_FEATURES) & CR4_FS_GS_BASE == 0)
@@ -422,7 +422,7 @@ CR4_FS_GS_BASE :: 1 << 16
 DR7_NO_BREAKPOINT :: op.DEBUG_CONTROL_NO_BREAKPOINT
 DR6_CLEAR :: 0xFFFF_0FF0
 
-// The processors refuse sgdt, sidt, sldt, smsw and str to programs
+// The processors refuse sgdt, sidt, sldt, smsw and str to processes
 // (CR4_USER_INSTRUCTION_PREVENTION). Written by processor_setup.
 user_instruction_prevention: bool
 
@@ -448,13 +448,13 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	model_specific_register_write(MSR_EFER, model_specific_register_read(MSR_EFER) | 1)
 	model_specific_register_write(MSR_STAR, 0x0010_0008 << 32)
 	model_specific_register_write(MSR_LSTAR, u64(uintptr(rawptr(kernel_enter))))
-	// The flags of the kernel at a syscall: the flags of the program with
+	// The flags of the kernel at a syscall: the flags of the process with
 	// these cleared: interrupt, direction, trap, user access, and nested
-	// task. A program can set nested task with popfq; with it set in the
+	// task. A process can set nested task with popfq; with it set in the
 	// kernel, the iretq of resume would fault in the kernel.
 	model_specific_register_write(MSR_SFMASK, 0x44700)
 	// The control registers are the kernel's own on each processor: a bit
-	// that the firmware left would decide what a program sees (an x87 error
+	// that the firmware left would decide what a process sees (an x87 error
 	// as a device interrupt, no alignment check, the addresses of the tables
 	// of the kernel). docs/ARCHITECTURE.md, "The control registers of a
 	// processor".
@@ -464,16 +464,16 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	if basic_features & (1 << 7) != 0 {
 		cr4 |= CR4_MACHINE_CHECK
 	}
-	// The kernel does not execute the memory of programs, and uses it only
+	// The kernel does not execute the memory of processes, and uses it only
 	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
 	if highest, _, _, _ := intrinsics.x86_cpuid(0, 0); highest >= 7 {
 		_, features, more_features, _ := intrinsics.x86_cpuid(7, 0)
 		if features & (1 << 7) != 0 {
-			cr4 |= CR4_NO_EXECUTE_PROGRAM
+			cr4 |= CR4_NO_EXECUTE_PROCESS
 			kernel_no_execute = true
 		}
 		if features & (1 << 20) != 0 {
-			cr4 |= CR4_GUARD_PROGRAM
+			cr4 |= CR4_GUARD_PROCESS
 			user_access_guard = 1
 		}
 		if more_features & (1 << 2) != 0 {
@@ -483,7 +483,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	}
 	control_register_4_write(cr4)
 	// No breakpoint that the firmware set stays on: then each debug
-	// exception in the kernel is a trap of a program that came late, which
+	// exception in the kernel is a trap of a process that came late, which
 	// interrupt_common drops.
 	debug_register_7_write(DR7_NO_BREAKPOINT)
 	debug_register_6_write(DR6_CLEAR)
@@ -510,10 +510,10 @@ processor_start :: proc "contextless" () {
 	gates[VECTOR_DEBUG].stack = INTERRUPT_STACK_DEBUG
 	gates[VECTOR_NON_MASKABLE_INTERRUPT].stack = INTERRUPT_STACK_NON_MASKABLE_INTERRUPT
 	gates[VECTOR_MACHINE_CHECK].stack = INTERRUPT_STACK_MACHINE_CHECK
-	// int3 of a program reaches its gate only with the privilege level 3 in
+	// int3 of a process reaches its gate only with the privilege level 3 in
 	// the gate; with 0 the processor gives a protection fault in its place,
 	// and a fault handler cannot tell a breakpoint. Every other gate keeps
-	// 0: no `int n` of a program can act as an exception or an interrupt.
+	// 0: no `int n` of a process can act as an exception or an interrupt.
 	gates[3].type = 0xEE
 
 	// The interrupt controller of the device lines (8259): lines 0 to 15
@@ -544,7 +544,7 @@ processor_start :: proc "contextless" () {
 	lock_ready = true
 	extended_state_prove()
 	extended_state_log()
-	return_to_program_log()
+	return_to_process_log()
 	control_registers_log()
 	thread_counters_log()
 	timer_calibrate()
@@ -552,9 +552,9 @@ processor_start :: proc "contextless" () {
 }
 
 // control_registers_log names, at boot, the control registers of the first
-// processor, and what a program can read of the tables of the kernel.
+// processor, and what a process can read of the tables of the kernel.
 control_registers_log :: proc "contextless" () {
-	log("kernel: control registers: cr0 ", Hex(control_register_0_read()), ", cr4 ", Hex(control_register_4_read()), user_instruction_prevention ? string("; UMIP on: sgdt, sidt, sldt, smsw and str of a program give a protection fault") : string("; no UMIP: a program reads with sgdt and sidt the addresses of the segment table and of the interrupt table of its processor"))
+	log("kernel: control registers: cr0 ", Hex(control_register_0_read()), ", cr4 ", Hex(control_register_4_read()), user_instruction_prevention ? string("; UMIP on: sgdt, sidt, sldt, smsw and str of a process give a protection fault") : string("; no UMIP: a process reads with sgdt and sidt the addresses of the segment table and of the interrupt table of its processor"))
 }
 
 interrupt_end :: proc "contextless" (line: u64) {
@@ -564,7 +564,7 @@ interrupt_end :: proc "contextless" (line: u64) {
 	port_write_8(0x20, 0x20)
 }
 
-// ports_allow lets the program on a processor use, or not use, a range of ports.
+// ports_allow lets the process on a processor use, or not use, a range of ports.
 ports_allow :: proc "contextless" (cpu: ^Processor, first, count: u64, allow: bool) {
 	for port in first ..< min(first + count, 65536) {
 		if allow {

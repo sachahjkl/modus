@@ -21,7 +21,7 @@ import "base:intrinsics"
 // that the connection carried ended.
 //
 // The table lasts until the machine stops. The disk grant table of each
-// principal keeps its keys across a restart (modus:support/disk_program),
+// principal keeps its keys across a restart (modus:support/disk_process),
 // and the root service gives each of them a row again, with a new serial,
 // after the read of that table.
 
@@ -61,7 +61,7 @@ Client_Table :: struct {
 }
 #assert(size_of(Client_Table) <= 4096)
 
-// client_table_read copies the rows of a client table that another program
+// client_table_read copies the rows of a client table that another process
 // writes. It reads again while the table changes, so the copy is one state
 // of the table.
 client_table_read :: proc "contextless" (table: ^Client_Table, clients: ^[CLIENT_CAPACITY]Client) {

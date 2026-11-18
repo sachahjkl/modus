@@ -18,7 +18,7 @@ SITE_OPERATION_FILE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 SITE_ERRORS_FILE :: SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
 SITE_FIXED_ADDRESSES_FILE :: FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
 SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
-// The table of the roles of the root service (program_roles_check.odin).
+// The table of the roles of the root service (process_roles_check.odin).
 SITE_ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
 // The rule of the root service for the budget that a module asks for.
 SITE_ROOT_BUDGETS_FILE :: SYSTEM_MODULE_SOURCES + "root/budgets.odin"
@@ -42,7 +42,7 @@ SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       Module_Build,
-	kind:        string, // "program" for a row marked program, else "module".
+	kind:        string, // "entry" for a row marked entry, else "module".
 	page:        string,
 	description: Module_Description,
 }
@@ -57,10 +57,10 @@ Site_Reference :: struct {
 	error_kinds:      []Site_Enumeration_Member,
 	error_units:      []Site_Enumeration_Member,
 	unit_names:       map[string]string,
-	start_grants:     []Site_Enumeration_Member, // Grant of src/library/contract/start_grant: what a program receives at its start.
+	start_grants:     []Site_Enumeration_Member, // Grant of src/library/contract/start_grant: what a process receives at its start.
 	root_grants:      []Site_Enumeration_Member, // Root_Grant of src/library/support/system: what the root service records and can revoke.
 	root_grant_names: map[string]string,
-	program_roles:    []Site_Role_Row, // program_roles of the root service: the whole role of each program.
+	process_roles:    []Site_Role_Row, // process_roles of the root service: the whole role of each process.
 	fixed_ranges:     []Site_Enumeration_Member,
 	console_commands: []Site_Console_Command,
 	modules:          []Site_Module,
@@ -166,13 +166,13 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	reference.root_grant_names, problem = site_names_read(grants_text, SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
 	note(&problems, problem)
 	system_parts: []string
-	reference.program_roles, system_parts, problem = program_roles_read(roles_text)
+	reference.process_roles, system_parts, problem = process_roles_read(roles_text)
 	note(&problems, problem)
 	// A page shows each grant of a row as a link to its row, and a page of
-	// each program its role: a grant of no member, or a program with no
+	// each process its role: a grant of no member, or a process with no
 	// row, stops the command, as it stops the build.
 	if problem == "" {
-		for item in program_roles_problems(reference.program_roles, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE) {
+		for item in process_roles_problems(reference.process_roles, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE) {
 			note(&problems, item)
 		}
 	}
@@ -210,7 +210,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	modules := make([dynamic]Site_Module, context.temp_allocator)
 	for build in module_builds {
 		description := describe_package(build.source) or_return
-		kind := build.program ? "program" : "module"
+		kind := build.entry ? "entry" : "module"
 		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
 	}
 	reference.modules = modules[:]
@@ -239,7 +239,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 }
 
 // site_grant_set_items gives each grant of a set of the root service as one
-// value: a link to its row in the table "What a program receives at its
+// value: a link to its row in the table "What a process receives at its
 // start", with its name and no period.
 site_grant_set_items :: proc(site: ^Site, from_page: string, members: []string, with_icon: bool) -> []string {
 	grants_page := site_page_file(SITE_GRANTS_FOLDER)
@@ -571,7 +571,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		count := len(reference.operations) - 1 // The member None is not an operation.
-		fmt.sbprintf(&b, "<h1>Kernel operations</h1>\n<p>What a program can ask the kernel: %d operations. The parameters and the result of each are the words of the comment of the contract: \"(parameters) -&gt; result\", then its text; the contract has no other form of them.</p>\n", count)
+		fmt.sbprintf(&b, "<h1>Kernel operations</h1>\n<p>What a process can ask the kernel: %d operations. The parameters and the result of each are the words of the comment of the contract: \"(parameters) -&gt; result\", then its text; the contract has no other form of them.</p>\n", count)
 		site_about_paragraph(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.operations_about, SITE_OPERATION_FILE, "Operation")
 		strings.write_string(&b, "<p>The table gives the number and the form of each operation; a name leads to the operation under the table, with its text, the statuses that its text names, and its line in the contract.</p>\n")
 		operations_table := site_table_start(&b, "Kernel operations", {{"Number", .Number}, {"Operation", .Name}, {"Parameters", .Short}, {"Result", .Short}}, {.None, .Operation, .None, .None})
@@ -626,37 +626,37 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		site_about_paragraph(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses_about, SITE_OPERATION_FILE, "Status")
 		site_enumeration_table(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"}, .Status)
 		site_source_line(site, &b, SITE_OPERATION_FILE)
-		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, count, .Operation, &b, SITE_OPERATION_FILE)
+		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a process asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, count, .Operation, &b, SITE_OPERATION_FILE)
 	}
 
 	// The context: the roles of its handles and of its values.
 	{
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<h1>The context of a program</h1>\n")
-		fmt.sbprintf(&b, "<p>The one record that a program receives when it starts: %d handles and %d values. A role is a place of the record with a meaning.</p>\n", op.CONTEXT_HANDLES, op.CONTEXT_VALUES)
+		strings.write_string(&b, "<h1>The context of a process</h1>\n")
+		fmt.sbprintf(&b, "<p>The one record that a process receives when it starts: %d handles and %d values. A role is a place of the record with a meaning.</p>\n", op.CONTEXT_HANDLES, op.CONTEXT_VALUES)
 		site_about_paragraph(site, &b, site_page_file(SITE_CONTEXT_FOLDER), reference.context_about, SITE_OPERATION_FILE, "CONTEXT_HANDLES")
-		// The roles of the first program are in the same file, under their
-		// own heading: no other program has them.
-		every_program := make([dynamic]Site_Constant, context.temp_allocator)
-		first_program := make([dynamic]Site_Constant, context.temp_allocator)
+		// The roles of the first process are in the same file, under their
+		// own heading: no other process has them.
+		every_process := make([dynamic]Site_Constant, context.temp_allocator)
+		first_process := make([dynamic]Site_Constant, context.temp_allocator)
 		for role in reference.context_roles {
 			if strings.has_prefix(role.name, "ROOT_") {
-				append(&first_program, role)
+				append(&first_process, role)
 			} else {
-				append(&every_program, role)
+				append(&every_process, role)
 			}
 		}
 		groups := [?]struct {
 			id, title, file: string,
 			roles:           []Site_Constant,
 		} {
-			{"every-program", "The roles that the system fixes for each program", SITE_OPERATION_FILE, every_program[:]},
-			{"first-program", "The roles of the first program, the root service", SITE_OPERATION_FILE, first_program[:]},
-			{"started-by-root", "The roles of a program that the root service starts", SITE_SYSTEM_GRANTS_FILE, reference.grant_roles},
+			{"every-process", "The roles that the system fixes for each process", SITE_OPERATION_FILE, every_process[:]},
+			{"first-process", "The roles of the first process, the root service", SITE_OPERATION_FILE, first_process[:]},
+			{"started-by-root", "The roles of a process that the root service starts", SITE_SYSTEM_GRANTS_FILE, reference.grant_roles},
 		}
 		for group in groups {
 			fmt.sbprintf(&b, "<h2 id=\"%s\">%s</h2>\n", group.id, group.title)
-			if group.id == "every-program" {
+			if group.id == "every-process" {
 				site_about_paragraph(site, &b, site_page_file(SITE_CONTEXT_FOLDER), reference.context_values_about, SITE_OPERATION_FILE, "CONTEXT_VALUES")
 			}
 			roles_table := site_table_start(&b, group.title, {{"Constant", .Name}, {"Place", .Number}, {"Handle or value", .Short}, {"What the file says", .Prose}})
@@ -682,7 +682,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_table_end(&b, roles_table)
 			site_source_line(site, &b, group.file)
 		}
-		add(site, entries, site_page_file(SITE_CONTEXT_FOLDER), "The context of a program", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each program of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a program receives.", SITE_OPERATION_FILE, len(reference.context_roles), .Handle, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_CONTEXT_FOLDER), "The context of a process", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each process of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a process receives.", SITE_OPERATION_FILE, len(reference.context_roles), .Handle, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The errors.
@@ -711,9 +711,9 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	// The grants.
 	{
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the programs and gives each one only the handles of its role.</p>\n<h2 id=\"at-start\">What a program receives at its start</h2>\n")
+		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the processes and gives each one only the handles of its role.</p>\n<h2 id=\"at-start\">What a process receives at its start</h2>\n")
 		site_about_paragraph(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants_about, SITE_START_GRANT_FILE, "Grant")
-		site_enumeration_table(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants, SITE_START_GRANT_FILE, "start-grant", "What a program receives at its start", {"Place", "Grant", "What the root service gives"}, .Grant)
+		site_enumeration_table(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants, SITE_START_GRANT_FILE, "start-grant", "What a process receives at its start", {"Place", "Grant", "What the root service gives"}, .Grant)
 		site_source_line(site, &b, SITE_START_GRANT_FILE)
 		strings.write_string(&b, "<h2 id=\"recorded\">What the root service records and can revoke</h2>\n")
 		site_about_paragraph(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.root_grants_about, SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
@@ -727,17 +727,17 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, grants_table)
 		site_source_line(site, &b, SITE_SYSTEM_GRANTS_FILE)
-		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n<p>One row for each program of the boot image: its start grants, each a link to its row in the first table of this page, and the other terms of its role. A build stops when a program has no row.</p>\n")
-		// The programs and the grants are lists of names: they break
+		strings.write_string(&b, "<h2 id=\"processes\">The grants of each process</h2>\n<p>One row for each process of the boot image: its start grants, each a link to its row in the first table of this page, and the other terms of its role. A build stops when a process has no row.</p>\n")
+		// The processes and the grants are lists of names: they break
 		// between the names, so the column of the reasons keeps its room.
 		// The terms are code that breaks at its spaces.
-		programs_table := site_table_start(&b, "Grants of each program", {{"Program", .List}, {"Grants", .List}, {"Other terms", .Prose}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None, .None})
-		for item in reference.program_roles {
-			// Each row is a link target, named by its program.
-			fmt.sbprintf(&b, "<tr id=\"programs-%s\" data-outline=\"", site_slug(item.name))
+		processes_table := site_table_start(&b, "Grants of each process", {{"Process", .List}, {"Grants", .List}, {"Other terms", .Prose}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None, .None})
+		for item in reference.process_roles {
+			// Each row is a link target, named by its process.
+			fmt.sbprintf(&b, "<tr id=\"processes-%s\" data-outline=\"", site_slug(item.name))
 			site_escape(&b, item.name)
 			strings.write_string(&b, "\">")
-			site_program_names_cell(site, &b, {item.name})
+			site_process_names_cell(site, &b, {item.name})
 			strings.write_string(&b, "<td>")
 			site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.grants, false)
 			strings.write_string(&b, "</td>")
@@ -745,15 +745,15 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_comment_cell(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b, programs_table)
+		site_table_end(&b, processes_table)
 		site_source_line(site, &b, SITE_ROOT_ROLES_FILE)
-		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the role of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_ROLES_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_ROLES_FILE, SITE_START_GRANT_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a process, the %d that it records, and the role of each process.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each process at its start, and what it records and can revoke.", SITE_ROOT_ROLES_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_ROLES_FILE, SITE_START_GRANT_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The fixed ranges.
 	{
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<h1>Fixed ranges</h1>\n<p>The addresses of the mappings that the system gives a program: one slot of the band for each range, so that no two ranges overlap.</p>\n")
+		strings.write_string(&b, "<h1>Fixed ranges</h1>\n<p>The addresses of the mappings that the system gives a process: one slot of the band for each range, so that no two ranges overlap.</p>\n")
 		site_about_paragraph(site, &b, site_page_file(SITE_FIXED_RANGES_FOLDER), reference.fixed_ranges_package_about, SITE_FIXED_ADDRESSES_FILE, "package fixed_addresses")
 		fmt.sbprintf(&b, "<p>The band starts at <code>0x%016X</code>; each slot is <code>0x%X</code> bytes (1 TiB) from the start of the one before. The table gives the slot of each range, its address, and what is mapped there.</p>\n", u64(fixed_addresses.BAND_START), u64(fixed_addresses.SLOT))
 		site_about_paragraph(site, &b, site_page_file(SITE_FIXED_RANGES_FOLDER), reference.fixed_ranges_about, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
@@ -775,7 +775,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, ranges_table)
 		site_source_line(site, &b, SITE_FIXED_ADDRESSES_FILE)
-		add(site, entries, site_page_file(SITE_FIXED_RANGES_FOLDER), "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a program of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a program, with its address.", SITE_FIXED_ADDRESSES_FILE, len(reference.fixed_ranges), .Number, &b, SITE_FIXED_ADDRESSES_FILE)
+		add(site, entries, site_page_file(SITE_FIXED_RANGES_FOLDER), "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a process of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a process, with its address.", SITE_FIXED_ADDRESSES_FILE, len(reference.fixed_ranges), .Number, &b, SITE_FIXED_ADDRESSES_FILE)
 	}
 
 	// The commands of the console.

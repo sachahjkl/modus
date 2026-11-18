@@ -4,7 +4,7 @@
 // the host (`test_modules` in `tools/modustool/modules.odin`): its entry
 // calls test_callee through an import slot, so the test checks the import
 // and the rebases of both modules in one number. It is not in the boot
-// image, and its entry is not the entry of a program: it returns a value.
+// image, and its entry is not the entry of a process: it returns a value.
 package test_caller
 
 foreign _ {

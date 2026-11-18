@@ -3,32 +3,32 @@ package kernel
 import "base:intrinsics"
 import op "modus:contract/operation"
 
-// The virtual memory of a program (docs/ARCHITECTURE.md, "The virtual
-// memory of a program"): commit and decommit the pages of an uncommitted
-// object, and change the protection of pages. The caller holds the program
-// lock of the program.
+// The virtual memory of a process (docs/ARCHITECTURE.md, "The virtual
+// memory of a process"): commit and decommit the pages of an uncommitted
+// object, and change the protection of pages. The caller holds the process
+// lock of the process.
 
-// object_only_here says if a memory object is named only by this program,
+// object_only_here says if a memory object is named only by this process,
 // with one mapping at most: its pages have page table entries only in this
-// program. It gives that mapping, or nil when it has none. The references of the object are the handles and
-// the mappings of all programs; under the program lock the handles and the
-// mappings of this program do not change, and another program that names
+// process. It gives that mapping, or nil when it has none. The references of the object are the handles and
+// the mappings of all processes; under the process lock the handles and the
+// mappings of this process do not change, and another process that names
 // the object holds a reference.
-object_only_here :: proc "contextless" (program: ^Program, region_index: u32) -> (found: ^Mapping, alone: bool) {
+object_only_here :: proc "contextless" (process: ^Process, region_index: u32) -> (found: ^Mapping, alone: bool) {
 	own: u32
 	mappings: u32
-	for &mapping in program.mappings {
+	for &mapping in process.mappings {
 		if mapping.page_count != 0 && mapping.region == region_index {
 			mappings += 1
 			found = &mapping
 		}
 	}
-	for slot in program.handles {
+	for slot in process.handles {
 		if slot.kind == .Memory && slot.object == region_index {
 			own += 1
 		}
 	}
-	// At most one mapping: the decommit of an object that this program holds
+	// At most one mapping: the decommit of an object that this process holds
 	// with no mapping has no entry to clear.
 	if mappings > 1 || intrinsics.atomic_load(&regions[region_index].references) != own + mappings {
 		return nil, false
@@ -70,17 +70,17 @@ table_pages :: proc "contextless" (counts: []u64) -> (sum: u64) {
 // committed, reserved_pages grows by as much, the bits are set. A budget
 // that cannot pay the table changes nothing.
 //
-// Decommit: the object must be named only by this program, with one
+// Decommit: the object must be named only by this process, with one
 // mapping. First, under the region lock, the present entries of the pages
-// are cleared and each processor that uses the page table of the program
+// are cleared and each processor that uses the page table of the process
 // forgets them (one processor_sync for the table): no processor can reach a
 // frame of the table after. Then, in one section of the frame lock and the
 // cache lock of this processor: each frame goes to the frame cache, each
 // committed page with no frame leaves reserved_pages, the budget receives
-// one page for each page, the slots keep only their protection. The program
-// lock keeps the faults of the program out between the two steps (a fault
+// one page for each page, the slots keep only their protection. The process
+// lock keeps the faults of the process out between the two steps (a fault
 // takes it).
-memory_commit :: proc "contextless" (program: ^Program, region_index: u32, ranges: []op.Page_Range, decommit: bool) -> (changed: u64, status: Operation_Outcome) {
+memory_commit :: proc "contextless" (process: ^Process, region_index: u32, ranges: []op.Page_Range, decommit: bool) -> (changed: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	if !region.uncommitted {
 		return 0, .Bad_Operation
@@ -115,7 +115,7 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 		}
 		return needed, .Ok
 	}
-	mapping, alone := object_only_here(program, region_index)
+	mapping, alone := object_only_here(process, region_index)
 	if !alone {
 		return 0, .Bad_State
 	}
@@ -128,24 +128,24 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 				continue // Not in the mapping: no entry.
 			}
 			address := mapping.address + (page - mapping.first) * PAGE_SIZE
-			if entry := page_entry(program.table, address); entry != nil && entry^ & PAGE_PRESENT != 0 {
+			if entry := page_entry(process.table, address); entry != nil && entry^ & PAGE_PRESENT != 0 {
 				entry^ = 0
 				mapping.present_page_count -= 1
-				if self.table == program.table {
+				if self.table == process.table {
 					page_flush(address)
 				}
 			}
 		}
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
-	processor_sync(processors_with_table(program.table))
-	// A thread of the program that waits on a word of a page whose frame
-	// returns wakes now, before the frame can serve another program: its
+	processor_sync(processors_with_table(process.table))
+	// A thread of the process that waits on a word of a page whose frame
+	// returns wakes now, before the frame can serve another process: its
 	// wait names the frame, so a later wake through a new frame of the page
 	// would not reach it, and a wake by the next user of the frame would.
-	// Only this program names the object, and the program lock keeps its
+	// Only this process names the object, and the process lock keeps its
 	// threads from a new wait meanwhile. It runs again and reads its words.
-	waiters_on_frames_wake(program, region, ranges)
+	waiters_on_frames_wake(process, region, ranges)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	cache := &self.frame_cache
@@ -173,11 +173,11 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	return changed, .Ok
 }
 
-// waiters_on_frames_wake wakes each thread of a program that has a word
+// waiters_on_frames_wake wakes each thread of a process that has a word
 // in a frame of the pages of the ranges of a memory object: a thread that
 // waits, or one that registered its words and does not wait yet. A decommit
-// and a revocation call it before the frames leave the program. The caller
-// holds the program lock of the program, so the words of its threads do
+// and a revocation call it before the frames leave the process. The caller
+// holds the process lock of the process, so the words of its threads do
 // not grow meanwhile. A thread with more words than this table holds wakes
 // anyway: a wake that was not needed is allowed (the thread reads its words
 // again).
@@ -190,16 +190,16 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 // one pass over its 262 144 slots, 2 MiB read in order.
 WAITING_WORD_CAPACITY :: 256
 
-waiters_on_frames_wake :: proc "contextless" (program: ^Program, region: ^Region, ranges: []op.Page_Range) {
+waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region, ranges: []op.Page_Range) {
 	Waiting_Word :: struct {
 		page:   u64, // The frame of the word.
 		thread: u32,
 	}
 	words: [WAITING_WORD_CAPACITY]Waiting_Word
 	count := 0
-	index := index_of_program(program)
+	index := index_of_process(process)
 	for &thread, slot in threads[1:] {
-		if thread.program != index || thread.word_count == 0 {
+		if thread.process != index || thread.word_count == 0 {
 			continue
 		}
 		if count + int(thread.word_count) > WAITING_WORD_CAPACITY {
@@ -270,10 +270,10 @@ protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -
 
 // protect_check finds the mapping of each range and checks what the
 // protection asks, before any change: a table is done whole or not at all.
-// A range covers the pages of one mapping of this program; Write needs a
+// A range covers the pages of one mapping of this process; Write needs a
 // mapping made with Write, Execute one made with Execute; a part of a
-// mapping needs an object with a frame list named only by this program.
-protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u8, status: Operation_Outcome) {
+// mapping needs an object with a frame list named only by this process.
+protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u8, status: Operation_Outcome) {
 	if .Write in flags && .Execute in flags || .No_Access in flags && flags != {.No_Access} {
 		return mappings, .Bad_Operation
 	}
@@ -283,7 +283,7 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 			return mappings, .Bad_Address
 		}
 		found := -1
-		for &mapping, slot in program.mappings {
+		for &mapping, slot in process.mappings {
 			if mapping.page_count != 0 && address >= mapping.address && (address - mapping.address) / PAGE_SIZE + count <= mapping.page_count {
 				found = slot
 				break
@@ -292,11 +292,11 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 		if found < 0 {
 			return mappings, .Bad_Address
 		}
-		mapping := &program.mappings[found]
+		mapping := &process.mappings[found]
 		if mapping.address >= op.THREAD_AREA_BASE {
 			return mappings, .Bad_Address // The thread areas and the time page keep their protection.
 		}
-		// More than the handle permitted when the program mapped the object.
+		// More than the handle permitted when the process mapped the object.
 		if .Write in flags && mapping.limit_bits & PAGE_WRITE == 0 || .Execute in flags && mapping.limit_bits & PAGE_NO_EXECUTE != 0 {
 			return mappings, .Bad_Operation
 		}
@@ -311,7 +311,7 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 			if regions[mapping.region].contiguous {
 				return mappings, .Bad_Address // Device memory, large pages: the protection is of the whole mapping.
 			}
-			if _, alone := object_only_here(program, mapping.region); !alone {
+			if _, alone := object_only_here(process, mapping.region); !alone {
 				return mappings, .Bad_State
 			}
 		}
@@ -321,7 +321,7 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 	// checked against the protection before the change of the whole:
 	// refused.
 	for range, index in ranges {
-		mapping := &program.mappings[mappings[index]]
+		mapping := &process.mappings[mappings[index]]
 		whole := range.address == mapping.address && range.page_count == mapping.page_count
 		for other, other_index in ranges {
 			if other_index != index && mappings[other_index] == mappings[index] && whole != (other.address == mapping.address && other.page_count == mapping.page_count) {
@@ -337,13 +337,13 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 // level at a time; a range with no table is skipped; the walk ends when it
 // has seen each present entry of the mapping (the entries that are not
 // present take their protection at their first use, in page_give).
-protect_entries_change :: proc "contextless" (program: ^Program, mapping: ^Mapping, region: ^Region, first, count: u64, self: ^Processor) {
+protect_entries_change :: proc "contextless" (process: ^Process, mapping: ^Mapping, region: ^Region, first, count: u64, self: ^Processor) {
 	seen: u64
 	present := mapping.present_page_count
 	for page := first; page < first + count && seen < present; {
 		address := mapping.address + page * PAGE_SIZE
 		run := min(512 - (address >> 12 & 511), first + count - page)
-		if entry := page_entry(program.table, address); entry != nil {
+		if entry := page_entry(process.table, address); entry != nil {
 			entries := ([^]u64)(entry)
 			for at in 0 ..< run {
 				if entries[at] & PAGE_PRESENT == 0 {
@@ -357,7 +357,7 @@ protect_entries_change :: proc "contextless" (program: ^Program, mapping: ^Mappi
 				} else {
 					entries[at] = entries[at] & PAGE_ADDRESS | bits
 				}
-				if self.table == program.table {
+				if self.table == process.table {
 					page_flush(address + at * PAGE_SIZE)
 				}
 			}
@@ -371,7 +371,7 @@ protect_entries_change :: proc "contextless" (program: ^Program, mapping: ^Mappi
 // is one entry. A whole mapping of 4 KiB pages changes only its present
 // entries, and its walk ends at the last of them (protect_entries_change),
 // so it counts its present pages: a mapping of 1 GiB of an object that
-// several programs name can change its protection whole, as long as it has
+// several processes name can change its protection whole, as long as it has
 // at most RANGE_TABLE_PAGE_LIMIT pages with a frame. A part counts each of
 // its pages: its marks are written in each slot.
 protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_Range) -> u64 {
@@ -386,20 +386,20 @@ protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_R
 }
 
 // memory_protect changes the protection of the pages of the ranges, then
-// makes each processor that uses the page table of the program forget the
+// makes each processor that uses the page table of the process forget the
 // old translations: one processor_sync for the table.
-memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: Operation_Outcome) {
-	places := protect_check(program, ranges, flags) or_return
+memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: Operation_Outcome) {
+	places := protect_check(process, ranges, flags) or_return
 	walked: u64
 	for range, index in ranges {
-		walked += protect_walk_count(&program.mappings[places[index]], range)
+		walked += protect_walk_count(&process.mappings[places[index]], range)
 	}
 	if walked > op.RANGE_TABLE_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
 	self := processor_self()
 	for range, index in ranges {
-		mapping := &program.mappings[places[index]]
+		mapping := &process.mappings[places[index]]
 		region_index := mapping.region
 		region := &regions[region_index]
 		first := (range.address - mapping.address) / PAGE_SIZE
@@ -444,7 +444,7 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 		if mapping.large {
 			for part in 0 ..< mapping.page_count / op.LARGE_PAGE_PAGES {
 				address := mapping.address + part * LARGE_PAGE_SIZE
-				entry := page_directory_entry(program.table, address)
+				entry := page_directory_entry(process.table, address)
 				if entry == nil {
 					continue
 				}
@@ -456,17 +456,17 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 				} else if !present && mapping.bits != 0 {
 					mapping.present_page_count += op.LARGE_PAGE_PAGES
 				}
-				if self.table == program.table {
+				if self.table == process.table {
 					page_flush(address)
 				}
 			}
 			changed += count
 			continue
 		}
-		protect_entries_change(program, mapping, region, first, count, self)
+		protect_entries_change(process, mapping, region, first, count, self)
 		changed += count
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
-	processor_sync(processors_with_table(program.table))
+	processor_sync(processors_with_table(process.table))
 	return changed, .Ok
 }

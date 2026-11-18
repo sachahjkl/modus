@@ -1,6 +1,6 @@
-; The hostile cases of the return to a program (main.odin): each one gives
+; The hostile cases of the return to a process (main.odin): each one gives
 ; the kernel a thread whose return the processor would refuse. Each runs in
-; a child program, which the kernel stops or which stops by itself.
+; a child process, which the kernel stops or which stops by itself.
 bits 64
 default rel
 section .text
@@ -8,7 +8,7 @@ section .text
 ; jump_to_the_last_instruction(address: rawptr, with_avx: bool) -> !
 ; With with_avx, the high halves of ymm0 to ymm15 get all ones: the thread
 ; holds AVX values when the kernel stops it. Then it jumps to address, the
-; syscall in the last two bytes below the half of a program, with rdi 0 (a
+; syscall in the last two bytes below the half of a process, with rdi 0 (a
 ; kernel entry with no wait). The address after that syscall is 2^47: not
 ; canonical.
 global jump_to_the_last_instruction
@@ -26,7 +26,7 @@ jump_to_the_last_instruction:
 	jmp rax
 
 ; spin_with_a_stack_that_is_not_canonical() -> !
-; A program can hold any value in rsp. This one holds an address that is
+; A process can hold any value in rsp. This one holds an address that is
 ; not canonical, uses no stack, and waits for the timer: the kernel entry
 ; of the timer saves that rsp in the frame of the thread.
 global spin_with_a_stack_that_is_not_canonical
@@ -41,7 +41,7 @@ spin_with_a_stack_that_is_not_canonical:
 ; Sets the flag nested task (bit 14) with popfq, writes the flags at before,
 ; makes one kernel entry with no wait, and gives the flags after it. Then it
 ; clears the flag again for the compiled code. A kernel that kept the flag
-; of the program would fault at its iretq.
+; of the process would fault at its iretq.
 global syscall_with_nested_task
 syscall_with_nested_task:
 	pushfq
@@ -62,11 +62,11 @@ syscall_with_nested_task:
 ; syscall_with_the_trap_flag() -> u64
 ; Sets the trap flag with popfq, then makes one kernel entry with no wait as
 ; the instruction right after popfq: a flag that popfq sets stops the
-; program after the instruction that follows it, so the trap belongs to
+; process after the instruction that follows it, so the trap belongs to
 ; that syscall. The mask of the kernel clears the flag for the kernel; the
 ; kernel must not take the trap at privilege 0. The kernel gives the flag
-; back with the flags of the program, so the trap comes after the first
-; instruction after the return: a fault of this program, which stops it.
+; back with the flags of the process, so the trap comes after the first
+; instruction after the return: a fault of this process, which stops it.
 ; If no trap comes, it clears the flag and gives 1.
 global syscall_with_the_trap_flag
 syscall_with_the_trap_flag:
@@ -75,7 +75,7 @@ syscall_with_the_trap_flag:
 	or qword [rsp], 0x100
 	popfq
 	syscall                      ; rax, rcx and r11 change.
-	pushfq                       ; The trap of the program comes after this instruction.
+	pushfq                       ; The trap of the process comes after this instruction.
 	and qword [rsp], ~0x100
 	popfq
 	mov eax, 1

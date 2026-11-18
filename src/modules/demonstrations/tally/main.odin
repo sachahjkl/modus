@@ -1,20 +1,20 @@
 // A count that its callers add to. This module shows that one file has each role: the system has no difference between a command line program, a library and a dynamic library.
 //
 // The same file, with the same hash, is used in four ways:
-//   start("tally")     a program, with a window that shows the count
-//   connect("tally")   a service: the calls go to the program that runs
+//   start("tally")     a process, with a window that shows the count
+//   connect("tally")   a service: the calls go to the process that runs
 //   load("tally")      a library: the calls are direct, in the memory of the caller
-//   isolate("tally")   a sandboxed program: the calls go through a ring
+//   isolate("tally")   a sandboxed process: the calls go through a ring
 //
-// The data of a module belongs to the program that runs it. The four uses give three counts: the program and the service have one count, the caller that loads the module has its own, and the sandboxed program has its own.
+// The data of a module belongs to the process that runs it. The four uses give three counts: the process and the service have one count, the caller that loads the module has its own, and the sandboxed process has its own.
 //
 // An export needs nothing from the entry: it reads and writes the data of the module only. That is the one rule for a module that has each role.
 //
-// **Grants**, as the root service gives them: **Serve**, so that `connect("tally")` reaches the program that runs.
+// **Grants**, as the root service gives them: **Serve**, so that `connect("tally")` reaches the process that runs.
 // `load` and `isolate` need no grant of tally: the console maps the file from the boot image.
 //
-// **What a reader sees**, as a program: the count, the number of adds, the last 8 notes with the newest first, and
-// the callers and the calls. The key Space adds 1, with the note "a key of the program". The log has "tally: ok"
+// **What a reader sees**, as a process: the count, the number of adds, the last 8 notes with the newest first, and
+// the callers and the calls. The key Space adds 1, with the note "a key of the process". The log has "tally: ok"
 // when the window opens.
 //
 // **Example**, in the console:
@@ -23,7 +23,7 @@
 // load("tally")
 // add(2, "two")       the count of the console: 2
 // connect("tally")
-// tally.add(5, "five")  the count of the program: 5
+// tally.add(5, "five")  the count of the process: 5
 // ```
 //
 // The design: (docs/MODULE_CONTRACT.md, "3. Static is dynamic").
@@ -55,7 +55,7 @@ notes: [NOTE_CAPACITY]Note // notes[(calls - 1) % NOTE_CAPACITY] is the last.
 
 // add adds an amount to the count, with a note that says why.
 //
-// The count and the notes are data of the module, in the program that runs it: the four ways of tally give three
+// The count and the notes are data of the module, in the process that runs it: the four ways of tally give three
 // counts. The module keeps the last 8 notes.
 //
 // - **amount**: the amount, positive or negative.
@@ -93,7 +93,7 @@ add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64
 
 // total gives the count.
 //
-// The count of the program that runs the module: after `load("tally")` it is the count of the caller itself. It
+// The count of the process that runs the module: after `load("tally")` it is the count of the caller itself. It
 // never fails.
 @(export, link_name = "total")
 total :: proc "c" () -> i64 {
@@ -155,7 +155,7 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 }
 
 // bar_items gives the item of the action bar. A procedure, not a global
-// array: an item is made by a call, and a freestanding program runs no
+// array: an item is made by a call, and a freestanding process runs no
 // call before its entry.
 bar_items :: proc "contextless" () -> [1]interface.Action_Bar_Item {
 	return {interface.action_bar_item("add 1", 1, "Space")}
@@ -167,7 +167,7 @@ bar_acted: bool // A press on the item ran its key: the next turn draws the new 
 // bar that a press ran. Space is one add of 1.
 key_run :: proc "contextless" (press: interface.Key_Press) {
 	if press.character == ' ' {
-		note := "a key of the program"
+		note := "a key of the process"
 		add(1, &note, nil)
 	}
 }
@@ -177,7 +177,7 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^system.Service) -> (facts_end: int) {
 	buffer: [24]u8
 	x := interface.draw_text(table, 12, 10, "count ", graphics.colors.dim)
-	// The count is the data of the module, in the memory of the program
+	// The count is the data of the module, in the memory of the process
 	// that runs it: the color of memory.
 	x = interface.draw_text(table, x, 10, system.format(buffer[:], count), graphics.colors.memory)
 	x = interface.draw_text(table, x + 24, 10, "adds ", graphics.colors.dim)
@@ -208,7 +208,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^syst
 	return interface.draw_text(table, x, text_y, system.format(buffer[:], service.calls), graphics.colors.text)
 }
 
-// The entry of tally: it runs only when tally is a program (`start` or
+// The entry of tally: it runs only when tally is a process (`start` or
 // `connect`), never after `load`. It opens the service and the window, then
 // runs the calls and the key Space in one loop until the principal closes
 // the window.

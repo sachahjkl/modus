@@ -99,7 +99,7 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Field", "detail", offset_of(module.Field, detail), size_of(field.detail)},
 		{"module.Field", "reserved", offset_of(module.Field, reserved), size_of(field.reserved)},
 		{"module.Budget_Request", "pages", offset_of(module.Budget_Request, pages), size_of(budget.pages)},
-		{"module.Budget_Request", "programs", offset_of(module.Budget_Request, programs), size_of(budget.programs)},
+		{"module.Budget_Request", "processes", offset_of(module.Budget_Request, processes), size_of(budget.processes)},
 		{"module.Budget_Request", "threads", offset_of(module.Budget_Request, threads), size_of(budget.threads)},
 		{"draw_record.Draw_Record", "kind", offset_of(draw_record.Draw_Record, kind), size_of(draw.kind)},
 		{"draw_record.Draw_Record", "reserved", offset_of(draw_record.Draw_Record, reserved), size_of(draw.reserved)},

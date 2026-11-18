@@ -1,9 +1,9 @@
 package terminal_records
 
-// The wait of one turn of the loop of the program `terminal`, in the thread
+// The wait of one turn of the loop of the process `terminal`, in the thread
 // that draws its window (src/md/features/terminal_due_picture.md).
 Picture_Wait :: enum u8 {
-	Nothing_To_Draw, // Wait for a record, a key, or the next look at the program. No picture is due.
+	Nothing_To_Draw, // Wait for a record, a key, or the next look at the process. No picture is due.
 	Compositor, // Wait until the compositor took the last picture: the canvas is not free.
 	Next_Frame, // Wait for the time of the next frame.
 }

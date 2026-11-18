@@ -26,8 +26,8 @@ palette_colors_keep_their_contrast :: proc(t: ^testing.T) {
 		// The chosen row: its name and its hint are white on the chosen blue.
 		expect_contrast(t, of, "white on the chosen row", COLOR_WHITE, tokens.chosen, TEXT_CONTRAST_LEAST)
 		// The row that asks for a second Enter: white on the color of "stop a
-		// program".
-		expect_contrast(t, of, "white on the row that asks", COLOR_WHITE, tokens.stop_program, TEXT_CONTRAST_LEAST)
+		// process".
+		expect_contrast(t, of, "white on the row that asks", COLOR_WHITE, tokens.stop_process, TEXT_CONTRAST_LEAST)
 		// The input band: the typed part is the strong text on the track,
 		// and each class of code keeps its contrast there too.
 		expect_contrast(t, of, "the typed part on the input band", tokens.text_strong, tokens.track, TEXT_CONTRAST_LEAST)
@@ -53,20 +53,20 @@ palette_colors_keep_their_contrast :: proc(t: ^testing.T) {
 // kinds") keeps the contrast of a graphic on each surface under it, in each
 // appearance: each color that an icon takes on the surface of a card, and
 // white on the chosen row and on the row that asks for a second Enter. The
-// deep red of "stop a program" does not keep it on a dark card, so the icon
+// deep red of "stop a process" does not keep it on a dark card, so the icon
 // of an entry that destroys has the brighter red of that concept.
 @(test)
 palette_icon_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	for of in Appearance {
 		tokens := color_tokens_of(of)
 		icon_colors := [?]Color {
-			value_kind_color(.Module, of), // A program that has a window, an export.
+			value_kind_color(.Module, of), // A module whose process has a window, an export.
 			value_kind_color(.Command, of), // A command.
 			value_kind_color(.Grant, of), // A grant, as a candidate of a field.
 			tokens.title, // The window that has the focus.
 			tokens.text, // The value of a setting that the machine uses.
 			tokens.dim, // The quiet state of each of them.
-			tokens.stop_program_pointer_over, // An entry that destroys.
+			tokens.stop_process_pointer_over, // An entry that destroys.
 		}
 		for surface in ([2]Color{tokens.card_top, tokens.card_bottom}) {
 			for color in icon_colors {
@@ -74,12 +74,12 @@ palette_icon_colors_keep_their_contrast :: proc(t: ^testing.T) {
 			}
 		}
 		expect_contrast(t, of, "a white icon on the chosen row", COLOR_WHITE, tokens.chosen, GRAPHIC_CONTRAST_LEAST)
-		expect_contrast(t, of, "a white icon on the row that asks", COLOR_WHITE, tokens.stop_program, GRAPHIC_CONTRAST_LEAST)
+		expect_contrast(t, of, "a white icon on the row that asks", COLOR_WHITE, tokens.stop_process, GRAPHIC_CONTRAST_LEAST)
 		// Why each icon of a chosen row is white: the color of a module is
 		// under the bound on the chosen blue.
 		testing.expect(t, value_contrast_ratio(value_kind_color(.Module, of), tokens.chosen) < GRAPHIC_CONTRAST_LEAST)
 	}
 	// Why the icon of an entry that destroys is not in the deep red: that
 	// pair is under the bound on a card of the dark appearance.
-	testing.expect(t, value_contrast_ratio(DARK_STOP_PROGRAM, DARK_CARD_TOP) < GRAPHIC_CONTRAST_LEAST)
+	testing.expect(t, value_contrast_ratio(DARK_STOP_PROCESS, DARK_CARD_TOP) < GRAPHIC_CONTRAST_LEAST)
 }

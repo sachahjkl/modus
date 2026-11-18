@@ -1,16 +1,16 @@
 // A demonstration: Conway's Game of Life.
 //   pointer, left button: draw cells    space: pause    r: random    c: clear
 //
-// This program is also a service: another program reads and changes the
+// This process is also a service: another process reads and changes the
 // cells with isolated calls, while the game runs.
 //
-// **What it is for.** It shows a program that is at once a window and a
+// **What it is for.** It shows a process that is at once a window and a
 // [service](term:service): its exports change the state that its window
 // draws, while the window runs. A caller reaches them through a connection
 // that the root service grants; it sees
-// the cells only through the exports, never the memory of the program.
+// the cells only through the exports, never the memory of the process.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("life")` in the console. A board of 96 by 64 cells, filled at
 // random, takes one step each 80 ms. The input draws cells with the left
 // button; Space pauses; `r` fills the board at random; `c` clears it. The
@@ -115,7 +115,7 @@ glider :: proc "c" (column, row: i64, error: ^errors.Error_Record) -> i64 {
 }
 
 // The window is built with the interface package (docs/INTERFACE.md): the
-// board is a picture of pixels of this program, and the window shows it
+// board is a picture of pixels of this process, and the window shows it
 // with one Picture record. Its generation changes when a cell changes, so
 // a frame with no change draws nothing.
 board_pixels: [COLUMNS * CELL * ROWS * CELL]graphics.Color
@@ -144,7 +144,7 @@ board_draw :: proc "contextless" () {
 }
 
 // entry opens the window, fills the board at random, and runs the game
-// until the program is stopped.
+// until the process is stopped.
 //
 // **The loop**: it runs the calls of its exports, takes the keys and the
 // pointer of the window, takes one step when the time of the next step

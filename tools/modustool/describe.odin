@@ -55,7 +55,7 @@ import "core:strings"
 //     the contract, and its description has no parameter.
 //   - The constant MODULE_BUDGET, at most one in the package, is the stated
 //     budget of the module: system.Stated_Budget{working_memory_pages = N,
-//     programs = N, threads = N, window_width = N, window_height = N}, or
+//     processes = N, threads = N, window_width = N, window_height = N}, or
 //     MODULE_BUDGET : system.Stated_Budget : {...}; each part an integer
 //     literal from 1, decimal or with a prefix 0x, 0o or 0b; a window part
 //     also the name of a constant of the package whose value is one integer
@@ -593,7 +593,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			if !address || result_text != "" && result_text != "i64" {
 				return describe_fail(path, declaration, "the entry has one parameter, an address, and no result or an i64 result")
 			}
-			// The entry has a comment as each export has: what this program
+			// The entry has a comment as each export has: what this module
 			// does when the loader starts it. With no comment its text is empty.
 			entry_description := Export_Description{name = name, file = path, line = declaration.pos.line}
 			entry_description.markdown = markdown_of(declaration.docs)
@@ -778,7 +778,7 @@ BUDGET_WINDOW_PART_LIMIT :: 2048
 budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> bool {
 	path := file.fullpath
 	// An argument of the format, not a part of it: its braces are text.
-	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, programs = N, threads = N, window_width = WIDTH, window_height = HEIGHT}"
+	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, processes = N, threads = N, window_width = WIDTH, window_height = HEIGHT}"
 	for statement in file.decls {
 		// A declaration inside a `when`: the tool reads the source with no
 		// setting of the build, so it cannot know the branch that the
@@ -800,7 +800,7 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 			return describe_fail(path, declaration, "%s is stated two times in the package: a module asks for one budget", BUDGET_REQUEST_NAME)
 		}
 		if declaration.is_mutable {
-			return describe_fail(path, declaration, "%s is a variable: it is a constant (::), so that the program cannot change the request that the build wrote; %s", BUDGET_REQUEST_NAME, FORM)
+			return describe_fail(path, declaration, "%s is a variable: it is a constant (::), so that the process cannot change the request that the build wrote; %s", BUDGET_REQUEST_NAME, FORM)
 		}
 		if len(declaration.values) != 1 {
 			return describe_fail(path, declaration, "%s has no value: %s", BUDGET_REQUEST_NAME, FORM)
@@ -844,14 +844,14 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 				return describe_fail(path, element, "%s: each part has its name (threads = N), so that a part never takes the place of another", BUDGET_REQUEST_NAME)
 			}
 			place: ^u64
-			// The window parts can name a constant: the program passes the
+			// The window parts can name a constant: the process passes the
 			// same constant to display.open.
 			window_index := -1
 			switch field.name {
 			case "working_memory_pages":
 				place = &stated.working_memory_pages
-			case "programs":
-				place = &stated.programs
+			case "processes":
+				place = &stated.processes
 			case "threads":
 				place = &stated.threads
 			case "window_width":
@@ -859,7 +859,7 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 			case "window_height":
 				place, window_index = &stated.window_height, 1
 			case:
-				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, programs, threads, window_width and window_height; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
+				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, processes, threads, window_width and window_height; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
 			}
 			if place^ != 0 || (window_index >= 0 && window_names[window_index] != "") {
 				return describe_fail(path, element, "%s states the part %s two times", BUDGET_REQUEST_NAME, field.name)
@@ -877,7 +877,7 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 			}
 			value, readable := integer_literal_value(number)
 			if !readable {
-				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer of 64 bits that the tool can read: a part counts pages, programs, threads or pixels", BUDGET_REQUEST_NAME, field.name, number.tok.text)
+				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer of 64 bits that the tool can read: a part counts pages, processes, threads or pixels", BUDGET_REQUEST_NAME, field.name, number.tok.text)
 			}
 			if value == 0 {
 				return describe_fail(path, element, "%s: the part %s is 0: leave the part out", BUDGET_REQUEST_NAME, field.name)

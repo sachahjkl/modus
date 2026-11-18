@@ -1,11 +1,11 @@
 // A demonstration: drawing with the pointer.
 //   left button: draw    right button: erase    click a color at the top    c: clear
 //
-// This program is also a service: it serves its exports while it runs.
-// Another program draws on the paper with isolated calls. The calls execute
-// in the one thread of this program, between two input events.
+// This process is also a service: it serves its exports while it runs.
+// Another process draws on the paper with isolated calls. The calls execute
+// in the one thread of this process, between two input events.
 //
-// **What it is for.** It is the smallest program that is both an
+// **What it is for.** It is the smallest process that is both an
 // application and a service: the same window takes the pointer and the
 // calls of the console, with one thread and no lock, because a call runs
 // between two events. The top line counts the callers and the calls.
@@ -41,7 +41,7 @@ colors := [?]graphics.Color{0x202428, 0xD03838, 0x2E9E4A, 0x2F6FD0, 0xE0A020, 0x
 
 drawn: i64 // The lines that calls drew.
 
-// The paper is a picture of this program (a Picture record of the interface
+// The paper is a picture of this process (a Picture record of the interface
 // package). paper_generation changes with each change of its pixels. The
 // palette and the top line are records.
 PAPER_HEIGHT :: HEIGHT - PALETTE_HEIGHT
@@ -54,7 +54,7 @@ window_memory: interface.Window_Memory(64, 256)
 
 // The key of the window, in its action bar.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [1]interface.Action_Bar_Item {
 	return {interface.action_bar_item("clear", 1, "c")}
 }
@@ -186,7 +186,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_rectangle(table, left + PALETTE_CELL - 3, 3, 3, PALETTE_HEIGHT - 6, 0xFFFFFF)
 			}
 		}
-		// The rest of the top line: the calls that this program served, and
+		// The rest of the top line: the calls that this process served, and
 		// the action bar of its key (docs/INTERFACE.md, "4.4 The action
 		// bar"), whose item stands from the right edge.
 		x := len(colors) * PALETTE_CELL

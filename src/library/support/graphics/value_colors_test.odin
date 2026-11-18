@@ -23,9 +23,9 @@ value_contrast_ratio :: proc(first, second: Color) -> f64 {
 	return (lighter + 0.05) / (darker + 0.05)
 }
 
-// Each value kind keeps its contrast on the surfaces where a program draws
+// Each value kind keeps its contrast on the surfaces where a process draws
 // values, in each appearance: the background and the two colors of a card.
-// The band of every second row of the program log is the top of a card.
+// The band of every second row of the process log is the top of a card.
 @(test)
 value_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	for of in Appearance {

@@ -6,7 +6,7 @@ import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
-// The log of the kernel: its records, the own log ring of each program, the
+// The log of the kernel: its records, the own log ring of each process, the
 // serial writer that writes their lines on the serial port, and the stop of
 // the machine. The serial port is the only device that the kernel has code
 // for, apart from the processor and its interrupt controller.
@@ -39,7 +39,7 @@ log_bytes :: proc "contextless" (bytes: []u8) {
 
 // The log (operation.Log_Record). Each record goes to two places: the
 // serial port, as one line of text, and the memory object of the log,
-// that programs with the grant read. The record also keeps the kind of each
+// that processes with the grant read. The record also keeps the kind of each
 // typed part of its text (modus:contract/value_kinds); the serial port has the
 // text only.
 Hex :: distinct u64
@@ -72,17 +72,17 @@ log_records: [^]op.Log_Record
 // of it with Read is the authority of Log_Read: its holder reads each
 // record already. 0: no log.
 log_region: u32
-// A record keeps the slot of its program and of its thread in one byte
-// each, so that it has room for the program serial and the own number in
+// A record keeps the slot of its process and of its thread in one byte
+// each, so that it has room for the process serial and the own number in
 // its 256 bytes.
-#assert(PROGRAM_CAPACITY <= 1 << 8)
+#assert(PROCESS_CAPACITY <= 1 << 8)
 #assert(THREAD_TABLE_CAPACITY <= 1 << 8)
 log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
 // The log lock protects the records of the log and their counter, and the
-// own log ring of each program with its count and its frames
+// own log ring of each process with its count and its frames
 // (docs/ARCHITECTURE.md, "Locks of the kernel"). It does not protect the
 // serial port: a Log that waited for the serial port under it would learn
-// how much the other programs wrote (src/md/features/log_side_channels.md).
+// how much the other processes wrote (src/md/features/log_side_channels.md).
 log_lock: Lock
 
 // The serial port has one writer at a time: the drain at the tick of any
@@ -156,7 +156,7 @@ log_fault_report_depth: u32
 // port, before the kernel reports its own fault. The report takes no lock,
 // because the processor can hold any lock, and it reads nothing through
 // the gs register: a fault of the kernel can arrive with the gs of a
-// program, and a read through it would be a second fault, with no end.
+// process, and a read through it would be a second fault, with no end.
 // Without this procedure, the report and a line that another processor
 // writes arrive as mixed bytes, and nobody can read the fault.
 //   - A second processor that has a fault of its own stops: one report.
@@ -348,7 +348,7 @@ kernel_log_lines_over: u64
 // op.LOG_RECORDS_OF_THE_KERNEL in this second, and counts it. Before the
 // first tick, each writer drains its record at once and no bound is needed.
 // A line past the bound is counted; the next line that fits is preceded by
-// one record with that count, inside the bound. So a program that faults
+// one record with that count, inside the bound. So a process that faults
 // in a loop cannot make the kernel flood the log
 // (src/md/features/log_side_channels.md). The caller holds the log lock.
 @(private = "file")
@@ -795,7 +795,7 @@ serial_flush :: proc "contextless" () {
 	serial_writer_free()
 }
 
-// own_log_ring_take takes the frames of the own log ring of a new program,
+// own_log_ring_take takes the frames of the own log ring of a new process,
 // zero, and the budget pays each one. false: the budget has too few pages,
 // and none is taken.
 own_log_ring_take :: proc "contextless" (budget: ^u32) -> (frames: [op.OWN_LOG_PAGES]u64, ok: bool) {
@@ -823,13 +823,13 @@ own_log_ring_give_back :: proc "contextless" (frames: [op.OWN_LOG_PAGES]u64, bud
 	lock_free(&frame_lock, .Frame)
 }
 
-// own_log_ring_end frees the own log ring of a program, if it has one, and
+// own_log_ring_end frees the own log ring of a process, if it has one, and
 // its pages return to its budget. The frames are cleared under the log
 // lock, so no Log_Read copies the ring after its pages leave; the frame
-// lock comes after the log lock is free. No thread of the program runs:
-// the caller is the first run of a guest, under the program lock, or the
-// free of the slot, under the control lock, with at most program locks.
-own_log_ring_end :: proc "contextless" (owner: ^Program) {
+// lock comes after the log lock is free. No thread of the process runs:
+// the caller is the first run of a guest, under the process lock, or the
+// free of the slot, under the control lock, with at most process locks.
+own_log_ring_end :: proc "contextless" (owner: ^Process) {
 	log_taken := log_take()
 	ring_frames := owner.log_ring_frames
 	owner.log_ring_frames = {}
@@ -838,13 +838,13 @@ own_log_ring_end :: proc "contextless" (owner: ^Program) {
 }
 
 // own_log_ring_copy copies, under the log lock, the records of the own log
-// ring of a program from the own number `after` on into a buffer: at most
+// ring of a process from the own number `after` on into a buffer: at most
 // `count`, in the order of their own numbers (op.own_log_window). found is
-// false when the slot holds no program with this serial and a ring. The
+// false when the slot holds no process with this serial and a ring. The
 // frames, the serial and the count of the owner change only under the log
-// lock while a ring exists: program_create sets the frames after the
+// lock while a ring exists: process_create sets the frames after the
 // serial, and the end of the ring clears them first.
-own_log_ring_copy :: proc "contextless" (owner: ^Program, serial: u64, after: u32, count: u64, buffer: ^[op.OWN_LOG_RECORD_CAPACITY]op.Log_Record) -> (copied: u64, lost: u64, total: u64, found: bool) {
+own_log_ring_copy :: proc "contextless" (owner: ^Process, serial: u64, after: u32, count: u64, buffer: ^[op.OWN_LOG_RECORD_CAPACITY]op.Log_Record) -> (copied: u64, lost: u64, total: u64, found: bool) {
 	taken := log_take()
 	defer log_free(taken)
 	if owner.log_ring_frames[0] == 0 || u64(intrinsics.atomic_load(&owner.serial)) != serial {
@@ -860,9 +860,9 @@ own_log_ring_copy :: proc "contextless" (owner: ^Program, serial: u64, after: u3
 }
 
 // own_log_record gives the place of the record with the count `number` in
-// the own log ring of a program, through the direct map. The caller holds
-// the log lock, and the program has a ring.
-own_log_record :: proc "contextless" (owner: ^Program, number: u64) -> ^op.Log_Record {
+// the own log ring of a process, through the direct map. The caller holds
+// the log lock, and the process has a ring.
+own_log_record :: proc "contextless" (owner: ^Process, number: u64) -> ^op.Log_Record {
 	page, offset := op.own_log_place(number)
 	return direct(owner.log_ring_frames[page] + offset, op.Log_Record)
 }
@@ -893,17 +893,17 @@ log_records_of_text :: proc "contextless" (text: []u8) -> u64 {
 // that falls in its text; the runs are in order and inside the text
 // (value_kinds.value_runs_check). The caller holds the log lock.
 //
-// The program slot and the program serial together name the program: the
-// log service gives a reader the records of its own program by the two
-// (src/md/features/log_reader_scope.md). `owner` is that program, nil for a
+// The process slot and the process serial together name the process: the
+// log service gives a reader the records of its own process by the two
+// (src/md/features/log_reader_scope.md). `owner` is that process, nil for a
 // record of the kernel. Its count of records takes one for each record,
 // under the log lock: each record takes the next own number, so a reader
 // of its own records numbers them with no count of the records of other
-// programs. Each record of a program also goes to its own log ring, which
+// processes. Each record of a process also goes to its own log ring, which
 // only its own records fill: a reader of its own records reads them there,
 // and the records of the others never push them out
 // (src/md/features/own_log_ring.md).
-log_record :: proc "contextless" (program: u32, program_serial: u32, owner: ^Program, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
+log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
 	if log_head == nil || log_serial_only {
 		return
 	}
@@ -935,9 +935,9 @@ log_record :: proc "contextless" (program: u32, program_serial: u32, owner: ^Pro
 		record^ = {
 			sequence       = written,
 			time           = microseconds(cycles_now()),
-			program        = u8(program),
+			process        = u8(process),
 			thread         = u8(thread),
-			program_serial = program_serial,
+			process_serial = process_serial,
 			own_number     = u32(own_count), // The low bits: a reader names a record by its distance to the count (op.own_log_window).
 			level          = level,
 			more           = u8(len(rest) != 0),
@@ -973,7 +973,7 @@ machine_stop :: #force_inline proc "contextless" (reason: Machine_Stop_Reason) -
 // tool reads the code, so each value is explicit. The operation
 // Machine_Stop gives its own code (machine_stop_with_code).
 Machine_Stop_Reason :: enum u8 {
-	Normal_End       = 0, // No program is left, or a self test of the start ended as it must.
+	Normal_End       = 0, // No process is left, or a self test of the start ended as it must.
 	Start_Failed     = 1, // The kernel cannot start: a record, a table or a part of the processor is missing or wrong.
 	Fault            = 2, // A fault of the kernel or of the machine: an exception in the kernel, a machine check.
 	Invariant_Broken = 3, // A check of the kernel found a broken rule: the lock order, a count, a lock that an operation asked for while it held it.

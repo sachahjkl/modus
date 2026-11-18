@@ -3,18 +3,18 @@ package operation
 
 import "core:testing"
 
-// The registers that a thread of a program holds after its start: each
+// The registers that a thread of a process holds after its start: each
 // write that the tests below change starts from them.
 @(private = "file")
-registers_of_a_program :: proc() -> Thread_Registers {
-	return {rip = PROGRAM_BASE, rsp = STACK_TOP - 8, rflags = THREAD_FLAGS_REQUIRED, cs = THREAD_CODE_SELECTOR, ss = THREAD_STACK_SELECTOR}
+registers_of_a_process :: proc() -> Thread_Registers {
+	return {rip = PROCESS_BASE, rsp = STACK_TOP - 8, rflags = THREAD_FLAGS_REQUIRED, cs = THREAD_CODE_SELECTOR, ss = THREAD_STACK_SELECTOR}
 }
 
 // A write that the return of the processor would take is accepted, with
-// each flag that a program can set itself, and the trap flag.
+// each flag that a process can set itself, and the trap flag.
 @(test)
-the_registers_of_a_program_are_accepted :: proc(t: ^testing.T) {
-	registers := registers_of_a_program()
+the_registers_of_a_process_are_accepted :: proc(t: ^testing.T) {
+	registers := registers_of_a_process()
 	refusal, _ := thread_registers_refusal(&registers)
 	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
 	registers.rflags = THREAD_FLAGS_ALLOWED
@@ -27,9 +27,9 @@ the_registers_of_a_program_are_accepted :: proc(t: ^testing.T) {
 }
 
 // Each value that would make the processor refuse the return, or give a
-// program a right that it does not have, is refused, with that value.
+// process a right that it does not have, is refused, with that value.
 @(test)
-the_registers_that_a_program_cannot_hold_are_refused :: proc(t: ^testing.T) {
+the_registers_that_a_process_cannot_hold_are_refused :: proc(t: ^testing.T) {
 	Case :: struct {
 		change:  proc(registers: ^Thread_Registers),
 		refusal: Thread_Write_Refusal,
@@ -47,7 +47,7 @@ the_registers_that_a_program_cannot_hold_are_refused :: proc(t: ^testing.T) {
 		{proc(registers: ^Thread_Registers) {registers.rsp = 0x8000_0000_0000_0000}, .Stack_Address, 0x8000_0000_0000_0000},
 	}
 	for item in cases {
-		registers := registers_of_a_program()
+		registers := registers_of_a_process()
 		item.change(&registers)
 		refusal, value := thread_registers_refusal(&registers)
 		testing.expectf(t, refusal == item.refusal && value == item.value, "%v %x, not %v %x", refusal, value, item.refusal, item.value)
@@ -115,7 +115,7 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			testing.expect(t, .Control not_in rights)
 		case .Write_Breakpoints:
 			// No thread handle writes a breakpoint: only the debugger of
-			// the program, through its program handle.
+			// the process, through its process handle.
 			testing.expect(t, thread_control_needs_the_debugger(command))
 			testing.expect(t, thread_control_takes_debug_handle(command))
 		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Placement:
@@ -124,18 +124,18 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			// A write that only lowers a share, or only narrows a set of
 			// processors: less than the end of the thread.
 			testing.expect_value(t, rights, Rights{.Control})
-		case .Read_Program_Schedule, .Write_Program_Schedule:
-			// No thread handle takes them: they name a program, through
+		case .Read_Process_Schedule, .Write_Process_Schedule:
+			// No thread handle takes them: they name a process, through
 			// the machine handle only.
-			testing.expect(t, thread_control_names_a_program(command))
+			testing.expect(t, thread_control_names_a_process(command))
 		case .Start_Counters, .Read_Counters, .Stop_Counters:
 			// No thread handle takes them: they act on the calling
 			// thread, through the machine handle with Counters only.
 			testing.expect(t, thread_control_counts_the_caller(command))
 			testing.expect_value(t, THREAD_COUNTERS_RIGHTS, Rights{.Counters})
 		}
-		if command != .Read_Program_Schedule && command != .Write_Program_Schedule {
-			testing.expect(t, !thread_control_names_a_program(command))
+		if command != .Read_Process_Schedule && command != .Write_Process_Schedule {
+			testing.expect(t, !thread_control_names_a_process(command))
 		}
 		if command != .Start_Counters && command != .Read_Counters && command != .Stop_Counters {
 			testing.expect(t, !thread_control_counts_the_caller(command))
@@ -149,7 +149,7 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 		case .Read_Schedule, .Read_Placement:
 			testing.expect(t, by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
-		case .Write_Schedule, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
+		case .Write_Schedule, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule:
 			testing.expect(t, by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
 		case:
@@ -159,7 +159,7 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 	}
 }
 
-// The program handle with Debug names a thread for each command but the
+// The process handle with Debug names a thread for each command but the
 // two of the schedule, the two of the placement and the three of the
 // thread counters.
 @(test)
@@ -167,7 +167,7 @@ the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		taken := thread_control_takes_debug_handle(command)
 		#partial switch command {
-		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 			testing.expect(t, !taken)
 		case:
 			testing.expect(t, taken)
@@ -180,12 +180,12 @@ the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
 @(private = "file")
 FOUR_PROCESSORS :: u64(0b1111)
 
-// A program only narrows the set of its thread: a set inside the set that
+// A process only narrows the set of its thread: a set inside the set that
 // the thread has is accepted, 0 keeps the set, and the limit of the record
 // is not read. The bits of processors that the machine does not have are
 // dropped.
 @(test)
-a_program_only_narrows_a_placement :: proc(t: ^testing.T) {
+a_process_only_narrows_a_placement :: proc(t: ^testing.T) {
 	whole := Thread_Placement{processors = FOUR_PROCESSORS, processors_limit = FOUR_PROCESSORS}
 	cases := [?]struct {
 		written: Thread_Placement,
@@ -211,12 +211,12 @@ a_program_only_narrows_a_placement :: proc(t: ^testing.T) {
 	}
 }
 
-// What a write of a program refuses: a processor that the set of the
+// What a write of a process refuses: a processor that the set of the
 // thread does not have, and a set with no processor of the machine. The
 // placement stays, and the error record gets the set that the write had
 // to stay inside.
 @(test)
-the_placements_that_a_program_cannot_write :: proc(t: ^testing.T) {
+the_placements_that_a_process_cannot_write :: proc(t: ^testing.T) {
 	cases := [?]struct {
 		written: u64,
 		held:    Thread_Placement,
@@ -298,7 +298,7 @@ the_placements_that_the_machine_handle_cannot_write :: proc(t: ^testing.T) {
 }
 
 // Each accepted write leaves a set that is not empty, that is inside its
-// limit and inside the machine; a write of a program is also inside the
+// limit and inside the machine; a write of a process is also inside the
 // set of before and keeps the limit. Each small pair of sets is tried, on
 // machines of 1, 4 and 64 processors.
 @(test)
@@ -338,7 +338,7 @@ no_write_leaves_a_placement_outside_its_bounds :: proc(t: ^testing.T) {
 	}
 }
 
-// A breakpoint is at an address of a program, with a kind and a length
+// A breakpoint is at an address of a process, with a kind and a length
 // that the processor has; the control register gets the local enable bits
 // only.
 @(test)
@@ -381,7 +381,7 @@ the_breakpoints_that_a_thread_can_have :: proc(t: ^testing.T) {
 	}
 }
 
-// The debugger of a program takes the two traps, and no other kind.
+// The debugger of a process takes the two traps, and no other kind.
 @(test)
 the_kinds_of_a_debugger :: proc(t: ^testing.T) {
 	mask, ok := fault_kinds_of_debugger_argument(0)
@@ -391,7 +391,7 @@ the_kinds_of_a_debugger :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, mask, FAULT_KINDS_DEBUGGER)
 	// One of the two kinds alone is refused: the other would stay with
-	// the program.
+	// the process.
 	_, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Debug))
 	testing.expect(t, !ok)
 	_, ok = fault_kinds_of_debugger_argument(u64(1) << u64(Fault_Kind.Page_Fault))
@@ -451,23 +451,23 @@ a_new_thread_gets_the_new_thread_weight_limit :: proc(t: ^testing.T) {
 	testing.expect_value(t, grandchild.weight_limit, LIMIT)
 }
 
-// The schedule of a program: 0 is the full value, a value above the full
+// The schedule of a process: 0 is the full value, a value above the full
 // weight is refused as a weight limit above it is, and a creation takes the
-// smaller of the value of the thread and the value of its program.
+// smaller of the value of the thread and the value of its process.
 @(test)
-the_schedule_of_a_program :: proc(t: ^testing.T) {
+the_schedule_of_a_process :: proc(t: ^testing.T) {
 	LIMIT :: u32(WEIGHT_FULL / THREAD_CAPACITY)
-	after, refusal := program_schedule_after_write({})
+	after, refusal := process_schedule_after_write({})
 	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
 	testing.expect_value(t, after.new_thread_weight_limit, u32(WEIGHT_FULL))
-	after, refusal = program_schedule_after_write({new_thread_weight_limit = LIMIT})
+	after, refusal = process_schedule_after_write({new_thread_weight_limit = LIMIT})
 	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
 	testing.expect_value(t, after.new_thread_weight_limit, LIMIT)
-	_, refusal = program_schedule_after_write({new_thread_weight_limit = WEIGHT_FULL + 1})
+	_, refusal = process_schedule_after_write({new_thread_weight_limit = WEIGHT_FULL + 1})
 	testing.expect_value(t, refusal, Thread_Write_Refusal.New_Thread_Weight_Limit)
-	// A thread with the full value in a program of the small value: a
-	// thread that the policy never wrote is closed by its program.
+	// A thread with the full value in a process of the small value: a
+	// thread that the policy never wrote is closed by its process.
 	testing.expect_value(t, new_thread_weight_limit_of_creation(WEIGHT_FULL, LIMIT), LIMIT)
 	testing.expect_value(t, new_thread_weight_limit_of_creation(LIMIT, WEIGHT_FULL), LIMIT)
-	testing.expect_value(t, program_slot_and_serial(5, 7), u64(5) | u64(7) << 32)
+	testing.expect_value(t, process_slot_and_serial(5, 7), u64(5) | u64(7) << 32)
 }

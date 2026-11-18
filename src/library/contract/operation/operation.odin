@@ -1,8 +1,8 @@
-// The kernel operations: what a program can ask the kernel. The list is
+// The kernel operations: what a process can ask the kernel. The list is
 // short and counted, and only a change of docs/PROPERTIES.md changes its
 // limit (docs/PROPERTIES.md, "Small kernel with a small, counted interface").
 //
-// Each thread of a program has one ring to the kernel: the kernel ring. It
+// Each thread of a process has one ring to the kernel: the kernel ring. It
 // is one page after the thread record of the thread, and the `gs` register
 // of the thread holds the address of the thread record. A kernel
 // operation is a command record in that ring: kind is an Operation, values
@@ -15,7 +15,7 @@
 //            since boot). WAIT_FOREVER waits with no time limit.
 //   rax   on return: the time, in milliseconds since boot.
 //
-// This package is the contract between the kernel and every program. The
+// This package is the contract between the kernel and every process. The
 // kernel imports it to read the commands and write the completions;
 // `src/library/support/system` imports it to give each operation a procedure; the
 // developer tools import its report records to read what the kernel shows.
@@ -27,26 +27,26 @@
 // - `Operation`: the kernel operations, each with its arguments, results and
 //   statuses.
 // - `Status`: the result kind of each completion record.
-// - `Handle`, `Right`, `Rights`, `Object_Kind`: how a program names an object
+// - `Handle`, `Right`, `Rights`, `Object_Kind`: how a process names an object
 //   and what it can do with it.
 // - `Time_Record`, `Thread_Record`, `Context`: the three records that the
-//   kernel or the starter puts at fixed addresses of each program.
+//   kernel or the starter puts at fixed addresses of each process.
 // - `Budget_Amounts`: what a budget holds and limits.
 // - `Fault_Record`, `Fault_Kind`, `Thread_Registers`: the fault ring and the
 //   control of a thread.
 // - `Event_Rule`, `Event_Record`, `Event_Ring`: the kernel events.
 // - `Guest_Registers`, `Guest_Exit_Kind`: a guest (`Guest_Run`).
 // - `Log_Head`, `Log_Record`, `Log_Level`: the log of the kernel.
-// - The reports of `Inspect`: `System_Report`, `Program_Report`,
+// - The reports of `Inspect`: `System_Report`, `Process_Report`,
 //   `Processor_Report`, `Boot_Report`, `Mapping_Report`, `Module_Report`,
-//   `Program_Mapping_Report`, `Thread_Table_Report`, `Stop_Report`,
+//   `Process_Mapping_Report`, `Thread_Table_Report`, `Stop_Report`,
 //   `Page_Report`.
-// - The fixed addresses of a program (`PROGRAM_BASE` to `USER_END`) and the
+// - The fixed addresses of a process (`PROCESS_BASE` to `USER_END`) and the
 //   roles of the context (`CONTEXT_LOG`, `CONTEXT_BUDGET`, the `CONTEXT_VALUE_`
 //   constants, the `ROOT_` constants).
 //
 // The design is in (docs/ARCHITECTURE.md, "Kernel systems") and in
-// (docs/ARCHITECTURE.md, "The virtual memory of a program").
+// (docs/ARCHITECTURE.md, "The virtual memory of a process").
 package operation
 
 import info "modus:contract/boot_info"
@@ -60,28 +60,28 @@ PAGE_SIZE :: 4096
 // or as the deadline of `Word_Wait`.
 WAIT_FOREVER :: max(u64)
 
-// The addresses of a program that the system fixes. Each program has the same
+// The addresses of a process that the system fixes. Each process has the same
 // layout, so that a loader, a debugger and a stop report read an address with
 // no table:
 //
-// - from `PROGRAM_BASE`: the module of the program;
+// - from `PROCESS_BASE`: the module of the process;
 // - from `CHOSEN_BASE`: the mappings whose address the kernel chooses;
-// - from `MODULE_BASE`: the modules that the program loads;
+// - from `MODULE_BASE`: the modules that the process loads;
 // - below `STACK_TOP`: the stack of the first thread;
 // - at `CONTEXT_ADDRESS`: the context;
 // - from `THREAD_AREA_BASE`: the thread areas;
 // - at `TIME_ADDRESS`: the time page;
-// - at `USER_END`: the end of the half of the addresses that a program owns.
-PROGRAM_BASE :: 0x0000_0000_0040_0000 // The module of the program: the starter maps its first byte here, at 4 MiB.
+// - at `USER_END`: the end of the half of the addresses that a process owns.
+PROCESS_BASE :: 0x0000_0000_0040_0000 // The module of the process: the starter maps its first byte here, at 4 MiB.
 CHOSEN_BASE :: 0x0000_1000_0000_0000 // Where the kernel puts a mapping with no given address: `Memory_Map` with the address 0 takes the lowest free place from here, and below `MODULE_BASE`.
-// Where a program loads, while it runs, the modules that it calls: the
-// console and the program `errors` start their `system.Module_Space` here.
+// Where a process loads, while it runs, the modules that it calls: the
+// console and the process `errors` start their `system.Module_Space` here.
 // The places end at `fixed_addresses.MODULES_END`. The modules that the
-// starter loads with the program follow it from `PROGRAM_BASE`.
+// starter loads with the process follow it from `PROCESS_BASE`.
 MODULE_BASE :: 0x0000_2000_0000_0000
 // The first address above the stack of the first thread. The stack grows
 // down from here: its `STACK_PAGES` pages end at this address. The starter
-// maps it, and gives it to `Program_Start` as the stack address.
+// maps it, and gives it to `Process_Start` as the stack address.
 STACK_TOP :: 0x0000_7FFF_FFE0_0000
 // The pages of the stack of the first thread: 64 pages, 256 KiB. A thread
 // that `system.thread_start` makes has its own count (`THREAD_STACK_PAGES`).
@@ -91,7 +91,7 @@ STACK_PAGES :: 64
 // the tool counts both in the budget that a module asks for
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
 THREAD_STACK_PAGES :: 16
-// The address of the context of the program (`Context`): the starter maps one
+// The address of the context of the process (`Context`): the starter maps one
 // page there and gives this address as the parameter of the entry.
 CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
 // The thread areas: one per thread, THREAD_AREA_PAGES pages each. An area
@@ -103,26 +103,26 @@ CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
 // write past the kernel ring faults and touches no other thread.
 THREAD_AREA_BASE :: 0x0000_7FFF_FFF4_0000
 THREAD_AREA_PAGES :: 4 // One page of thread record, the two pages of the kernel ring (`ring.PAGE_COUNT`), one guard page.
-// The threads of one program, at the same time. `Thread_Create` gives
+// The threads of one process, at the same time. `Thread_Create` gives
 // `No_Slot` when all the thread numbers are in use. The 32 thread areas end
 // below `TIME_ADDRESS`.
 THREAD_CAPACITY :: 32
-// The time page: one page that the kernel writes and that each program can
-// only read. A program reads the time with no kernel entry.
+// The time page: one page that the kernel writes and that each process can
+// only read. A process reads the time with no kernel entry.
 TIME_ADDRESS :: 0x0000_7FFF_FFFE_0000
-// The first address that a program does not own: the end of the lower half
+// The first address that a process does not own: the end of the lower half
 // of the addresses of the processor. The kernel refuses a mapping that ends
 // above it, and a thread instruction address at or above it.
 USER_END :: 0x0000_8000_0000_0000
 
-// The record at TIME_ADDRESS. A program reads `milliseconds` with one load
+// The record at TIME_ADDRESS. A process reads `milliseconds` with one load
 // of 64 bits: the value is always complete.
 //
-// The kernel is the one writer; a program maps the page read only. The
+// The kernel is the one writer; a process maps the page read only. The
 // clock that it gives is the clock of the machine since boot: it is not a
 // date (the date page gives the date). `system.time` reads `milliseconds`.
 //
-// Example: a program that reads `milliseconds = 5230` 5.23 seconds after the
+// Example: a process that reads `milliseconds = 5230` 5.23 seconds after the
 // kernel made the page; with `cycle_frequency = 2_000_000_000`, a cycle count
 // of `cycle_start + 3_000_000` is 1.5 ms after the time 0.
 Time_Record :: struct {
@@ -134,28 +134,28 @@ Time_Record :: struct {
 	// boot.
 	cycle_frequency: u64,
 	// The cycle counter at the time 0. It does not change after boot. A
-	// program that needs a time finer than one millisecond reads the cycle
+	// process that needs a time finer than one millisecond reads the cycle
 	// counter, subtracts this, and divides by the frequency.
 	cycle_start: u64,
 }
 
-// A handle: the number by which one program names one kernel object, with
+// A handle: the number by which one process names one kernel object, with
 // the rights that it holds on it. 0 names no object.
 //
-// A handle names a slot of the handle table of its program: the same number
-// in another program names another object, or none. Its low 16 bits are the
+// A handle names a slot of the handle table of its process: the same number
+// in another process names another object, or none. Its low 16 bits are the
 // index of the slot, and the next 16 bits a generation that changes at each
 // close of the slot: an old number of a closed handle names no new object,
-// and gives `Bad_Handle`. A program gets a handle
+// and gives `Bad_Handle`. A process gets a handle
 // from an operation that makes an object (`Memory_Create`), from its
-// starter in its `Context`, or from another program with `Handle_Give`. The
+// starter in its `Context`, or from another process with `Handle_Give`. The
 // kernel checks each handle argument: a handle that names no object of the
 // kind that an operation needs gives `Bad_Handle`; a handle with too few
 // rights gives `No_Right`. `Handle_Close` ends a handle; an object ends when
 // no handle and no mapping names it. See [handle](term:handle) and
 // (docs/ARCHITECTURE.md, "K1. Handle table").
 //
-// Example: the log handle of a program is `context.handles[CONTEXT_LOG]`.
+// Example: the log handle of a process is `context.handles[CONTEXT_LOG]`.
 Handle :: distinct u32
 
 // A right: one kind of operation that a handle permits on its object. The
@@ -168,17 +168,17 @@ Handle :: distinct u32
 // the comment of each operation the rights that it needs are in **bold**.
 // See [right](term:right).
 //
-// Example: a starter gives a program read-only memory with
-// `Handle_Give` and the rights `{.Read}`: the program maps it with no
+// Example: a starter gives a process read-only memory with
+// `Handle_Give` and the rights `{.Read}`: the process maps it with no
 // `Write` and gives no copy of it, because it has no **Give**.
 Right :: enum u32 {
-	Give    = 0, // Each kind: give a copy of the handle to another program.
-	Read    = 1, // Memory: map it; the memory of the log: also copy the own log ring of a program (Log_Read). Program, Thread: read its state. Interrupt: read its count. Budget: read what it holds (Budget_Read).
+	Give    = 0, // Each kind: give a copy of the handle to another process.
+	Read    = 1, // Memory: map it; the memory of the log: also copy the own log ring of a process (Log_Read). Process, Thread: read its state. Interrupt: read its count. Budget: read what it holds (Budget_Read).
 	// Memory: map it with Write. Log: write text on the log. Thread: write its registers and its extended state
-	// while it is held (Thread_Control): full control of the code that its program runs.
+	// while it is held (Thread_Control): full control of the code that its process runs.
 	Write   = 2,
 	Execute = 3, // Memory: map it with Execute.
-	// Program: map memory in it, give handles to it, start it, stop it. Thread: end it, make it the fault handler,
+	// Process: map memory in it, give handles to it, start it, stop it. Thread: end it, make it the fault handler,
 	// write its weight and its request (Thread_Control).
 	Control = 4,
 	// Machine: read the reports. Thread: hold it and release it, and read its registers, its extended state and its
@@ -192,18 +192,18 @@ Right :: enum u32 {
 	// two weight limits and the placement of any thread (Thread_Control).
 	Schedule = 10,
 	// Budget: pay pages of a memory object that this budget already pays for (Memory_Commit), and nothing else: no
-	// object, thread, program or budget is created with it. The narrow form of Spend, to give to another program.
+	// object, thread, process or budget is created with it. The narrow form of Spend, to give to another process.
 	Commit = 11,
 	// Machine: give the event table of the machine (Events_Set): the kernel then writes records of its own work,
-	// for every program or for the programs that the rules name, into memory of the caller.
+	// for every process or for the processes that the rules name, into memory of the caller.
 	Events = 12,
-	// Program: debug it. The holder becomes the debugger of the program (Fault_Handler_Set with the program
+	// Process: debug it. The holder becomes the debugger of the process (Fault_Handler_Set with the process
 	// handle): it receives its debug exceptions and its breakpoints, holds its threads by their numbers, reads
-	// and writes their registers and their breakpoints, and reads the memory of the program (Thread_Control).
-	// The handle of a new program has it; the root service gives it to no program at its start.
+	// and writes their registers and their breakpoints, and reads the memory of the process (Thread_Control).
+	// The handle of a new process has it; the root service gives it to no process at its start.
 	Debug = 13,
 	// Machine: count the events of the processor for the code of the calling thread (Thread_Control, the
-	// commands of the thread counters). A count of the misses of a shared cache measures what other programs do,
+	// commands of the thread counters). A count of the misses of a shared cache measures what other processes do,
 	// so it is a grant, as a precise clock is (src/md/features/processor_counters.md).
 	Counters = 14,
 }
@@ -216,17 +216,17 @@ Rights :: bit_set[Right;u32]
 // kernel checks it at each handle argument.
 Object_Kind :: enum u8 {
 	None      = 0, // No object: the handle number is free, or was never given.
-	Memory    = 1, // A memory object: pages that a program maps (`Memory_Create`). Rights: Give, Read, Write, Execute.
-	Program   = 2, // A program: its addresses, its handles and its threads (`Program_Create`). Rights: Give, Read, Control, Debug.
+	Memory    = 1, // A memory object: pages that a process maps (`Memory_Create`). Rights: Give, Read, Write, Execute.
+	Process   = 2, // A process: its addresses, its handles and its threads (`Process_Create`). Rights: Give, Read, Control, Debug.
 	Interrupt = 3, // One interrupt line or message interrupt of a device, which wakes the threads of its holder (`Device_Create`). Rights: Give, Read.
 	Ports     = 4, // A range of input and output ports of a device (`Device_Create`). Rights: Give.
 	Machine   = 5, // The machine: its rights are Give, Inspect, Devices, Stop, Physical, Schedule, Events and Counters.
-	Thread    = 6, // One thread of a program (`Thread_Create`). Rights: Give, Read, Write, Control, Inspect.
+	Thread    = 6, // One thread of a process (`Thread_Create`). Rights: Give, Read, Write, Control, Inspect.
 	Budget    = 7, // A budget: what its holders can still create (`Budget_Create`). Rights: Give, Read, Spend, Commit.
-	Log       = 8, // The log of the kernel. Rights: Give, Write. Each program has one at `CONTEXT_LOG`.
+	Log       = 8, // The log of the kernel. Rights: Give, Write. Each process has one at `CONTEXT_LOG`.
 }
 
-// What a program asks the kernel. A thread asks for an operation with one
+// What a process asks the kernel. A thread asks for an operation with one
 // command record in its kernel ring: `kind` is the operation, and the
 // values are its arguments, in the order of its form. Then it enters the
 // kernel with the `syscall` instruction. The kernel executes the commands
@@ -244,7 +244,7 @@ Object_Kind :: enum u8 {
 // operation: the kernel refuses the command with `Bad_Operation` and the
 // error record `Unknown_Operation`, and changes nothing.
 //
-// A handle argument names an object of this program by the number that a
+// A handle argument names an object of this process by the number that a
 // grant or an operation gave. When the handle names no object of the kind
 // that the operation needs, the status is `Bad_Handle`; when it names the
 // object but has not the right that the operation needs, `No_Right`. The
@@ -256,15 +256,15 @@ Operation :: enum u32 {
 	None           = 0,
 	Log            = 1, // (log, address, length, level: Log_Level, channel, channel, runs).
 	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
-	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the program and
-	// the thread of each record, so a program cannot write a record of another program. The operation writes
+	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the process and
+	// the thread of each record, so a process cannot write a record of another process. The operation writes
 	// the records only; the tick of the first processor writes their line on the serial port after it, so a
-	// `Log` never waits for the lines of other programs.
+	// `Log` never waits for the lines of other processes.
 	//
 	// **Arguments**
 	//
-	// - `log`: the log handle, with **Write**. Each program has it in its context at `CONTEXT_LOG`.
-	// - `address`, `length`: the text, at most `LOG_TEXT_BYTES_MOST` bytes, in memory that the program can read. A text longer
+	// - `log`: the log handle, with **Write**. Each process has it in its context at `CONTEXT_LOG`.
+	// - `address`, `length`: the text, at most `LOG_TEXT_BYTES_MOST` bytes, in memory that the process can read. A text longer
 	//   than `LOG_TEXT_CAPACITY` continues in the next records (`Log_Record`, `more`).
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
 	// - `channel`, `channel`: the name of the channel, 16 bytes in two values. The name is the bytes before
@@ -279,11 +279,11 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
-	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the program cannot read the text and its runs.
+	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
 	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
-	// - `No_Budget`: the budget of the program accepted all the records of its amount in this second
+	// - `No_Budget`: the budget of the process accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
-	//   what other programs wrote.
+	//   what other processes wrote.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
 	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
 	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
@@ -312,21 +312,21 @@ Operation :: enum u32 {
 	//   `Uncommitted` with another flag; `Large_Pages` with a count that is not a multiple of
 	//   `LARGE_PAGE_PAGES`.
 	// - `No_Budget`: the budget cannot pay.
-	// - `No_Slot`: the table of the memory objects of the kernel is full, or the handle table of the program.
+	// - `No_Slot`: the table of the memory objects of the kernel is full, or the handle table of the process.
 	// - `No_Memory`: a contiguous object finds no free run of its length, though the budget can pay.
 	//
 	// ```odin
 	// memory, status := system.memory_create(16, flags = {.Frames_Now})
 	// ```
-	Memory_Map     = 3, // (memory, program, address, flags: Map_Flags, first, pages) -> address.
-	// Maps pages of a memory object in this program or in another program, and gives the address of the
+	Memory_Map     = 3, // (memory, process, address, flags: Map_Flags, first, pages) -> address.
+	// Maps pages of a memory object in this process or in another process, and gives the address of the
 	// first page.
 	//
 	// **Arguments**
 	//
 	// - `memory`: a memory handle with **Read**, and **Write** to map with `Write`, **Execute** to map with
 	//   `Execute`.
-	// - `program`: 0 for this program, or a program handle with **Control**.
+	// - `process`: 0 for this process, or a process handle with **Control**.
 	// - `address`: the address of the first page: a multiple of 4096, at least 4096, with the mapping below
 	//   `USER_END` and over no other mapping. 0: the kernel chooses the lowest free place from
 	//   `CHOSEN_BASE`, with a page with no mapping before and after it, on 2 MiB for an object of
@@ -341,33 +341,33 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `memory` or `program` is not a handle of its kind with its rights.
-	// - `No_Right`: also, the program maps in itself at addresses that meet a module record of the
+	// - `Bad_Handle`, `No_Right`: `memory` or `process` is not a handle of its kind with its rights.
+	// - `No_Right`: also, the process maps in itself at addresses that meet a module record of the
 	//   writer `Starter` (`Module_Writer`). The error kind is `Starter_Module`. The kernel checks it before
 	//   the other mappings. An address that the kernel chooses meets no such record.
-	// - `Bad_State`: the program is stopped; or a part of the object has a protection of its own
+	// - `Bad_State`: the process is stopped; or a part of the object has a protection of its own
 	//   (`Memory_Protect`): such an object has one mapping only.
 	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
 	//   4096, ends above `USER_END`, or meets another mapping.
 	// - `Bad_Operation`: `Write` with `Execute`; or a flag that the kernel does not know, which it refuses
 	//   before it reads the handles; or, with the IOMMU in use, `memory` is device memory over the
-	//   registers of a device with a domain and `program` names another program: only the holder of the
+	//   registers of a device with a domain and `process` names another process: only the holder of the
 	//   registers maps them, so that its mappings keep the domain of the device.
-	// - `No_Slot`: the program has 128 mappings, or the kernel finds no free place for the address that it
+	// - `No_Slot`: the process has 128 mappings, or the kernel finds no free place for the address that it
 	//   chooses.
-	// - `No_Budget`, `No_Memory`: the budget of the program that receives the mapping cannot pay its page
+	// - `No_Budget`, `No_Memory`: the budget of the process that receives the mapping cannot pay its page
 	//   tables, or no page frame is free.
 	//
 	// ```odin
 	// address, status := system.memory_map(memory, flags = {.Write})
 	// ```
-	Memory_Unmap   = 4, // (program, address).
-	// Removes the mapping that starts at an address, in this program or in another program. The memory
+	Memory_Unmap   = 4, // (process, address).
+	// Removes the mapping that starts at an address, in this process or in another process. The memory
 	// object ends when no handle and no mapping names it.
 	//
 	// **Arguments**
 	//
-	// - `program`: 0 for this program, or a program handle with **Control**.
+	// - `process`: 0 for this process, or a process handle with **Control**.
 	// - `address`: the first byte of a mapping, below `THREAD_AREA_BASE`: the thread areas and the time page
 	//   stay.
 	//
@@ -375,10 +375,10 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
-	// - `No_Right`: also, the program unmaps in itself a mapping that meets a module record of the writer
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
+	// - `No_Right`: also, the process unmaps in itself a mapping that meets a module record of the writer
 	//   `Starter` (`Module_Writer`). The error kind is `Starter_Module`.
-	// - `Bad_State`: the program is stopped.
+	// - `Bad_State`: the process is stopped.
 	// - `Bad_Address`: no mapping starts at the address, or it is a thread area or the time page.
 	Memory_Size    = 5, // (memory) -> pages.
 	// Gives the count of pages of a memory object.
@@ -392,69 +392,69 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`: `memory` is not a memory handle.
-	Program_Create = 6, // (budget, name, name_length) -> program handle.
-	// Makes a program, in the state `Created`, and gives a handle to it with **Give**, **Read** and
-	// **Control**. The program has no memory and no handle: its addresses hold the time page only.
-	// `Program_Start` starts it.
+	Process_Create = 6, // (budget, name, name_length) -> process handle.
+	// Makes a process, in the state `Created`, and gives a handle to it with **Give**, **Read** and
+	// **Control**. The process has no memory and no handle: its addresses hold the time page only.
+	// `Process_Start` starts it.
 	//
 	// **Arguments**
 	//
-	// - `budget`: a budget handle with **Spend**. It pays for one program slot, for the page tables of
-	//   the program, and for the `OWN_LOG_PAGES` pages of its own log ring, which return to it when the
-	//   slot of the program is free. The program keeps it: it pays for its first thread at `Program_Start`, and for each
-	//   page table of the program after.
-	// - `name`, `name_length`: the name of the program, at most `PROGRAM_NAME_BYTES_MOST` bytes, in memory that the program can
+	// - `budget`: a budget handle with **Spend**. It pays for one process slot, for the page tables of
+	//   the process, and for the `OWN_LOG_PAGES` pages of its own log ring, which return to it when the
+	//   slot of the process is free. The process keeps it: it pays for its first thread at `Process_Start`, and for each
+	//   page table of the process after.
+	// - `name`, `name_length`: the name of the process, at most `PROCESS_NAME_BYTES_MOST` bytes, in memory that the process can
 	//   read: the reports and the log show it. Each byte is a printable character of ASCII or the
 	//   space (32 to 126): a name starts each line of the log on the serial port.
 	//
-	// **Results**: the program handle.
+	// **Results**: the process handle.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `Bad_Address`: `name_length` is above `PROGRAM_NAME_BYTES_MOST`, or the program cannot read the name.
+	// - `Bad_Address`: `name_length` is above `PROCESS_NAME_BYTES_MOST`, or the process cannot read the name.
 	// - `Bad_Operation`: a byte of the name is outside 32 to 126.
-	// - `No_Budget`: the budget has no program slot or no page left, or it cannot pay the page tables or
+	// - `No_Budget`: the budget has no process slot or no page left, or it cannot pay the page tables or
 	//   the own log ring.
-	// - `No_Slot`: the table of the programs of the kernel is full, or the handle table of the program.
-	Program_Start  = 7, // (program, entry, stack, context).
-	// Starts a program that `Program_Create` made: its first thread runs at `entry`, and the program goes
-	// from `Created` to `Ready`. The budget of the program pays for the thread, as `Thread_Create` does.
+	// - `No_Slot`: the table of the processes of the kernel is full, or the handle table of the process.
+	Process_Start  = 7, // (process, entry, stack, context).
+	// Starts a process that `Process_Create` made: its first thread runs at `entry`, and the process goes
+	// from `Created` to `Ready`. The budget of the process pays for the thread, as `Thread_Create` does.
 	// The first thread gets the limit of a new thread of the calling thread
 	// (`new_thread_weight_limit_of_creation`: the smaller of the new-thread weight limit of the calling
-	// thread and the one of its program) and the limit of its placement (`Thread_Placement`): a program
-	// does not leave a limit by a program that it starts.
+	// thread and the one of its process) and the limit of its placement (`Thread_Placement`): a process
+	// does not leave a limit by a process that it starts.
 	//
 	// **Arguments**
 	//
-	// - `program`: a program handle with **Control**, of a program in the state `Created`.
+	// - `process`: a process handle with **Control**, of a process in the state `Created`.
 	// - `entry`: the address of the first instruction, below `USER_END`.
 	// - `stack`: the top of the stack, from 8 to `USER_END`; the thread starts with its stack pointer at
 	//   `stack` minus 8, as after a call.
 	// - `context`: the value of the first register of the thread. By the rule of the system it is the
-	//   address of the `Context` of the program (`CONTEXT_ADDRESS`); the kernel does not read it.
+	//   address of the `Context` of the process (`CONTEXT_ADDRESS`); the kernel does not read it.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
-	// - `Bad_State`: the program is not in the state `Created`.
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
+	// - `Bad_State`: the process is not in the state `Created`.
 	// - `Bad_Address`: `entry` or `stack` is out of its range.
-	// - `No_Budget`: the budget of the program has no thread slot left, or it cannot pay for the thread
+	// - `No_Budget`: the budget of the process has no thread slot left, or it cannot pay for the thread
 	//   area or its page tables.
-	// - `No_Slot`: the thread table of the kernel is full, or the program has `THREAD_CAPACITY` threads.
+	// - `No_Slot`: the thread table of the kernel is full, or the process has `THREAD_CAPACITY` threads.
 	// - `No_Memory`: no free run of page frames for the thread area.
-	Program_Stop   = 8, // (program, code).
-	// Stops a program: this one or another one. Each of its threads ends, and the operation returns when no
-	// thread of the program runs an instruction any more. The program is `Stopped` with the stop code, which
-	// `Program_State` gives. Its handles, its mappings and its memory end when its last thread left its
-	// processor. A program that is stopped already stays as it is.
+	Process_Stop   = 8, // (process, code).
+	// Stops a process: this one or another one. Each of its threads ends, and the operation returns when no
+	// thread of the process runs an instruction any more. The process is `Stopped` with the stop code, which
+	// `Process_State` gives. Its handles, its mappings and its memory end when its last thread left its
+	// processor. A process that is stopped already stays as it is.
 	//
 	// **Arguments**
 	//
-	// - `program`: 0 for this program, or a program handle with **Control**. With 0, the thread that asks
-	//   ends with its program: the operation does not return.
+	// - `process`: 0 for this process, or a process handle with **Control**. With 0, the thread that asks
+	//   ends with its process: the operation does not return.
 	// - `code`: the stop code, any value. The kernel uses the codes `STOP_CODE_FAULT` to
 	//   `STOP_CODE_FAULT_UNANSWERED` for the stops that it makes.
 	//
@@ -462,82 +462,82 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
-	Program_State  = 9, // (program, report: Stop_Report) -> state: Program_State, code, entries, slot, serial.
-	// Gives the state of a program, its stop code, its count of kernel entries, and its place in the reports of
-	// `Inspect`. With an address, the kernel also writes there where the program stopped on a fault.
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
+	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, code, entries, slot, serial.
+	// Gives the state of a process, its stop code, its count of kernel entries, and its place in the reports of
+	// `Inspect`. With an address, the kernel also writes there where the process stopped on a fault.
 	//
-	// The root service states facts of a program that it started by that place: the disk program page names
-	// each disk program by its slot and its serial, which the reports of `Inspect` give too
-	// (`modus:contract/disk_program_page`).
+	// The root service states facts of a process that it started by that place: the disk process page names
+	// each disk process by its slot and its serial, which the reports of `Inspect` give too
+	// (`modus:contract/disk_process_page`).
 	//
 	// **Arguments**
 	//
-	// - `program`: a program handle with **Read**.
-	// - `report`: 0, or the address of a `Stop_Report` that the program can write: the instruction, the
-	//   address of a page fault, the module and the stack trace of the fault that stopped the program. All
-	//   zero while the program runs, or when it stopped with no fault.
+	// - `process`: a process handle with **Read**.
+	// - `report`: 0, or the address of a `Stop_Report` that the process can write: the instruction, the
+	//   address of a page fault, the module and the stack trace of the fault that stopped the process. All
+	//   zero while the process runs, or when it stopped with no fault.
 	//
 	// **Results**
 	//
-	// 1. the `Program_State` of the program: `Created`, `Ready` (one of its threads is ready), `Waiting` or
+	// 1. the `Process_State` of the process: `Created`, `Ready` (one of its threads is ready), `Waiting` or
 	//    `Stopped`;
 	// 2. its stop code: 0 while it runs;
 	// 3. its kernel entries since its start;
-	// 4. its program slot: the index that `Inspect` with the kind `Program` takes for it;
-	// 5. its program serial, as `Program_Report.program_serial` gives it: the slot and the serial name this
-	//    program and no later one. The kernel keeps both until the last handle of the program closes.
+	// 4. its process slot: the index that `Inspect` with the kind `Process` takes for it;
+	// 5. its process serial, as `Process_Report.process_serial` gives it: the slot and the serial name this
+	//    process and no later one. The kernel keeps both until the last handle of the process closes.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Read**.
-	// - `Bad_Address`: the program cannot write the `Stop_Report` at `report`.
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Read**.
+	// - `Bad_Address`: the process cannot write the `Stop_Report` at `report`.
 	Handle_Give    = 10, // (target, handle, rights: Rights) -> the handle in the target.
-	// Copies a handle into a program, with a part of its rights: a grant never adds a right. The kernel
+	// Copies a handle into a process, with a part of its rights: a grant never adds a right. The kernel
 	// records where the copy came from (its origin): `Handle_Revoke` of the given handle ends the copy, and
 	// when the given handle closes, the copy comes from the origin of the given handle.
 	//
 	// **Arguments**
 	//
 	// - `target`: where the copy goes:
-	//   - 0: this program, with no right needed;
-	//   - a program handle with **Control**: that program;
-	//   - a memory handle: the other program that maps this memory, the other side of a ring. If no other
-	//     program maps it, the one other program that holds a handle to it. The kernel keeps, with the
+	//   - 0: this process, with no right needed;
+	//   - a process handle with **Control**: that process;
+	//   - a memory handle: the other process that maps this memory, the other side of a ring. If no other
+	//     process maps it, the one other process that holds a handle to it. The kernel keeps, with the
 	//     copy, the memory object that it came through: `Handle_State` proves it to the receiver.
-	// - `handle`: the handle to give, with **Give** when the target is another program.
-	// - `rights`: the rights of the copy are the rights of `handle` that are also in `rights`. A program
-	//   handle that goes to the program that it names also loses **Control** and **Give**: a program never
+	// - `handle`: the handle to give, with **Give** when the target is another process.
+	// - `rights`: the rights of the copy are the rights of `handle` that are also in `rights`. A process
+	//   handle that goes to the process that it names also loses **Control** and **Give**: a process never
 	//   holds the authority of its starter over itself, so it cannot give it to a child that would change
 	//   its module records ([the writer of a module record](docs/MODULE_CONTRACT.md#the-writer-of-a-module-record)).
 	//
-	// **Results**: the number of the copy in the target program.
+	// **Results**: the number of the copy in the target process.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`: `handle` or `target` names nothing; `target` is a handle of another kind; or it is a
-	//   memory object that no other program maps or holds, or that two other programs hold.
-	// - `No_Right`: `handle` has not **Give**, or the program handle `target` has not **Control**.
-	// - `Bad_State`: the target program is stopped; or `handle` names a memory object with a protection of
-	//   its own on a part (`Memory_Protect`), and the target is another program.
-	// - `No_Slot`: the handle table of the target program is full.
+	//   memory object that no other process maps or holds, or that two other processes hold.
+	// - `No_Right`: `handle` has not **Give**, or the process handle `target` has not **Control**.
+	// - `Bad_State`: the target process is stopped; or `handle` names a memory object with a protection of
+	//   its own on a part (`Memory_Protect`), and the target is another process.
+	// - `No_Slot`: the handle table of the target process is full.
 	//
 	// ```odin
-	// copy, status := system.give(program, memory, {.Read})
+	// copy, status := system.give(process, memory, {.Read})
 	// ```
 	Handle_Close   = 11, // (handle).
-	// Closes a handle of this program. What came from it (its copies and its mappings) comes from its origin
+	// Closes a handle of this process. What came from it (its copies and its mappings) comes from its origin
 	// now. The object ends when nothing names it:
 	//
 	// - a memory object, when no handle and no mapping names it;
 	// - a budget, when its last handle closes: what it holds returns to the budget that it came from, which
 	//   pays for its objects;
-	// - a program: it stops with `STOP_CODE_NO_HANDLE` when its last handle closes;
-	// - the event table of the machine, when the last machine handle with **Events** of its program closes.
+	// - a process: it stops with `STOP_CODE_NO_HANDLE` when its last handle closes;
+	// - the event table of the machine, when the last machine handle with **Events** of its process closes.
 	//
 	// **Arguments**
 	//
-	// - `handle`: any handle of this program.
+	// - `handle`: any handle of this process.
 	//
 	// **Results**: none.
 	//
@@ -546,7 +546,7 @@ Operation :: enum u32 {
 	// - `Bad_Handle`: `handle` names nothing.
 	Interrupt_Read = 12, // (interrupt) -> count.
 	// Gives the count of the interrupts of a line or of a message interrupt since the last read, and sets
-	// it to 0. Each interrupt also adds 1 to the `events` word of the threads of the program that holds the
+	// it to 0. Each interrupt also adds 1 to the `events` word of the threads of the process that holds the
 	// handle, and wakes them.
 	//
 	// **Arguments**
@@ -566,7 +566,7 @@ Operation :: enum u32 {
 	// - `machine`: the machine handle, with **Devices**.
 	// - `kind`, `a`, `b`: a `Device_Kind` and its two values:
 	//   - `Ports`: `a` the first port, below 65536, and `b` the count, from 1 to 65536 minus `a`: a ports
-	//     handle with **Give**; the threads of the program use the ports with `in` and `out`;
+	//     handle with **Give**; the threads of the process use the ports with `in` and `out`;
 	//   - `Interrupt`: `a` a line of the 8259, from 1 to 15: an interrupt handle with **Give** and **Read**;
 	//   - `Memory`: `a` the physical address, a multiple of 4096, and `b` the count of pages of the
 	//     registers of a device: a memory handle with **Give**, **Read** and **Write**, mapped with no cache.
@@ -600,37 +600,37 @@ Operation :: enum u32 {
 	//   a range that does not hold the framebuffer of the firmware: the error record has the kind
 	//   `Bad_Value` for `a`, with the address of that framebuffer as its limit.
 	// - `No_Slot`: no free memory object, no free message interrupt (`MESSAGE_CAPACITY`), or the handle
-	//   table of the program is full.
+	//   table of the process is full.
 	Inspect        = 14, // (machine, kind: Inspect_Kind, index, address, size) -> bytes written.
-	// Writes a report of the kernel into memory of the program. Each `Inspect_Kind` has its report:
+	// Writes a report of the kernel into memory of the process. Each `Inspect_Kind` has its report:
 	//
 	// - `System`: a `System_Report`; `index` is not read;
-	// - `Program`: the `Program_Report` of the program slot `index`;
+	// - `Process`: the `Process_Report` of the process slot `index`;
 	// - `Processor`: the `Processor_Report` of the processor `index`;
 	// - `Boot`: the `Boot_Report`;
 	// - `Mappings`: the `Mapping_Report` of the page table: `index` 0 for the kernel half of the addresses,
-	//   another value for the half of the program that asks;
-	// - `Modules`: the `Module_Report` of the program slot `index`;
-	// - `Program_Mappings`, `Threads`, `Stop`: the reports of a developer tool for the program slot `index`:
-	//   `Program_Mapping_Report`, `Thread_Table_Report`, `Stop_Report`;
-	// - `Pages`: the `Page_Report` of the program that asks, for the address that it wrote in the record;
+	//   another value for the half of the process that asks;
+	// - `Modules`: the `Module_Report` of the process slot `index`;
+	// - `Process_Mappings`, `Threads`, `Stop`: the reports of a developer tool for the process slot `index`:
+	//   `Process_Mapping_Report`, `Thread_Table_Report`, `Stop_Report`;
+	// - `Pages`: the `Page_Report` of the process that asks, for the address that it wrote in the record;
 	//   `index` must be 0.
 	//
-	// A slot or a processor with no program, or out of the table, gives a report of zeros.
+	// A slot or a processor with no process, or out of the table, gives a report of zeros.
 	//
 	// **Arguments**
 	//
 	// - `machine`: the machine handle, with **Inspect**.
 	// - `kind`, `index`: the report, as above.
 	// - `address`, `size`: the memory of the report: `size` is at least the size of the report, and the
-	//   program can write it.
+	//   process can write it.
 	//
 	// **Results**: the bytes written: the size of the report.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Inspect**.
-	// - `Bad_Address`: `size` is below the size of the report, or the program cannot write the memory.
+	// - `Bad_Address`: `size` is below the size of the report, or the process cannot write the memory.
 	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know; for `Pages`, `index` is
 	//   not 0, or the address in the record is not a multiple of 4096, or its 64 pages pass `USER_END`.
 	Machine_Stop   = 15, // (machine, code).
@@ -648,24 +648,24 @@ Operation :: enum u32 {
 	// - `Bad_Operation`: `code` is above `MACHINE_STOP_CODE_MOST`. A code that the host cannot receive
 	//   whole is refused: else a code of 256 would end the machine with 0, the code of a normal end.
 	Thread_Create  = 16, // (budget, entry, stack, parameter, weight, request) -> thread handle.
-	// Starts a new thread of this program, and gives a handle to it with **Give**, **Read**, **Write**,
+	// Starts a new thread of this process, and gives a handle to it with **Give**, **Read**, **Write**,
 	// **Control** and **Inspect**. The thread is ready at once: it starts at `entry` with `parameter` in its
 	// first register, and its stack pointer at `stack` minus 8.
 	//
 	// **Arguments**
 	//
 	// - `budget`: a budget handle with **Spend**. It pays for the thread slot and for the thread area: the
-	//   thread record, the kernel ring and a page with no memory. The budget of the program pays for the
+	//   thread record, the kernel ring and a page with no memory. The budget of the process pays for the
 	//   page tables of the area.
 	// - `entry`: the address of the first instruction, below `USER_END`.
 	// - `stack`: the top of the stack, from 8 to `USER_END`.
 	// - `parameter`: any value.
 	// - `weight`: from 1 to the limit of a new thread: the smaller of the new-thread weight limit of the
-	//   calling thread (`Thread_Schedule`) and the one of its program (`Program_Schedule`,
+	//   calling thread (`Thread_Schedule`) and the one of its process (`Process_Schedule`,
 	//   `new_thread_weight_limit_of_creation`). Each is `WEIGHT_FULL` unless the holder of the machine
-	//   lowered it; 0 is that limit. A weight above it is refused. While the share policy of the program
-	//   `scheduler` is on, it writes the program weight divided by 32 there, so the limit can be 32: a
-	//   program that passes a weight reads its own schedule first, or passes 0. The share of the thread
+	//   lowered it; 0 is that limit. A weight above it is refused. While the share policy of the process
+	//   `scheduler` is on, it writes the process weight divided by 32 there, so the limit can be 32: a
+	//   process that passes a weight reads its own schedule first, or passes 0. The share of the thread
 	//   under the strategies that use weights. A weight can only be lower than the weight of a thread
 	//   created with 0. The new thread gets that limit as its weight limit and as its own new-thread
 	//   weight limit (`thread_schedule_of_new_thread`). It also gets the limit of the
@@ -681,8 +681,8 @@ Operation :: enum u32 {
 	// - `Bad_Operation`: `weight` is above the limit of a new thread, or `request` above
 	//   `REQUEST_LIMIT`.
 	// - `Bad_Address`: `entry` or `stack` is out of its range.
-	// - `Bad_State`: the program stops.
-	// - `No_Slot`: the thread table of the kernel is full, the program has `THREAD_CAPACITY` threads, or
+	// - `Bad_State`: the process stops.
+	// - `No_Slot`: the thread table of the kernel is full, the process has `THREAD_CAPACITY` threads, or
 	//   its handle table is full.
 	// - `No_Budget`: the budget has no thread slot left, or it cannot pay for the thread area or its page
 	//   tables.
@@ -692,9 +692,9 @@ Operation :: enum u32 {
 	// thread, status := system.thread_start(worker, nil)
 	// ```
 	Thread_Stop    = 17, // (thread).
-	// Ends a thread: the calling thread, or a thread that a handle names, of this program or of another one.
+	// Ends a thread: the calling thread, or a thread that a handle names, of this process or of another one.
 	// A thread on another processor leaves it at once, and the operation returns after it left. The other
-	// threads of its program get an event. A program with no thread left stops, with the code 0.
+	// threads of its process get an event. A process with no thread left stops, with the code 0.
 	//
 	// **Arguments**
 	//
@@ -706,7 +706,7 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**.
-	Thread_State   = 18, // (thread) -> state: Program_State, stop count, area bytes, components, form.
+	Thread_State   = 18, // (thread) -> state: Process_State, stop count, area bytes, components, form.
 	// Gives the state of a thread, and what a holder of the thread needs for `Thread_Control`.
 	//
 	// **Arguments**
@@ -715,7 +715,7 @@ Operation :: enum u32 {
 	//
 	// **Results**
 	//
-	// 1. its `Program_State`: `Ready`, `Waiting` or `Stopped`. A thread that a stop holds is `Ready` when
+	// 1. its `Process_State`: `Ready`, `Waiting` or `Stopped`. A thread that a stop holds is `Ready` when
 	//    its wait ended, and runs only when its stop count is 0;
 	// 2. its stop count (`Thread_Control`);
 	// 3. the bytes of the extended state area of a thread on this machine;
@@ -730,14 +730,14 @@ Operation :: enum u32 {
 	// Adds words to the wait of this kernel entry: the one way to wait for something else than a time. A
 	// thread that asks for a wait when it enters the kernel waits at the end of the entry while each word
 	// of its list holds its value. The wait ends when `Word_Wake` names one of its words, or at its
-	// deadline. The kernel names a word by its page frame, so two programs that map one memory object wait
+	// deadline. The kernel names a word by its page frame, so two processes that map one memory object wait
 	// on one word. If a word does not hold its value already, the wait ends at once: no wake is lost
 	// between a read of the word and the wait.
 	//
 	// **Arguments**
 	//
 	// - `words`: the address of `count` records `Word`: each one is the address of a word of 32 bits, a
-	//   multiple of 4 that the program can read, and the value that the word holds while the thread waits
+	//   multiple of 4 that the process can read, and the value that the word holds while the thread waits
 	//   (the low 32 bits of `value`).
 	// - `count`: the words of this command. One entry holds at most `WORD_WAIT_CAPACITY` words in all its
 	//   commands.
@@ -747,7 +747,7 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `No_Slot`: the entry would hold more than `WORD_WAIT_CAPACITY` words.
-	// - `Bad_Address`: the program cannot read the table or a word, or a word is not a multiple of 4. The
+	// - `Bad_Address`: the process cannot read the table or a word, or a word is not a multiple of 4. The
 	//   entry then does not wait.
 	//
 	// ```odin
@@ -759,21 +759,21 @@ Operation :: enum u32 {
 	//
 	// **Arguments**
 	//
-	// - `word`: the address of a word of 32 bits, a multiple of 4 that the program can read.
+	// - `word`: the address of a word of 32 bits, a multiple of 4 that the process can read.
 	// - `count`: the most threads to wake.
 	//
 	// **Results**: the count of threads woken.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Address`: the program cannot read the word, or its address is not a multiple of 4.
+	// - `Bad_Address`: the process cannot read the word, or its address is not a multiple of 4.
 	//
 	// ```odin
 	// system.word_wake(&ready)
 	// ```
-	Budget_Create  = 21, // (budget, pages, programs, threads, processor, log_records) -> budget handle.
+	Budget_Create  = 21, // (budget, pages, processes, threads, processor, log_records) -> budget handle.
 	// Makes a budget from a budget, and gives a handle to it with **Give**, **Read**, **Spend** and
-	// **Commit** (`Budget_Amounts` says what each amount is). The pages, the program slots, the thread
+	// **Commit** (`Budget_Amounts` says what each amount is). The pages, the process slots, the thread
 	// slots and the log records of each second move from `budget` to the new budget. The processor time is
 	// a limit for each second, for the new budget and each budget that comes from it. When the last handle
 	// to the new budget closes, what it holds returns to `budget`, which pays for its objects.
@@ -781,7 +781,7 @@ Operation :: enum u32 {
 	// **Arguments**
 	//
 	// - `budget`: a budget handle with **Spend**.
-	// - `pages`, `programs`, `threads`: what moves to the new budget.
+	// - `pages`, `processes`, `threads`: what moves to the new budget.
 	// - `processor`: microseconds of processor time in each second, on all the processors together: at most
 	//   the limit of `budget`.
 	// - `log_records`: records of the log in each second, which move to the new budget.
@@ -792,8 +792,8 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
 	// - `No_Budget`: `budget` holds less than an amount that moves, or a limit is above its own.
-	// - `No_Slot`: the table of the budgets of the kernel is full, or the handle table of the program.
-	Budget_Read    = 22, // (budget) -> pages, programs, threads, processor, log_records, processor time, refused.
+	// - `No_Slot`: the table of the budgets of the kernel is full, or the handle table of the process.
+	Budget_Read    = 22, // (budget) -> pages, processes, threads, processor, log_records, processor time, refused.
 	// Gives what a budget can still pay, its limits, and what it used.
 	//
 	// **Arguments**
@@ -803,7 +803,7 @@ Operation :: enum u32 {
 	// **Results**
 	//
 	// 1. the pages that it can still pay;
-	// 2. the program slots that it can still pay;
+	// 2. the process slots that it can still pay;
 	// 3. the thread slots that it can still pay;
 	// 4. its limit of processor time: microseconds in each second;
 	// 5. the log records of each second that it holds: its amount, after the budgets that came from it;
@@ -814,14 +814,14 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Read**.
 	Handle_State   = 23, // (handle, memory) -> kind: Object_Kind, rights: Rights, through, holdings.
-	// Gives the kind and the rights of a handle of this program, and proves where it came from. A program
-	// that receives the number of a handle from another program, in a ring, proves with this operation that
-	// the other program gave the handle through that ring (`Handle_Give` with the memory of the ring as its
-	// target). Without the proof, the other program can name a handle that the receiver holds for itself.
+	// Gives the kind and the rights of a handle of this process, and proves where it came from. A process
+	// that receives the number of a handle from another process, in a ring, proves with this operation that
+	// the other process gave the handle through that ring (`Handle_Give` with the memory of the ring as its
+	// target). Without the proof, the other process can name a handle that the receiver holds for itself.
 	//
 	// **Arguments**
 	//
-	// - `handle`: any handle of this program.
+	// - `handle`: any handle of this process.
 	// - `memory`: 0, or a memory handle with any rights: the memory of the ring.
 	//
 	// **Results**
@@ -829,32 +829,32 @@ Operation :: enum u32 {
 	// 1. the `Object_Kind` of the object;
 	// 2. the `Rights` of the handle;
 	// 3. 1 when the handle came through the memory object of `memory`, else 0;
-	// 4. the count of the holdings that came from this handle, in all programs: what `Handle_Revoke` ends.
+	// 4. the count of the holdings that came from this handle, in all processes: what `Handle_Revoke` ends.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`: `handle` names nothing, or `memory` is not a memory handle.
-	Handle_Revoke  = 24, // (handle, program) -> holdings ended.
+	Handle_Revoke  = 24, // (handle, process) -> holdings ended.
 	// Ends each holding that came from a handle. A holding is a handle or a mapping. The origin of a handle
 	// that `Handle_Give` made is the handle that was given; the origin of a mapping is the memory handle
 	// that was mapped. When a handle closes, what came from it comes from its origin. The operation ends
-	// each holding that came from the handle, and what came from those holdings, in any program. The handle
-	// stays, and the mappings of the program that revokes stay. A program that lost a holding gets an event.
-	// A thread that uses memory that its program lost stops its program on a page fault.
+	// each holding that came from the handle, and what came from those holdings, in any process. The handle
+	// stays, and the mappings of the process that revokes stay. A process that lost a holding gets an event.
+	// A thread that uses memory that its process lost stops its process on a page fault.
 	//
 	// **Arguments**
 	//
-	// - `handle`: any handle of this program, with any rights: the program that holds it is the origin of
+	// - `handle`: any handle of this process, with any rights: the process that holds it is the origin of
 	//   what came from it.
-	// - `program`: 0 for each program, or a program handle with **Control**: only the holdings in that
-	//   program.
+	// - `process`: 0 for each process, or a process handle with **Control**: only the holdings in that
+	//   process.
 	//
 	// **Results**: the count of the holdings that ended.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`: `handle` names nothing, or `program` is not a program handle.
-	// - `No_Right`: the program handle has not **Control**.
+	// - `Bad_Handle`: `handle` names nothing, or `process` is not a process handle.
+	// - `No_Right`: the process handle has not **Control**.
 	Memory_Physical = 25, // (machine, memory) -> device address.
 	// Gives the address that a device uses for the first page of a memory object, so that a device service
 	// gives it to its device, which reads and writes the memory with no processor (direct memory access).
@@ -864,13 +864,13 @@ Operation :: enum u32 {
 	//
 	// When the IOMMU is in use, the call is also the declaration: each page of the object, which is not
 	// device memory, becomes memory that each device whose registers the caller holds by a handle can read,
-	// and write only while the caller holds a handle with **Write** to the object. A program that holds no
+	// and write only while the caller holds a handle with **Write** to the object. A process that holds no
 	// such handle declares nothing. An object that is not contiguous then has a device window: its pages
 	// get their frames now, and the devices see them in their order from the address that the call gives,
 	// at 2^38 or above: a device that gives fewer than 39 bits of address must get contiguous objects only
 	// (`Device_Create` says whether the unit of a device gives windows: `Device_Memory_Facts`). The pages leave the
-	// device when the program closes or loses its last handle to the object, when it holds neither a handle
-	// nor a mapping of the registers of the device, when the object ends, or when the program stops
+	// device when the process closes or loses its last handle to the object, when it holds neither a handle
+	// nor a mapping of the registers of the device, when the object ends, or when the process stops
 	// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts"). The devices behind a conventional bridge
 	// share one domain: it lives while the caller holds the registers of each of them.
 	//
@@ -889,42 +889,42 @@ Operation :: enum u32 {
 	// - `Bad_Operation`: also, with the IOMMU in use, a contiguous object ends above 2^38 or above the
 	//   address width of the unit of a device; or an object that is not contiguous is `Uncommitted`, larger
 	//   than 128 MiB (`iommu.WINDOW_SIZE`), or declared to a device whose unit gives no windows.
-	// - `Bad_State`: another program declared memory to the same device, and it still holds or maps its
+	// - `Bad_State`: another process declared memory to the same device, and it still holds or maps its
 	//   registers; or the device is behind a conventional bridge, and the caller does not hold the registers
 	//   of each device behind that bridge, which all share its requester and its domain (the log names the
 	//   device that it misses).
 	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
 	//   the kernel are in use.
 	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
-	Program_Module = 26, // (program, record: Module_Record).
-	// Records a module that a loader put in a program, in the module records of the program. The kernel
+	Process_Module = 26, // (process, record: Module_Record).
+	// Records a module that a loader put in a process, in the module records of the process. The kernel
 	// does not read the module: the record is what the loader asserts. The kernel names the module of the
 	// address of a fault with it, and `Inspect` gives the records (`Module_Report`). The kernel writes the
-	// writer of the record (`Module_Writer`): `Program` when the program records a module in itself,
-	// `Starter` when another program does it through the program handle. A program cannot replace or
+	// writer of the record (`Module_Writer`): `Process` when the process records a module in itself,
+	// `Starter` when another process does it through the process handle. A process cannot replace or
 	// remove a record of the writer `Starter`, and cannot map or unmap where such a record is, so the
 	// record names the code that its starter put there
 	// ([the writer of a module record](docs/MODULE_CONTRACT.md#the-writer-of-a-module-record)).
 	//
 	// **Arguments**
 	//
-	// - `program`: 0 for this program, or a program handle with **Control**.
-	// - `record`: the address of a `Module_Record` that the program can read. A record with the base of a
-	//   record that exists replaces it; a record with the size 0 removes the record of its base. A program
-	//   has at most `PROGRAM_MODULE_CAPACITY` records, and no two of them share an address. The kernel
+	// - `process`: 0 for this process, or a process handle with **Control**.
+	// - `record`: the address of a `Module_Record` that the process can read. A record with the base of a
+	//   record that exists replaces it; a record with the size 0 removes the record of its base. A process
+	//   has at most `PROCESS_MODULE_CAPACITY` records, and no two of them share an address. The kernel
 	//   does not read the field `writer`.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
-	// - `No_Right`: also, the program replaces or removes in itself a record of the writer `Starter`. The
-	//   error kind is `Starter_Module`: the fix is with the holder of the program handle.
-	// - `Bad_State`: the program is stopped.
-	// - `Bad_Address`: the program cannot read the record; the module passes `USER_END`; it meets another
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
+	// - `No_Right`: also, the process replaces or removes in itself a record of the writer `Starter`. The
+	//   error kind is `Starter_Module`: the fix is with the holder of the process handle.
+	// - `Bad_State`: the process is stopped.
+	// - `Bad_Address`: the process cannot read the record; the module passes `USER_END`; it meets another
 	//   record; or a record of size 0 names a base that no record has.
-	// - `No_Slot`: the program has `PROGRAM_MODULE_CAPACITY` records.
+	// - `No_Slot`: the process has `PROCESS_MODULE_CAPACITY` records.
 	Strategy_Set = 27, // (machine, strategy: Strategy) -> the strategy before.
 	// Changes the scheduling strategy of the machine while it runs: no thread stops, and none is lost. The
 	// state of the strategy of each thread starts from zero
@@ -950,13 +950,13 @@ Operation :: enum u32 {
 	// page that was not committed, and each gets a frame at its first use. With `Decommit`, the committed
 	// pages of the ranges are no longer paid: their frames and their pages return at once to the budget of
 	// the object, and a page committed again is zero
-	// ([the virtual memory of a program](docs/ARCHITECTURE.md#the-virtual-memory-of-a-program)).
+	// ([the virtual memory of a process](docs/ARCHITECTURE.md#the-virtual-memory-of-a-process)).
 	//
 	// **Arguments**
 	//
 	// - `memory`: a memory handle with **Write**, of an object made with `Uncommitted`.
 	// - `budget`: a handle to the budget of the object, with **Commit** or **Spend**. **Write** on the object
-	//   does not spend the budget of its maker: to let another program commit, give it the object and a
+	//   does not spend the budget of its maker: to let another process commit, give it the object and a
 	//   budget handle with **Commit** only ([who pays a commit](docs/ARCHITECTURE.md#who-pays-a-commit)).
 	//   Not read with `Decommit`.
 	// - `ranges`, `count`: a table of `count` records `Page_Range`, from 1 to `RANGE_TABLE_CAPACITY`, in
@@ -973,31 +973,31 @@ Operation :: enum u32 {
 	// - `Bad_Handle`: `budget` names another budget than the budget of the object.
 	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
 	//   the table has more than `RANGE_TABLE_PAGE_LIMIT` pages; the object was not made `Uncommitted`.
-	// - `Bad_Address`: the program cannot read the table, or the ranges are not in order, overlap, or pass
+	// - `Bad_Address`: the process cannot read the table, or the ranges are not in order, overlap, or pass
 	//   the end of the object.
 	// - `No_Budget`: the budget cannot pay the table: nothing changes.
-	// - `Bad_State`: a `Decommit` of an object that another program names, or that has more than one
+	// - `Bad_State`: a `Decommit` of an object that another process names, or that has more than one
 	//   mapping.
 	//
 	// ```odin
 	// changed, status := system.memory_commit(memory, ranges[:])
 	// ```
 	Memory_Protect = 29, // (ranges: Address_Range, count, flags: Map_Flags) -> pages changed.
-	// Changes the protection of pages of mappings of this program: read only (no flag), `Write`, `Execute`,
-	// or `No_Access`. Each processor that runs a thread of the program forgets the old translations before
+	// Changes the protection of pages of mappings of this process: read only (no flag), `Write`, `Execute`,
+	// or `No_Access`. Each processor that runs a thread of the process forgets the old translations before
 	// the operation returns (one shoot-down). A table is done whole or not at all
 	// ([protection and the shoot-down](docs/ARCHITECTURE.md#protection-and-the-shoot-down)).
 	//
 	// **Arguments**
 	//
 	// - `ranges`, `count`: a table of `count` records `Address_Range`, from 1 to `RANGE_TABLE_CAPACITY`.
-	//   Each range is inside one mapping of this program, below `THREAD_AREA_BASE`.
+	//   Each range is inside one mapping of this process, below `THREAD_AREA_BASE`.
 	// - `flags`: a `Map_Flags`. A protection can only take away what the mapping was made with: `Write`
 	//   needs a mapping made with `Write`, `Execute` one made with `Execute`. `No_Access` takes no other
 	//   flag, and `Write` with `Execute` is refused.
 	//
 	// A range that is a part of a mapping, not its whole, takes away from the protection of the mapping now:
-	// it cannot get more. It needs an object with a frame list that only this program names, with one
+	// it cannot get more. It needs an object with a frame list that only this process names, with one
 	// mapping; while a part has its own protection, the object is not mapped again and not given
 	// (`Bad_State`). At most `RANGE_TABLE_PAGE_LIMIT` pages change in one call.
 	//
@@ -1008,47 +1008,47 @@ Operation :: enum u32 {
 	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
 	//   `Write` with `Execute`, or `No_Access` with another flag; more than the mapping was made with; one
 	//   table names a mapping whole and in part; more than `RANGE_TABLE_PAGE_LIMIT` pages.
-	// - `Bad_Address`: the program cannot read the table; a range is not on whole pages, is empty, or is not
+	// - `Bad_Address`: the process cannot read the table; a range is not on whole pages, is empty, or is not
 	//   inside one mapping; the mapping is a thread area or the time page; a part of a mapping of a
 	//   contiguous object.
-	// - `Bad_State`: a part of a mapping of an object that another program names, or that has another
+	// - `Bad_State`: a part of a mapping of an object that another process names, or that has another
 	//   mapping.
 	//
 	// ```odin
 	// changed, status := system.memory_protect(ranges[:], {})
 	// ```
-	Fault_Handler_Set = 30, // (thread, end: Fault_Handler_Action, kinds: Fault_Kinds, program).
-	// Makes a thread of this program the fault handler of the program: the faults of the chosen kinds of
-	// the other threads of the program become records of the
+	Fault_Handler_Set = 30, // (thread, end: Fault_Handler_Action, kinds: Fault_Kinds, process).
+	// Makes a thread of this process the fault handler of the process: the faults of the chosen kinds of
+	// the other threads of the process become records of the
 	// [fault ring](docs/ARCHITECTURE.md#the-fault-ring) in the thread record of the handler, in place of a
 	// stop. The thread of a fault waits for `Fault_Answer`. A page fault is delivered only below
-	// `THREAD_AREA_BASE`. A fault of a kind that the handler did not ask for stops the program as with no
+	// `THREAD_AREA_BASE`. A fault of a kind that the handler did not ask for stops the process as with no
 	// handler. A new handler replaces the one before, and its ring starts empty.
 	//
 	// **Arguments**
 	//
 	// - `thread`: 0 for the calling thread, or a thread handle with **Control** of a live thread of this
-	//   program.
-	// - `end`: a `Fault_Handler_Action`: `End` (1) ends the delivery, and each fault stops the program
+	//   process.
+	// - `end`: a `Fault_Handler_Action`: `End` (1) ends the delivery, and each fault stops the process
 	//   again; `Set` (0) sets the handler.
 	// - `kinds`: the `Fault_Kinds` to deliver, or 0 for page faults only, so that a handler of pages never
 	//   gets a kind that it does not know. Only the kinds of `FAULT_KINDS_DELIVERED`.
-	// - `program`: 0, or a program handle with **Debug** of another program. Then the thread becomes the
-	//   [debug handler](docs/ARCHITECTURE.md#the-debugger-of-a-program) of that program: the caller is its
-	//   debugger. The faults of the kinds `Debug` and `Breakpoint` of that program become records of the ring
-	//   of this thread, before the fault handler of the program itself, and each faulting thread waits for a
+	// - `process`: 0, or a process handle with **Debug** of another process. Then the thread becomes the
+	//   [debug handler](docs/ARCHITECTURE.md#the-debugger-of-a-process) of that process: the caller is its
+	//   debugger. The faults of the kinds `Debug` and `Breakpoint` of that process become records of the ring
+	//   of this thread, before the fault handler of the process itself, and each faulting thread waits for a
 	//   `Fault_Answer` with the same handle. `kinds` is then 0 or the whole of
-	//   `FAULT_KINDS_DEBUGGER`: the debugger takes both kinds. `end` `End` ends the debugging (the detach). A program has one debugger at a
-	//   time, and a thread is the debug handler of one program and not the fault handler of its own.
+	//   `FAULT_KINDS_DEBUGGER`: the debugger takes both kinds. `end` `End` ends the debugging (the detach). A process has one debugger at a
+	//   time, and a thread is the debug handler of one process and not the fault handler of its own.
 	//
 	// The debugging ends at the detach, when the debug handler thread ends, when the last handle of the
-	// debugger to the program with **Debug** closes or is revoked, and when the program stops. The kernel
-	// then removes the breakpoints of each thread of the program and the trap flag that the debugger wrote,
+	// debugger to the process with **Debug** closes or is revoked, and when the process stops. The kernel
+	// then removes the breakpoints of each thread of the process and the trap flag that the debugger wrote,
 	// takes back the stops that the debugger made, and resumes each thread that waits for its answer: a
-	// debugger that ends never holds and never stops the program.
+	// debugger that ends never holds and never stops the process.
 	//
-	// When a thread of the program waits for an answer, a new handler or the end of the delivery ends the
-	// ring that holds its record: the program stops with `STOP_CODE_FAULT_UNANSWERED`, as when the handler
+	// When a thread of the process waits for an answer, a new handler or the end of the delivery ends the
+	// ring that holds its record: the process stops with `STOP_CODE_FAULT_UNANSWERED`, as when the handler
 	// thread ends, and the operation gives `Ok`.
 	//
 	// **Results**: none.
@@ -1056,19 +1056,19 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Operation`: `end` names no `Fault_Handler_Action`; a kind that the kernel never delivers; kinds with the end of the
-	//   delivery; with `program`, kinds that are not 0 and not the whole of `FAULT_KINDS_DEBUGGER`.
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**; `program` is not a
-	//   program handle with **Debug**.
-	// - `Bad_State`: the thread is not a live thread of this program; the thread is the debug handler of a
-	//   program and would become the fault handler of its own, or the reverse; with `program`: the program is
-	//   the caller, it stopped, it has another debugger, the thread is the debug handler of another program,
+	//   delivery; with `process`, kinds that are not 0 and not the whole of `FAULT_KINDS_DEBUGGER`.
+	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**; `process` is not a
+	//   process handle with **Debug**.
+	// - `Bad_State`: the thread is not a live thread of this process; the thread is the debug handler of a
+	//   process and would become the fault handler of its own, or the reverse; with `process`: the process is
+	//   the caller, it stopped, it has another debugger, the thread is the debug handler of another process,
 	//   or, for `End`, the caller is not its debugger.
 	//
 	// ```odin
 	// status := system.fault_handler_set(kinds = {.Page_Fault, .Breakpoint})
 	// ```
-	Fault_Answer = 31, // (thread, serial, answer: Fault_Answer_Kind, program).
-	// Answers a thread of this program that waits in the fault ring, by the two values of its
+	Fault_Answer = 31, // (thread, serial, answer: Fault_Answer_Kind, process).
+	// Answers a thread of this process that waits in the fault ring, by the two values of its
 	// `Fault_Record`.
 	//
 	// **Arguments**
@@ -1077,10 +1077,10 @@ Operation :: enum u32 {
 	// - `answer`: a `Fault_Answer_Kind`:
 	//   - `Resume`: the thread continues with its registers, at the instruction of its record (the faulting
 	//     instruction again, or the next one after a trap), or where `Thread_Control` wrote;
-	//   - `Stop`: the program stops as with no handler: the stop code and the stop report of the fault.
-	// - `program`: 0, or the program handle with **Debug** of the program that the caller debugs: the answer
-	//   is for a thread of that program, whose record came to the debug handler. Only `Resume`: a debugger
-	//   stops a program with `Program_Stop` and the right **Control**. After a `Debug` fault of an execute
+	//   - `Stop`: the process stops as with no handler: the stop code and the stop report of the fault.
+	// - `process`: 0, or the process handle with **Debug** of the process that the caller debugs: the answer
+	//   is for a thread of that process, whose record came to the debug handler. Only `Resume`: a debugger
+	//   stops a process with `Process_Stop` and the right **Control**. After a `Debug` fault of an execute
 	//   breakpoint, `Resume` at the same instruction sets the resume flag of the thread, so that the
 	//   instruction runs once and the breakpoint stays.
 	//
@@ -1088,11 +1088,11 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `answer` is not `Resume` or `Stop`; `Stop` with `program`.
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Debug**.
+	// - `Bad_Operation`: `answer` is not `Resume` or `Stop`; `Stop` with `process`.
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Debug**.
 	// - `Bad_State`: no thread with that number waits for the fault of that serial: a wrong answer, a second
-	//   answer, or an answer from another program; an answer with no `program` for a fault that went to the
-	//   debugger of the program; with `program`, the caller is not the debugger. Also for `Resume` after a fault kind that does not resume
+	//   answer, or an answer from another process; an answer with no `process` for a fault that went to the
+	//   debugger of the process; with `process`, the caller is not the debugger. Also for `Resume` after a fault kind that does not resume
 	//   by itself (`fault_kind_resumes`) when `Thread_Control` wrote neither the registers nor the extended
 	//   state of the thread since its fault: the thread still waits, and `Stop` ends it.
 	//
@@ -1102,8 +1102,8 @@ Operation :: enum u32 {
 	Events_Set = 32, // (machine, memory, rules: Event_Rule, count, records) -> ring bytes, processors.
 	// Gives the event table of the machine: the kernel writes an `Event_Record` into the event ring of the
 	// processor of each [kernel event](docs/ARCHITECTURE.md#kernel-events) that a rule accepts. A new table
-	// replaces the table of the caller. The table also ends when its program ends, and when the last
-	// machine handle of its program with **Events** closes or is revoked: the table lives while the right
+	// replaces the table of the caller. The table also ends when its process ends, and when the last
+	// machine handle of its process with **Events** closes or is revoked: the table lives while the right
 	// that made it lives.
 	//
 	// **Arguments**
@@ -1125,14 +1125,14 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Events**, or `memory` not a
-	//   memory handle with **Write**; the program of a rule is not a program handle with **Read**.
-	// - `Bad_State`: `memory` is 0 and the caller has no table; or another program has the table: one table
+	//   memory handle with **Write**; the process of a rule is not a process handle with **Read**.
+	// - `Bad_State`: `memory` is 0 and the caller has no table; or another process has the table: one table
 	//   at a time.
 	// - `No_Slot`: `count` is above `EVENT_RULE_CAPACITY`.
 	// - `Bad_Operation`: `count` is 0; `records` is not a power of two in its range; the object is not
 	//   contiguous, is the registers of a device, or is too small for the rings; a rule that the kernel
 	//   refuses (its kind, its flags, its reserved values, its least duration or its one in N).
-	// - `Bad_Address`: the program cannot read the table of rules.
+	// - `Bad_Address`: the process cannot read the table of rules.
 	Thread_Control = 33, // (thread, number, command: Thread_Control_Command, address, size, source) -> see the command.
 	// Controls a thread: holds it and releases it, reads its registers and its extended state, and writes
 	// them ([the control of a thread](docs/ARCHITECTURE.md#the-control-of-a-thread)). `Stop` and `Resume`
@@ -1143,8 +1143,8 @@ Operation :: enum u32 {
 	// ([the schedule of a live thread](docs/SCHEDULING.md#the-schedule-of-a-live-thread)). And it reads and
 	// writes the placement of a thread: the processors that can run it (`Thread_Placement`), also while the
 	// thread runs ([the placement of a thread](docs/SCHEDULING.md#the-placement-of-a-thread)). Two more
-	// commands read and write the schedule of a program (`Program_Schedule`): the new-thread weight limit
-	// of all the threads of one program at once, through the machine handle only. Three commands count the
+	// commands read and write the schedule of a process (`Process_Schedule`): the new-thread weight limit
+	// of all the threads of one process at once, through the machine handle only. Three commands count the
 	// events of the processor for the code of the calling thread (`Thread_Counters`,
 	// [the counters of a thread](docs/ARCHITECTURE.md#the-counters-of-a-thread)).
 	//
@@ -1152,29 +1152,29 @@ Operation :: enum u32 {
 	//
 	// - `thread`: a thread handle with the rights of the command (`thread_control_rights`): **Inspect**,
 	//   and **Write** too for a write of the registers or of the extended state; **Control** for
-	//   `Write_Schedule` and `Write_Placement`. Or 0, and then `number` names a live thread of this program
+	//   `Write_Schedule` and `Write_Placement`. Or 0, and then `number` names a live thread of this process
 	//   (`Thread_Record.number`, `Fault_Record.thread`). Or, for the two commands of the schedule and the
 	//   two commands of the placement only, the machine handle with **Schedule** and **Inspect**
 	//   (`thread_control_machine_rights`), and then `number` names any thread of the machine. A
-	//   thread of another program needs a handle. Or the program handle with **Debug** of the program that
+	//   thread of another process needs a handle. Or the process handle with **Debug** of the process that
 	//   the caller debugs (`Fault_Handler_Set` with that handle first), and then `number` names a live thread
-	//   of that program, for each command but the two of the schedule and the two of the placement
-	//   (`thread_control_takes_debug_handle`). The two commands of the schedule of a program take the
+	//   of that process, for each command but the two of the schedule and the two of the placement
+	//   (`thread_control_takes_debug_handle`). The two commands of the schedule of a process take the
 	//   machine handle with **Schedule** and **Inspect** only. The three commands of the thread counters
 	//   act on the calling thread (`thread_control_counts_the_caller`): `Start_Counters` and
 	//   `Read_Counters` take the machine handle with **Counters** only; `Stop_Counters` reads no handle.
 	// - `number`: the number of the thread when `thread` is 0; the machine number of the thread
 	//   (`Thread_Report.machine_number`) when `thread` is the machine handle. For the two commands of the
-	//   schedule of a program: the slot of the program in the low 32 bits and its serial
-	//   (`Program_Report.program_serial`) in the high 32 bits (`program_slot_and_serial`). Not read by
+	//   schedule of a process: the slot of the process in the low 32 bits and its serial
+	//   (`Process_Report.process_serial`) in the high 32 bits (`process_slot_and_serial`). Not read by
 	//   the three commands of the thread counters.
 	// - `command`: a `Thread_Control_Command`.
 	// - `address`, `size`: the memory of the command that reads or writes: `size` is at least the size of
 	//   a `Thread_Registers`, of the extended state area (`Thread_State`), of a `Thread_Schedule`, of a
-	//   `Thread_Breakpoints`, of a `Thread_Placement` or of a `Thread_Counters`, and the program can read it, or write it for a read
+	//   `Thread_Breakpoints`, of a `Thread_Placement` or of a `Thread_Counters`, and the process can read it, or write it for a read
 	//   of the thread. For
 	//   `Read_Memory`, `size` is the count of bytes to read, at most `THREAD_MEMORY_READ_LIMIT`.
-	// - `source`: for `Read_Memory`, the address of the first byte in the program of the thread.
+	// - `source`: for `Read_Memory`, the address of the first byte in the process of the thread.
 	//
 	// **Results**: what the command gives: the stop count, or the bytes written and the components.
 	// `Read_Memory` gives the count of bytes that it copied.
@@ -1182,11 +1182,11 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Operation`: `command` is `None` or a command that the kernel does not know; a write of values
-	//   that a thread of a program cannot hold changes nothing (`thread_registers_refusal`,
+	//   that a thread of a process cannot hold changes nothing (`thread_registers_refusal`,
 	//   `extended_state_refusal`); a `Write_Schedule` through 0 or a thread handle with a weight above
 	//   the weight of the thread or a request above its request; a `Write_Schedule` with a weight above
 	//   `WEIGHT_FULL`, a request above `REQUEST_LIMIT`, or a weight limit or a new-thread weight limit
-	//   above `WEIGHT_FULL`, changes nothing; a `Write_Program_Schedule` with a new-thread weight limit
+	//   above `WEIGHT_FULL`, changes nothing; a `Write_Process_Schedule` with a new-thread weight limit
 	//   above `WEIGHT_FULL` changes nothing; a `Write_Breakpoints` with a breakpoint that a thread cannot have
 	//   (`thread_breakpoints_refusal`) changes nothing; a `Read_Memory` of more than
 	//   `THREAD_MEMORY_READ_LIMIT` bytes; a `Write_Placement` that `thread_placement_after_write` refuses
@@ -1196,30 +1196,30 @@ Operation :: enum u32 {
 	//   kernel uses, with the error kind `Unsupported`.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
 	//   the machine handle with the rights of a command of the schedule or of the placement. The machine
-	//   handle with another command gives `Bad_Handle`. A program handle with no **Debug** gives
-	//   `No_Right`, and a program handle with a command of the schedule or of the placement `Bad_Handle`.
-	//   A command of the schedule of a program, `Start_Counters` or `Read_Counters` with 0 or with a
+	//   handle with another command gives `Bad_Handle`. A process handle with no **Debug** gives
+	//   `No_Right`, and a process handle with a command of the schedule or of the placement `Bad_Handle`.
+	//   A command of the schedule of a process, `Start_Counters` or `Read_Counters` with 0 or with a
 	//   handle that is not the machine handle gives `Bad_Handle`; the machine handle with no
 	//   **Counters** gives `No_Right` for `Start_Counters` and `Read_Counters`.
-	// - `Bad_State`: no live program has the slot and the serial of `number`, for a command of the
-	//   schedule of a program; no live thread of this program has `number`; no live thread of the machine has the
-	//   machine number `number`; the thread or its program ended, also for a read or a write of a
+	// - `Bad_State`: no live process has the slot and the serial of `number`, for a command of the
+	//   schedule of a process; no live thread of this process has `number`; no live thread of the machine has the
+	//   machine number `number`; the thread or its process ended, also for a read or a write of a
 	//   schedule or of a placement of a thread that ends; a read or
 	//   a write of the registers or of the breakpoints of a thread that is not held, or of the calling
 	//   thread; a `Stop` above
-	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0; through a program
-	//   handle with **Debug**: the caller is not the debugger of the program, the program is the caller, or a
+	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0; through a process
+	//   handle with **Debug**: the caller is not the debugger of the process, the process is the caller, or a
 	//   `Resume` of a thread that the debugger did not stop; a `Read_Counters` of a thread that does not
 	//   count.
-	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory; a `Read_Memory`
-	//   whose first byte the program of the thread cannot read, or whose range is not below `USER_END`.
-	Guest_Run = 34, // (program, registers: Guest_Registers) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
-	// Runs the guest processor of a program on the calling thread, until an exit that the kernel does not
-	// handle itself, and gives that exit ([a guest](docs/ARCHITECTURE.md#a-guest)). The program is a guest:
-	// a program that `Program_Create` made and that no thread ran. Its addresses are the guest physical
-	// addresses: `Memory_Map` with its handle gives the guest memory. The first run makes the program a
+	// - `Bad_Address`: `size` is too small, or the process cannot read or write the memory; a `Read_Memory`
+	//   whose first byte the process of the thread cannot read, or whose range is not below `USER_END`.
+	Guest_Run = 34, // (process, registers: Guest_Registers) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
+	// Runs the guest processor of a process on the calling thread, until an exit that the kernel does not
+	// handle itself, and gives that exit ([a guest](docs/ARCHITECTURE.md#a-guest)). The process is a guest:
+	// a process that `Process_Create` made and that no thread ran. Its addresses are the guest physical
+	// addresses: `Memory_Map` with its handle gives the guest memory. The first run makes the process a
 	// guest: its budget pays two pages, the time page leaves it, the `OWN_LOG_PAGES` pages of its own log
-	// ring return to its budget (a guest writes no log record), and `Program_Start` of it gives `Bad_State`
+	// ring return to its budget (a guest writes no log record), and `Process_Start` of it gives `Bad_State`
 	// after. The guest processor starts in 16-bit real mode, with each segment at base 0.
 	//
 	// The kernel gives a page on first use of a mapping of the guest its frame when the guest touches it,
@@ -1228,11 +1228,11 @@ Operation :: enum u32 {
 	//
 	// **Arguments**
 	//
-	// - `program`: a program handle with **Control**, of a program in the state `Created`, with no thread,
+	// - `process`: a process handle with **Control**, of a process in the state `Created`, with no thread,
 	//   which is not the caller.
-	// - `registers`: the address of a `Guest_Registers` record that the program can read and write. The
+	// - `registers`: the address of a `Guest_Registers` record that the process can read and write. The
 	//   kernel reads it before the entry, and writes the registers of the guest processor there after the
-	//   exit. The program answers an exit by a change of the record before the next run.
+	//   exit. The process answers an exit by a change of the record before the next run.
 	//
 	// **Results**
 	//
@@ -1248,20 +1248,20 @@ Operation :: enum u32 {
 	// - `Bad_Operation`: the processors of the machine have no virtualization support that the kernel uses
 	//   (AMD SVM with nested paging), and the error kind is `Unsupported`; or `rflags` of the record has a
 	//   bit that no flags register has (`guest_registers_refusal`).
-	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
-	// - `Bad_State`: the program is the caller, was started, stopped, or another thread runs its guest
+	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
+	// - `Bad_State`: the process is the caller, was started, stopped, or another thread runs its guest
 	//   processor now.
-	// - `Bad_Address`: the program cannot read and write the record.
-	// - `No_Budget`: at the first run, the budget of the program cannot pay its two pages.
+	// - `Bad_Address`: the process cannot read and write the record.
+	// - `No_Budget`: at the first run, the budget of the process cannot pay its two pages.
 	//
 	// ```odin
 	// exit, status := system.guest_run(guest, &registers)
 	// ```
-	Log_Read = 35, // (memory, program, serial, after, records: Log_Record, count) -> copied, lost, total.
-	// Copies the records of the own log ring of one program: the last `OWN_LOG_RECORD_CAPACITY` records
-	// that the program wrote, which only its own records push out. The ring lives until the slot of the
-	// program is free: after its stop, while a handle names it, it is still read. The log service reads
-	// the [own records](term:own-records) of a caller with it, and the records of a program whose handle
+	Log_Read = 35, // (memory, process, serial, after, records: Log_Record, count) -> copied, lost, total.
+	// Copies the records of the own log ring of one process: the last `OWN_LOG_RECORD_CAPACITY` records
+	// that the process wrote, which only its own records push out. The ring lives until the slot of the
+	// process is free: after its stop, while a handle names it, it is still read. The log service reads
+	// the [own records](term:own-records) of a caller with it, and the records of a process whose handle
 	// a starter lends (src/md/features/own_log_ring.md). The kernel
 	// copies whole records under the log lock, so no copy is torn, and gives them to the caller after
 	// the lock. A guest has no own log ring after its first `Guest_Run`.
@@ -1270,17 +1270,17 @@ Operation :: enum u32 {
 	//
 	// - `memory`: a handle of the memory of the log (`ROOT_LOG_RECORDS`) with **Read**. Its holder reads
 	//   each record of the whole log, so a copy of an own log ring gives it no new fact.
-	// - `program`, `serial`: the program slot and the program serial of the program, as `Program_State`
+	// - `process`, `serial`: the process slot and the process serial of the process, as `Process_State`
 	//   gives them.
 	// - `after`: an own number (`Log_Record.own_number`), modulo 2^32: the first record to copy. An `after`
-	//   past the count of the records of the program gives no record (`own_log_window`).
-	// - `records`: the address of `count` records that the program can write.
+	//   past the count of the records of the process gives no record (`own_log_window`).
+	// - `records`: the address of `count` records that the process can write.
 	// - `count`: the records that fit at `records`, at most `OWN_LOG_RECORD_CAPACITY`.
 	//
 	// **Results**
 	//
 	// 1. the records copied, in the order of their own numbers;
-	// 2. the own records from `after` that the ring no longer keeps: the program wrote more records after
+	// 2. the own records from `after` that the ring no longer keeps: the process wrote more records after
 	//    them than the ring holds;
 	// 3. the records that the ring keeps from the first one copied to the last one: more than the first
 	//    result when `count` is too small.
@@ -1288,11 +1288,11 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `memory` is not a handle of the memory of the log with **Read**.
-	// - `Bad_Operation`: `program` is 0 or past the program slots, or `count` is above
+	// - `Bad_Operation`: `process` is 0 or past the process slots, or `count` is above
 	//   `OWN_LOG_RECORD_CAPACITY`.
-	// - `Bad_State`: the slot holds no program with this serial and an own log ring: the slot is free,
-	//   another program has it, or the program is a guest.
-	// - `Bad_Address`: the program cannot write the `count` records at `records`.
+	// - `Bad_State`: the slot holds no process with this serial and an own log ring: the slot is free,
+	//   another process has it, or the process is a guest.
+	// - `Bad_Address`: the process cannot write the `count` records at `records`.
 	//
 	// ```odin
 	// results, status := system.call(.Log_Read, u64(log_memory), slot, serial, after, u64(uintptr(&rows[0])), u64(len(rows)))
@@ -1329,7 +1329,7 @@ STRATEGY_NAMES := [Strategy]string {
 }
 
 // The weight of a thread created with the weight 0: the most. A weight is
-// from 1 to 1024: a program can lower or split the share of its threads,
+// from 1 to 1024: a process can lower or split the share of its threads,
 // never raise it above the default. 1024 keeps each product of the virtual
 // time inside 64 bits (docs/SCHEDULING.md, "Integer arithmetic and the
 // overflow argument").
@@ -1340,7 +1340,7 @@ REQUEST_DEFAULT :: 3000 // Microseconds: the request of a thread created with th
 // (docs/SCHEDULING.md, "Integer arithmetic and the overflow argument").
 REQUEST_LIMIT :: 100_000
 
-// The schedule of a thread: the two values that a program sets for the
+// The schedule of a thread: the two values that a process sets for the
 // scheduling strategies. `Thread_Control` reads it (`Read_Schedule`) and
 // writes it (`Write_Schedule`) while the thread lives, also while it runs;
 // `Thread_Create` takes the same two values. See
@@ -1351,7 +1351,7 @@ REQUEST_LIMIT :: 100_000
 //
 // Who writes decides what a write can do:
 //
-// - A write through 0 (a thread of the calling program) or through a thread
+// - A write through 0 (a thread of the calling process) or through a thread
 //   handle only **lowers**: a weight above the weight that the thread has
 //   now, or a request above its request, gives `Bad_Operation`, and nothing
 //   changes. 0 keeps the value that the thread has. `weight_limit` and
@@ -1367,10 +1367,10 @@ REQUEST_LIMIT :: 100_000
 //
 // The weight limit is the most that the weight of the thread can be. The
 // new-thread weight limit is the weight limit that the thread gives to a
-// thread that it creates, and to the first thread of a program that it
+// thread that it creates, and to the first thread of a process that it
 // starts (`thread_schedule_of_new_thread`). So a weight that the holder of
 // **Schedule** lowered stays lowered, also in the new threads. The share
-// policy of the program `scheduler` uses the second limit to bound the
+// policy of the process `scheduler` uses the second limit to bound the
 // weight of a thread that no round of the policy saw ([new-thread weight
 // limit](term:new-thread-weight-limit)).
 //
@@ -1402,27 +1402,27 @@ thread_schedule_after_machine_write :: proc "contextless" (written: Thread_Sched
 	}
 }
 
-// The schedule of a program: the value that bounds each creation by any
-// thread of one program at once. Only the machine handle with **Schedule**
-// and **Inspect** reads it (`Read_Program_Schedule`) and writes it
-// (`Write_Program_Schedule`). A program created has the full value. The
-// share policy of the program `scheduler` writes it before it reads the
-// threads of a program: one write then bounds each thread that the
-// program creates after it, also a thread that a thread created a moment
+// The schedule of a process: the value that bounds each creation by any
+// thread of one process at once. Only the machine handle with **Schedule**
+// and **Inspect** reads it (`Read_Process_Schedule`) and writes it
+// (`Write_Process_Schedule`). A process created has the full value. The
+// share policy of the process `scheduler` writes it before it reads the
+// threads of a process: one write then bounds each thread that the
+// process creates after it, also a thread that a thread created a moment
 // before the write and that the policy never saw.
 //
 // Example: `{new_thread_weight_limit = 32}` gives each thread that the
-// program creates after the write the weight 32 at most.
-Program_Schedule :: struct {
-	new_thread_weight_limit: u32, // From 1 to `WEIGHT_FULL`: a thread of the program creates no thread with a higher weight limit. 0 in a write is `WEIGHT_FULL`.
+// process creates after the write the weight 32 at most.
+Process_Schedule :: struct {
+	new_thread_weight_limit: u32, // From 1 to `WEIGHT_FULL`: a thread of the process creates no thread with a higher weight limit. 0 in a write is `WEIGHT_FULL`.
 }
-#assert(size_of(Program_Schedule) == 4)
+#assert(size_of(Process_Schedule) == 4)
 
-// program_schedule_after_write gives the schedule that a program has after
-// a write of `Write_Program_Schedule`, or what the write refuses: a value
+// process_schedule_after_write gives the schedule that a process has after
+// a write of `Write_Process_Schedule`, or what the write refuses: a value
 // above `WEIGHT_FULL`, as for a weight limit (`Thread_Write_Refusal`
 // `New_Thread_Weight_Limit`). 0 is `WEIGHT_FULL`.
-program_schedule_after_write :: proc "contextless" (written: Program_Schedule) -> (after: Program_Schedule, refusal: Thread_Write_Refusal) {
+process_schedule_after_write :: proc "contextless" (written: Process_Schedule) -> (after: Process_Schedule, refusal: Thread_Write_Refusal) {
 	if written.new_thread_weight_limit > WEIGHT_FULL {
 		return {}, .New_Thread_Weight_Limit
 	}
@@ -1430,25 +1430,25 @@ program_schedule_after_write :: proc "contextless" (written: Program_Schedule) -
 }
 
 // new_thread_weight_limit_of_creation gives the limit of a thread that a
-// thread creates, or of the first thread of a program that it starts: the
+// thread creates, or of the first thread of a process that it starts: the
 // smaller of the new-thread weight limit of the creating thread and the one
-// of its program. The value of the program closes every thread of the
-// program in one write; the value of the thread keeps a limit that the
+// of its process. The value of the process closes every thread of the
+// process in one write; the value of the thread keeps a limit that the
 // holder wrote for one thread.
-new_thread_weight_limit_of_creation :: proc "contextless" (thread_value, program_value: u32) -> u32 {
-	return min(thread_value, program_value)
+new_thread_weight_limit_of_creation :: proc "contextless" (thread_value, process_value: u32) -> u32 {
+	return min(thread_value, process_value)
 }
 
-// program_slot_and_serial gives the `number` of the two commands of the
-// schedule of a program: the slot of the program in the low 32 bits and
-// its serial in the high 32 bits. The serial changes for each new program
-// of a slot, so the number of a program that ended names no later one.
-program_slot_and_serial :: proc "contextless" (slot, serial: u64) -> u64 {
+// process_slot_and_serial gives the `number` of the two commands of the
+// schedule of a process: the slot of the process in the low 32 bits and
+// its serial in the high 32 bits. The serial changes for each new process
+// of a slot, so the number of a process that ended names no later one.
+process_slot_and_serial :: proc "contextless" (slot, serial: u64) -> u64 {
 	return (slot & 0xFFFF_FFFF) | (serial << 32)
 }
 
 // thread_schedule_of_new_thread gives the schedule of a thread that
-// `Thread_Create` or `Program_Start` makes. `new_thread_weight_limit` is the
+// `Thread_Create` or `Process_Start` makes. `new_thread_weight_limit` is the
 // limit of a new thread of the calling thread
 // (`new_thread_weight_limit_of_creation`); `weight` and `request` are
 // the values of the call, 0 for the defaults. The new thread gets that
@@ -1496,7 +1496,7 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 //
 // Who writes decides what a write can do (`thread_placement_after_write`):
 //
-// - A write through 0 (a thread of the calling program) or through a thread
+// - A write through 0 (a thread of the calling process) or through a thread
 //   handle with **Control** only **narrows**: a set with a processor that
 //   the set of the thread does not have gives `Bad_Operation`, and nothing
 //   changes. 0 keeps the set that the thread has. `processors_limit` is not
@@ -1507,7 +1507,7 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 //   of the set that is outside the new limit is dropped. As a write of a
 //   `Thread_Schedule` through the machine handle, it always gives each
 //   value: the set 0 is the whole limit, not the set that the thread has,
-//   so it undoes a narrowing that the program of the thread made. A
+//   so it undoes a narrowing that the process of the thread made. A
 //   holder that keeps the set reads the placement first and writes the
 //   set that it read.
 //
@@ -1518,7 +1518,7 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 // `Stop`, which has its own right.
 //
 // The limit is the most that the set of the thread can be. A new thread,
-// and the first thread of a program that a thread starts, get the limit
+// and the first thread of a process that a thread starts, get the limit
 // of the thread that creates them, as their set and as their limit. So a
 // limit that the holder of **Schedule** wrote stays.
 //
@@ -1536,7 +1536,7 @@ Thread_Placement :: struct {
 // a write of `Write_Placement`, or what the write refuses. `written` is the
 // record of the writer, `held` the placement that the thread has, and
 // `machine_processors` the set of the processors that the machine has.
-// `by_machine`: the machine handle names the thread; else the program of
+// `by_machine`: the machine handle names the thread; else the process of
 // the thread or the holder of a thread handle writes.
 //
 // With a refusal, `after` is `held`, and `most` is the set that the
@@ -1589,7 +1589,7 @@ thread_placement_after_write :: proc "contextless" (written, held: Thread_Placem
 // registers, its extended state) between two runs. See [guest](term:guest)
 // and (docs/ARCHITECTURE.md, "A guest").
 //
-// A program answers an exit by a change of the record before the next run:
+// A process answers an exit by a change of the record before the next run:
 // for `Port_Read`, the value in the low bytes of `rax` and the next
 // instruction in `rip`; for `Port_Write` and `Halt`, the next instruction in
 // `rip`. A record of zeros is a guest processor at the address 0 with no flag
@@ -1630,52 +1630,52 @@ guest_registers_refusal :: proc "contextless" (registers: Guest_Registers) -> bo
 Guest_Exit_Kind :: enum u64 {
 	None          = 0, // Not an exit: a completion with a status that is not Ok.
 	Port_Write    = 1, // `out`: a the port, b the size in bytes (1, 2 or 4), c the value.
-	Port_Read     = 2, // `in`: a the port, b the size in bytes. The program writes the value in `rax` and the next instruction in `rip`.
+	Port_Read     = 2, // `in`: a the port, b the size in bytes. The process writes the value in `rax` and the next instruction in `rip`.
 	Halt          = 3, // `hlt`: the guest waits for an interrupt.
-	Cpuid         = 4, // `cpuid`: the leaf is in `rax` and `rcx` of the record. The program writes the four answers and the next instruction.
+	Cpuid         = 4, // `cpuid`: the leaf is in `rax` and `rcx` of the record. The process writes the four answers and the next instruction.
 	Memory        = 5, // An access to a guest physical address that no mapping allows: a the address, b the access (`Fault_Access`).
-	Interrupted   = 6, // An interrupt of the machine ended the run, or its program stopped: nothing to answer. Run again.
+	Interrupted   = 6, // An interrupt of the machine ended the run, or its process stopped: nothing to answer. Run again.
 	Shutdown      = 7, // The guest processor shut down: a fault while it delivered a double fault. Its state means nothing now.
 	Refused_State = 8, // The processor refused the state of the guest processor: no instruction of the guest ran.
 	Other         = 9, // Another instruction that the guest may not run alone: the exit code of the processor is the sixth result.
 }
 
-// A module record: one module that a loader put in a program (Program_Module).
-// The identity of a program that runs is the list of its module records: the
+// A module record: one module that a loader put in a process (Process_Module).
+// The identity of a process that runs is the list of its module records: the
 // hash of each module, and the hash that a replacement put it in place of.
 //
-// A loader writes it with `Program_Module`; the kernel keeps at most
-// `PROGRAM_MODULE_CAPACITY` for each program and gives them in a
+// A loader writes it with `Process_Module`; the kernel keeps at most
+// `PROCESS_MODULE_CAPACITY` for each process and gives them in a
 // `Module_Report`, in a `Stop_Report` and in each `Stop_Frame`. The kernel
 // does not check the hash: it is what the loader asserted. The kernel writes
 // `writer`: a record of the writer `Starter` is a claim of the starter of
-// the program, which the program cannot change; a record of the writer
-// `Program` is a claim of the program. 88 bytes. See
+// the process, which the process cannot change; a record of the writer
+// `Process` is a claim of the process. 88 bytes. See
 // [module record](term:module-record).
 //
 // The writer is a word, not a member: a reader takes it from a report of
 // the kernel through module_writer_of_word, and refuses a word that names
 // no writer.
 Module_Record :: struct {
-	base:     u64, // The address of the first byte of the module in the program.
+	base:     u64, // The address of the first byte of the module in the process.
 	size:     u64, // The bytes of addresses of the module. 0: no module.
 	hash:     [32]u8, // The hash of the module that is loaded: BLAKE3 of its file, the name of the module in the module store.
 	replaces: [32]u8, // Zero, or the hash that an import names and that a replacement changed to `hash`.
-	writer:   u64, // Who wrote the record: the word of a Module_Writer. The kernel writes it; `Program_Module` does not read it.
+	writer:   u64, // Who wrote the record: the word of a Module_Writer. The kernel writes it; `Process_Module` does not read it.
 }
 #assert(size_of(Module_Record) == 88)
 
 // Who wrote a module record (`Module_Record.writer`). The kernel knows it at
-// each `Program_Module`: it compares the program of the record with the
-// program that calls.
+// each `Process_Module`: it compares the process of the record with the
+// process that calls.
 //
 // Example: the root service starts `imports` and writes the record of its
 // module: `Starter`. `imports` loads `agenda` in its own memory and writes
-// its record: `Program`. `imports` cannot remove the first record, nor unmap
+// its record: `Process`. `imports` cannot remove the first record, nor unmap
 // or map at its addresses (`No_Right`).
 Module_Writer :: enum u64 {
-	Program = 0, // The program wrote the record for itself. It can replace or remove it.
-	Starter = 1, // Another program wrote it, through the program handle with Control: the starter, or a program to which it gave that handle. The kernel writes the record of the root service so. The program cannot change it.
+	Process = 0, // The process wrote the record for itself. It can replace or remove it.
+	Starter = 1, // Another process wrote it, through the process handle with Control: the starter, or a process to which it gave that handle. The kernel writes the record of the root service so. The process cannot change it.
 }
 
 // The most bytes of the word of a writer: the field `writer` of a row of
@@ -1698,31 +1698,31 @@ module_writer_of_word :: proc "contextless" (word: u64) -> (writer: Module_Write
 // array names each writer, so a new writer cannot have no word.
 @(rodata)
 MODULE_WRITER_NAMES := [Module_Writer]string {
-	.Program = "program",
+	.Process = "process",
 	.Starter = "starter",
 }
 
 // module_writer_name gives the word of a writer in a row of a table:
-// "program" or "starter". Each word fits MODULE_WRITER_NAME_CAPACITY bytes.
+// "process" or "starter". Each word fits MODULE_WRITER_NAME_CAPACITY bytes.
 // It takes a member that module_writer_of_word gave: there is no word for a
 // writer that names nothing.
 module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
 	return MODULE_WRITER_NAMES[writer]
 }
 
-// The module records of one program: the program module, the modules that
-// it imports and the modules that it loads while it runs. `Program_Module`
+// The module records of one process: its own module, the modules that
+// it imports and the modules that it loads while it runs. `Process_Module`
 // gives `No_Slot` for one more.
-PROGRAM_MODULE_CAPACITY :: 16
+PROCESS_MODULE_CAPACITY :: 16
 
-// Where a program stopped on a fault (Program_State). Zero: the program
+// Where a process stopped on a fault (Process_State). Zero: the process
 // runs, or it stopped with no fault.
 //
-// The kernel writes it when it stops a program on a fault; a holder of the
-// program handle with **Read** gets it whole from `Program_State`, and a
+// The kernel writes it when it stops a process on a fault; a holder of the
+// process handle with **Read** gets it whole from `Process_State`, and a
 // holder of the machine with **Inspect** gets it from `Inspect` with the kind
-// `Stop`, with the values that can show memory of the program taken out.
-// The console and the program `errors` turn it into a stack trace with names
+// `Stop`, with the values that can show memory of the process taken out.
+// The console and the process `errors` turn it into a stack trace with names
 // (see [stop report](term:stop-report)).
 //
 // Example: a null pointer read gives `code = 0x10E` (`STOP_CODE_FAULT` plus
@@ -1740,9 +1740,9 @@ Stop_Report :: struct {
 	// one before it, and at a return address 0.
 	frame_count: u64,
 	frames:      [STOP_FRAME_CAPACITY]Stop_Frame,
-	// Inspect_Kind.Stop only: the serial of the program of the slot, and the
+	// Inspect_Kind.Stop only: the serial of the process of the slot, and the
 	// values that the kernel took out (see Inspect_Kind.Stop).
-	program_serial: u64,
+	process_serial: u64,
 	hidden_value_count: u64,
 }
 
@@ -1755,12 +1755,12 @@ STOP_FRAME_CAPACITY :: 16
 // the call.
 //
 // Example: `address = 0x0040_1234`, `base = 0x0040_0000` is the offset
-// 0x1234 in the module of `hash`; the program `errors` finds the procedure
+// 0x1234 in the module of `hash`; the process `errors` finds the procedure
 // there in the debug object of that module.
 //
 // A frame has no writer (`Module_Writer`). A reader that must know whether
-// the module of a frame is a claim of the program matches `base` with the
-// record of the same base in the `Module_Report` of the program, which
+// the module of a frame is a claim of the process matches `base` with the
+// record of the same base in the `Module_Report` of the process, which
 // carries the writer. `Stop_Report.module` carries the writer of the module
 // of the instruction.
 Stop_Frame :: struct {
@@ -1769,24 +1769,24 @@ Stop_Frame :: struct {
 	hash:    [32]u8, // The hash of that module.
 }
 
-// The module records of one program, in the order of their addresses.
+// The module records of one process, in the order of their addresses.
 // `Inspect` with the kind `Modules` writes it, with the right **Inspect** of
 // the machine. The developer tools name each address of a sample with it.
 Module_Report :: struct {
-	count:   u64, // The records in `modules`: at most `PROGRAM_MODULE_CAPACITY`.
-	modules: [PROGRAM_MODULE_CAPACITY]Module_Record,
-	program_serial: u64, // The serial of the program of the slot: a reader drops reports of two programs.
+	count:   u64, // The records in `modules`: at most `PROCESS_MODULE_CAPACITY`.
+	modules: [PROCESS_MODULE_CAPACITY]Module_Record,
+	process_serial: u64, // The serial of the process of the slot: a reader drops reports of two processes.
 }
 
 // A budget: what its holders can still create. No operation creates an
-// object from nothing: Memory_Create, Program_Create and Thread_Create take
+// object from nothing: Memory_Create, Process_Create and Thread_Create take
 // a budget handle, and the budget pays.
 //
 // The record holds five amounts. Four of them are **amounts that move**:
 // `Budget_Create` takes them from a budget for a new budget, and an object
 // or a budget that ends gives them back. The log records of each second
-// move too: a budget counts only the records of its own programs against
-// what it holds, so a refusal tells a program nothing of what the others
+// move too: a budget counts only the records of its own processes against
+// what it holds, so a refusal tells a process nothing of what the others
 // wrote. Processor time is a **limit for each period**.
 //
 // A limit is for a budget and for each budget that came from it: what a
@@ -1802,17 +1802,17 @@ Module_Report :: struct {
 // When the last handle to a budget closes, what the budget holds returns to
 // the budget that it came from, and that budget pays for its objects.
 //
-// The record travels in two directions: a program gives it to
+// The record travels in two directions: a process gives it to
 // `Budget_Create` (through `system.budget_create`), and `Budget_Read` and
-// `Program_Report.budget` give what a budget still holds. See
+// `Process_Report.budget` give what a budget still holds. See
 // [budget](term:budget) and [limit](term:limit).
 //
-// Example: `{pages = 4096, programs = 1, threads = 4, processor = 250_000,
-// log_records = 100}` is 16 MiB, one program of four threads, a quarter of
+// Example: `{pages = 4096, processes = 1, threads = 4, processor = 250_000,
+// log_records = 100}` is 16 MiB, one process of four threads, a quarter of
 // one processor, and 100 lines of log in each second.
 Budget_Amounts :: struct {
 	pages:       u64, // Moves. The pages of memory objects, of thread areas, of frame lists and of page tables.
-	programs:    u64, // Moves. Program slots: one for each `Program_Create`.
+	processes:    u64, // Moves. Process slots: one for each `Process_Create`.
 	threads:     u64, // Moves. Thread slots: one for each thread that runs, the first one included.
 	processor:   u64, // A limit. Microseconds of processor time in each second, on all the processors together: 1 000 000 is one full processor.
 	log_records: u64, // Moves. Records on the log in each second; `Log` gives `No_Budget` above it.
@@ -1824,10 +1824,10 @@ Budget_Amounts :: struct {
 // `Word_Wait` takes a table of them: the thread waits at the end of its
 // kernel entry while each word holds its value, and wakes when `Word_Wake`
 // names one of its words, or at its deadline. The kernel names a word by
-// its page frame, so two programs that map one memory object wait on one
+// its page frame, so two processes that map one memory object wait on one
 // word. See [word wait](term:word-wait).
 Word :: struct {
-	address: u64, // The address of the word in the program: a multiple of 4 that the program can read.
+	address: u64, // The address of the word in the process: a multiple of 4 that the process can read.
 	value:   u64, // The low 32 bits.
 }
 
@@ -1837,9 +1837,9 @@ WORD_WAIT_CAPACITY :: 64
 
 // What the kernel tells a thread: the kernel adds 1 to the `events` word of
 // the thread record and wakes the thread, when
-//   an interrupt of the program arrives,
-//   a program stops and this program holds its handle,
-//   another thread of the program ends.
+//   an interrupt of the process arrives,
+//   a process stops and this process holds its handle,
+//   another thread of the process ends.
 // The thread reads `events`, reads the state that it needs, then waits on
 // the word with the value that it read first.
 
@@ -1848,47 +1848,47 @@ WORD_WAIT_CAPACITY :: 64
 //
 // The record is the first page of the thread area of the thread, at
 // `THREAD_AREA_BASE + number * THREAD_AREA_PAGES * PAGE_SIZE`; the kernel ring
-// of the thread follows it. The program can write the page, so the kernel
+// of the thread follows it. The process can write the page, so the kernel
 // reads back from it only `fault_read`, and treats that value as a claim
 // (docs/ARCHITECTURE.md, "The fault ring"). At most one page
 // (`#assert` below). See [thread record](term:thread-record).
 //
 // Example: `system.thread_record().number` is 0 in the first thread of a
-// program, and the `events` word is the word that a thread waits on for an
+// process, and the `events` word is the word that a thread waits on for an
 // interrupt.
 Thread_Record :: struct {
 	self:      u64, // The address of this record. The kernel ring is PAGE_SIZE after it.
 	parameter: u64, // The parameter of the entry of the thread.
-	number:    u64, // The number of the thread in its program. The first thread is 0.
+	number:    u64, // The number of the thread in its process. The first thread is 0.
 	events:    u32, // The kernel adds 1 for each event: see Word_Wait.
 	processors: u32, // The processors that run threads: a thread that is alone on the machine does not spin. The kernel writes it when the thread starts.
-	// The fault ring of the program, when this thread is its fault handler
+	// The fault ring of the process, when this thread is its fault handler
 	// (Fault_Handler_Set; docs/ARCHITECTURE.md, "The fault ring"). The kernel
 	// writes fault_records[n % FAULT_RECORD_CAPACITY] for the record n, then
 	// fault_written = n + 1, then wakes the threads that wait on
 	// fault_written. The handler reads the records from fault_read to
 	// fault_written and writes fault_read: a record is free again once
 	// fault_read passed it. A fault that finds FAULT_RECORD_CAPACITY records
-	// not read stops the program as a fault does with no handler, and the
+	// not read stops the process as a fault does with no handler, and the
 	// kernel adds 1 to fault_full.
 	fault_written: u32, // The kernel writes it: the count of fault records written since the handler was set.
 	fault_read:    u32, // The handler writes it: the count of fault records that it read.
-	fault_full:    u32, // The kernel writes it: the faults that found the ring full and stopped the program, since the program started.
+	fault_full:    u32, // The kernel writes it: the faults that found the ring full and stopped the process, since the process started.
 	fault_reserved: u32, // Not read.
 	fault_records: [FAULT_RECORD_CAPACITY]Fault_Record,
 }
 #assert(size_of(Thread_Record) <= PAGE_SIZE)
 
 // The fault ring: one record for each fault that the kernel gave to the
-// fault handler of a program in place of a stop. The thread of the record
-// waits until a thread of the program answers (Fault_Answer).
+// fault handler of a process in place of a stop. The thread of the record
+// waits until a thread of the process answers (Fault_Answer).
 //
 // The capacity is the count of faults that can wait for an answer at once:
-// a 17th fault stops the program. Sixteen records of 64 bytes fit in the
+// a 17th fault stops the process. Sixteen records of 64 bytes fit in the
 // thread record with its other fields.
 FAULT_RECORD_CAPACITY :: 16
 
-// One fault that the kernel gave to the fault handler of a program, in the
+// One fault that the kernel gave to the fault handler of a process, in the
 // fault ring of the thread record of the handler.
 //
 // The kernel writes it; the handler reads it, decides, and answers with
@@ -1903,8 +1903,8 @@ FAULT_RECORD_CAPACITY :: 16
 // `kind = .Page_Fault`, `address = 0x1000_0000_2000`, `access = {.Write}`
 // (2), and `error_code = 2`.
 Fault_Record :: struct {
-	thread:      u64, // The number of the thread in its program (Thread_Record.number).
-	serial:      u64, // The serial of the fault: a count of the faults of this program that went to a ring (the first is 1). Fault_Answer names it, so an answer for an earlier fault, or for an ended thread whose number serves again, is refused.
+	thread:      u64, // The number of the thread in its process (Thread_Record.number).
+	serial:      u64, // The serial of the fault: a count of the faults of this process that went to a ring (the first is 1). Fault_Answer names it, so an answer for an earlier fault, or for an ended thread whose number serves again, is refused.
 	address:     u64, // A page fault: the address of the access. 0 for another kind.
 	access:      u64, // A page fault: Fault_Access, what the access was. 0 for another kind.
 	// The address where the thread continues after Resume. A fault: the
@@ -1917,8 +1917,8 @@ Fault_Record :: struct {
 	instruction: u64,
 	kind:        u64, // The processor exception: the word of a Fault_Kind, read through fault_kind_of_word.
 	// The error code that the processor gave with the exception, whole.
-	// General_Protection: 0; a selector that the program loaded or named;
-	// or (n << 3) | 2 for an `int n` whose gate a program cannot use (0x72
+	// General_Protection: 0; a selector that the process loaded or named;
+	// or (n << 3) | 2 for an `int n` whose gate a process cannot use (0x72
 	// for int 14), which is never the exception n. Segment_Not_Present and
 	// Stack_Fault: 0 or a selector. Page_Fault: the bits of the access.
 	// Debug: the debug status, what made the exception
@@ -1976,15 +1976,15 @@ Fault_Kinds :: bit_set[Fault_Kind; u64]
 FAULT_KINDS_DELIVERED :: u64(1 << 0 | 1 << 1 | 1 << 3 | 1 << 6 | 1 << 11 | 1 << 12 | 1 << 13 | 1 << 14 | 1 << 16 | 1 << 17 | 1 << 19)
 // The kinds whose class is Trap.
 FAULT_KINDS_TRAPS :: u64(1 << 1 | 1 << 3)
-// The kinds that the debugger of a program takes (Fault_Handler_Set with a
-// program handle): Debug and Breakpoint. Each other fault of the program
-// stays with the program: its own fault handler, or its stop.
+// The kinds that the debugger of a process takes (Fault_Handler_Set with a
+// process handle): Debug and Breakpoint. Each other fault of the process
+// stays with the process: its own fault handler, or its stop.
 FAULT_KINDS_DEBUGGER :: FAULT_KINDS_TRAPS
 
 // The debug status: the error code of a fault record of the kind Debug. It
 // says what made the debug exception, from the status register of the
 // processor (DR6), which the kernel reads and clears at each exception. 0:
-// an `int1` of the program.
+// an `int1` of the process.
 //
 // Example: a thread that reaches the address of its breakpoint 2 gives a
 // record with `kind = .Debug`, `error_code = 4` and the address in
@@ -2003,7 +2003,7 @@ FAULT_KINDS_RESUMABLE :: FAULT_KINDS_TRAPS | u64(1) << 14
 // The class of a vector of the processor (fault_kind_class): Fault and Trap
 // as above; a vector that is not a Fault_Kind is never delivered.
 Fault_Class :: enum u8 {
-	Never_Delivered = 0, // The kernel never gives this vector to a fault handler: it stops the program, or it is not a fault of a thread.
+	Never_Delivered = 0, // The kernel never gives this vector to a fault handler: it stops the process, or it is not a fault of a thread.
 	Fault           = 1, // The instruction did not run: after Resume it runs again.
 	Trap            = 2, // The instruction ran: after Resume the thread continues at the next one.
 }
@@ -2043,8 +2043,8 @@ fault_kinds_of_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok:
 // Fault_Handler_Set names for a debugger, as a mask of vectors: always
 // each kind of FAULT_KINDS_DEBUGGER. The argument is 0 or that whole set;
 // ok is false for any other. A debugger that took one of the two kinds
-// would leave the other to the program: a breakpoint that the debugger
-// set would then stop the program.
+// would leave the other to the process: a breakpoint that the debugger
+// set would then stop the process.
 fault_kinds_of_debugger_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok: bool) {
 	if argument != 0 && argument != FAULT_KINDS_DEBUGGER {
 		return 0, false
@@ -2055,8 +2055,8 @@ fault_kinds_of_debugger_argument :: proc "contextless" (argument: u64) -> (mask:
 // What `Fault_Handler_Set` does, in its argument `end`. Its word crosses
 // the command record, so each value is explicit.
 Fault_Handler_Action :: enum u64 {
-	Set = 0, // The thread becomes the fault handler of the program, or the debug handler of the program of `program`.
-	End = 1, // The delivery ends: each fault stops the program again. With `program`: the debugging ends (the detach).
+	Set = 0, // The thread becomes the fault handler of the process, or the debug handler of the process of `process`.
+	End = 1, // The delivery ends: each fault stops the process again. With `process`: the debugging ends (the detach).
 }
 
 // What a faulting access was: the bits of the error code of the processor.
@@ -2071,12 +2071,12 @@ Fault_Access :: bit_set[Fault_Access_Bit; u64]
 
 // The answer for a thread that waits in the fault ring.
 //
-// A thread of the program gives it to `Fault_Answer` with the serial of the
+// A thread of the process gives it to `Fault_Answer` with the serial of the
 // fault record. A kind that is not `Resume` or `Stop` is refused.
 Fault_Answer_Kind :: enum u64 {
 	None   = 0, // No answer: refused.
 	Resume = 1, // The thread continues with its registers: at the instruction of its record (the faulting instruction again, or the next one after a trap), or where Thread_Control wrote. For a kind of FAULT_KINDS_RESUMABLE, or after a write of Thread_Control.
-	Stop   = 2, // The program stops as if no handler were set: the stop code and the stop report of the fault.
+	Stop   = 2, // The process stops as if no handler were set: the stop code and the stop report of the fault.
 }
 
 // What Thread_Control does. The results are in the completion record.
@@ -2085,7 +2085,7 @@ Fault_Answer_Kind :: enum u64 {
 // the thread handle, and a write of the registers
 // and a read of the memory need **Write** too
 // (`thread_control_rights`). A write of the breakpoints takes only the
-// program handle with **Debug** of the debugger. A read or a write of the
+// process handle with **Debug** of the debugger. A read or a write of the
 // registers or of the breakpoints needs the thread held: its stop count
 // above 0 and its processor
 // left (`Bad_State` before). The two commands of the schedule, the two of
@@ -2110,7 +2110,7 @@ Thread_Control_Command :: enum u64 {
 	// it left.
 	Stop                 = 1,
 	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
-	// thread whose wait ended runs again. The debugger of the program
+	// thread whose wait ended runs again. The debugger of the process
 	// takes back only the stops that it made, and the other callers only
 	// the stops that the debugger did not make: Bad_State when the caller
 	// has no stop of its own on the thread.
@@ -2154,17 +2154,17 @@ Thread_Control_Command :: enum u64 {
 	Read_Breakpoints     = 9,
 	// Reads a Thread_Breakpoints at the address: the thread has these
 	// breakpoints from now on, and no other. The thread is held. Only
-	// through the program handle with Debug, from the debugger of the
-	// program (thread_control_needs_the_debugger): Bad_Handle with 0 or a
+	// through the process handle with Debug, from the debugger of the
+	// process (thread_control_needs_the_debugger): Bad_Handle with 0 or a
 	// thread handle.
 	// Bad_Operation for a breakpoint that a thread cannot have
 	// (thread_breakpoints_refusal): nothing changes. A reached breakpoint is
 	// a fault of the kind Debug of the thread.
 	Write_Breakpoints    = 10,
 	// Copies `size` bytes (at most THREAD_MEMORY_READ_LIMIT) from the
-	// address `source` of the program of the thread to the address -> the
+	// address `source` of the process of the thread to the address -> the
 	// bytes copied. The thread is not held. The copy reads only pages that
-	// the program maps, that it can read and that have a frame: no read
+	// the process maps, that it can read and that have a frame: no read
 	// gives a frame to a page. It stops before the first page that is not
 	// so, and gives the count before it; Bad_Address when that page holds
 	// the first byte. Device memory is never read.
@@ -2187,17 +2187,17 @@ Thread_Control_Command :: enum u64 {
 	// machine has, and for a set with no processor inside the limit
 	// (thread_placement_after_write): nothing changes.
 	Write_Placement      = 13,
-	// Writes the Program_Schedule of a program at the address (size: at
+	// Writes the Process_Schedule of a process at the address (size: at
 	// least its size) -> the bytes written. Only the machine handle with
-	// Schedule and Inspect; `number` names the program by its slot and its
-	// serial (program_slot_and_serial). The value in use: never 0.
-	Read_Program_Schedule = 14,
-	// Reads a Program_Schedule at the address: each thread of the program
+	// Schedule and Inspect; `number` names the process by its slot and its
+	// serial (process_slot_and_serial). The value in use: never 0.
+	Read_Process_Schedule = 14,
+	// Reads a Process_Schedule at the address: each thread of the process
 	// creates its threads under it from now on (the creations that come
 	// after the write in the order of the kernel). Only the machine handle
 	// with Schedule and Inspect. Bad_Operation for a value above
-	// WEIGHT_FULL (program_schedule_after_write): nothing changes.
-	Write_Program_Schedule = 15,
+	// WEIGHT_FULL (process_schedule_after_write): nothing changes.
+	Write_Process_Schedule = 15,
 	// The calling thread counts the four events of Thread_Counters from 0,
 	// from now on, in user mode only -> nothing. A thread that counts starts
 	// again from 0. Only the machine handle with Counters; `number` is not
@@ -2250,27 +2250,27 @@ Thread_Counters :: struct {
 }
 #assert(size_of(Thread_Counters) == 32)
 
-// thread_control_names_a_program says if a command of Thread_Control names
-// a program, by its slot and its serial, in place of a thread: the two
-// commands of the schedule of a program. Only the machine handle takes
+// thread_control_names_a_process says if a command of Thread_Control names
+// a process, by its slot and its serial, in place of a thread: the two
+// commands of the schedule of a process. Only the machine handle takes
 // them (thread_control_machine_rights).
-thread_control_names_a_program :: proc "contextless" (command: Thread_Control_Command) -> bool {
-	return command == .Read_Program_Schedule || command == .Write_Program_Schedule
+thread_control_names_a_process :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Read_Process_Schedule || command == .Write_Process_Schedule
 }
 
 // thread_control_rights gives the rights that a thread handle needs for a
 // command of Thread_Control: Inspect for a hold and for each read, and Write
 // too for a write of the registers. A write of the registers lets its
-// holder choose the code that the program of the
+// holder choose the code that the process of the
 // thread runs, so it has its own right; a hold and a read do not, so a
 // profiler gets them with no write. A writer also reads the frame before it
 // writes it. Control, the right to end a thread, gives none of them. It
 // gives the write of the schedule, which only lowers: a holder that can end
 // a thread can also give it a smaller share, which is less. A write of the
 // breakpoints takes no thread handle and no number of an own thread
-// (thread_control_needs_the_debugger). A read of the memory of the program
+// (thread_control_needs_the_debugger). A read of the memory of the process
 // needs Write too: a handle with Inspect alone sees how the thread runs,
-// and never the bytes that its program holds. Control also gives the write
+// and never the bytes that its process holds. Control also gives the write
 // of the placement, which only narrows: a holder that can end a thread can
 // also give it fewer processors, which is less.
 //
@@ -2282,7 +2282,7 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 		return {.Inspect, .Write}
 	case .Write_Schedule, .Write_Placement:
 		return {.Control}
-	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 		return {.Inspect}
 	}
 	// Only a cast that skipped the border of the command reaches this line:
@@ -2304,12 +2304,12 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 // first to keep what it does not change, and it gets the machine numbers
 // from a report. So Schedule with no Inspect names no thread. A write of a
 // placement through the machine handle gives the set and the limit, for
-// the same reason. The two commands of the schedule of a program take the
-// machine handle only, with the same rights: a read of any program is a
+// the same reason. The two commands of the schedule of a process take the
+// machine handle only, with the same rights: a read of any process is a
 // report of the machine.
 thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Command) -> (rights: Rights, taken: bool) {
 	switch command {
-	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
+	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule:
 		return {.Schedule, .Inspect}, true
 	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters:
 		return {}, false
@@ -2319,15 +2319,15 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 }
 
 // thread_control_takes_debug_handle says if a command of Thread_Control
-// also takes the program handle with Debug of the program that the caller
-// debugs, with the number of a thread of that program in place of a thread
+// also takes the process handle with Debug of the process that the caller
+// debugs, with the number of a thread of that process in place of a thread
 // handle: each command but the two of the schedule, the two of the
 // placement and the three of the thread counters. A debugger holds, reads
 // and writes a thread; the share of a thread and its processors are not a
 // part of debugging, and the thread counters are of the calling thread.
 thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	switch command {
-	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 		return false
 	case .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory:
 		return true
@@ -2337,10 +2337,10 @@ thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control
 }
 
 // thread_control_needs_the_debugger says if a command of Thread_Control
-// takes only the program handle with Debug, from the debugger of the
-// program of the thread: the write of the breakpoints. A program has no
-// use for a breakpoint on itself, and a breakpoint that a program could
-// set on its own threads would let each program put a debug exception at
+// takes only the process handle with Debug, from the debugger of the
+// process of the thread: the write of the breakpoints. A process has no
+// use for a breakpoint on itself, and a breakpoint that a process could
+// set on its own threads would let each process put a debug exception at
 // the place where the kernel copies its memory. With 0 or a thread handle
 // the command gives Bad_Handle.
 thread_control_needs_the_debugger :: proc "contextless" (command: Thread_Control_Command) -> bool {
@@ -2362,7 +2362,7 @@ Thread_Breakpoint_Kind :: enum u32 {
 	Read_Or_Write = 3, // The thread reads or writes a byte of the range: a Debug trap after the instruction.
 }
 
-// One breakpoint of a thread: an address of its program, and what stops
+// One breakpoint of a thread: an address of its process, and what stops
 // there. 16 bytes.
 //
 // Example: `{address = 0x40_1000, kind = .Execute}` stops the thread before
@@ -2370,7 +2370,7 @@ Thread_Breakpoint_Kind :: enum u32 {
 // length = 8}` stops it after a write to one of the 8 bytes from that
 // address.
 Thread_Breakpoint :: struct {
-	address: u64, // Below USER_END: an address of a program, never of the kernel. A data breakpoint: a multiple of `length`.
+	address: u64, // Below USER_END: an address of a process, never of the kernel. A data breakpoint: a multiple of `length`.
 	kind:    Thread_Breakpoint_Kind,
 	length:  u32, // A data breakpoint: 1, 2, 4 or 8 bytes. Execute and None: 0.
 }
@@ -2380,7 +2380,7 @@ Thread_Breakpoint :: struct {
 // `Write_Breakpoints` of `Thread_Control` give and take them. The place of
 // a breakpoint is its number in the debug status of a fault record
 // (`DEBUG_STATUS_BREAKPOINTS`). A breakpoint is of one thread: no other
-// thread and no other program stops on it. A written image is hostile
+// thread and no other process stops on it. A written image is hostile
 // input to the kernel: it must pass `thread_breakpoints_refusal`. 64 bytes.
 // See [breakpoint](term:breakpoint).
 Thread_Breakpoints :: struct {
@@ -2391,7 +2391,7 @@ Thread_Breakpoints :: struct {
 // thread_breakpoints_refusal says what a write of the breakpoints of a
 // thread refuses, and the value that it refuses: a kind that does not
 // exist, a length that the kind cannot have, an address that is not an
-// address of a program or that is not a multiple of the length. With these
+// address of a process or that is not a multiple of the length. With these
 // checks no breakpoint is ever at an address of the kernel.
 thread_breakpoints_refusal :: proc "contextless" (breakpoints: ^Thread_Breakpoints) -> (refusal: Thread_Write_Refusal, value: u64) {
 	for breakpoint in breakpoints.breakpoints {
@@ -2492,8 +2492,8 @@ Thread_Registers :: struct {
 	r12, r13, r14, r15: u64,
 	rip:    u64, // The address of the next instruction of the thread: below USER_END.
 	rflags: u64, // THREAD_FLAGS_REQUIRED set, and no bit outside THREAD_FLAGS_ALLOWED.
-	cs:     u64, // THREAD_CODE_SELECTOR: the one code selector of a program.
-	ss:     u64, // THREAD_STACK_SELECTOR: the one stack selector of a program.
+	cs:     u64, // THREAD_CODE_SELECTOR: the one code selector of a process.
+	ss:     u64, // THREAD_STACK_SELECTOR: the one stack selector of a process.
 	// Read only, 1: the last entry of the thread into the kernel was a
 	// syscall that has not returned yet: the thread waits in it, or its
 	// processor left it after the operations of the entry and before the
@@ -2507,15 +2507,15 @@ Thread_Registers :: struct {
 }
 #assert(size_of(Thread_Registers) == 176)
 
-// The selector of the code segment of each thread of a program: the 64-bit
+// The selector of the code segment of each thread of a process: the 64-bit
 // code segment of privilege 3 of the kernel.
 THREAD_CODE_SELECTOR :: 0x23
-// The selector of the stack segment of each thread of a program: the data
+// The selector of the stack segment of each thread of a process: the data
 // segment of privilege 3 of the kernel.
 THREAD_STACK_SELECTOR :: 0x1B
 // Interrupts on, and bit 1, which the processor always sets.
 THREAD_FLAGS_REQUIRED :: u64(0x202)
-// The flags that a thread of a program can hold: carry, parity, adjust,
+// The flags that a thread of a process can hold: carry, parity, adjust,
 // zero, sign, trap, interrupt, direction, overflow, resume, alignment check
 // and identification, and bit 1. Not: the I/O privilege level, nested task,
 // virtual-8086, the virtual interrupt flags, the reserved bits.
@@ -2545,12 +2545,12 @@ Thread_Write_Refusal :: enum u64 {
 	Breakpoint_Address  = 14, // The address of a breakpoint is not below USER_END, is not a multiple of the length of a data breakpoint, or is not 0 in an empty place.
 	Processors          = 15, // The set of processors of a Thread_Placement has no processor that the machine has, has none inside the limit, or, in a write that only narrows, has a processor that the set of the thread does not have: the error record gives the set that it had to stay inside.
 	Processors_Limit    = 16, // The limit of a Thread_Placement, in a write through the machine handle, has no processor that the machine has: the error record gives the processors of the machine.
-	New_Thread_Weight_Limit = 17, // The new-thread weight limit of a Thread_Schedule or of a Program_Schedule, in a write through the machine handle, is above WEIGHT_FULL.
+	New_Thread_Weight_Limit = 17, // The new-thread weight limit of a Thread_Schedule or of a Process_Schedule, in a write through the machine handle, is above WEIGHT_FULL.
 }
 
 // thread_registers_refusal says what a write of the registers of a thread
 // refuses, and the value that it refuses. The checks are the conditions of
-// the return of the processor to a program (iretq): with them, the kernel
+// the return of the processor to a process (iretq): with them, the kernel
 // never faults at the return.
 thread_registers_refusal :: proc "contextless" (registers: ^Thread_Registers) -> (refusal: Thread_Write_Refusal, value: u64) {
 	switch {
@@ -2625,30 +2625,30 @@ extended_state_refusal :: proc "contextless" (area: []u8, components: u64, mxcsr
 //   Operation: one operation of a kernel entry. detail: the Operation;
 //              value_0: its cycles of the cycle counter, from the start of
 //              its execution to its end; value_1: its Status.
-//   Switch:    a processor takes a thread from a run queue. The program and
+//   Switch:    a processor takes a thread from a run queue. The process and
 //              the thread of the record are the thread taken; value_0: the
-//              program slot of the thread that the processor left just
+//              process slot of the thread that the processor left just
 //              before (0: none: it was idle, or it took no thread first);
 //              value_1: the number of that thread.
-//   Fault:     an exception of a thread of a program. detail: the vector;
+//   Fault:     an exception of a thread of a process. detail: the vector;
 //              value_0: the address of a page fault, only when a rule that
-//              names the program accepted the event (a rule for every
-//              program gets 0: the order of the pages that a program
+//              names the process accepted the event (a rule for every
+//              process gets 0: the order of the pages that a process
 //              touches can show its data); 0 for another vector;
 //              value_1: the Event_Fault_Outcome.
 //   Lock_Wait: a processor took a lock of the kernel after a wait. detail:
-//              the Lock_Kind; value_0: the cycles of the wait. The program
+//              the Lock_Kind; value_0: the cycles of the wait. The process
 //              and the thread are the current thread of the processor (0:
 //              none).
 //
-// A program with the right **Events** on the machine chooses the kinds to
+// A process with the right **Events** on the machine chooses the kinds to
 // record with the rules of its event table (`Events_Set`). See
 // [kernel event](term:kernel-event).
 Event_Kind :: enum u32 {
 	None      = 0, // No kind: a rule of this kind is refused.
 	Operation = 1, // One kernel operation, at its end.
 	Switch    = 2, // A processor takes a thread from a run queue.
-	Fault     = 3, // An exception of a thread of a program.
+	Fault     = 3, // An exception of a thread of a process.
 	Lock_Wait = 4, // A processor took a lock of the kernel after a wait.
 }
 
@@ -2665,13 +2665,13 @@ event_kind_of_word :: proc "contextless" (word: u32) -> (kind: Event_Kind, ok: b
 	return {}, false
 }
 
-// What the kernel did with a fault of a program (Event_Record.value_1 of a
+// What the kernel did with a fault of a process (Event_Record.value_1 of a
 // Fault).
 Event_Fault_Outcome :: enum u64 {
 	None      = 0,
 	First_Use = 1, // A page on first use: the page has its frame, and the instruction runs again.
-	Fault_Ring = 2, // A record of the fault ring of the program: the thread waits for an answer.
-	Stopped   = 3, // The program stops.
+	Fault_Ring = 2, // A record of the fault ring of the process: the thread waits for an answer.
+	Stopped   = 3, // The process stops.
 }
 
 // A flag of an event rule. A flag that the kernel does not know makes the
@@ -2683,17 +2683,17 @@ Event_Rule_Flag :: enum u32 {
 Event_Rule_Flags :: bit_set[Event_Rule_Flag;u32]
 
 // One rule of the event table. A rule accepts a kernel event of its kind
-// when each of its tests passes: the program, the detail with Match_Detail,
+// when each of its tests passes: the process, the detail with Match_Detail,
 // the least duration; then "one in N": of the events that passed the other
 // tests of this rule, since the table was given, the event N, 2N, 3N and so
 // on. A kernel event that a rule accepts is one Event_Record, whatever the
 // other rules say. The kernel tests the rules in their order: at most
 // EVENT_RULE_CAPACITY tests of a few fields, with no lock.
 //
-// A program gives a table of rules to `Events_Set`; the kernel copies it and
+// A process gives a table of rules to `Events_Set`; the kernel copies it and
 // checks each rule first: an unknown kind or flag, a reserved word that is
 // not 0, a duration for Switch or Fault, a detail for Switch or a duration
-// above `EVENT_LEAST_NANOSECONDS_MOST` gives `Bad_Operation`; a bad program
+// above `EVENT_LEAST_NANOSECONDS_MOST` gives `Bad_Operation`; a bad process
 // handle gives `Bad_Handle`. "One in N" is a count, never a random choice.
 // 64 bytes. See [event rule](term:event-rule).
 //
@@ -2703,11 +2703,11 @@ Event_Rule_Flags :: bit_set[Event_Rule_Flag;u32]
 Event_Rule :: struct {
 	kind:    Event_Kind, // The kind of the events that the rule tests.
 	flags:   Event_Rule_Flags, // `Match_Detail`, or no flag.
-	// A program handle of the caller with the right Read: only the events
-	// of that program, with the address of its page faults (Read gives its
-	// stop report, which has that address already). 0: every program and
-	// the kernel itself (program 0), with no address of a fault.
-	program: u64,
+	// A process handle of the caller with the right Read: only the events
+	// of that process, with the address of its page faults (Read gives its
+	// stop report, which has that address already). 0: every process and
+	// the kernel itself (process 0), with no address of a fault.
+	process: u64,
 	detail:  u64, // With Match_Detail: the Operation, the vector of a Fault, or the Lock_Kind.
 	// Operation and Lock_Wait: the least duration in nanoseconds, at most
 	// EVENT_LEAST_NANOSECONDS_MOST. 0 for Switch and Fault.
@@ -2729,7 +2729,7 @@ EVENT_ONE_IN_MOST :: 1 << 32
 // The fewest records of one event ring. The count of records of a ring is
 // a power of two from this to `EVENT_RING_RECORDS_MOST`: the kernel indexes
 // a ring with its own count and the capacity, never with a value of the
-// program.
+// process.
 EVENT_RING_RECORDS_LEAST :: 16
 // The most records of one event ring: 2^20 records of 64 bytes, 64 MiB for
 // each processor.
@@ -2738,21 +2738,21 @@ EVENT_RING_RECORDS_MOST :: 1 << 20
 // One kernel event, in the event ring of the processor where it came.
 //
 // The kernel writes it at an event point when a rule accepts the event; the
-// program that gave the event table reads it with no kernel entry. What
+// process that gave the event table reads it with no kernel entry. What
 // `detail`, `value_0` and `value_1` hold depends on `kind` (see
 // `Event_Kind`). A record shows the address of a page fault only when a rule
-// names its program with a handle with **Read**. 64 bytes. See
+// names its process with a handle with **Read**. 64 bytes. See
 // [event record](term:event-record).
 //
-// Example: a `Switch` record with `program = 7`, `thread = 2`, `value_0 = 0`:
-// the processor was idle, and took the thread 2 of the program in slot 7.
+// Example: a `Switch` record with `process = 7`, `thread = 2`, `value_0 = 0`:
+// the processor was idle, and took the thread 2 of the process in slot 7.
 Event_Record :: struct {
 	time:      u64, // The cycle counter at the event point (Time_Record: cycle_start and cycle_frequency).
 	kind:      u32, // The word of an Event_Kind, read through event_kind_of_word.
 	processor: u32, // The index of the processor.
-	program:   u32, // The slot of the program. 0: the kernel, with no thread.
-	thread:    u32, // The number of the thread in its program (Thread_Record.number). 0 when program is 0.
-	program_serial: u64, // The serial of the program of the slot (Program_Report.program_serial).
+	process:   u32, // The slot of the process. 0: the kernel, with no thread.
+	thread:    u32, // The number of the thread in its process (Thread_Record.number). 0 when process is 0.
+	process_serial: u64, // The serial of the process of the slot (Process_Report.process_serial).
 	detail:    u64, // By kind: the Operation, the vector of a Fault, or the Lock_Kind. 0 for Switch.
 	value_0:   u64, // By kind: see `Event_Kind`.
 	value_1:   u64, // By kind: see `Event_Kind`.
@@ -2763,17 +2763,17 @@ Event_Record :: struct {
 // The head of one event ring. The ring of processor p starts at the byte
 // p * (EVENT_RING_HEAD_BYTES + records * 64) of the memory object; its
 // records follow its head. The kernel writes the record n at the index
-// n % records, then `written` = n + 1. The program reads the records from
+// n % records, then `written` = n + 1. The process reads the records from
 // `read` to `written`, then writes `read`: a place is free for the kernel
 // again once `read` passed it. When records - (written - read) is 0, the
 // kernel drops the record and adds 1 to `lost`: it never waits, and it
-// never writes over a record that the program did not read. The kernel
+// never writes over a record that the process did not read. The kernel
 // keeps its own counts; it reads only `read` from this memory, and a false
-// value there loses records of this program, or lets the kernel write over
-// records that this program did not read: nothing else.
+// value there loses records of this process, or lets the kernel write over
+// records that this process did not read: nothing else.
 //
 // The two lines of 64 bytes keep the words that the kernel writes and the
-// word that the program writes on two cache lines. 128 bytes. See
+// word that the process writes on two cache lines. 128 bytes. See
 // [event ring](term:event-ring).
 Event_Ring :: struct {
 	// The line that the kernel writes.
@@ -2782,9 +2782,9 @@ Event_Ring :: struct {
 	records:   u64, // The capacity of the ring, written when the table is given.
 	processor: u64, // The index of the processor of this ring.
 	reserved_kernel: [4]u64, // Not written.
-	// The line that the program writes.
-	read:      u64, // The count of records that the program read: the kernel can write over each record before it.
-	reserved_program: [7]u64, // Not read.
+	// The line that the process writes.
+	read:      u64, // The count of records that the process read: the kernel can write over each record before it.
+	reserved_process: [7]u64, // Not read.
 }
 #assert(size_of(Event_Ring) == 128)
 // The bytes of the head of one event ring, before its records.
@@ -2815,27 +2815,27 @@ Status :: enum u32 {
 	// The handle number is 0 where 0 is not allowed, was never given, was closed, or names an object of another
 	// kind. Each operation that takes a handle can give it.
 	Bad_Address   = 3, // An address argument is wrong.
-	// The program cannot read or write the memory that it names, the address is not aligned as the operation
+	// The process cannot read or write the memory that it names, the address is not aligned as the operation
 	// needs, or a range is outside its object, below 4096 or above `USER_END`, or meets another mapping.
 	No_Memory     = 4, // No page frame is free, though the budget can pay.
 	// A contiguous run of the length asked does not exist, or a page table finds no frame. `Memory_Create`,
-	// `Memory_Map`, `Program_Start` and `Thread_Create` give it. Another try can pass after other objects end.
+	// `Memory_Map`, `Process_Start` and `Thread_Create` give it. Another try can pass after other objects end.
 	No_Slot       = 5, // A table of fixed capacity is full.
-	// The handle table of a program, the 128 mappings of a program, the threads of a program
-	// (`THREAD_CAPACITY`), the module records (`PROGRAM_MODULE_CAPACITY`), the words of a wait
+	// The handle table of a process, the 128 mappings of a process, the threads of a process
+	// (`THREAD_CAPACITY`), the module records (`PROCESS_MODULE_CAPACITY`), the words of a wait
 	// (`WORD_WAIT_CAPACITY`), the message interrupts (`MESSAGE_CAPACITY`), the rules of an event table, or a
 	// table of the kernel. Another try can pass after a slot frees.
 	Bad_State     = 6, // The object is not in a state where the operation applies.
-	// The program is stopped or not created, the thread is not held or ended, no thread waits for the fault
-	// that an answer names, another program has the event table, the memory object has a protection of its
+	// The process is stopped or not created, the thread is not held or ended, no thread waits for the fault
+	// that an answer names, another process has the event table, the memory object has a protection of its
 	// own. The arguments are right; the moment is wrong.
 	No_Right      = 7, // The handle names the object, but it does not have the right for this operation.
-	// The `Handle_State` of the handle gives the rights that it has. No operation adds a right: a program
-	// that needs it asks the holder of a handle with that right for a new grant. A program also gets it
+	// The `Handle_State` of the handle gives the rights that it has. No operation adds a right: a process
+	// that needs it asks the holder of a handle with that right for a new grant. A process also gets it
 	// when it changes a module record of its starter in itself, or maps or unmaps over it
-	// (`Module_Writer`): only a holder of its program handle does that.
+	// (`Module_Writer`): only a holder of its process handle does that.
 	No_Budget     = 8, // The budget cannot pay for the operation.
-	// The budget, or a budget above it, does not hold the pages, the program slot or the thread slot that the
+	// The budget, or a budget above it, does not hold the pages, the process slot or the thread slot that the
 	// operation takes; or for `Log`, the budget accepted all the records of its amount in this second. See
 	// `Budget_Amounts`.
 }
@@ -2924,7 +2924,7 @@ RANGE_TABLE_PAGE_LIMIT :: 65536
 
 // A range of pages of a memory object (Memory_Commit).
 //
-// A program writes a table of them in its own memory; the kernel reads it
+// A process writes a table of them in its own memory; the kernel reads it
 // as hostile input: the ranges must be in increasing order, with no overlap,
 // inside the object. Example: `{first = 16, page_count = 4}` is the pages 16
 // to 19.
@@ -2933,7 +2933,7 @@ Page_Range :: struct {
 	page_count: u64, // The pages of the range, from 1.
 }
 
-// A range of addresses of the program (Memory_Protect).
+// A range of addresses of the process (Memory_Protect).
 //
 // The same rules as `Page_Range`, on addresses: in increasing order, with no
 // overlap, inside one mapping. Example: `{address = 0x1000_0000_0000,
@@ -2968,28 +2968,28 @@ MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execut
 // The largest code of `Machine_Stop`: the host receives one byte.
 MACHINE_STOP_CODE_MOST :: 255
 
-// The code of a program that the kernel stopped. `Program_State` gives the
-// code; `Program_Stop` takes any other code from the program that stops a
-// program. The console and the log name each of these codes.
+// The code of a process that the kernel stopped. `Process_State` gives the
+// code; `Process_Stop` takes any other code from the process that stops a
+// process. The console and the log name each of these codes.
 STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
-STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
+STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the process closed.
 STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
-STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the program: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a program"). The stop report has the address in `address`.
-STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault ring of the program ended while a thread waited for an answer in it: its handler thread ended, or Fault_Handler_Set named another handler or ended the delivery.
+STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the process: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a process"). The stop report has the address in `address`.
+STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault ring of the process ended while a thread waited for an answer in it: its handler thread ended, or Fault_Handler_Set named another handler or ended the delivery.
 
-// The state of a program or of a thread. A program is Ready when one of
+// The state of a process or of a thread. A process is Ready when one of
 // its threads is Ready.
 //
-// `Program_State` gives the state of a program; `Thread_State` and
-// `Thread_Report.state` give the state of a thread. The states of a program:
+// `Process_State` gives the state of a process; `Thread_State` and
+// `Thread_Report.state` give the state of a thread. The states of a process:
 // `Created`, then `Ready` and `Waiting` in turn while it runs, then
 // `Stopped`, which it never leaves.
-Program_State :: enum u32 {
-	None    = 0, // No program or no thread in the slot.
-	Created = 1, // `Program_Create` made the program; `Program_Start` has not started it. It has no thread.
+Process_State :: enum u32 {
+	None    = 0, // No process or no thread in the slot.
+	Created = 1, // `Process_Create` made the process; `Process_Start` has not started it. It has no thread.
 	Ready   = 2, // A thread runs or waits for a processor in a run queue.
 	Waiting = 3, // Each thread is in a wait: a deadline or a word wait. A wake makes it Ready again. A hold does not change it.
-	// The program ended: `Program_Stop`, a fault with no fault handler, the close of the last handle to it, or
+	// The process ended: `Process_Stop`, a fault with no fault handler, the close of the last handle to it, or
 	// the end of its last thread (the stop code 0). Its stop code says which. A thread that ended is Stopped
 	// too.
 	Stopped = 4,
@@ -3031,44 +3031,44 @@ MESSAGE_CAPACITY :: 16
 
 // What `Inspect` writes: the kind of a report of the kernel, and what its
 // `index` argument names. Each kind needs **Inspect** on the machine. A slot
-// or a processor with no program, or out of the table, gives a report of
+// or a processor with no process, or out of the table, gives a report of
 // zeros.
 Inspect_Kind :: enum u64 {
 	None    = 0, // Refused: `Bad_Operation`.
 	System  = 1, // The `System_Report` of the machine. `index` is not read.
-	Program   = 2, // The `Program_Report` of the program slot `index`.
+	Process   = 2, // The `Process_Report` of the process slot `index`.
 	Processor = 3, // The `Processor_Report` of the processor `index`, from 0.
 	Boot      = 4, // The `Boot_Report`. `index` is not read.
-	Mappings  = 5, // The `Mapping_Report` of a page table. `index` 0: the kernel half of the addresses. Another value: the half of the program that asks.
-	Modules   = 6, // The `Module_Report` of the program slot `index`.
-	// The reports of a developer tool (docs/TOOLS.md): what one program has,
-	// read with the right Inspect: counts, places and states. A program
-	// without that right sees no other program.
-	// Each one has the serial of the program, so that a reader drops a
-	// sample of two programs in one slot.
-	Program_Mappings = 7, // Program_Mapping_Report of program slot `index`.
-	Threads          = 8, // Thread_Table_Report of program slot `index`.
-	// Stop_Report of program slot `index`: zero when it did not stop on a
-	// fault, or when the slot has no program. A frame of a stack trace comes
-	// from the stack of the program, and a corrupt chain of frame pointers
+	Mappings  = 5, // The `Mapping_Report` of a page table. `index` 0: the kernel half of the addresses. Another value: the half of the process that asks.
+	Modules   = 6, // The `Module_Report` of the process slot `index`.
+	// The reports of a developer tool (docs/TOOLS.md): what one process has,
+	// read with the right Inspect: counts, places and states. A process
+	// without that right sees no other process.
+	// Each one has the serial of the process, so that a reader drops a
+	// sample of two processes in one slot.
+	Process_Mappings = 7, // Process_Mapping_Report of process slot `index`.
+	Threads          = 8, // Thread_Table_Report of process slot `index`.
+	// Stop_Report of process slot `index`: zero when it did not stop on a
+	// fault, or when the slot has no process. A frame of a stack trace comes
+	// from the stack of the process, and a corrupt chain of frame pointers
 	// gives values of its memory; the address of a page fault can be a
 	// value too. So the kernel gives a frame only when a module record of
-	// the program holds its address (else the frame is all zero), and the
+	// the process holds its address (else the frame is all zero), and the
 	// address of the fault only in the first page or in a module record
 	// (else 0). hidden_value_count counts what it took out. The holder of the
-	// program handle with Read still reads the whole report (Program_State).
+	// process handle with Read still reads the whole report (Process_State).
 	Stop             = 9,
-	// Page_Report of the program that asks, for the address that it writes
+	// Page_Report of the process that asks, for the address that it writes
 	// in the Page_Report: which of the 64 pages from it have a frame. Index
-	// must be 0: a page that gets a frame in another program is a fact that
+	// must be 0: a page that gets a frame in another process is a fact that
 	// it can watch page by page (a side channel), so no slot but its own.
 	Pages            = 10,
 }
 
-// A fact about one mapping of a program, in `Program_Mapping.flags`.
-Program_Mapping_Flag :: enum u32 {
-	Write       = 0, // The program can write the pages.
-	Execute     = 1, // The program can execute the pages.
+// A fact about one mapping of a process, in `Process_Mapping.flags`.
+Process_Mapping_Flag :: enum u32 {
+	Write       = 0, // The process can write the pages.
+	Execute     = 1, // The process can execute the pages.
 	Uncached    = 2, // The registers of a device.
 	Device      = 3, // The frames are not from the page frame table: a framebuffer, boot data, a device.
 	Contiguous  = 4, // The memory object was made `Contiguous`: its frames follow each other and do not move.
@@ -3080,45 +3080,45 @@ Program_Mapping_Flag :: enum u32 {
 	No_Access   = 10, // The protection of the mapping is No_Access now.
 }
 
-// One mapping of a program: Program_Mapping_Report.
+// One mapping of a process: Process_Mapping_Report.
 //
 // The kernel writes it for a developer tool from its own table of mappings
-// and from the page table. Example: a stack of 64 pages of which the program
+// and from the page table. Example: a stack of 64 pages of which the process
 // touched 3 has `page_count = 64`, `present = 3` and the flag `Write`. 64
 // bytes.
-Program_Mapping :: struct {
-	address:       u64, // The first byte of the mapping in the program.
+Process_Mapping :: struct {
+	address:       u64, // The first byte of the mapping in the process.
 	page_count:    u64, // The pages of the mapping.
 	first:         u64, // The first page of the memory object.
 	present:       u64, // The pages of this mapping that have a page frame, from the page table.
 	region_pages:  u64, // The pages of the memory object.
 	region_serial: u64, // The memory object: two mappings with one serial map one object.
-	flags:         bit_set[Program_Mapping_Flag;u32], // What the mapping and its memory object are.
-	references:    u32, // The handles and the mappings that name the memory object, in all programs.
+	flags:         bit_set[Process_Mapping_Flag;u32], // What the mapping and its memory object are.
+	references:    u32, // The handles and the mappings that name the memory object, in all processes.
 	committed:     u64, // The committed pages of the memory object: all its pages, unless it was made Uncommitted.
 }
-#assert(size_of(Program_Mapping) == 64)
+#assert(size_of(Process_Mapping) == 64)
 
-MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel: the mappings of one program. `Memory_Map` gives `No_Slot` for one more.
+MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
 
-// The mappings of one program, in the order of their addresses. `Inspect`
-// with the kind `Program_Mappings` writes it; the developer tools show the
-// memory of a program with it.
-Program_Mapping_Report :: struct {
-	program_serial: u64, // The serial of the program of the slot: a reader drops reports of two programs.
+// The mappings of one process, in the order of their addresses. `Inspect`
+// with the kind `Process_Mappings` writes it; the developer tools show the
+// memory of a process with it.
+Process_Mapping_Report :: struct {
+	process_serial: u64, // The serial of the process of the slot: a reader drops reports of two processes.
 	count:    u64, // The records in `mappings`.
-	mappings: [MAPPING_REPORT_CAPACITY]Program_Mapping, // By address; `count` of them are used.
+	mappings: [MAPPING_REPORT_CAPACITY]Process_Mapping, // By address; `count` of them are used.
 }
 
-// One thread of a program: Thread_Table_Report. The kernel reads the
+// One thread of a process: Thread_Table_Report. The kernel reads the
 // fields of the scheduler with no lock: each field is whole, two fields can
 // come from two instants.
 Thread_Report :: struct {
 	// The machine number of the thread: the name of this thread among all the threads of the machine. A new
 	// thread never has the machine number of a thread that ended. `Thread_Control` takes it with the machine handle.
 	machine_number:   u64,
-	number:           u32, // The thread area of the thread in the program.
-	state:            Program_State, // Ready or Waiting (Stopped: it ended).
+	number:           u32, // The thread area of the thread in the process.
+	state:            Process_State, // Ready or Waiting (Stopped: it ended).
 	processor:        u32, // 1 + the processor that runs it now. 0: none.
 	home:             u32, // The processor of its run queue.
 	weight:           u32, // From 1 to `WEIGHT_FULL`.
@@ -3133,25 +3133,25 @@ Thread_Report :: struct {
 }
 #assert(size_of(Thread_Report) == 80)
 
-THREAD_REPORT_CAPACITY :: 32 // The thread areas of one program: `THREAD_CAPACITY`.
+THREAD_REPORT_CAPACITY :: 32 // The thread areas of one process: `THREAD_CAPACITY`.
 
-// The threads of one program, with the state of the scheduler of each.
+// The threads of one process, with the state of the scheduler of each.
 // `Inspect` with the kind `Threads` writes it.
 Thread_Table_Report :: struct {
-	program_serial: u64, // The serial of the program of the slot: a reader drops reports of two programs.
+	process_serial: u64, // The serial of the process of the slot: a reader drops reports of two processes.
 	count:   u64, // The records in `threads`.
 	threads: [THREAD_REPORT_CAPACITY]Thread_Report, // `count` of them are used.
 }
 
-// The pages of a range of a program that have a page frame: a reader that
+// The pages of a range of a process that have a page frame: a reader that
 // shows the bytes of memory knows which pages it can read with no fault,
 // and does not give a frame to a page by its read.
 //
 // The 64 pages are the bits of one word.
 PAGE_REPORT_CAPACITY :: 64
 
-// Which of 64 pages of the program that asks have a page frame, and which
-// are mapped. The program writes `address`; `Inspect` with the kind `Pages`
+// Which of 64 pages of the process that asks have a page frame, and which
+// are mapped. The process writes `address`; `Inspect` with the kind `Pages`
 // writes the two sets. A memory viewer reads only the present pages, so its
 // read gives no frame to a page.
 //
@@ -3169,7 +3169,7 @@ System_Report :: struct {
 	time:          u64, // Milliseconds since boot.
 	page_count:    u64, // Pages of memory that the kernel manages.
 	free_pages:    u64, // The free frames: in the frame table and in the frame caches of the processors.
-	program_slots: u64, // The program slots in use.
+	process_slots: u64, // The process slots in use.
 	region_count:  u64, // Memory objects in use.
 	entries:       u64, // Kernel entries since boot.
 	interrupts:    u64, // Interrupts since boot.
@@ -3178,7 +3178,7 @@ System_Report :: struct {
 	// caches while the kernel reads them; their difference is exact (docs/ARCHITECTURE.md, "The frame caches").
 	processors:    u64, // The processors that run threads.
 	reserved_pages:   u64, // Pages that a budget paid for and that have no page frame yet: pages on first use.
-	first_use_faults: u64, // Page faults of programs after which the page was present.
+	first_use_faults: u64, // Page faults of processes after which the page was present.
 	locks:            [LOCK_KIND_CAPACITY]Lock_Count, // By Lock_Kind.
 	strategy:         Strategy, // The scheduling strategy of the machine (Strategy_Set): the new one as soon as a change starts, before each run queue converted (Processor_Report.strategy).
 	strategy_changes: u32, // The calls of Strategy_Set since boot.
@@ -3189,8 +3189,8 @@ System_Report :: struct {
 // the lock order: a processor takes a lock only if it holds no lock of a
 // later kind.
 Lock_Kind :: enum u64 {
-	Control = 0, // The paths that cross programs or end objects that several programs name: rare.
-	Program = 1, // The handles, the mappings and the page table of one program.
+	Control = 0, // The paths that cross processes or end objects that several processes name: rare.
+	Process = 1, // The handles, the mappings and the page table of one process.
 	Origin  = 2, // The origin tree of the holdings.
 	Region  = 3, // One memory object: it gives a page on first use one frame.
 	Frame   = 4, // The page frames, the reserved pages, the pages of the budgets, the slots of the memory objects.
@@ -3206,7 +3206,7 @@ LOCK_KIND_CAPACITY :: 12
 @(rodata)
 LOCK_KIND_NAMES := [Lock_Kind]string {
 	.Control = "control",
-	.Program = "program",
+	.Process = "process",
 	.Origin  = "origin",
 	.Region  = "region",
 	.Frame   = "frame",
@@ -3227,9 +3227,9 @@ Lock_Count :: struct {
 // The state of one processor: what it runs, its scheduler and its frame
 // cache. `Inspect` with the kind `Processor` writes it.
 Processor_Report :: struct {
-	program:   u64, // The slot of the program that the processor runs. 0: the processor is idle.
+	process:   u64, // The slot of the process that the processor runs. 0: the processor is idle.
 	busy_time: u64, // Milliseconds with a thread.
-	same:      u64, // 1: the program is the program that asks.
+	same:      u64, // 1: the process is the process that asks.
 	apic_id:   u64, // The number that the machine gives to the processor.
 	// The scheduler (docs/SCHEDULING.md), since boot.
 	strategy:    Strategy, // The strategy of the run queue of the processor.
@@ -3250,9 +3250,9 @@ Processor_Report :: struct {
 // The log: records in channels.
 //
 // The kernel keeps the last LOG_RECORD_CAPACITY records in one memory
-// object. The kernel is the one writer: it sets the time, the program and
-// the thread of each record, so a program cannot write a record of another
-// program. A program chooses only the level, the channel and the text.
+// object. The kernel is the one writer: it sets the time, the process and
+// the thread of each record, so a process cannot write a record of another
+// process. A process chooses only the level, the channel and the text.
 // A reader maps the memory object without Write. It reads Log_Head.written,
 // and it waits on the low 32 bits of that word (Word_Wait).
 //
@@ -3262,14 +3262,14 @@ Processor_Report :: struct {
 // reads `written` again after the copy, with the two rules of
 // `log_first_kept` and `log_copy_kept` (log_ring.odin).
 //
-// The level of one record of the log: how much the text matters. A program
+// The level of one record of the log: how much the text matters. A process
 // gives it to `Log`; a reader of the log filters on it. See
 // [level](term:level).
 Log_Level :: enum u8 {
 	Info    = 0, // A fact of the normal work: a service started, a file was written.
 	Debug   = 1, // For the principal who looks for a fault: details that a normal reader hides.
-	Warning = 2, // Something went wrong and the program went on: a refused request, a retry.
-	Error   = 3, // Something failed: an operation that the program needed, a check of a test.
+	Warning = 2, // Something went wrong and the process went on: a refused request, a retry.
+	Error   = 3, // Something failed: an operation that the process needed, a check of a test.
 }
 
 // The bytes of text in one log record. With the other fields, a record is
@@ -3295,31 +3295,31 @@ LOG_PAGES :: 128
 LOG_RECORD_CAPACITY :: LOG_PAGES * 4096 / size_of(Log_Record) - 1
 // The log records that the kernel writes for itself in each second after
 // its first tick, at most: the stops on a fault, the refused returns, the
-// full fault rings, that a program can cause as fast as it faults. A line
+// full fault rings, that a process can cause as fast as it faults. A line
 // past the bound is counted, and one record says the count.
 LOG_RECORDS_OF_THE_KERNEL :: 64
-// The log records of each second of a program of normal use: what the root
-// service gives each program that it starts.
-LOG_RECORDS_OF_A_PROGRAM :: 1000
-// The program slots of the kernel.
-PROGRAM_SLOTS_OF_THE_MACHINE :: 64
-// The bytes of the name of a program (`Program_Create`). The kernel keeps
+// The log records of each second of a process of normal use: what the root
+// service gives each process that it starts.
+LOG_RECORDS_OF_A_PROCESS :: 1000
+// The process slots of the kernel.
+PROCESS_SLOTS_OF_THE_MACHINE :: 64
+// The bytes of the name of a process (`Process_Create`). The kernel keeps
 // the name with a zero byte after it.
-PROGRAM_NAME_BYTES_MOST :: 31
+PROCESS_NAME_BYTES_MOST :: 31
 // The log records of each second of the whole machine: the amount of the
-// root budget, which divides it among every budget, a program of normal use
-// in each program slot. The serial port can lose the lines of a flood of
+// root budget, which divides it among every budget, a process of normal use
+// in each process slot. The serial port can lose the lines of a flood of
 // these records, and says how many (src/md/features/log_side_channels.md).
-LOG_RECORDS_OF_THE_MACHINE :: PROGRAM_SLOTS_OF_THE_MACHINE * LOG_RECORDS_OF_A_PROGRAM
+LOG_RECORDS_OF_THE_MACHINE :: PROCESS_SLOTS_OF_THE_MACHINE * LOG_RECORDS_OF_A_PROCESS
 
-// The pages of the own log ring of a program: the kernel keeps a copy of
-// each record of the program there, which only the records of that program
+// The pages of the own log ring of a process: the kernel keeps a copy of
+// each record of the process there, which only the records of that process
 // push out (src/md/features/own_log_ring.md). The budget that pays the
-// program pays them at `Program_Create`. 4 pages hold 64 records: the rows
-// of one call of a reader with 64 rows, for 16 KiB of each program.
+// process pays them at `Process_Create`. 4 pages hold 64 records: the rows
+// of one call of a reader with 64 rows, for 16 KiB of each process.
 OWN_LOG_PAGES :: 4
 // The records that an own log ring keeps. The ring has no head: the kernel
-// keeps the count of the records of the program, and the record with the
+// keeps the count of the records of the process, and the record with the
 // count n is in the place n % OWN_LOG_RECORD_CAPACITY.
 OWN_LOG_RECORD_CAPACITY :: OWN_LOG_PAGES * 4096 / size_of(Log_Record)
 
@@ -3338,15 +3338,15 @@ Log_Head :: struct {
 //
 // The kernel writes it for a `Log` operation, or for a line of its own; the
 // root service gives the memory of the records (`ROOT_LOG_RECORDS`) to the
-// readers of the log. The kernel sets `time`, `program`, `program_serial`,
-// `own_number`, `thread` and `name`: a program cannot write a record of
-// another program. The program slot with the program serial names one
-// program: the log service gives a reader that does not act for the
+// readers of the log. The kernel sets `time`, `process`, `process_serial`,
+// `own_number`, `thread` and `name`: a process cannot write a record of
+// another process. The process slot with the process serial names one
+// process: the log service gives a reader that does not act for the
 // principal the records of those two numbers only, numbered by `own_number`
-// (modus:contract/log_scope), from the own log ring of its program
-// (`Log_Read`): the kernel writes each record of a program in the whole log
+// (modus:contract/log_scope), from the own log ring of its process
+// (`Log_Read`): the kernel writes each record of a process in the whole log
 // and in that ring. The slots have one byte each: the kernel has
-// at most 256 program slots and 256 thread slots, which leaves room for the
+// at most 256 process slots and 256 thread slots, which leaves room for the
 // two numbers in 256 bytes. See [log record](term:log-record).
 //
 // Example: the line `[console:shell] started` on the serial port is one
@@ -3355,17 +3355,17 @@ Log_Head :: struct {
 Log_Record :: struct {
 	sequence:       u64, // The number of the record in the whole log, from 0.
 	time:           u64, // Microseconds since the start of the machine.
-	program:        u8, // The program slot. 0: the kernel.
+	process:        u8, // The process slot. 0: the kernel.
 	thread:         u8, // The slot of the thread. 0: the kernel.
 	level:          Log_Level, // The level that the writer gave.
 	more:           u8, // 1: the text continues in the next record.
-	program_serial: u32, // The program serial: it changes for each new program in the slot. 0: the kernel.
-	own_number:     u32, // The number of the record among the records of its program, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
+	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
+	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
 	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`.
 	run_count:      u8, // The value runs of the text: runs[:run_count].
 	reserved:       u8, // 0.
-	name:           [PROGRAM_NAME_BYTES_MOST + 1]u8, // The name of the program, or "kernel".
-	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the program gave no channel.
+	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name of the process, or "kernel".
+	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the process gave no channel.
 	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
 	text:       [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
 }
@@ -3384,7 +3384,7 @@ KERNEL_STACK_SLOT_PAGES :: 32 // The pages of addresses of the slot of one proce
 KERNEL_STACK_PAGES :: 16 // From page 1 of the slot.
 KERNEL_FAULT_STACK_PAGES :: 4 // From page 2 + KERNEL_STACK_PAGES of the slot.
 // Each of the three other interrupt stacks. Each one holds only the frame
-// and the report of a fault of the kernel: a debug exception of a program
+// and the report of a fault of the kernel: a debug exception of a process
 // leaves it for the kernel stack at once.
 KERNEL_INTERRUPT_STACK_PAGES :: 2
 KERNEL_INTERRUPT_STACK_COUNT :: 3 // The debug exception, the non-maskable interrupt and the machine check.
@@ -3401,7 +3401,7 @@ KERNEL_STACK_SLOT_STACK_PAGES :: KERNEL_STACK_PAGES + KERNEL_FAULT_STACK_PAGES +
 Mapping_Flag :: enum u64 {
 	Write   = 0, // The pages can be written.
 	Execute = 1, // The pages can be executed.
-	Program = 2, // A program can use the pages.
+	Process = 2, // A process can use the pages.
 	Large   = 3, // The table holds pages of 2 MiB.
 }
 
@@ -3420,7 +3420,7 @@ MAPPING_RUN_CAPACITY :: 96
 // What the page table says, as the kernel reads it from the table itself.
 //
 // `Inspect` with the kind `Mappings` writes it, for the kernel half of the
-// addresses or for the half of the program that asks. A test reads it to
+// addresses or for the half of the process that asks. A test reads it to
 // prove that no page is writable and executable and that each kernel stack
 // has its guard pages: the report comes from the table that the processor
 // uses, not from the records of the kernel.
@@ -3433,8 +3433,8 @@ Mapping_Report :: struct {
 	write_execute_pages: u64, // Always 0: no page is both.
 	guard_pages:         u64, // Kernel half: the pages around the kernel stacks that have no memory.
 	guards_expected:     u64, // Kernel half: the guard pages that the layout of the kernel stacks has. Equal to `guard_pages` when each guard is in place.
-	kernel_guard:        u64, // 1: the processors refuse the memory of programs to the kernel, outside a copy.
-	kernel_no_execute:   u64, // 1: the processors refuse to execute the memory of programs in the kernel.
+	kernel_guard:        u64, // 1: the processors refuse the memory of processes to the kernel, outside a copy.
+	kernel_no_execute:   u64, // 1: the processors refuse to execute the memory of processes in the kernel.
 }
 
 // The record of how the machine started. A time is a number of
@@ -3520,109 +3520,109 @@ Boot_Report :: struct {
 	iommu_unit_count:       u64,
 }
 
-// The state of one program slot: its state, its name, its counts and what
-// its budget still holds. `Inspect` with the kind `Program` writes it; the
-// developer tools list the programs with it. A slot with no program gives
+// The state of one process slot: its state, its name, its counts and what
+// its budget still holds. `Inspect` with the kind `Process` writes it; the
+// developer tools list the processes with it. A slot with no process gives
 // zeros.
-Program_Report :: struct {
-	state:        Program_State, // `None` for a slot with no program.
-	code:         u32, // The stop code: 0 while the program runs.
-	name:         [PROGRAM_NAME_BYTES_MOST + 1]u8, // The name that `Program_Create` gave; zero bytes after it.
+Process_Report :: struct {
+	state:        Process_State, // `None` for a slot with no process.
+	code:         u32, // The stop code: 0 while the process runs.
+	name:         [PROCESS_NAME_BYTES_MOST + 1]u8, // The name that `Process_Create` gave; zero bytes after it.
 	mapped_pages: u64, // The pages of all its mappings.
 	handle_count: u64, // The handles in its handle table.
 	run_time:     u64, // Milliseconds of processor time.
 	entries:      u64, // Its kernel entries since its start.
 	thread_count: u64, // Its threads that did not end.
 	start_time:   u64, // Microseconds since the machine started.
-	budget:       Budget_Amounts, // What the budget that pays for the program still holds.
+	budget:       Budget_Amounts, // What the budget that pays for the process still holds.
 	present_pages: u64, // The mapped pages that have a page frame.
-	program_serial: u64, // A number that changes for each new program in the slot: two reports with the same serial are of one program.
+	process_serial: u64, // A number that changes for each new process in the slot: two reports with the same serial are of one process.
 }
 
-// The context: the one record that a program receives when it starts, in
+// The context: the one record that a process receives when it starts, in
 // place of text arguments that it must parse. The address of the record is
 // the parameter of the entry.
 //
 // The record has 16 handles and 24 values of 64 bits. Its starter writes
 // it and maps it read-write at `CONTEXT_ADDRESS` before the first thread
-// runs (the kernel does both for the root service, which has no starter). A program finds each thing at a **fixed place**: the
-// index of a handle or of a value is its role. So a program needs no name,
+// runs (the kernel does both for the root service, which has no starter). A process finds each thing at a **fixed place**: the
+// index of a handle or of a value is its role. So a process needs no name,
 // no path and no parser to find what it was given:
 // `ctx.handles[CONTEXT_LOG]` is its log, and a handle that its starter did
-// not give is 0. A program that starts with a context of zeros has no
+// not give is 0. A process that starts with a context of zeros has no
 // handle: it can compute and stop, and reach nothing.
 //
 // Three groups of places exist:
 //
-// - **The places that the system fixes for every program**: the log, the
+// - **The places that the system fixes for every process**: the log, the
 //   budget, the seed, the fixed ranges that the starter mapped. Every
 //   starter writes them in the same way.
-// - **The places of the first program**, the root service: the kernel
+// - **The places of the first process**, the root service: the kernel
 //   writes them at boot, with every handle that exists then (the machine,
 //   the framebuffer, the boot image, the records of the log).
-// - **The places that a starter and its program agree on**: the handles
-//   0 to 13 and the values 0 to 8. The root service gives each program the
+// - **The places that a starter and its process agree on**: the handles
+//   0 to 13 and the values 0 to 8. The root service gives each process the
 //   handles of its grants there (`src/library/support/system`, `GRANT_...`); a call
 //   host receives its call ring at 0 and its call region at 1.
 //
 // A handle of the context has the rights that the starter chose, never
-// more than the starter holds. Who starts a program decides what it can
+// more than the starter holds. Who starts a process decides what it can
 // reach: the context is the whole of its authority at its start. The
 // design: (docs/MODULE_CONTRACT.md, "The context").
 CONTEXT_HANDLES :: 16
 // The values 0 to 15 began as free values, and the roles of the system
 // took 9 to 15 one after the other until two roles wanted one number. The
 // values 16 to 23 are for the roles that the system fixes for every
-// program: a new role of the system takes a number there, never under 16.
-// A starter and its program use 0 to 8 for their own values.
+// process: a new role of the system takes a number there, never under 16.
+// A starter and its process use 0 to 8 for their own values.
 CONTEXT_VALUES :: 24
 
-// It holds no text: a program has nothing to parse.
+// It holds no text: a process has nothing to parse.
 //
 // The starter writes the record in one page that it maps at
-// `CONTEXT_ADDRESS` in the new program, and gives that address as the
-// parameter of the entry. The program reads it once, at its start
-// (`system.context_record`). Each starter and its program agree on the role of
+// `CONTEXT_ADDRESS` in the new process, and gives that address as the
+// parameter of the entry. The process reads it once, at its start
+// (`system.context_record`). Each starter and its process agree on the role of
 // each index below 16; the roles that the system fixes have constants here.
 // A handle at an index that the starter did not grant is 0. See
 // [context](term:context).
 //
 // Example: the handle of the log is `handles[CONTEXT_LOG]`, the budget of
-// the program `handles[CONTEXT_BUDGET]`, and the random seed the four values
+// the process `handles[CONTEXT_BUDGET]`, and the random seed the four values
 // from `values[CONTEXT_VALUE_SEED]`.
 Context :: struct {
-	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index is fixed by who starts the program,
+	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index is fixed by who starts the process,
 	// except the last two.
-	values:  [CONTEXT_VALUES]u64, // Numbers that the starter gives: sizes, addresses, flags. The role of each index is fixed by who starts the program, from 16 by the system.
+	values:  [CONTEXT_VALUES]u64, // Numbers that the starter gives: sizes, addresses, flags. The role of each index is fixed by who starts the process, from 16 by the system.
 }
 
-// The two roles that the system fixes for each program. A handle that the
-// program was not granted is 0.
+// The two roles that the system fixes for each process. A handle that the
+// process was not granted is 0.
 //
-// The handle 14: the log of the kernel, with the right **Write**. A program
+// The handle 14: the log of the kernel, with the right **Write**. A process
 // writes its lines with the kernel operation `Log` on it (`system.log`
 // does). The starter gives it, and the root service gives it to each
-// program that has the grant log; a call host gets it from the console.
-// With no log handle, a line of the program goes nowhere.
+// process that has the grant log; a call host gets it from the console.
+// With no log handle, a line of the process goes nowhere.
 CONTEXT_LOG :: 14 // The log of the kernel.
-// The values 9 to 12: the random seed of the program, 32 bytes, that its
+// The values 9 to 12: the random seed of the process, 32 bytes, that its
 // starter writes (docs/RANDOMNESS.md). A start with a seed of zeros is
-// refused. The root service has none: it gathers its own. A program does
+// refused. The root service has none: it gathers its own. A process does
 // not use the values 9 to 12 for another role.
 //
-// The generator of the program (`src/library/support/random`) reads the seed, then
+// The generator of the process (`src/library/support/random`) reads the seed, then
 // writes zeros over the four values: a copy of the context made later
 // holds no seed. A starter makes the seed of each child from its own
 // generator (`random.values_with_seed`).
 CONTEXT_VALUE_SEED :: 9
 CONTEXT_VALUE_SEED_COUNT :: 4 // The values of the seed: 4 values of 8 bytes.
 // The value 16: the strength of the seed of the system, from which the seed
-// of the program comes: the word of a Seed_Strength. The starter writes it
+// of the process comes: the word of a Seed_Strength. The starter writes it
 // with the seed.
 //
-// The seed itself cannot say how it was made: the generator of the program
+// The seed itself cannot say how it was made: the generator of the process
 // keeps this value. The handshake of `src/library/support/quic` refuses a seed weaker
-// than its least strength, and the program `randomness` shows it.
+// than its least strength, and the process `randomness` shows it.
 CONTEXT_VALUE_SEED_STRENGTH :: 16
 
 // How strong the source of a seed is: the strongest source that gave all
@@ -3657,12 +3657,12 @@ seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Stren
 	}
 	return {}, false
 }
-// The value 17: the program `settings` runs its boot pass (1): it reads the
+// The value 17: the process `settings` runs its boot pass (1): it reads the
 // settings kept in its store, writes the settings page, and stops, with no
 // window (modus:contract/settings).
 //
 // The root service writes 1 when it starts `settings` at boot; each other
-// start of `settings` has 0 and opens its window. No other program reads
+// start of `settings` has 0 and opens its window. No other process reads
 // this value.
 CONTEXT_VALUE_SETTINGS_BOOT_PASS :: 17
 // The values 18 and 19: the address and the size of the second pointer
@@ -3678,51 +3678,51 @@ CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS :: 18
 CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
 // The value 20: a set of bits, bit n for the member n of the fixed ranges
 // (modus:contract/fixed_addresses, Fixed_Range): the ranges that the starter
-// mapped for this program. A set bit is the statement of the starter that
-// the range is mapped; a program reads nothing at a fixed range whose bit
+// mapped for this process. A set bit is the statement of the starter that
+// the range is mapped; a process reads nothing at a fixed range whose bit
 // is clear. It is a value of the context, which only the starter writes,
-// and not a field of a shared page, which another program can write.
+// and not a field of a shared page, which another process can write.
 CONTEXT_VALUE_FIXED_RANGES_MAPPED :: 20
 // The value 21: the size in bytes of the debug image, which the starter
 // mapped at the fixed range Debug_Image (modus:contract/fixed_addresses) when its
 // bit of the value 20 is set. The value 23 has no role.
 //
-// A program that prints a stop report (the console) reads the names of the
+// A process that prints a stop report (the console) reads the names of the
 // procedures there; with no debug image, a report names offsets only.
 CONTEXT_VALUE_DEBUG_IMAGE_SIZE :: 21
 // The value 22: the machine runs for a measure (1), or not (0). See
 // [measure run](term:measure-run).
 //
-// The root service writes 1 in the context of each program that it starts
+// The root service writes 1 in the context of each process that it starts
 // when the boot image holds the resource `measure_run`: the tool puts it
-// in the boot image of `modustool measure` only. A program that starts a
+// in the boot image of `modustool measure` only. A process that starts a
 // child copies the value.
 //
-// A program that measures a rate over a duration (reads in one second,
+// A process that measures a rate over a duration (reads in one second,
 // records in one second) does so only when the value is 1
 // (`system.measure_run`). With 0 it runs its checks, which end after a
 // count of work, and writes no rate.
 CONTEXT_VALUE_MEASURE_RUN :: 22
-// The handle 15: the budget that pays for the program, with the rights
+// The handle 15: the budget that pays for the process, with the rights
 // **Give**, **Read** and **Spend**. Each page and each object that the
-// program makes is paid from it; `Memory_Create` and `Program_Create` name
+// process makes is paid from it; `Memory_Create` and `Process_Create` name
 // it. The loader of the starter gives it, and a starter cannot put another
-// handle at this place: the program receives its new budget here. The root
-// service receives the root budget with **Commit** too. When the program
+// handle at this place: the process receives its new budget here. The root
+// service receives the root budget with **Commit** too. When the process
 // stops, what the budget still holds returns to the budget of its starter.
-CONTEXT_BUDGET :: 15 // The budget of the program.
+CONTEXT_BUDGET :: 15 // The budget of the process.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
 // role of the system takes a number from 16, never 13 or 15, so that an
 // old reader cannot take a new value for a page.
 
-// The roles of the first program (the root service).
+// The roles of the first process (the root service).
 //
 // The handle 0: the machine, with every right of the machine. The kernel
 // gives it at boot to the root service only. The root service gives a
-// part of its rights to a program that has a grant for it (Inspect, Stop,
-// Schedule, Physical): a machine handle reaches each program, so no other
-// program receives it whole.
+// part of its rights to a process that has a grant for it (Inspect, Stop,
+// Schedule, Physical): a machine handle reaches each process, so no other
+// process receives it whole.
 ROOT_MACHINE :: 0
 // The handle 1: the memory of the framebuffer that the firmware set up,
 // with **Give**, **Read** and **Write**; 0 when the firmware gave no
@@ -3731,12 +3731,12 @@ ROOT_MACHINE :: 0
 ROOT_FRAMEBUFFER :: 1
 // The handle 2: the memory of the boot image, with **Give** and **Read**:
 // every module and resource that the boot program checked. The root
-// service starts each program from it, and gives it read-only to a
-// program that has the grant image.
+// service starts each process from it, and gives it read-only to a
+// process that has the grant image.
 ROOT_BOOT_IMAGE :: 2
 // The handle 3: the memory of the records of the log of the kernel, with
-// **Give** and **Read**. The root service gives it, read-only, to a program
-// that has the grant log_records, as the program that shows the log.
+// **Give** and **Read**. The root service gives it, read-only, to a process
+// that has the grant log_records, as the process that shows the log.
 ROOT_LOG_RECORDS :: 3 // Memory, with Read: the records of the log.
 // The handle 4: the memory of the debug image that the boot program read,
 // with **Give** and **Read**: the names of the procedures for the stop

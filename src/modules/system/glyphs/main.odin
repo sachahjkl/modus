@@ -1,15 +1,15 @@
 // The font service (src/md/features/glyphs_on_demand.md, "Layer 1: the
 // fixed subsets, shared and read-only"): it draws the fixed subsets past
-// the glyph caches into the demand cache, which each program that gets the
+// the glyph caches into the demand cache, which each process that gets the
 // glyph caches maps read-only, then ends.
 //
-// **What it is for.** Each program draws a character past the glyph
+// **What it is for.** Each process draws a character past the glyph
 // caches itself, from the font outlines, into its private glyph cache.
-// The characters that many programs draw at their start, the
+// The characters that many processes draw at their start, the
 // box-drawing characters of the terminal and the Greek letters of the
-// interface font, are drawn here once for all: a program finds them in the
+// interface font, are drawn here once for all: a process finds them in the
 // demand cache with the same bytes. The demand cache holds the same
-// entries whatever the programs draw, so it tells no program what another
+// entries whatever the processes draw, so it tells no process what another
 // draws.
 //
 // **Its grants**: the demand cache with Read and Write, and the font
@@ -39,10 +39,10 @@ import "modus:support/vector_font"
 
 // The render memory; the demand cache and the outlines are memory of the
 // root service and of the boot image.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 192, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 192, processes = 1, threads = 1}
 
 // The font of the outlines of each face: the file of its glyph cache. The
-// demand cache names each one by its hash, and a program uses a face only
+// demand cache names each one by its hash, and a process uses a face only
 // beside the glyph cache of that hash.
 font_of_face :: proc "contextless" (face: demand_cache.Face) -> fallback_glyphs.Outline_Font {
 	switch face {
@@ -129,9 +129,9 @@ coverage_log :: proc "contextless" () {
 		interface_drawn, total := fallback_glyphs.coverage(.Interface, script)
 		cells_drawn, _ := fallback_glyphs.coverage(.Cells, script)
 		if interface_drawn == total && cells_drawn == total {
-			system.log_in("programs", .Info, "glyphs: the script ", fallback_glyphs.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
+			system.log_in("processes", .Info, "glyphs: the script ", fallback_glyphs.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
 		} else {
-			system.log_in("programs", .Info, "glyphs: the script ", fallback_glyphs.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
+			system.log_in("processes", .Info, "glyphs: the script ", fallback_glyphs.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
 		}
 	}
 }
@@ -140,17 +140,17 @@ coverage_log :: proc "contextless" () {
 // header, draws the whole subset of each face, writes the coverage of the
 // fallback chains, and ends with the code 0. With no demand cache, no
 // outlines, or a font that the renderer refuses, it stops with the code 1:
-// each program then draws each of its glyphs past the glyph caches itself.
+// each process then draws each of its glyphs past the glyph caches itself.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(ctx.handles[demand_cache.SERVICE_GRANT_CACHE])
 	if status != .Ok {
-		system.log_in("programs", .Error, "glyphs: the demand cache does not map: status ", status)
+		system.log_in("processes", .Error, "glyphs: the demand cache does not map: status ", status)
 		system.stop(1)
 	}
 	outlines, problem := font_outlines.open(&ctx.values)
 	if problem.kind != .None {
-		system.log_in("programs", .Error, "glyphs: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind])
+		system.log_in("processes", .Error, "glyphs: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind])
 		system.stop(1)
 	}
 	faces: [demand_cache.Face]demand_cache.Face_Header
@@ -162,20 +162,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			demand_fonts[face], font_problem = vector_font.demand_font_open(bytes, face, &render_memory)
 		}
 		if font_problem != .None {
-			system.log_in("programs", .Error, "glyphs: the font ", fallback_glyphs.outline_font_name(font), " of the face ", face_name_of(face), " is refused: ", vector_font.font_problem_names[font_problem])
+			system.log_in("processes", .Error, "glyphs: the font ", fallback_glyphs.outline_font_name(font), " of the face ", face_name_of(face), " is refused: ", vector_font.font_problem_names[font_problem])
 			system.stop(1)
 		}
 		// The hash of the record: the root service checked the hash of the
 		// whole resource, and the tool wrote each record from its file.
 		faces[face] = {font_hash = hash, flags = demand_fonts[face].flags}
 		if hash != blake3.hash(bytes) {
-			system.log_in("programs", .Error, "glyphs: the font ", fallback_glyphs.outline_font_name(font), " does not have the hash of its record")
+			system.log_in("processes", .Error, "glyphs: the font ", fallback_glyphs.outline_font_name(font), " does not have the hash of its record")
 			system.stop(1)
 		}
 	}
 	writer = demand_cache.writer_open(uintptr(address), vector_font.RENDERER_VERSION, faces)
 	// The whole subset of each face, face after face, in the order of the
-	// code points: the entries of the cache do not depend on what a program
+	// code points: the entries of the cache do not depend on what a process
 	// draws.
 	total: u64
 	for face in demand_cache.Face {
@@ -195,12 +195,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		total += drawn
 		font_name := fallback_glyphs.outline_font_name(font_of_face(face))
 		if refused == 0 && absent == 0 {
-			system.log_in("programs", .Info, "glyphs: the face ", face_name_of(face), " of the demand cache holds each of the ", u64(demand_cache.subset_count(face)), " characters of its subset of ", font_name)
+			system.log_in("processes", .Info, "glyphs: the face ", face_name_of(face), " of the demand cache holds each of the ", u64(demand_cache.subset_count(face)), " characters of its subset of ", font_name)
 		} else {
-			system.log_in("programs", .Warning, "glyphs: the face ", face_name_of(face), " of the demand cache lacks characters of its subset of ", font_name, ": ", drawn, " drawn, ", refused, " refused, ", absent, " that the font cannot draw")
+			system.log_in("processes", .Warning, "glyphs: the face ", face_name_of(face), " of the demand cache lacks characters of its subset of ", font_name, ": ", drawn, " drawn, ", refused, " refused, ", absent, " that the font cannot draw")
 		}
 	}
-	system.log_in("programs", .Info, "glyphs: the font service drew each face of its subset into the demand cache: ", total, " characters, ", u64(writer.words_used), " words of ", u64(demand_cache.WORD_CAPACITY))
+	system.log_in("processes", .Info, "glyphs: the font service drew each face of its subset into the demand cache: ", total, " characters, ", u64(writer.words_used), " words of ", u64(demand_cache.WORD_CAPACITY))
 	// What the fallback chains draw past the glyph caches, script by
 	// script: the log names what no font of the system has.
 	_ = fallback_glyphs.open(&outlines, 0)

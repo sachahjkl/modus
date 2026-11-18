@@ -3,12 +3,12 @@ package root
 // The replacement table of the machine, and who may change it
 // (docs/MODULE_CONTRACT.md, "Who may replace a module").
 //
-// A replacement puts the code of another module into each program that
+// A replacement puts the code of another module into each process that
 // imports a module, with all its memory and all its handles. The check of
 // the loader proves the descriptions of the exports, not what the code
 // does. So this service writes a replacement only for a replacement row of
 // the boot image whose signature verifies under the signing key of the
-// system: the key that verified the system description. The program with
+// system: the key that verified the system description. The process with
 // the role Replace names the two modules; it chooses among the rows that
 // the key signed, and gives no row of its own.
 //
@@ -21,7 +21,7 @@ import "modus:private/root/replacement_signature"
 import "modus:contract/root_ring"
 import "modus:support/system"
 
-// replace changes the replacement table of the machine, for a program with
+// replace changes the replacement table of the machine, for a process with
 // the role Replace: where a module imports the module `name`, the loaders
 // give the module of entry `by` of the boot image (from 1). 0 removes the
 // record. It writes the error record of a refusal in values.
@@ -82,7 +82,7 @@ replacement_table_change :: proc "contextless" (asker: ^Started, name: string, b
 			if decision == .List_Not_Valid {
 				reason = replacement_list.list_problem_sentences[problem]
 			}
-			system.log_in("programs", .Warning, "root: refused the replacement of ", system.Module_Name{from_name}, " by ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, ": ", reason)
+			system.log_in("processes", .Warning, "root: refused the replacement of ", system.Module_Name{from_name}, " by ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, ": ", reason)
 			return .No_Right, decision
 		}
 	}
@@ -90,16 +90,16 @@ replacement_table_change :: proc "contextless" (asker: ^Started, name: string, b
 		return written, .Accepted
 	}
 	if by == 0 {
-		system.log_in("programs", .Info, "root: no replacement of ", system.Module_Name{from_name})
+		system.log_in("processes", .Info, "root: no replacement of ", system.Module_Name{from_name})
 	} else {
-		system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
+		system.log_in("processes", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
 	}
 	return .Ok, .Accepted
 }
 
 // replacement_list_bytes gives the resource replacement_list of the boot
 // image, or nil when it has none. The check of the boot image at the start
-// compared its hash with the system description, and no program writes
+// compared its hash with the system description, and no process writes
 // the pages of the boot image.
 replacement_list_bytes :: proc "contextless" () -> []u8 {
 	entry := system.image_resource_find(image, replacement_list.RESOURCE_NAME)

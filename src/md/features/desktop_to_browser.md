@@ -1,12 +1,12 @@
 # From the desktop of today to a light web browser
 
-The desktop of today has windows of a fixed size, programs with fixed tables, a draw table on the processor, and a network stack with TCP and QUIC. This file records the path from there to a light web browser, and to the run of two programs of other projects in Odin: `gui_toolkit`, a toolkit of immediate-mode interfaces, and `wren`, a web browser built on it. It gives each phase, what it depends on, and why the phases come in this order, with the standard of quality that every phase keeps. The entries of the work are in `ROADMAP.md`; this file holds the reasons and the order.
+The desktop of today has windows of a fixed size, processes with fixed tables, a draw table on the processor, and a network stack with TCP and QUIC. This file records the path from there to a light web browser, and to the run of two programs of other projects in Odin: `gui_toolkit`, a toolkit of immediate-mode interfaces, and `wren`, a web browser built on it. It gives each phase, what it depends on, and why the phases come in this order, with the standard of quality that every phase keeps. The entries of the work are in `ROADMAP.md`; this file holds the reasons and the order.
 
 ## The constraints
 
 - Each phase adds a capability to a system that works. No phase replaces a part that works with a part that does not work yet.
 - Each phase keeps the properties of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md). The section "The contradictions, and how they were resolved" names each place where the path pulled against a property, and the text that changed.
-- A browser reads hostile data from the network: HTML, CSS, pictures, fonts. Each reader of such data is a confined program or module with fuzz targets ([../infrastructure/fuzzing.md](../infrastructure/fuzzing.md)).
+- A browser reads hostile data from the network: HTML, CSS, pictures, fonts. Each reader of such data is a confined process or module with fuzz targets ([../infrastructure/fuzzing.md](../infrastructure/fuzzing.md)).
 - Each phase keeps the standard of quality below. A phase that makes a measure worse is read to its cause before it is merged.
 
 ## The standard of quality
@@ -23,7 +23,7 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 - **The measures are measures, never tests.** The tool records them in the measure record of each release and follows them over the releases ([measure_history.md](measure_history.md)). A test never fails on a time (`AGENTS.md`, "Work"). A change that makes a measure worse is a regression that a developer reads to its cause.
 - **The processor profile is accepted with no shame.** The test machine has no GPU, and a machine with no GPU still gets a desktop that answers at once.
 - **Its thresholds come from numbers.** The first measure is a frame of the desktop at 1920 × 1080 drawn on the processor, before any GPU work. Its number gives the resolution, the rate and the effects of the processor profile.
-- **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads in the turn that draws it to the flip; the time from the read of a key by the input service to the flip that shows it; the time from `Program_Start` to the first frame of the window.
+- **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads in the turn that draws it to the flip; the time from the read of a key by the input service to the flip that shows it; the time from `Process_Start` to the first frame of the window.
 
 ### The thresholds of the processor profile
 
@@ -38,23 +38,23 @@ Each value comes from the first measure below, on the test machine (one processo
 
 ### The three measures on the path of the system
 
-The compositor measures all three, with `system.nanoseconds()`, the clock of the system that the kernel keeps for each program: never a clock of the host. Each measure is one sentence of the log, and the tool keeps it in the measure record; no test reads a time.
+The compositor measures all three, with `system.nanoseconds()`, the clock of the system that the kernel keeps for each process: never a clock of the host. Each measure is one sentence of the log, and the tool keeps it in the measure record; no test reads a time.
 
 | Measure | From | To | Its line |
 |---|---|---|---|
 | The time of a frame | The read of the first record (of the root service, of the input service or of a window) in the turn that draws the frame; the start of the draw when that turn read none | The end of the copy into the screen page and of its page flip | Each 4096 frames, about once a minute, so that the measure does not fill the log of the system; and with each line of the keys; over the last 64 frames |
 | The time of a key to the screen | The read of the byte of the key by the input service, which writes the time in its record (not the interrupt: the input service reads the byte just after it) | The flip of the frame that draws the Present that names the key | Each 16 keys that a window named |
-| The start of a window | The call of `system.program_start` by the root service, which loads the module and makes `Program_Start` | The flip of the first frame that draws the first Present of the window | One line for each window, when both times are known |
+| The start of a window | The call of `system.process_start` by the root service, which loads the module and makes `Process_Start` | The flip of the first frame that draws the first Present of the window | One line for each window, when both times are known |
 
 **The time of a frame holds no pacing.** The compositor draws at most one frame each 16 ms. A record that comes during that wait is read in a turn that draws nothing; the frame starts in the turn that draws, so its time is the cost of the frame, and it compares with the 8.3 ms of a frame at 120 Hz. The wait is the rate of the compositor, which the reference screen at 120 Hz changes.
 
 ```
 compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least <t> us, median <t> us, over <n> frames
 compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least <t> us, median <t> us, over <n> keys
-compositor: measure: the start of the window <name>, from Program_Start to its first frame: <t> us
+compositor: measure: the start of the window <name>, from Process_Start to its first frame: <t> us
 ```
 
-**The tie of a key to its effect.** A frame shows a key only when the program says so. The path:
+**The tie of a key to its effect.** A frame shows a key only when the process says so. The path:
 
 1. The input service writes the time of the system in the record of the key.
 2. The compositor gives each key with a character a serial, sends it in the event `Key`, and keeps the serial, the window and the time in a table of 32 keys.
@@ -64,22 +64,22 @@ compositor: measure: the start of the window <name>, from Program_Start to its f
 
 So the key is measured to the frame that shows its character, not to a frame that only came after it. A key that does not change the edit line stays sent, and the next edit of the line ties it late; its time is then too long, never too short. The cases:
 
-- a key that the terminal drops because the queue of its program is full, or that the console drops while a line runs and its keys that wait are full;
+- a key that the terminal drops because the queue of its process is full, or that the console drops while a line runs and its keys that wait are full;
 - a key that the completion list takes, which moves the list and not the line: Tab, Enter or Escape while a list is open (`completion_key` in `src/modules/system/console/completion.odin`); the arrows and Control+R or Control+S have no measure, because the compositor gives a serial only to a key with a character and no Control;
 - a character of the history search, which changes the search and not the line.
 
-A window that names no serial ties none. A Present that names a serial past the newest key that its window got is refused and counted, as an `Edit` record whose serial is past the newest key that the terminal forwarded: a program cannot name the key of another window, nor hold the measure with the largest serial. When the table is full, a new key takes the place of the oldest key that is not shown, and of the oldest shown key only when all are shown; each such key is a lost measure, and counted. The counts of the lost keys and of the refused serials come in one line after a line of the keys, when they changed: the table holds measures, not records of input.
+A window that names no serial ties none. A Present that names a serial past the newest key that its window got is refused and counted, as an `Edit` record whose serial is past the newest key that the terminal forwarded: a process cannot name the key of another window, nor hold the measure with the largest serial. When the table is full, a new key takes the place of the oldest key that is not shown, and of the oldest shown key only when all are shown; each such key is a lost measure, and counted. The counts of the lost keys and of the refused serials come in one line after a line of the keys, when they changed: the table holds measures, not records of input.
 
-**The start of a window.** The root service writes the time before it calls `system.program_start`, and sends it to the compositor after the start, in the control record `Client_Started`, for the ring of the window. The time holds the load of the module, its hash and `Program_Start`, as the principal waits for them. The two times come from two programs in either order: the compositor keeps the time of the first flip of each window, and writes the line when it has both, whichever comes second. The span is the first flip less the start. A record that names no window (the handle 0, a handle of no window, a window that ended), a time of 0 or after now, and a second record are refused. When the control ring is full, the root service writes one line, and the window has no measure.
+**The start of a window.** The root service writes the time before it calls `system.process_start`, and sends it to the compositor after the start, in the control record `Client_Started`, for the ring of the window. The time holds the load of the module, its hash and `Process_Start`, as the principal waits for them. The two times come from two processes in either order: the compositor keeps the time of the first flip of each window, and writes the line when it has both, whichever comes second. The span is the first flip less the start. A record that names no window (the handle 0, a handle of no window, a window that ended), a time of 0 or after now, and a second record are refused. When the control ring is full, the root service writes one line, and the window has no measure.
 
 **The profile at the start.** The compositor writes one line at its start: `compositor: the quality profile is the processor profile: the system drives no GPU device`. The system drives no GPU today, so the decision is one pure procedure of the private part `quality` of the compositor, which the GPU path changes.
 
-**The checks.** No wait of the measure run depends on the order of two programs or on the place of the 16th key. The line of the profile and the start of `locks` are waited for in any order with the steps after them. The line of the keys, with its line of the frames, is waited for after the 24 characters of `start("processor_frame")`: whatever the count of keys before them, more than 16 keys come after the wait before, so a line comes after it. After the machine, the tool checks the form of the lines only, as for `processor_frame`.
+**The checks.** No wait of the measure run depends on the order of two processes or on the place of the 16th key. The line of the profile and the start of `locks` are waited for in any order with the steps after them. The line of the keys, with its line of the frames, is waited for after the 24 characters of `start("processor_frame")`: whatever the count of keys before them, more than 16 keys come after the wait before, so a line comes after it. After the machine, the tool checks the form of the lines only, as for `processor_frame`.
 
 **The refused forms.**
 
 - **The first flip after the key.** A frame of a clock, or of a window that ignores the key, would count as its effect, and the number would be too small.
-- **The time in the event, sent back by the program.** A program would then write the time that the compositor reads. With a serial, the compositor keeps the time.
+- **The time in the event, sent back by the process.** A process would then write the time that the compositor reads. With a serial, the compositor keeps the time.
 - **A line for each frame and each key.** The log would hold thousands of lines in a test; a line for each 16 keys holds the least and the median.
 - **The time of the `Client_Add` record.** It goes before the budget and the mappings are made, so it is not the start that the design names. A new control record says when the start ended.
 - **The profile in the root service.** The compositor owns the screen, and it is the part that a GPU changes first.
@@ -94,9 +94,9 @@ A window that names no serial ties none. A Present that names a serial past the 
 2. **A frame of the compositor with four windows**, of 1280 × 800, 960 × 640, 800 × 640 and 640 × 480, in the phases of the compositor ([`docs/SIMD.md`](../../../docs/SIMD.md), "4. The compositor"): the background copied into the frame, one call of the drawing module for each window (the records of its frame and the Picture record of its surface) and one for the bar, then the copy of the frame into a screen page. One line for a full frame. One line for a frame in its damage: a rectangle of 400 × 300 of the surface of the front window and the clock of the bar, the damage of one `Present` and of one second of the bar.
 3. **A draw table that fills the screen** with the records of a desktop: twelve cards, each with a gradient, a title and a caption in the interface font, ten lines of a label in the interface font and a value in the font of the cells, a bar, an opaque picture, a picture with alpha and a rectangle with alpha. One call of the drawing module draws it into a canvas of 1920 × 1080, with the fill of the background. The table is built once: the time is its execution, which a GPU back end of the draw table replaces.
 
-**Where it runs: a program on the machine.** The program `processor_frame` runs in the measure run of `modustool measure`, after the other measures of that run, when no other program draws. It makes its canvases and its surfaces with its own budget, and calls the code that the compositor calls: `graphics.clear`, `graphics.copy` (that is `copy_bytes_without_overlap`), and the drawing module through `interface.draw_part_through_module`. So the number is a number of the code of the system, built as the system is, under its kernel, on the machine of the other measures. The test machine keeps its screen of 1024 × 768: the move of the screen is the entry "The reference screen", and the measure comes before it, to give the thresholds.
+**Where it runs: a process on the machine.** The process `processor_frame` runs in the measure run of `modustool measure`, after the other measures of that run, when no other process draws. It makes its canvases and its surfaces with its own budget, and calls the code that the compositor calls: `graphics.clear`, `graphics.copy` (that is `copy_bytes_without_overlap`), and the drawing module through `interface.draw_part_through_module`. So the number is a number of the code of the system, built as the system is, under its kernel, on the machine of the other measures. The test machine keeps its screen of 1024 × 768: the move of the screen is the entry "The reference screen", and the measure comes before it, to give the thresholds.
 
-**What it does not measure.** The procedures of the frame of the compositor (`screen_build`, `frame_records`, `draw_areas`) are in the compositor module, and no other module imports them. The program builds the records of each window in the form of the compositor (the gradients of the title bar, the borders, the title, the close button) and runs the same phases. It leaves out the pointer, a blend of at most 48 × 48 pixels, the read of the rings, the page flip, and the swap of red and blue of a screen in that order. When the test machine shows 1920 × 1080, the line "compositor: a full frame of 1920x1080 with ..." of the compositor itself is the number of the compositor, and part 2 is read against it.
+**What it does not measure.** The procedures of the frame of the compositor (`screen_build`, `frame_records`, `draw_areas`) are in the compositor module, and no other module imports them. The process builds the records of each window in the form of the compositor (the gradients of the title bar, the borders, the title, the close button) and runs the same phases. It leaves out the pointer, a blend of at most 48 × 48 pixels, the read of the rings, the page flip, and the swap of red and blue of a screen in that order. When the test machine shows 1920 × 1080, the line "compositor: a full frame of 1920x1080 with ..." of the compositor itself is the number of the compositor, and part 2 is read against it.
 
 **How it reports.** One line for each part, with the least of the 21 frames and their median, in microseconds with one decimal, and the frames in one second that the median gives:
 
@@ -106,12 +106,12 @@ processor_frame: measure: a clear and a present of 1920x1080: least <t> us, medi
 
 The least is the cost when the host did not stop the processor during the frame. The median holds the noise of the host. The chart of the measure history follows the least ([measure_history.md](measure_history.md)). The frames in one second come from the median, because a screen shows each frame and not only the fastest one. The line of the draw table names its count of records of each kind before its times.
 
-**No time is a condition.** The scenario of the measure run waits for each line and for the last line of the program. Then the tool reads the four lines and checks their form only: each part ran once, each number is a number, the least is not above the median, the frames in one second agree with the median, and the count of frames is not 0. The program checks its pixels: after each part a pixel that the part writes has its color, and no call of the drawing module was refused.
+**No time is a condition.** The scenario of the measure run waits for each line and for the last line of the process. Then the tool reads the four lines and checks their form only: each part ran once, each number is a number, the least is not above the median, the frames in one second agree with the median, and the count of frames is not 0. The process checks its pixels: after each part a pixel that the part writes has its color, and no call of the drawing module was refused.
 
 **The refused forms.**
 
 - **The measure inside the compositor, at its start**, as its measures of the bar and of a title bar. Three canvases of 1920 × 1080 and the four surfaces are about 8 500 pages. The budget of the compositor would hold them at each start of each machine, for a run that only measures. The compositor already prints its full frame at the size of its screen.
-- **The frame of the compositor in a support package** that the compositor and the program both import. It measures the code of the compositor itself, but it moves the loop of the compositor for one measure. The reference screen gives the number of the compositor itself with no move.
+- **The frame of the compositor in a support package** that the compositor and the process both import. It measures the code of the compositor itself, but it moves the loop of the compositor for one measure. The reference screen gives the number of the compositor itself with no move.
 - **A host benchmark alone.** A host test has another runtime of memory, no kernel, no page on first use and no QEMU: its number is a second number, never the only one. It is not built.
 - **A rate over one second.** A count of 21 frames needs no duration, and runs the same work on a slow host. The frames in one second are computed from the median.
 - **Large pages for the canvases.** The surfaces of today have 4 KiB pages ("Large pages for large buffers" below). The measure takes the pages of today; a measure with both forms is a later step.
@@ -136,14 +136,14 @@ No code changes with this file. The work is its entry in `ROADMAP.md`.
 | Phase | What it gives | Depends on |
 |---|---|---|
 | A. The desktop foundations | Data with no known bound, the measure of a frame on the processor, windows that change size, a resolution, a window manager, the clipboard, sound | Nothing new |
-| B. Data in and out | Documents, drag and drop, pictures, notifications, buffers that pass from program to program with no copy | A |
+| B. Data in and out | Documents, drag and drop, pictures, notifications, buffers that pass from process to process with no copy | A |
 | C. The draw table | Alpha, paths, clips, one text kind | Nothing new; it runs beside A and B |
 | D. The web network | TLS over TCP, HTTP, cookies and a cache | A (arenas for the answers) |
-| E. A light browser | HTML, a subset of CSS, links, forms, one program for each origin | A, B, C, D |
+| E. A light browser | HTML, a subset of CSS, links, forms, one process for each origin | A, B, C, D |
 | F. The GPU and 3D | virtio-gpu, the WebGPU subset, its back end on the processor | C |
 | G. A real machine | USB, NVMe, device services for real devices | A for the display modes |
-| H. `gui_toolkit` and `wren` | The toolkit of rich programs, then the browser `wren` | A, B, C, G for `wren` on a real machine |
-| I. WebAssembly | A portable and confined program format | H |
+| H. `gui_toolkit` and `wren` | The toolkit of rich modules, then the browser `wren` | A, B, C, G for `wren` on a real machine |
+| I. WebAssembly | A portable and confined code format | H |
 
 The reasons:
 
@@ -156,7 +156,7 @@ The reasons:
 - **F comes after C** because the GPU draws the same draw table, and 3D draws into a picture that the draw table shows.
 - **G is late** because the test machine is virtual (property 7). A real machine is a goal, not a condition of the earlier phases.
 - **H comes after the foundations** because it needs the system as a target of the core library of Odin, and for `wren` a large part of the web stack.
-- **I comes after H** because the engine of WebAssembly is a rich program, and its first users are the programs of `gui_toolkit`.
+- **I comes after H** because the engine of WebAssembly is a rich module, and its first users are the modules of `gui_toolkit`.
 
 ## SIMD on the hot paths
 
@@ -172,56 +172,56 @@ The hot paths of these phases have a vector form after the rules of [`docs/SIMD.
 - **Memory with no known bound.** Arenas paid by the budget: [memory_without_a_bound.md](memory_without_a_bound.md).
 - **The measure of a frame at 1920 × 1080 on the processor.** See "The standard of quality".
 - **Layout with intrinsic sizes.** The interface package measures each element first, then places it: a label is as wide as its text, a column as wide as its widest child. Today a window places its elements at sizes that its code states. A window that changes size needs elements that know their size.
-- **Windows that change size.** The principal drags an edge of a window that its program declared resizable. The compositor sends the event `Resized`; the program makes the surface of the new size, paid by its budget, and draws its next frame into it; the compositor shows the old one until that frame comes. A budget that cannot pay keeps the old size, with one line. A program never draws into a surface that the compositor resized under it. The program makes the surface, and not the compositor, because whoever creates an object pays for it: [window_resize.md](window_resize.md).
+- **Windows that change size.** The principal drags an edge of a window that its process declared resizable. The compositor sends the event `Resized`; the process makes the surface of the new size, paid by its budget, and draws its next frame into it; the compositor shows the old one until that frame comes. A budget that cannot pay keeps the old size, with one line. A process never draws into a surface that the compositor resized under it. The process makes the surface, and not the compositor, because whoever creates an object pays for it: [window_resize.md](window_resize.md).
 - **A resolution that the principal chooses.** The compositor sets a mode of the display, then a scale factor for the interface, from 1.25 to 2 on the reference screen.
 - **A window manager.** Windows float, with snap to the edges and to the halves of the screen, maximize and minimize, and global shortcuts that the compositor keeps. Workspaces come next. Tiling may come later as an option, never as the form of the desktop. One key combination always goes to the system (property 20, line 8).
-- **The clipboard.** A copy gives the compositor a read-only handle to a memory object of the program that copies. A paste of the principal gives the program that pastes a read-only handle to that object, at that paste only (property 20, line 5). No program reads the clipboard when the principal does not paste: [clipboard.md](clipboard.md).
+- **The clipboard.** A copy gives the compositor a read-only handle to a memory object of the process that copies. A paste of the principal gives the process that pastes a read-only handle to that object, at that paste only (property 20, line 5). No process reads the clipboard when the principal does not paste: [clipboard.md](clipboard.md).
 - **Sound** through virtio-snd: a device service, and the class protocol of a timed stream, whose records carry the time at which their samples must play: [timed_stream.md](timed_stream.md).
 
 ### The look
 
-The desktop of the system keeps rectangular forms, sober by choice: sharp shadows, short animations that say a change of state, transparency only where it informs, and a blur later, with the GPU ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). This is the look of the desktop and of its elements. The draw table puts no limit of look on what a program draws ([../api/draw_table.md](../api/draw_table.md), "The limits of the format: cost, never look").
+The desktop of the system keeps rectangular forms, sober by choice: sharp shadows, short animations that say a change of state, transparency only where it informs, and a blur later, with the GPU ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). This is the look of the desktop and of its elements. The draw table puts no limit of look on what a process draws ([../api/draw_table.md](../api/draw_table.md), "The limits of the format: cost, never look").
 
 ## B. Data in and out
 
 - **The document service with the picker.** Already in `ROADMAP.md`, "A document service with a picker". A browser saves a page and reads a file of the principal through it.
-- **Drag and drop** gives the program under the pointer a read-only handle to what was dropped, at the drop only: a grant that follows from an action ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users", the forms of concession).
-- **Picture decoders.** PNG first, then JPEG. Each decoder is a module that runs in a call host with no handle but the bytes that it reads and the picture that it writes, and each has fuzz targets. A wrong file stops the call host, never the program that asked. Their hot loops have SSE2 forms (see "SIMD on the hot paths").
-- **Notifications.** A program asks the compositor to show a short text. The compositor draws it in a place that a program cannot imitate (property 20, line 8), and a notification never takes the focus.
+- **Drag and drop** gives the process under the pointer a read-only handle to what was dropped, at the drop only: a grant that follows from an action ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users", the forms of concession).
+- **Picture decoders.** PNG first, then JPEG. Each decoder is a module that runs in a call host with no handle but the bytes that it reads and the picture that it writes, and each has fuzz targets. A wrong file stops the call host, never the process that asked. Their hot loops have SSE2 forms (see "SIMD on the hot paths").
+- **Notifications.** A process asks the compositor to show a short text. The compositor draws it in a place that a process cannot imitate (property 20, line 8), and a notification never takes the focus.
 - **Buffers that pass from hand to hand with no copy.** See the next section.
 
-### Chains with no copy across several programs
+### Chains with no copy across several processes
 
-A browser moves large buffers through several programs: the bytes of a picture arrive from the network, a decoder makes pixels of them, and the compositor shows the pixels. Each copy of a picture of 8 MiB costs time and memory. The aim: a buffer passes from hand to hand through successive lends of its memory handle, with no copy.
+A browser moves large buffers through several processes: the bytes of a picture arrive from the network, a decoder makes pixels of them, and the compositor shows the pixels. Each copy of a picture of 8 MiB costs time and memory. The aim: a buffer passes from hand to hand through successive lends of its memory handle, with no copy.
 
 What exists today:
 
 - **The lend of a handle for one call** (`system.lend`, `system.lend_end`; [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Lent handle"). The caller makes a copy of its handle with the rights of the description of the export, gives the callee a handle from that copy, and revokes the copy after the call. A table parameter in a memory object is lent with the rights of its direction, so a callee that only reads a table gets no Write. A revocation reaches each handle and each mapping that came from the copy, through each chain of gifts ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default", the revocation).
-- **The datagram region with no copy on send** ([../infrastructure/network_data_path.md](../infrastructure/network_data_path.md), "The send with no copy"). The device reads the data to send from the datagram region of the program; the network service copies and checks 8 bytes of the header only. On receive, the network service still copies each datagram once into the region of the program, and that copy is irreducible with one receive queue.
-- **The surfaces of the windows.** A program makes the memory of its surface and gives the compositor a handle with Read only (`display.open`). The compositor reads the pixels in place, with no copy through a ring.
+- **The datagram region with no copy on send** ([../infrastructure/network_data_path.md](../infrastructure/network_data_path.md), "The send with no copy"). The device reads the data to send from the datagram region of the process; the network service copies and checks 8 bytes of the header only. On receive, the network service still copies each datagram once into the region of the process, and that copy is irreducible with one receive queue.
+- **The surfaces of the windows.** A process makes the memory of its surface and gives the compositor a handle with Read only (`display.open`). The compositor reads the pixels in place, with no copy through a ring.
 
 What is missing for a chain:
 
-- **A lend that passes on to a third program.** A lent handle has only the rights of the description, with no Give, so a callee cannot lend the buffer on: the decoder cannot pass the pixels that it wrote to the compositor. The chain needs a description that lets a callee lend a handle on, with at most the rights that it received, and a `lend_end` of the first hand that ends each later hand too. The kernel already revokes through the chain; the form of the description and of the library is what is missing.
-- **The read-only narrowing at each hand.** Each hand must pass the buffer on with Read only, and the hand before must lose its Write before the next hand reads, or the next hand must copy before it checks (property 6, "copy, then validate"). Today a program cannot take Write away from an object that another program maps: `Memory_Protect` acts only on an object that this program alone names. The missing part is a narrowing of an object for each holder: after it, no holder writes the object, and a reader can check the bytes in place.
+- **A lend that passes on to a third process.** A lent handle has only the rights of the description, with no Give, so a callee cannot lend the buffer on: the decoder cannot pass the pixels that it wrote to the compositor. The chain needs a description that lets a callee lend a handle on, with at most the rights that it received, and a `lend_end` of the first hand that ends each later hand too. The kernel already revokes through the chain; the form of the description and of the library is what is missing.
+- **The read-only narrowing at each hand.** Each hand must pass the buffer on with Read only, and the hand before must lose its Write before the next hand reads, or the next hand must copy before it checks (property 6, "copy, then validate"). Today a process cannot take Write away from an object that another process maps: `Memory_Protect` acts only on an object that this process alone names. The missing part is a narrowing of an object for each holder: after it, no holder writes the object, and a reader can check the bytes in place.
 
 The design of these two parts is not written. It needs a new intent file before any code.
 
 ### Large pages for large buffers
 
-A large page maps 2 MiB with one entry of the page table, so a program that reads a large buffer misses the translation cache less ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "Large pages").
+A large page maps 2 MiB with one entry of the page table, so a process that reads a large buffer misses the translation cache less ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "Large pages").
 
 What exists today:
 
 - The flag `Large_Pages` of `Memory_Create`: the object is contiguous, its frames are one run aligned on 2 MiB, and its count of pages is a multiple of 512, or `Memory_Create` refuses it. `Memory_Map` uses a large page for each aligned 2 MiB of the mapping.
 - A protection change must cover the whole mapping, and a decommit of such an object is refused, because it is contiguous.
 - `Uncommitted` with any other flag is refused, so an uncommitted object never has large pages.
-- The program `address_space` tests the flag and measures random reads over 64 MiB with large pages and with 4 KiB pages.
+- The process `address_space` tests the flag and measures random reads over 64 MiB with large pages and with 4 KiB pages.
 
 What is missing:
 
 - **The surfaces.** `display.open` makes each surface with 4 KiB pages. A surface of 1920 × 1080 with two pictures is 16 MiB, eight large pages.
-- **The decoded pictures and the frames of a video.** No program asks for large pages for them.
+- **The decoded pictures and the frames of a video.** No process asks for large pages for them.
 - **The arenas.** An arena is an uncommitted object ([memory_without_a_bound.md](memory_without_a_bound.md)), and the kernel refuses large pages for it. Large pages in an arena need a commit by whole runs of 2 MiB, which is a change of the kernel.
 - **A measure.** The gain is measured for random reads only. A surface is mostly written and read in rows, where the gain can be small. The use for surfaces and pictures waits for a measure of a frame of the compositor with both forms. A contiguous run of 2 MiB can also fail on a fragmented machine, where 4 KiB pages succeed, so each use needs its refusal path.
 
@@ -242,7 +242,7 @@ The seven steps of the draw table, already in `ROADMAP.md`, "Next": [../api/draw
 - **Text layout** with the shaping that exists ([glyphs_on_demand.md](glyphs_on_demand.md)).
 - **Painting into the draw table.** The boxes of a page become draw records; the browser draws no pixel itself.
 - **Links, a history and forms.**
-- **One program for each origin.** Each origin runs in its own program, with the network grant of that origin only (property 20, line 3). A page of one origin reads nothing of another. The program of the window holds the address bar and starts the program of each origin.
+- **One process for each origin.** Each origin runs in its own process, with the network grant of that origin only (property 20, line 3). A page of one origin reads nothing of another. The process of the window holds the address bar and starts the process of each origin.
 - **JavaScript** is a separate decision, in `ROADMAP.md`, "Maybe".
 
 ## F. 3D
@@ -256,12 +256,12 @@ The GPU path and the WebGPU of the system are in [gpu_access.md](gpu_access.md).
 
 ### 3D on the processor: a back end of the same subset
 
-A program that draws 3D on a machine with no GPU uses the processor back end of the WebGPU subset. It has the same objects as the GPU back end: buffers, pipelines, command lists and draw calls. A program writes the same code for the processor and for the GPU, and only the back end changes.
+A process that draws 3D on a machine with no GPU uses the processor back end of the WebGPU subset. It has the same objects as the GPU back end: buffers, pipelines, command lists and draw calls. A process writes the same code for the processor and for the GPU, and only the back end changes.
 
 - **Its shaders are a small fixed set**, written in Odin with SIMD: a vertex transform, a flat color, a texture, a light of one direction. A pipeline names one of them. A shader of WGSL that the set does not hold is refused by this back end, with its name.
 - **It has no compiler of WGSL for the processor.** Such a compiler is larger than the whole 2D drawing, and property 18 refuses it.
-- **Its rasterizer** draws triangles with a depth buffer into a picture memory of the program, and a picture record of the draw table shows it, so the draw table stays the one 2D interface.
-- **It must not become a separate drawer of 3D.** Each feature of the processor back end is a feature of the subset that the GPU back end has too. A feature that only the processor back end has is refused: it is a second 3D interface, and a program that uses it does not move to the GPU.
+- **Its rasterizer** draws triangles with a depth buffer into a picture memory of the process, and a picture record of the draw table shows it, so the draw table stays the one 2D interface.
+- **It must not become a separate drawer of 3D.** Each feature of the processor back end is a feature of the subset that the GPU back end has too. A feature that only the processor back end has is refused: it is a second 3D interface, and a process that uses it does not move to the GPU.
 
 ## G. A real machine
 
@@ -274,59 +274,59 @@ A program that draws 3D on a machine with no GPU uses the processor back end of 
 
 `gui_toolkit` is an immediate-mode toolkit in Odin. On Linux it draws through WebGPU on Vulkan, with a Rust library for text; its packages `platform`, `render` and `font` meet the operating system, and most of the others are pure Odin. `wren` is a web browser in Odin on `gui_toolkit`: Lexbor in C for HTML, Rust libraries for the network, the pictures and the text, and Wasmtime as its one engine of execution.
 
-### The toolkit of rich programs
+### The toolkit of rich modules
 
-`gui_toolkit` is ported to the system and becomes the toolkit of rich programs: a program whose interface needs more than the elements of the `interface` package (an editor, a browser, a program of a third party). A rich program is an outside module ([../infrastructure/third_party_module.md](../infrastructure/third_party_module.md)), never a source of `src/`.
+`gui_toolkit` is ported to the system and becomes the toolkit of rich modules: a module whose interface needs more than the elements of the `interface` package (an editor, a browser, a module of a third party). A rich module is an outside module ([../infrastructure/third_party_module.md](../infrastructure/third_party_module.md)), never a source of `src/`.
 
-1. **A target "modus" for the core library of Odin**, for outside modules only. `core:os` reads and writes the objects of the private store and of the handles that the program was given; `core:thread` runs on `Thread_Create`; `core:time` reads the clock of the system; `core:sync` waits on `Word_Wait`; the allocators of the language run on arenas. A path names an object of the private store or of a given handle, never a global tree. The arguments of a command line and the environment are empty. A write to the standard output is a line of the log of the program, which no program reads as input.
+1. **A target "modus" for the core library of Odin**, for outside modules only. `core:os` reads and writes the objects of the private store and of the handles that the process was given; `core:thread` runs on `Thread_Create`; `core:time` reads the clock of the system; `core:sync` waits on `Word_Wait`; the allocators of the language run on arenas. A path names an object of the private store or of a given handle, never a global tree. The arguments of a command line and the environment are empty. A write to the standard output is a line of the log of the process, which no process reads as input.
 
-   **A ported program adapts to the system.** The system has no global path, no `PATH`, no environment and no ambient settings, and it gets none for a ported program. Each need of a program on another system has its form here:
+   **A ported module adapts to the system.** The system has no global path, no `PATH`, no environment and no ambient settings, and it gets none for a ported module. Each need of a module on another system has its form here:
    - a file or a folder (`HOME`, `TMPDIR`, a path): a handle that the start record gives, such as the private store;
-   - a program to start (`PATH`): a module, named by its hash or by its name in the signed image;
+   - a process to start (`PATH`): a module, named by its hash or by its name in the signed image;
    - a service (`DISPLAY`, a socket path): `connect` to the root service, which answers only with a grant;
    - a setting (`LANG`, `TZ`, a theme): the settings service and its read-only page, whose change comes as an event;
    - the parameters of a start (`argv`): the values of the context, which a border reads as their types;
    - a secret: a handle to an object or a grant, never a text.
 
-   A port changes the code of the program where it reads one of these: a new constraint gives a new rule, and the program follows it. Each read of the program becomes explicit in its start record, typed and refusable, where an environment is inherited, untyped and invisible.
+   A port changes the code of the module where it reads one of these: a new constraint gives a new rule, and the module follows it. Each read of the module becomes explicit in its start record, typed and refusable, where an environment is inherited, untyped and invisible.
 
-   A compatibility layer stays open. It would build, for a ported program only, an environment and arguments from its start record: `HOME` to its private store, `LANG` from the settings. It would never exist for the code of the system. It is decided when the first ports show what they read, from that measure and not before (`ROADMAP.md`, "Maybe").
+   A compatibility layer stays open. It would build, for a ported module only, an environment and arguments from its start record: `HOME` to its private store, `LANG` from the settings. It would never exist for the code of the system. It is decided when the first ports show what they read, from that measure and not before (`ROADMAP.md`, "Maybe").
 2. **A `gt:platform` back end for modus**: the surface, the input, the fonts and the clipboard. Its `render` draws through the draw table, and through the WebGPU subset when it exists. What the draw table does not have yet (a blur, a blend mode, a transform) is drawn by `gt:paint` on the processor into a picture memory, which a picture record shows.
-3. **The look of the system as a style of `gui_toolkit`.** The look of the `interface` package (the grid of points, the gradient of the cards, the folded gap, the colors of each concept, the scroll bar) is possible in `gui_toolkit` as an extended style, so a rich program can look like a program of the system. The style lives in `gui_toolkit`.
+3. **The look of the system as a style of `gui_toolkit`.** The look of the `interface` package (the grid of points, the gradient of the cards, the folded gap, the colors of each concept, the scroll bar) is possible in `gui_toolkit` as an extended style, so a rich module can look like a module of the system. The style lives in `gui_toolkit`.
 
-The `interface` package of the system stays, for the programs of `src/modules`. It is limited today: fixed sizes, one pass of layout. It grows by the steps of phase A. Whether the programs of the system later move to `gui_toolkit` is not decided: it needs a change of the rule of property 18 for the code of the system, and of the import rule of `src/`.
+The `interface` package of the system stays, for the modules of `src/modules`. It is limited today: fixed sizes, one pass of layout. It grows by the steps of phase A. Whether the modules of the system later move to `gui_toolkit` is not decided: it needs a change of the rule of property 18 for the code of the system, and of the import rule of `src/`.
 
 ### `wren` by stages
 
 - Its Odin code first.
 - Lexbor, with a small library of C on the same target.
 - Its Rust libraries, through a Rust target for modus, or replaced by Odin code.
-- Wasmtime: see "I. WebAssembly as a program format".
+- Wasmtime: see "I. WebAssembly as a code format".
 - Drawing through the draw table, then the WebGPU subset when the GPU layers exist. WebGL in `wren` draws through the WebGPU subset; wgpu is not ported into the code of the system, and a port of it stays open as a module of `wren` itself.
 
 **A fast path.** `wren` whole, in a Linux guest, through the driver domain of the GPU. It needs no port, and it waits for "Linux in a guest" ([foreign_systems.md](foreign_systems.md)).
 
-## I. WebAssembly as a program format
+## I. WebAssembly as a code format
 
-WebAssembly becomes a portable and confined program format, after the port of `gui_toolkit` ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "15. Isolation inside a program"). A WebAssembly file is data named by its hash. An engine, a module of the system named by its hash, runs it inside one program, with only the imports that the program gives it. A WebAssembly file is not a module: the system keeps one module format (property 10).
+WebAssembly becomes a portable and confined code format, after the port of `gui_toolkit` ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "15. Isolation inside a process"). A WebAssembly file is data named by its hash. An engine, a module of the system named by its hash, runs it inside one process, with only the imports that the process gives it. A WebAssembly file is not a module: the system keeps one module format (property 10).
 
 Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
-- **A compiler at run time.** The engine compiles the file to code of the processor, writes it, then runs it. The rule of property 11 holds: that code is confined to its program, in its own memory, never shared with another program and never kept as a module; the compiler is a module named by its hash. The kernel refuses a page that is Write and Execute together, so this way needs a design of an explicit switch of a page from Write to Execute. It waits for that design and for a measure against the interpreter.
-- **An interpreter first.** The engine reads the file and runs it with no code written at run time. It needs no switch and no change of property 11. It is slower; it waits for a measure that says if it is enough for the programs of `gui_toolkit`.
+- **A compiler at run time.** The engine compiles the file to code of the processor, writes it, then runs it. The rule of property 11 holds: that code is confined to its process, in its own memory, never shared with another process and never kept as a module; the compiler is a module named by its hash. The kernel refuses a page that is Write and Execute together, so this way needs a design of an explicit switch of a page from Write to Execute. It waits for that design and for a measure against the interpreter.
+- **An interpreter first.** The engine reads the file and runs it with no code written at run time. It needs no switch and no change of property 11. It is slower; it waits for a measure that says if it is enough for the modules of `gui_toolkit`.
 
 ## The contradictions, and how they were resolved
 
-- **Property 18, "uses no existing toolkit".** The rule now binds the code of the system: the kernel, the boot program, `src/library` and the modules of `src/modules`. A rich program and a ported program can use `gui_toolkit`; each is an outside module, and each still draws through the draw table. The text of property 18 changed in this way.
+- **Property 18, "uses no existing toolkit".** The rule now binds the code of the system: the kernel, the boot program, `src/library` and the modules of `src/modules`. A rich module and a ported module can use `gui_toolkit`; each is an outside module, and each still draws through the draw table. The text of property 18 changed in this way.
 - **The refused form of [../infrastructure/release_image.md](../infrastructure/release_image.md), "Import the package `signing` of gui_toolkit".** It stays refused, for its own reason: two packages named `ed25519` in one build. Its text now says that this is no rule against `gui_toolkit`.
 - **The import rule of `src/`.** It does not change for a source of `src/`: `base:`, `modus:` and, for the kernel, `kernel:`; `gt:` and the core library are refused. The rule now says that it binds the code of the system only, and that an outside module imports `gt:` and the core library on the target modus (`AGENTS.md`, "Work"; [../infrastructure/repository_layout.md](../infrastructure/repository_layout.md), "The rules of the imports").
-- **The objective, "no foreign interface", and property 19.** The target modus of the core library is a binding of the language over the concepts of the system, inside the program: no global tree of paths, no arguments, no environment, no stream that a program reads.
+- **The objective, "no foreign interface", and property 19.** The target modus of the core library is a binding of the language over the concepts of the system, inside the process: no global tree of paths, no arguments, no environment, no stream that a process reads.
 - **Property 11, code named by its hash.** Property 11 has a rule for code that a compiler writes at run time, and its field "Open" holds the choice between a compiler and an interpreter.
 - **Property 7, "support for hardware that nobody on the project owns".** The forbid now binds the boot image. A device service that a principal grants from the disk is not support of the system, and property 7 has a rule for the device services.
 
 ## State
 
-Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the program `processor_frame` in the measure run, with its four lines in the measure record and the check of their form. Sound through virtio-snd, the first timed stream ([timed_stream.md](timed_stream.md)).
+Built: the first measure of the standard of quality, a frame at 1920 × 1080 on the processor in three parts, by the process `processor_frame` in the measure run, with its four lines in the measure record and the check of their form. Sound through virtio-snd, the first timed stream ([timed_stream.md](timed_stream.md)).
 
 Built: the three measures of the standard of quality on the path of the system (the time of a frame, of a key to the screen through the console, of the start of a window), the line of the quality profile at the start of the compositor, and the check of the form of their lines in the measure run.
 

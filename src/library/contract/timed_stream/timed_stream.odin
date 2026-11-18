@@ -1,4 +1,4 @@
-// The timed stream: what a program and the sound service agree on
+// The timed stream: what a process and the sound service agree on
 // (src/md/features/timed_stream.md). A timed stream is a class protocol
 // whose records say when their content must reach the device. Its first
 // user is sound: the sound service is the device service of a virtio sound

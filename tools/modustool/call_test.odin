@@ -96,8 +96,8 @@ call_parse_reads :: proc(t: ^testing.T) {
 	testing.expect(t, arguments[0].is_text && arguments[0].text == "a \"note\"\n")
 	testing.expect(t, !arguments[1].is_text && arguments[1].integer == -12)
 	testing.expect(t, !arguments[2].is_text && arguments[2].integer == 16)
-	service, export, arguments, problem = call_parse("monitor.programs()")
-	testing.expect(t, problem == "" && service == "monitor" && export == "programs" && len(arguments) == 0)
+	service, export, arguments, problem = call_parse("monitor.processes()")
+	testing.expect(t, problem == "" && service == "monitor" && export == "processes" && len(arguments) == 0)
 	// A table: rows of field values.
 	service, export, arguments, problem = call_parse(`sample.sum_values([(1, "a", 10), (2, "b", -20)], 7)`)
 	testing.expect_value(t, problem, "")
@@ -114,7 +114,7 @@ call_parse_reads :: proc(t: ^testing.T) {
 // Each malformed text gives a sentence, and no call.
 @(test)
 call_parse_refuses :: proc(t: ^testing.T) {
-	for text in ([]string{"programs()", "monitor.programs", ".x()", "monitor.count(\"open", "monitor.count(1 2)", "monitor.count(1,)", "monitor.count(abc)", "s.f([(1, 2)", "s.f([(1, [(2)])])", "s.f([(1 2)])", "s.f([1, 2])"}) {
+	for text in ([]string{"processes()", "monitor.processes", ".x()", "monitor.count(\"open", "monitor.count(1 2)", "monitor.count(1,)", "monitor.count(abc)", "s.f([(1, 2)", "s.f([(1, [(2)])])", "s.f([(1 2)])", "s.f([1, 2])"}) {
 		_, _, _, problem := call_parse(text)
 		testing.expectf(t, problem != "", "%s is refused", text)
 	}

@@ -139,7 +139,7 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, checked >= 15, "fewer than 15 sizes asserted with a number in the contract")
-	// Pinned: the records that the kernel and the programs share.
+	// Pinned: the records that the kernel and the processes share.
 	testing.expect_value(t, sizes["operation.Fault_Record"], 64)
 	testing.expect_value(t, sizes["operation.Event_Rule"], 64)
 	testing.expect_value(t, sizes["operation.Event_Record"], 64)

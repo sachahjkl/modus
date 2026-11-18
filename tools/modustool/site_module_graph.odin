@@ -41,32 +41,32 @@ SITE_GRAPH_BAND_COLUMNS :: 2 // The columns of the modules with no edge, on the 
 // and is imported by none: it is not a node.
 Site_Graph_Kind :: enum {
 	Kernel, // Runs in kernel mode.
-	Program, // A module with an entry: a program starts from it.
-	No_Entry, // A module with no entry: another module imports it, or a program loads it.
+	Entry, // A module with an entry: it can start.
+	No_Entry, // A module with no entry: another module imports it, or a process loads it.
 }
 
 site_graph_kind_names := [Site_Graph_Kind]string {
 	.Kernel   = "kernel",
-	.Program  = "program",
+	.Entry    = "module with an entry",
 	.No_Entry = "module with no entry",
 }
 
 site_graph_kind_classes := [Site_Graph_Kind]string {
 	.Kernel   = "graph-kernel",
-	.Program  = "graph-program",
+	.Entry    = "graph-entry",
 	.No_Entry = "graph-no-entry",
 }
 
 site_graph_kind_meanings := [Site_Graph_Kind]string {
 	.Kernel   = "runs in kernel mode",
-	.Program  = "has an entry: a program starts from it",
-	.No_Entry = "has no entry: another module imports it, or a program loads it by its name",
+	.Entry    = "has an entry: it can start",
+	.No_Entry = "has no entry: another module imports it, or a process loads it by its name",
 }
 
 // The accent of each kind: the colors of the card of the boot image.
 site_graph_kind_colors := [Site_Graph_Kind]graphics.Color {
 	.Kernel   = graphics.DARK_KERNEL,
-	.Program  = graphics.DARK_PROGRAM,
+	.Entry    = graphics.DARK_PROCESS,
 	.No_Entry = graphics.DARK_NO_ENTRY,
 }
 
@@ -74,7 +74,7 @@ site_graph_kind_colors := [Site_Graph_Kind]graphics.Color {
 // contrast of a graphic on the light background.
 site_graph_kind_light_shades := [Site_Graph_Kind]u32 {
 	.Kernel   = 73,
-	.Program  = 58,
+	.Entry    = 58,
 	.No_Entry = 55,
 }
 
@@ -627,7 +627,7 @@ site_module_graph_inputs :: proc(site: ^Site) -> []Site_Graph_Input {
 		} else {
 			for export in item.description.exports {
 				if export.name == ENTRY_NAME {
-					input.kind = .Program
+					input.kind = .Entry
 				}
 			}
 		}
@@ -717,8 +717,8 @@ site_module_graph_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Referenc
 	depth := max(layout.layer_count - 1, 0)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>The module graph</h1>\n")
-	fmt.sbprintf(&b, "<p>Each module and program of the build is a node: %d nodes. Each import is an edge: %d edges, a depth of %d. An edge is an import of the module file: the module names the hash of another module, and a loader puts that module in the same program. ", len(inputs), len(layout.edges), depth)
-	strings.write_string(&b, "An edge is not a library of <code>contract</code> or <code>support</code>, which the build compiles into each module; not a module that a program loads by its name, as the console does; not a connection to a service; and not a replacement of an import, which the machine decides when a program starts.</p>\n")
+	fmt.sbprintf(&b, "<p>Each module of the build is a node: %d nodes. Each import is an edge: %d edges, a depth of %d. An edge is an import of the module file: the module names the hash of another module, and a loader puts that module in the same process. ", len(inputs), len(layout.edges), depth)
+	strings.write_string(&b, "An edge is not a library of <code>contract</code> or <code>support</code>, which the build compiles into each module; not a module that a process loads by its name, as the console does; not a connection to a service; and not a replacement of an import, which the machine decides when a process starts.</p>\n")
 	fmt.sbprintf(&b, "<p>The nodes are read from <code>module_builds</code>; see the <a href=\"%s\">modules</a> for the page of each. A pointer on a node, or the focus, marks its edges and its neighbours and shows its identity card; a click opens its page. The table under the picture gives every edge.</p>\n", site_page_link(site, path, modules_page))
 	strings.write_string(&b, "<figure class=\"graph-figure\" id=\"module-graph\">\n")
 	site_graph_svg(site, &b, path, inputs, layout, "The module graph", -1, true)
@@ -738,7 +738,7 @@ site_module_graph_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Referenc
 	if len(unimported) == 0 {
 		strings.write_string(&b, "<p>None.</p>\n")
 	} else {
-		fmt.sbprintf(&b, "<p>%d modules have no entry and no importer in the build. A program can still load one by its name, or a replacement can put one in place of an import: the graph shows the build, not what runs.</p>\n<p>", len(unimported))
+		fmt.sbprintf(&b, "<p>%d modules have no entry and no importer in the build. A process can still load one by its name, or a replacement can put one in place of an import: the graph shows the build, not what runs.</p>\n<p>", len(unimported))
 		for name, index in unimported {
 			strings.write_string(&b, index > 0 ? ", " : "")
 			site_module_link(site, &b, path, name)
@@ -746,8 +746,8 @@ site_module_graph_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Referenc
 		strings.write_string(&b, ".</p>\n")
 	}
 	fmt.sbprintf(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"%s\"><code>%s</code></a>, the boot image of the last build and the module files of <code>%s</code>.</p>\n", site_repository_file(site, SITE_MODULES_FILE), SITE_MODULES_FILE, MODULE_BUILD_FOLDER)
-	site_page_add(site, Site_Page{path = path, title = "The module graph", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s as a graph: %d imports, in layers by depth, with the identity card of each module.", len(inputs), SITE_SYSTEM_NAME, len(layout.edges))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation, script = SITE_MODULE_GRAPH_SCRIPT})
-	append(entries, Site_Reference_Entry{path = path, title = "The module graph", what = "Each module and program as a node, each import as an edge, in layers by depth; the identity card of each module.", source = SITE_MODULES_FILE, count = len(layout.edges), kind = .Module})
+	site_page_add(site, Site_Page{path = path, title = "The module graph", description = site_description_cut(fmt.tprintf("The %d modules of %s as a graph: %d imports, in layers by depth, with the identity card of each module.", len(inputs), SITE_SYSTEM_NAME, len(layout.edges))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation, script = SITE_MODULE_GRAPH_SCRIPT})
+	append(entries, Site_Reference_Entry{path = path, title = "The module graph", what = "Each module as a node, each import as an edge, in layers by depth; the identity card of each module.", source = SITE_MODULES_FILE, count = len(layout.edges), kind = .Module})
 	fmt.printfln("modustool: site: the module graph: %d nodes, %d edges, depth %d, %d nodes with no edge; modules with no entry that no module imports: %s", len(inputs), len(layout.edges), depth, layout.band_count, len(unimported) == 0 ? "none" : strings.join(unimported[:], ", ", context.temp_allocator))
 }
 
@@ -761,7 +761,7 @@ SITE_MODULE_GRAPH_RULES :: `/* The module graph (docs/SITE.md, "The module graph
 .graph text { font-family: var(--mono); font-size: 12px; fill: var(--text); }
 .graph .graph-heading { fill: var(--dim); }
 .graph-kernel { --graph-color: var(--graph-kernel); }
-.graph-program { --graph-color: var(--graph-program); }
+.graph-entry { --graph-color: var(--graph-entry); }
 .graph-no-entry { --graph-color: var(--graph-no-entry); }
 .graph-bar { fill: var(--graph-color); }
 .graph-size-unknown .graph-bar { fill: none; stroke: var(--graph-color); stroke-width: 1px; }
@@ -792,7 +792,7 @@ SITE_MODULE_GRAPH_RULES :: `/* The module graph (docs/SITE.md, "The module graph
 site_module_graph_variables :: proc(builder: ^strings.Builder, light: bool) {
 	strings.write_string(builder, ":root {\n")
 	site_variable(builder, "graph-kernel", site_graph_kind_color(.Kernel, light))
-	site_variable(builder, "graph-program", site_graph_kind_color(.Program, light))
+	site_variable(builder, "graph-entry", site_graph_kind_color(.Entry, light))
 	site_variable(builder, "graph-no-entry", site_graph_kind_color(.No_Entry, light))
 	strings.write_string(builder, "}\n")
 }

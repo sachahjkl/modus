@@ -16,7 +16,7 @@ Act_Name_Set :: struct {
 }
 
 // act_name_set_of_record checks the values of a record Act_Names from a
-// window and gives its set. The values are those of another program: a
+// window and gives its set. The values are those of another process: a
 // count over display.ACT_NAME_SET_CAPACITY, a hash of 0 in the count and a
 // value that is not 0 after it are refused, and ok is false.
 act_name_set_of_record :: proc "contextless" (values: [7]u64) -> (set: Act_Name_Set, ok: bool) {
@@ -52,7 +52,7 @@ act_name_set_has :: proc "contextless" (set: ^Act_Name_Set, hash: u64) -> bool {
 // act_name_front gives the first set of a list that holds the hash of an
 // act name, or NO_ROW. The owner gives the sets of its windows, the front
 // window first: two windows that name one act, as two windows of one
-// program, give the one in front.
+// process, give the one in front.
 act_name_front :: proc "contextless" (sets: []^Act_Name_Set, hash: u64) -> int {
 	for set, index in sets {
 		if set != nil && act_name_set_has(set, hash) {

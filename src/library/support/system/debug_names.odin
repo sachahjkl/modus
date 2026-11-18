@@ -6,7 +6,7 @@ import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 
 // The names of a stop report (docs/MODULE_CONTRACT.md, "Debug information").
-// The kernel gives each frame as an address in a module record; a program
+// The kernel gives each frame as an address in a module record; a process
 // with the grant of the debug image names it with the debug object of that
 // module: "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)". The
 // kernel reads no debug object.
@@ -26,7 +26,7 @@ Debug_Object_Verdict :: struct {
 	object:      []u8, // Its debug object, inside the image, or nil.
 }
 
-// The debug image of a program and the verdicts of its searches. Each
+// The debug image of a process and the verdicts of its searches. Each
 // object is searched and checked once, then each lookup is two binary
 // searches. One thread uses one of them: it is not shared.
 Debug_Names :: struct {
@@ -36,7 +36,7 @@ Debug_Names :: struct {
 	next_verdict:  int, // The place of the next verdict when all are taken.
 }
 
-// debug_names_of gives the debug image that the starter of the program
+// debug_names_of gives the debug image that the starter of the process
 // mapped, with no verdict yet. Its image is nil with no debug image.
 debug_names_of :: proc "contextless" (ctx: ^Context) -> (names: Debug_Names) {
 	if .Debug_Image not_in fixed_addresses.ranges_mapped(&ctx.values) {

@@ -13,7 +13,7 @@ import "modus:support/system"
 import "modus:contract/timed_stream"
 
 // The devices of the bus. This service holds the two ports of the
-// configuration of all devices: no other program has them. It gives a
+// configuration of all devices: no other process has them. It gives a
 // device service one device, and it takes the device back when the service
 // stops.
 
@@ -30,7 +30,7 @@ device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle
 	return system.Handle(values[0]), values, status
 }
 
-// A device service, by the class of its device: the program, and the ring
+// A device service, by the class of its device: the process, and the ring
 // that it serves to its one client.
 Driver :: struct {
 	name:          string,
@@ -46,7 +46,7 @@ DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, 
 DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
 // The entropy service, whose one client is this service (entropy.odin).
 DRIVER_ENTROPY :: Driver{"entropy", pci.DEVICE_VIRTIO_ENTROPY, entropy_service.RING_CAPACITY, entropy_service.SERVICE_RING}
-// The sound service, whose one client is the program with the grant
+// The sound service, whose one client is the process with the grant
 // Sound_Device (src/md/features/timed_stream.md).
 DRIVER_SOUND :: Driver{"sound", pci.DEVICE_VIRTIO_SOUND, timed_stream.RING_CAPACITY, timed_stream.SERVICE_RING}
 #assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
@@ -204,7 +204,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	}
 	group, behind_conventional_bridge := bridge_group_of(place.bus)
 	for &item in started {
-		if item.program != 0 && item.is_driver && (item.device == place || (behind_conventional_bridge && item.bridge_group == group)) {
+		if item.process != 0 && item.is_driver && (item.device == place || (behind_conventional_bridge && item.bridge_group == group)) {
 			return nil, 0, .Bad_State // One service for one device, and for all the devices behind one conventional bridge.
 		}
 	}
@@ -354,7 +354,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		if context_refused(kind.name, &context_grants, &values) {
 			status = .Bad_State
 		} else {
-			driver.program, status = system.program_start(system.image_find(image, kind.name), kind.name, context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(system.image_find(image, kind.name), kind.name))
+			driver.process, status = system.process_start(system.image_find(image, kind.name), kind.name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, kind.name), kind.name))
 		}
 	}
 	if status != .Ok {

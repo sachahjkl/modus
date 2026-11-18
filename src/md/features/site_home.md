@@ -73,7 +73,7 @@ Refused forms:
 
 The home showed three cards that each quoted one whole line of a log. A line of a log is a record: it is exact, and it is not a picture. The page of the measured numbers already shows each line with its conditions.
 
-The rule: the home shows a measure only as a chart whose bars have one unit and one scale from zero. Two measures of today are such charts: the kernel entries in one second with 1, 2 and 4 programs, and the time of one glyph by five ways. A chart is drawn only when its line holds every number, in the unit of the chart. With no chart, the section is absent.
+The rule: the home shows a measure only as a chart whose bars have one unit and one scale from zero. Two measures of today are such charts: the kernel entries in one second with 1, 2 and 4 processes, and the time of one glyph by five ways. A chart is drawn only when its line holds every number, in the unit of the chart. With no chart, the section is absent.
 
 Refused forms:
 
@@ -103,7 +103,7 @@ For a reader who asks for reduced motion the heron is not a control: a control t
 - **The rules name a stage by its place.** The style sheet has rules for 12 stages. A thirteenth stage has a row and a segment, and its card shows only where every card shows.
 - **The text of a stage is typed, its time is not.** The table of the texts is keyed by the name that the kernel logs. A stage that the kernel renames loses its text and keeps its time; a host test fails for a stage of the log with no text.
 - **A segment on the light page is darker than its accent.** An accent on white is under the contrast of a form that carries a fact. Each accent has a shade for a form on the light page.
-- **A chart reads its numbers from the words of a line.** A program that changes the words of its line removes the chart from the home; it never draws a wrong bar.
+- **A chart reads its numbers from the words of a line.** A process that changes the words of its line removes the chart from the home; it never draws a wrong bar.
 - **The animation of the first press is a constant of the tool**, written into the table of the script. The script holds no name and no number of an animation.
 - **The box of the heron is in the page, the control is made by the script.** With no script nothing answers a press, so nothing says that a press does something.
 

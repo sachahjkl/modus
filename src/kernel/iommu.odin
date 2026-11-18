@@ -38,7 +38,7 @@ import "base:intrinsics"
 // identifier 0 stays unused, as the caching mode needs.
 IOMMU_DEVICE_CAPACITY :: 32
 // The devices whose registers one service can hold and declare memory to:
-// a declaration from a program that holds the registers of more gives
+// a declaration from a process that holds the registers of more gives
 // No_Slot. A device service holds one.
 IOMMU_DEVICES_OF_A_SERVICE :: 4
 // The devices that a reserved memory range names, each with a standing
@@ -85,14 +85,14 @@ Iommu_Unit :: struct {
 	wait_status:    u64, // The physical address of the word where the unit writes the number of a wait descriptor that it reached.
 }
 
-// The domain of one device: its requester, its unit, the program that
+// The domain of one device: its requester, its unit, the process that
 // owns it, and its second-level tables. A slot whose owner is 0 is free.
 Iommu_Device :: struct {
 	requester:    u16,
 	unit:         u32,
 	present:      bool, // Its context entry is present.
-	owner:        u32, // The program slot of the service that owns the domain. 0: a free slot. Atomic.
-	owner_serial: u32, // The serial of that program, when it took the domain.
+	owner:        u32, // The process slot of the service that owns the domain. 0: a free slot. Atomic.
+	owner_serial: u32, // The serial of that process, when it took the domain.
 	top:          u64, // The top table of the domain.
 }
 
@@ -455,7 +455,7 @@ Bus_Walk :: struct {
 	behind_conventional_bridge: bool, // A conventional bridge is on its way from bus 0: it shares its requester.
 	shared_requester:           u16, // Behind a conventional bridge: the requester that the function shares with each device there.
 	group:                      u32, // 1 + a shared requester whose functions the walk checks. 0: none.
-	holder:                     ^Program, // The program that must hold the registers of each function of the group.
+	holder:                     ^Process, // The process that must hold the registers of each function of the group.
 	member_count:               u32, // The functions of the group, bridges excepted.
 	unheld:                     bool, // A function of the group whose registers the holder does not hold, or that has no memory registers, or a bridge that the walk cannot follow.
 	unheld_requester:           u16, // The first such function.
@@ -746,7 +746,7 @@ standing_domains_make :: proc "contextless" () -> bool {
 		reserved := iommu_reserved_ranges[index]
 		pages := (reserved.end - reserved.start) / PAGE_SIZE
 		// A range of free or loaded memory would give a device a frame of a
-		// program; a range at or above the windows would meet the window of
+		// process; a range at or above the windows would meet the window of
 		// an object.
 		if reserved.end > iommu.WINDOW_BASE || pages > iommu.RESERVED_RANGE_PAGE_LIMIT || !device_range(reserved.start, pages) {
 			log("kernel: IOMMU: the reserved memory range ", Hex(reserved.start), " to ", Hex(reserved.end), " is not mapped: it meets memory that the firmware gave as free or loaded, ends past 256 GiB, or is larger than 1 GiB; its devices fault there")
@@ -843,7 +843,7 @@ reserved_devices_read :: proc "contextless" () {
 // after processors_start, which receives the size of the direct map and the
 // frequency of the cycle counter. Each unit is checked before any is
 // turned on. A machine with no unit, or with a form that the kernel does not
-// program, runs as before, with one line. The tables of the start are
+// process, runs as before, with one line. The tables of the start are
 // memory of the kernel; when a unit fails to start they stay, a few pages.
 // The machine says its vendor by the table of its firmware: DMAR for
 // VT-d, else IVRS for AMD-Vi, so one boot image runs on both.
@@ -1205,7 +1205,7 @@ interrupt_remapping_off :: proc "contextless" (unit: ^Iommu_Unit) {
 // iommu_owns_range says if a range of physical addresses meets the
 // registers of a unit, the configuration memory of the buses, or a
 // reserved memory range: the kernel owns the first two while the IOMMU is
-// in use, so Device_Create gives neither to a program, which could turn
+// in use, so Device_Create gives neither to a process, which could turn
 // translation off; the third is memory that a device of the firmware
 // writes.
 iommu_owns_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
@@ -1299,9 +1299,9 @@ iommu_requester_of :: proc "contextless" (physical: u64) -> (requester: u32, bri
 // When a domain of its shared requester lives and the owner does not hold
 // that function, the check of the group did not count it: it appeared
 // behind the bridge after the check, and it would reach what the owner
-// declared, so the domain ends. A program gets the registers of a function
+// declared, so the domain ends. A process gets the registers of a function
 // only through Device_Create, so each function of a group passes here
-// before a program can drive it. The caller holds the control lock, under
+// before a process can drive it. The caller holds the control lock, under
 // which no hold of a function of a group ends and no domain of a shared
 // requester is made or ends. A hold can still be added without it (the
 // owner maps its own handle, or gives it to itself), and that only makes the
@@ -1320,15 +1320,15 @@ iommu_bridge_function_made :: proc "contextless" (region_index: u32) {
 		defer lock_free(&frame_lock, .Frame)
 		for &device, slot in iommu_devices {
 			owner := intrinsics.atomic_load(&device.owner)
-			if owner == 0 || u32(device.requester) + 1 != region.requester || device.owner_serial != programs[owner].serial {
+			if owner == 0 || u32(device.requester) + 1 != region.requester || device.owner_serial != processes[owner].serial {
 				continue
 			}
-			if registers_held(&programs[owner], region.requester, region.bridge_function, nil, nil) {
+			if registers_held(&processes[owner], region.requester, region.bridge_function, nil, nil) {
 				continue
 			}
 			function := u16(region.bridge_function - 1)
 			shared := device.requester
-			log("kernel: IOMMU: the device at bus ", u64(iommu.requester_bus(function)), ", device ", u64(iommu.requester_device(function)), ", function ", u64(iommu.requester_function(function)), " behind the conventional bridge of the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " was not counted when its domain was made: the domain of the service ", program_name(&programs[owner]), " ends")
+			log("kernel: IOMMU: the device at bus ", u64(iommu.requester_bus(function)), ", device ", u64(iommu.requester_device(function)), ", function ", u64(iommu.requester_function(function)), " behind the conventional bridge of the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " was not counted when its domain was made: the domain of the service ", process_name(&processes[owner]), " ends")
 			domains_end(owner, 1 << u32(slot))
 			ended |= 1 << u32(slot)
 		}
@@ -1461,7 +1461,7 @@ iommu_message_end :: proc "contextless" (index: u32) {
 	message_entry_clear(index)
 }
 
-// shared_domain_owner gives the program that owns the domain of a shared
+// shared_domain_owner gives the process that owns the domain of a shared
 // requester (1 + it), or 0 when none lives: the check of its group made
 // it, and its owner still holds each function of the group. The caller
 // holds the control lock, under which the domain of a shared requester is
@@ -1470,7 +1470,7 @@ iommu_message_end :: proc "contextless" (index: u32) {
 shared_domain_owner :: proc "contextless" (requester: u32) -> u32 {
 	for &device in iommu_devices {
 		owner := intrinsics.atomic_load(&device.owner)
-		if owner != 0 && device.present && u32(device.requester) + 1 == requester && device.owner_serial == programs[owner].serial {
+		if owner != 0 && device.present && u32(device.requester) + 1 == requester && device.owner_serial == processes[owner].serial {
 			return owner
 		}
 	}
@@ -1479,7 +1479,7 @@ shared_domain_owner :: proc "contextless" (requester: u32) -> u32 {
 
 // message_entry_due says if the entry of a message interrupt of a shared
 // requester must be present: a domain of that requester lives, and its
-// owner is the program that holds the interrupt (interrupt_owner). Else a
+// owner is the process that holds the interrupt (interrupt_owner). Else a
 // service that let one device of the group go, and kept its interrupts,
 // would get them back when another service takes the group. The caller
 // holds the control lock, under which interrupt_owner changes.
@@ -1489,10 +1489,10 @@ message_entry_due :: proc "contextless" (index: u32) -> bool {
 	return owner != 0 && owner == intrinsics.atomic_load(&interrupt_owner[INTERRUPT_LINES + index])
 }
 
-// iommu_interrupt_owner_changed follows a change of the program that holds
+// iommu_interrupt_owner_changed follows a change of the process that holds
 // a message interrupt (handle_insert, handle_close, handle_insert_undo):
 // the entry of a message interrupt of a shared requester follows that
-// program (message_entry_due). The caller holds the control lock, as for
+// process (message_entry_due). The caller holds the control lock, as for
 // each handle of an interrupt, and not the frame lock.
 iommu_interrupt_owner_changed :: proc "contextless" (object: u32) {
 	if !iommu_in_use || object < INTERRUPT_LINES || iommu_message_shared[object - INTERRUPT_LINES] == 0 {
@@ -1544,33 +1544,33 @@ interrupt_entry_invalidate :: proc "contextless" (index: u32) {
 }
 
 // owned_devices gives a bit for each device slot whose domain this
-// program owns. The caller holds the frame lock, or the program lock of
-// this program: only its own declarations, under that lock, make it an
+// process owns. The caller holds the frame lock, or the process lock of
+// this process: only its own declarations, under that lock, make it an
 // owner, and its own paths end its domains, except one: a function behind
 // a conventional bridge that appears after the check ends the domain of
 // its group under the control and the frame locks only
 // (iommu_bridge_function_made). The frame loop of declare checks the
 // owner of each slot again for that.
 @(private = "file")
-owned_devices :: proc "contextless" (program_index: u32) -> (owned: u32) {
-	serial := programs[program_index].serial
+owned_devices :: proc "contextless" (process_index: u32) -> (owned: u32) {
+	serial := processes[process_index].serial
 	for &device, slot in iommu_devices {
-		if intrinsics.atomic_load(&device.owner) == program_index && device.owner_serial == serial {
+		if intrinsics.atomic_load(&device.owner) == process_index && device.owner_serial == serial {
 			owned |= 1 << u32(slot)
 		}
 	}
 	return owned
 }
 
-// owned_of gives the slots that a program owns for one requester (1 + the
+// owned_of gives the slots that a process owns for one requester (1 + the
 // identifier, as a memory object keeps it). The caller holds the frame
-// lock, or the program lock of this program, as for owned_devices: under
-// that lock the slots of the program change only by the one exception that
+// lock, or the process lock of this process, as for owned_devices: under
+// that lock the slots of the process change only by the one exception that
 // owned_devices names (iommu_bridge_function_made, under the control and
 // the frame locks), which the frame loop of declare checks again.
 @(private = "file")
-owned_of :: proc "contextless" (program_index: u32, requester: u32) -> (owned: u32) {
-	all := owned_devices(program_index)
+owned_of :: proc "contextless" (process_index: u32, requester: u32) -> (owned: u32) {
+	all := owned_devices(process_index)
 	for slot in u32(0) ..< IOMMU_DEVICE_CAPACITY {
 		if all & (1 << slot) != 0 && u32(iommu_devices[slot].requester) + 1 == requester {
 			owned |= 1 << slot
@@ -1579,12 +1579,12 @@ owned_of :: proc "contextless" (program_index: u32, requester: u32) -> (owned: u
 	return owned
 }
 
-// device_slot gives the slot of the domain of a requester for a program:
-// the slot that the program owns, or a free slot, which the program owns
-// only after its first declaration. Bad_State: another program owns it.
+// device_slot gives the slot of the domain of a requester for a process:
+// the slot that the process owns, or a free slot, which the process owns
+// only after its first declaration. Bad_State: another process owns it.
 // The caller holds the frame lock.
 @(private = "file")
-device_slot :: proc "contextless" (requester: u16, program_index: u32) -> (slot: u32, status: Operation_Outcome) {
+device_slot :: proc "contextless" (requester: u16, process_index: u32) -> (slot: u32, status: Operation_Outcome) {
 	free := u32(IOMMU_DEVICE_CAPACITY)
 	for &device, index in iommu_devices {
 		if device.owner == 0 {
@@ -1594,7 +1594,7 @@ device_slot :: proc "contextless" (requester: u16, program_index: u32) -> (slot:
 			continue
 		}
 		if device.requester == requester {
-			if device.owner != program_index || device.owner_serial != programs[program_index].serial {
+			if device.owner != process_index || device.owner_serial != processes[process_index].serial {
 				return 0, .Bad_State
 			}
 			return u32(index), .Ok
@@ -1792,13 +1792,13 @@ Declaration_Change :: enum {
 }
 
 // declare_to_device declares one memory object to one device slot.
-// writable: the handle of the call has Write; write_held: the program
+// writable: the handle of the call has Write; write_held: the process
 // still holds a handle to the object with Write after this call, so a
 // device keeps the write only while it holds one. made: the context entry
 // of the domain became present. The caller holds the frame lock, and
 // invalidates after it by what changed.
 @(private = "file")
-declare_to_device :: proc "contextless" (program_index: u32, requester: u16, slot: u32, region_index: u32, writable: bool, write_held: bool) -> (change: Declaration_Change, made: bool, status: Operation_Outcome) {
+declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slot: u32, region_index: u32, writable: bool, write_held: bool) -> (change: Declaration_Change, made: bool, status: Operation_Outcome) {
 	device := &iommu_devices[slot]
 	region := &regions[region_index]
 	bit := u32(1) << slot
@@ -1815,7 +1815,7 @@ declare_to_device :: proc "contextless" (program_index: u32, requester: u16, slo
 		}
 		return .None, false, .Ok
 	}
-	budget := &programs[program_index].budget
+	budget := &processes[process_index].budget
 	new_domain := device.owner == 0
 	if new_domain {
 		// Device_Create gave the requester only for a device that a unit
@@ -1854,8 +1854,8 @@ declare_to_device :: proc "contextless" (program_index: u32, requester: u16, slo
 		region.declared_writable |= bit
 	}
 	if new_domain {
-		device.owner_serial = programs[program_index].serial
-		intrinsics.atomic_store(&device.owner, program_index)
+		device.owner_serial = processes[process_index].serial
+		intrinsics.atomic_store(&device.owner, process_index)
 		// A device of a reserved range moves from its standing domain: the
 		// entry is cleared and the standing domain forgotten first, so the
 		// unit never reads an entry with half of each.
@@ -1887,12 +1887,12 @@ write_deny_for :: proc "contextless" (region_index: u32, mask: u32) -> u32 {
 	return denied
 }
 
-// holds_with gives whether the program holds another handle to a memory
+// holds_with gives whether the process holds another handle to a memory
 // object than except (nil: any), and whether one of those has Write. The
-// caller holds the program lock.
+// caller holds the process lock.
 @(private = "file")
-holds_with :: proc "contextless" (program: ^Program, region_index: u32, except: ^Handle_Slot) -> (holds: bool, writes: bool) {
-	for &other in program.handles {
+holds_with :: proc "contextless" (process: ^Process, region_index: u32, except: ^Handle_Slot) -> (holds: bool, writes: bool) {
+	for &other in process.handles {
 		if &other != except && other.kind == .Memory && other.object == region_index {
 			holds = true
 			writes ||= .Write in other.rights
@@ -1901,22 +1901,22 @@ holds_with :: proc "contextless" (program: ^Program, region_index: u32, except: 
 	return holds, writes
 }
 
-// registers_held says if a program holds a handle or a mapping of the
+// registers_held says if a process holds a handle or a mapping of the
 // registers of a function (1 + the requester of its domain, and its
 // bridge_function as a memory object keeps it), other than the handle and
 // the mapping that end. A mapping of the registers drives the device as a
 // handle does, so it keeps the domain. Behind a conventional bridge, each
 // function that shares the requester counts apart: the domain lives only
-// while its owner holds every one of them. The caller holds the program
+// while its owner holds every one of them. The caller holds the process
 // lock.
 @(private = "file")
-registers_held :: proc "contextless" (program: ^Program, requester: u32, bridge_function: u32, closed: ^Handle_Slot, unmapped: ^Mapping) -> bool {
-	for &other in program.handles {
+registers_held :: proc "contextless" (process: ^Process, requester: u32, bridge_function: u32, closed: ^Handle_Slot, unmapped: ^Mapping) -> bool {
+	for &other in process.handles {
 		if &other != closed && other.kind == .Memory && regions[other.object].requester == requester && regions[other.object].bridge_function == bridge_function {
 			return true
 		}
 	}
-	for &mapping in program.mappings {
+	for &mapping in process.mappings {
 		if &mapping != unmapped && mapping.page_count != 0 && regions[mapping.region].requester == requester && regions[mapping.region].bridge_function == bridge_function {
 			return true
 		}
@@ -1924,12 +1924,12 @@ registers_held :: proc "contextless" (program: ^Program, requester: u32, bridge_
 	return false
 }
 
-// shares_requester says if a program holds registers behind a conventional
+// shares_requester says if a process holds registers behind a conventional
 // bridge whose shared requester is this one (1 + it). The caller holds the
-// program lock.
+// process lock.
 @(private = "file")
-shares_requester :: proc "contextless" (program: ^Program, requester: u32) -> bool {
-	for &other in program.handles {
+shares_requester :: proc "contextless" (process: ^Process, requester: u32) -> bool {
+	for &other in process.handles {
 		if other.kind == .Memory && regions[other.object].requester == requester && regions[other.object].bridge_function != 0 {
 			return true
 		}
@@ -1947,10 +1947,10 @@ iommu_bridge_refusal_last: u32
 // declaration of its domain: a service that does not hold the registers of
 // each of them gets Bad_State, with one line, as the device that it misses
 // would reach what it declares. member_count: the functions of the group.
-// The caller holds the program lock; the walk reads the bus with no lock.
+// The caller holds the process lock; the walk reads the bus with no lock.
 @(private = "file")
-bridge_domain_check :: proc "contextless" (program: ^Program, requester: u32) -> (member_count: u32, status: Operation_Outcome) {
-	walk := Bus_Walk{group = requester, holder = program}
+bridge_domain_check :: proc "contextless" (process: ^Process, requester: u32) -> (member_count: u32, status: Operation_Outcome) {
+	walk := Bus_Walk{group = requester, holder = process}
 	buses_walk(&walk)
 	if !walk.unheld && walk.member_count != 0 {
 		return walk.member_count, .Ok
@@ -1965,7 +1965,7 @@ bridge_domain_check :: proc "contextless" (program: ^Program, requester: u32) ->
 	if walk.odd_bridge {
 		log("kernel: IOMMU: the bridge at bus ", u64(iommu.requester_bus(walk.unheld_requester)), ", device ", u64(iommu.requester_device(walk.unheld_requester)), ", function ", u64(iommu.requester_function(walk.unheld_requester)), ", behind the conventional bridge of the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), ", has a secondary bus that the walk cannot follow: the declaration is refused, and the devices behind it get no domain")
 	} else {
-		log("kernel: IOMMU: the service ", program_name(program), " does not hold the registers of the device at bus ", u64(iommu.requester_bus(walk.unheld_requester)), ", device ", u64(iommu.requester_device(walk.unheld_requester)), ", function ", u64(iommu.requester_function(walk.unheld_requester)), ", which shares the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: the declaration is refused, and they get no domain")
+		log("kernel: IOMMU: the service ", process_name(process), " does not hold the registers of the device at bus ", u64(iommu.requester_bus(walk.unheld_requester)), ", device ", u64(iommu.requester_device(walk.unheld_requester)), ", function ", u64(iommu.requester_function(walk.unheld_requester)), ", which shares the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: the declaration is refused, and they get no domain")
 	}
 	return 0, .Bad_State
 }
@@ -2009,26 +2009,26 @@ new_entry_needs_invalidation :: proc "contextless" (unit: ^Iommu_Unit, device_en
 }
 
 // iommu_declare maps each page of a memory object in the domain of each
-// device whose registers the program holds by a handle, and gives the
+// device whose registers the process holds by a handle, and gives the
 // device address of the object: Memory_Physical. A contiguous object has
 // its physical address; another one has its window, where its pages follow
 // each other, and each of its pages gets its frame now. The device writes
 // the pages only when writable: the handle of the call has the right
-// Write. A program that holds no such handle declares nothing, and gets the
+// Write. A process that holds no such handle declares nothing, and gets the
 // physical address of a contiguous object only. Device memory is not
 // declared: a device reaches no registers of a device. Either every device
 // of the call gets the object, or none that did not have it before, and
 // none gets a write that it did not have. A device keeps the write only
-// while the program holds a handle with Write. The invalidation runs only
-// when a domain changed, for that domain. The caller holds the program
+// while the process holds a handle with Write. The invalidation runs only
+// when a domain changed, for that domain. The caller holds the process
 // lock. The domain of a shared requester is made under the control lock:
 // the call asks for it (Needs_Control), and after the frame lock the message
 // interrupts of the groups follow their domains (group_messages_follow).
 // They follow whatever the status: a call that fails after it made the
 // domain of a shared requester for an earlier device of the call keeps that
 // domain, and its interrupts then come with it.
-iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: Operation_Outcome) {
-	address, status = declare(program_index, region_index, writable)
+iommu_declare :: proc "contextless" (process_index: u32, region_index: u32, writable: bool) -> (address: u64, status: Operation_Outcome) {
+	address, status = declare(process_index, region_index, writable)
 	if lock_held(.Control) {
 		group_messages_follow()
 	}
@@ -2037,7 +2037,7 @@ iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writ
 
 // declare is iommu_declare up to the end of the frame lock.
 @(private = "file")
-declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: Operation_Outcome) {
+declare :: proc "contextless" (process_index: u32, region_index: u32, writable: bool) -> (address: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	if !iommu_in_use || region.device {
 		if !region.contiguous {
@@ -2045,10 +2045,10 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 		}
 		return region.physical, .Ok
 	}
-	program := &programs[program_index]
+	process := &processes[process_index]
 	requesters: [IOMMU_DEVICES_OF_A_SERVICE]u32
 	count := 0
-	for slot in program.handles {
+	for slot in process.handles {
 		if slot.kind != .Memory {
 			continue
 		}
@@ -2095,17 +2095,17 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 	member_counts: [IOMMU_DEVICES_OF_A_SERVICE]u32
 	shared_requesters: u32 // A bit for each requester of the call that is shared.
 	for requester, index in requesters[:count] {
-		if !shares_requester(program, requester) {
+		if !shares_requester(process, requester) {
 			continue
 		}
 		shared_requesters |= 1 << u32(index)
-		if owned_of(program_index, requester) != 0 {
+		if owned_of(process_index, requester) != 0 {
 			continue
 		}
 		if require_control() == .Needs_Control {
 			return 0, .Needs_Control
 		}
-		members, check_status := bridge_domain_check(program, requester)
+		members, check_status := bridge_domain_check(process, requester)
 		if check_status != .Ok {
 			return 0, check_status
 		}
@@ -2129,14 +2129,14 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 			region_frame(region, page, true)
 		}
 	}
-	_, write_held := holds_with(program, region_index, nil)
+	_, write_held := holds_with(process, region_index, nil)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	added, write_allowed, changed, made: u32
 	status = .Ok
 	for requester, index in requesters[:count] {
 		slot: u32
-		slot, status = device_slot(u16(requester - 1), program_index)
+		slot, status = device_slot(u16(requester - 1), process_index)
 		if status != .Ok {
 			break
 		}
@@ -2155,7 +2155,7 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 		}
 		change: Declaration_Change
 		entry_made: bool
-		change, entry_made, status = declare_to_device(program_index, u16(requester - 1), slot, region_index, writable, write_held)
+		change, entry_made, status = declare_to_device(process_index, u16(requester - 1), slot, region_index, writable, write_held)
 		if entry_made {
 			made |= 1 << slot
 		}
@@ -2196,7 +2196,7 @@ declare :: proc "contextless" (program_index: u32, region_index: u32, writable: 
 		// The next refusal of a device behind a bridge has its line again.
 		intrinsics.atomic_store(&iommu_bridge_refusal_last, 0)
 		shared := u16(requesters[index] - 1)
-		log("kernel: IOMMU: the service ", program_name(program), " holds the registers of each of the ", u64(members), " devices that share the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: they have one domain")
+		log("kernel: IOMMU: the service ", process_name(process), " holds the registers of each of the ", u64(members), " devices that share the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: they have one domain")
 	}
 	return device_address(region_index), .Ok
 }
@@ -2214,10 +2214,10 @@ iommu_region_end_held :: proc "contextless" (region_index: u32) {
 // of a service, so that the device of a service reaches only what the
 // service holds, and writes only what it can write:
 //
-// - the last handle of the program to a declared object: the object leaves
-//   each domain of the program;
+// - the last handle of the process to a declared object: the object leaves
+//   each domain of the process;
 // - the last handle with Write: the pages of the object become read-only in
-//   each domain of the program;
+//   each domain of the process;
 // - the last handle to the registers of a device, with no mapping of them
 //   left: the domain of that device ends, so a device given to another
 //   service reaches nothing of this one. Behind a conventional bridge, the
@@ -2225,10 +2225,10 @@ iommu_region_end_held :: proc "contextless" (region_index: u32) {
 //   of all of them.
 //
 // Each change is invalidated before the close returns. handle_close calls
-// it with the program lock of the program, before the release of the
+// it with the process lock of the process, before the release of the
 // object. A handle of an object that is not declared and is no registers
 // costs two loads.
-iommu_handle_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Slot) {
+iommu_handle_closed :: proc "contextless" (process: ^Process, closed: ^Handle_Slot) {
 	if !iommu_in_use {
 		return
 	}
@@ -2240,14 +2240,14 @@ iommu_handle_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Sl
 	if region.bridge_function != 0 && !lock_held(.Control) {
 		bridge_control_missing()
 	}
-	holds, writes := holds_with(program, closed.object, closed)
-	held := requester == 0 || registers_held(program, requester, region.bridge_function, closed, nil)
-	program_index := index_of_program(program)
+	holds, writes := holds_with(process, closed.object, closed)
+	held := requester == 0 || registers_held(process, requester, region.bridge_function, closed, nil)
+	process_index := index_of_process(process)
 	ended: u32
 	{
 		lock_take(&frame_lock, .Frame)
 		defer lock_free(&frame_lock, .Frame)
-		owned := owned_devices(program_index)
+		owned := owned_devices(process_index)
 		changed: u32
 		switch {
 		case !holds:
@@ -2256,10 +2256,10 @@ iommu_handle_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Sl
 			changed = write_deny_for(closed.object, owned)
 		}
 		if !held {
-			ended = owned_of(program_index, requester)
+			ended = owned_of(process_index, requester)
 			if ended != 0 {
 				// It invalidates each ended domain; the others changed above.
-				domains_end(program_index, ended)
+				domains_end(process_index, ended)
 				changed &~= ended
 			}
 		}
@@ -2269,11 +2269,11 @@ iommu_handle_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Sl
 }
 
 // iommu_mapping_ended follows the end of a mapping: the last mapping of the
-// registers of a device, when the program holds no handle of them either,
-// ends the domain of that device. unmap calls it with the program lock,
+// registers of a device, when the process holds no handle of them either,
+// ends the domain of that device. unmap calls it with the process lock,
 // before the release of the object. A mapping of an object that is no
 // registers costs two loads.
-iommu_mapping_ended :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
+iommu_mapping_ended :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	if !iommu_in_use {
 		return
 	}
@@ -2281,26 +2281,26 @@ iommu_mapping_ended :: proc "contextless" (program: ^Program, mapping: ^Mapping)
 	if regions[mapping.region].bridge_function != 0 && !lock_held(.Control) {
 		bridge_control_missing()
 	}
-	if requester == 0 || registers_held(program, requester, regions[mapping.region].bridge_function, nil, mapping) {
+	if requester == 0 || registers_held(process, requester, regions[mapping.region].bridge_function, nil, mapping) {
 		return
 	}
-	program_index := index_of_program(program)
+	process_index := index_of_process(process)
 	ended: u32
 	{
 		lock_take(&frame_lock, .Frame)
 		defer lock_free(&frame_lock, .Frame)
-		ended = owned_of(program_index, requester)
+		ended = owned_of(process_index, requester)
 		if ended != 0 {
-			domains_end(program_index, ended)
+			domains_end(process_index, ended)
 		}
 	}
 	domains_ended(ended)
 }
 
-// iommu_program_end ends each domain that a program owns.
-// program_cleanup calls it before the handles and the mappings of the
-// program end, with the control lock.
-iommu_program_end :: proc "contextless" (program_index: u32) {
+// iommu_process_end ends each domain that a process owns.
+// process_cleanup calls it before the handles and the mappings of the
+// process end, with the control lock.
+iommu_process_end :: proc "contextless" (process_index: u32) {
 	if !iommu_in_use {
 		return
 	}
@@ -2308,9 +2308,9 @@ iommu_program_end :: proc "contextless" (program_index: u32) {
 	{
 		lock_take(&frame_lock, .Frame)
 		defer lock_free(&frame_lock, .Frame)
-		ended = owned_devices(program_index)
+		ended = owned_devices(process_index)
 		if ended != 0 {
-			domains_end(program_index, ended)
+			domains_end(process_index, ended)
 		}
 	}
 	domains_ended(ended)
@@ -2322,7 +2322,7 @@ iommu_program_end :: proc "contextless" (program_index: u32) {
 // domain of a shared requester holds the control lock: the close of a
 // handle and the unmap of a mapping of the registers of a function behind a
 // conventional bridge ask for it (enter.odin), and the revocation and the
-// end of a program hold it. The end of the domain of another device needs
+// end of a process hold it. The end of the domain of another device needs
 // no follow, and may come with no control lock: then no present entry of a
 // group may have lost its domain, else the kernel has a fault
 // (bridge_control_missing).
@@ -2355,13 +2355,13 @@ bridge_control_missing :: proc "contextless" () -> ! {
 }
 
 // domains_end ends the domains of the device slots of a mask, which a
-// program owns: their context entries, their bits in each memory object,
+// process owns: their context entries, their bits in each memory object,
 // the invalidation of each domain, then their tables, whose pages return
-// to the budget of the program, and the slots are free. A device of a
+// to the budget of the process, and the slots are free. A device of a
 // reserved range goes back to its standing domain. The caller holds the
 // frame lock.
 @(private = "file")
-domains_end :: proc "contextless" (program_index: u32, owned: u32) {
+domains_end :: proc "contextless" (process_index: u32, owned: u32) {
 	for slot in u32(0) ..< IOMMU_DEVICE_CAPACITY {
 		if owned & (1 << slot) != 0 && iommu_devices[slot].present {
 			device_entry_write(iommu_devices[slot].unit, iommu_devices[slot].requester, false)
@@ -2380,7 +2380,7 @@ domains_end :: proc "contextless" (program_index: u32, owned: u32) {
 			invalidate_slot(slot, .Cleared)
 		}
 	}
-	budget := programs[program_index].budget
+	budget := processes[process_index].budget
 	for slot in u32(0) ..< IOMMU_DEVICE_CAPACITY {
 		if owned & (1 << slot) == 0 {
 			continue
@@ -2415,7 +2415,7 @@ fault_count_of :: proc "contextless" (requester: u16, interrupt: bool) -> ^u64 {
 // held: a DMA fault stops nothing. The records are the fault recording
 // registers of VT-d, or the event log of AMD-Vi (amd_events_take). The
 // name of the service is read with no lock: in a race with the end of the
-// service, the line can name the program of the slot before or after.
+// service, the line can name the process of the slot before or after.
 iommu_faults_take :: proc "contextless" () {
 	if !iommu_in_use {
 		return
@@ -2483,7 +2483,7 @@ fault_line_write :: proc "contextless" (fault: iommu.Fault) {
 	service := "no service"
 	for &device in iommu_devices {
 		if owner := intrinsics.atomic_load(&device.owner); owner != 0 && device.requester == fault.requester {
-			service = program_name(&programs[owner])
+			service = process_name(&processes[owner])
 		}
 	}
 	bus, device_number, function := u64(iommu.requester_bus(fault.requester)), u64(iommu.requester_device(fault.requester)), u64(iommu.requester_function(fault.requester))

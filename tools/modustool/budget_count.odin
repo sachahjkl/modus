@@ -8,14 +8,14 @@ import "core:math/bits"
 // The parts of the budget of a module that the tool counts, and the sum
 // that the table Budget holds (docs/MODULE_CONTRACT.md, "The budget that a
 // module asks for"; src/md/features/module_budget_request.md). The source
-// states what the tool cannot count: its working memory, its programs, its
+// states what the tool cannot count: its working memory, its processes, its
 // threads and the size of its window. Each counted part is a fact of the
 // files of the build.
 
-// The pages that the starter and the kernel pay for the program and its
-// first thread: its stack, the page of the context of the program, its
+// The pages that the starter and the kernel pay for the process and its
+// first thread: its stack, the page of the context of the process, its
 // thread area, and the own log ring that the kernel takes from the budget
-// at Program_Create. The guard page of a thread area has no memory.
+// at Process_Create. The guard page of a thread area has no memory.
 BUDGET_FIRST_THREAD_PAGES :: op.STACK_PAGES + 1 + (op.THREAD_AREA_PAGES - 1) + op.OWN_LOG_PAGES
 
 // The pages of each other thread: the stack that system.thread_start makes
@@ -46,7 +46,7 @@ Budget_Count :: struct {
 // Example: the stated budget {working_memory_pages = 100, threads = 3,
 // window_width = 512, window_height = 256}, a module of 5 pages and one
 // import of 3 pages give 100 + 8 + (72 + 2 * 19) + 256 = 474 pages, the
-// least programs and 3 threads.
+// least processes and 3 threads.
 budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memory_sizes: []u64) -> (counted: Budget_Count, ok: bool) {
 	add :: proc(sum: ^u64, value: u64) -> bool {
 		total, carry := bits.add_u64(sum^, value, 0)
@@ -63,7 +63,7 @@ budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memo
 		add(&counted.module_pages, module_pages_of_size(size)) or_return
 	}
 
-	// Every program has its first thread, also when the source leaves the
+	// Every process has its first thread, also when the source leaves the
 	// part out and the starter gives the least.
 	thread_count := max(stated.threads, 1)
 	other_pages := multiply(thread_count - 1, BUDGET_OTHER_THREAD_PAGES) or_return
@@ -81,7 +81,7 @@ budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memo
 	add(&pages, counted.module_pages) or_return
 	add(&pages, counted.thread_pages) or_return
 	add(&pages, counted.window_pages) or_return
-	counted.request = {pages = pages, programs = stated.programs, threads = stated.threads}
+	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads}
 	return counted, true
 }
 
@@ -131,5 +131,5 @@ budget_import_memory_sizes :: proc(build: Module_Build) -> (sizes: []u64, ok: bo
 // budget_count_line gives the parts of a request in words, for a line of
 // the tests and of the measure of a build.
 budget_count_line :: proc(counted: Budget_Count) -> string {
-	return fmt.tprintf("%d pages (%d of working memory, %d of the module and its imports, %d of its threads, %d of the pictures of its window), %d programs, %d threads", counted.request.pages, counted.working_memory_pages, counted.module_pages, counted.thread_pages, counted.window_pages, counted.request.programs, counted.request.threads)
+	return fmt.tprintf("%d pages (%d of working memory, %d of the module and its imports, %d of its threads, %d of the pictures of its window), %d processes, %d threads", counted.request.pages, counted.working_memory_pages, counted.module_pages, counted.thread_pages, counted.window_pages, counted.request.processes, counted.request.threads)
 }

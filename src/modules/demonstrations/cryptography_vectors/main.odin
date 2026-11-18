@@ -1,6 +1,6 @@
 // The module `cryptography` as it ships, at work (docs/CRYPTOGRAPHY.md).
 //
-// This program imports the module through its import slots, as `agenda`
+// This process imports the module through its import slots, as `agenda`
 // imports `calendar`: each call is a direct call of an export. It runs the
 // published vectors of each primitive through the exports, checks that a
 // changed byte, or a point of small order, gives its error record and no
@@ -9,12 +9,12 @@
 // of the module in the boot image: the hash names the code that ran.
 //
 // **What it is for.** A reader trusts a primitive of cryptography only when
-// it gives the published answers. This program checks the
+// it gives the published answers. This process checks the
 // [cryptography module](term:cryptography-module) that the system ships,
 // through the same exports that the QUIC of the remote service calls, and
 // names it by its hash, so the check is of that exact code.
 //
-// **What a reader sees.** Start it from the menu of the programs, or with
+// **What a reader sees.** Start it from the start menu, or with
 // `start("cryptography_vectors")` in the console. The window has one row
 // for each primitive and its standard, passed or failed, then the speeds.
 // The log gets one line for each primitive (`cryptography_vectors: <name>
@@ -24,7 +24,7 @@
 //
 // **Its grant**: **Image**: it reads the hash of the module
 // `cryptography` in the boot image. The module itself comes through its
-// imports, as for any program.
+// imports, as for any process.
 //
 // **What it does not prove.** Vectors show that the code gives the right
 // answers on those inputs. They do not show that it runs in constant time,
@@ -327,7 +327,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, " ns")
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "size", interface.text_of(&builder), graphics.colors.text, 120)
 
-	content = interface.card(&frame, {8, 116, WIDTH - 16, 276}, "THE VECTORS", "through the exports of the module, live", graphics.colors.program)
+	content = interface.card(&frame, {8, 116, WIDTH - 16, 276}, "THE VECTORS", "through the exports of the module, live", graphics.colors.process)
 	column = interface.column_of(content)
 	cells: [4]interface.Area
 	sizes := [4]interface.Size{interface.characters(20), interface.characters(22), interface.characters(8), interface.share()}
@@ -339,9 +339,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.row_split(line, sizes[:], cells[:], 16)
 		interface.cell_text(&frame, cells[0], vector.name, graphics.colors.text)
 		interface.cell_text(&frame, cells[1], vector.standard, graphics.colors.dim)
-		interface.cell_text(&frame, cells[2], vector.passed ? "passed" : "FAILED", vector.passed ? graphics.colors.program : graphics.colors.failed)
+		interface.cell_text(&frame, cells[2], vector.passed ? "passed" : "FAILED", vector.passed ? graphics.colors.process : graphics.colors.failed)
 		if vector.checks {
-			interface.cell_text(&frame, cells[3], vector.refused ? "refused, no byte given" : "NOT refused", vector.refused ? graphics.colors.program : graphics.colors.failed)
+			interface.cell_text(&frame, cells[3], vector.refused ? "refused, no byte given" : "NOT refused", vector.refused ? graphics.colors.process : graphics.colors.failed)
 		}
 	}
 
@@ -381,7 +381,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 
 // entry runs the vectors of each primitive, the refused inputs, the
 // measures of speed and of one call, reads the hash of the module, writes
-// the lines on the log, then keeps the window open until the program is
+// the lines on the log, then keeps the window open until the process is
 // stopped. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

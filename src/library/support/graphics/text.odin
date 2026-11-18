@@ -8,11 +8,11 @@ import "modus:support/text_shaping"
 // The text of the system (docs/FONTS.md). Two fonts draw on one grid of
 // cells of 8 x 16 pixels at scale 1 (16 x 32, 24 x 48 at the scales 2 and
 // 3): the vector font, from a glyph cache that the root service maps for
-// the program, and Spleen 8x16 (font.odin), the fallback and the other
-// value of the setting. A program calls text, character and text_scaled;
+// the process, and Spleen 8x16 (font.odin), the fallback and the other
+// value of the setting. A process calls text, character and text_scaled;
 // it does not know which font draws.
 //
-// The state is in this package, one for the program, and changes only
+// The state is in this package, one for the process, and changes only
 // through text_cache_set and text_choice_set (src/library/support/display calls them
 // at the start of a window and at a change of the setting, between two
 // frames). The zero state draws with Spleen: no cache yet.
@@ -31,8 +31,8 @@ Subpixel_Order :: enum u8 {
 	None, // No subpixels: grayscale.
 }
 
-// The text state of a program: the setting of the font, the caches, and
-// the tables of the blend. One for the program, in `text_state`.
+// The text state of a process: the setting of the font, the caches, and
+// the tables of the blend. One for the process, in `text_state`.
 Text_State :: struct {
 	font:        Text_Font, // The setting "font".
 	order:       Subpixel_Order, // The setting "subpixel_order".
@@ -48,12 +48,12 @@ Text_State :: struct {
 	blend_tables: Blend_Tables,
 }
 
-// The text state of this program. `text_cache_set` and `text_choice_set`
+// The text state of this process. `text_cache_set` and `text_choice_set`
 // change it, between two frames.
 text_state: Text_State
 
 // text_cache_set validates a glyph cache once and makes it the cache of the
-// vector font. A refused cache leaves the program with Spleen; the problem
+// vector font. A refused cache leaves the process with Spleen; the problem
 // is a value for the log of the caller.
 text_cache_set :: proc "contextless" (bytes: []u8) -> glyph_cache.Problem {
 	cache, problem := glyph_cache.validate(bytes)
@@ -78,8 +78,8 @@ cell_cache_problem :: proc "contextless" (cache: ^glyph_cache.Cache) -> glyph_ca
 
 // text_cache_use makes a cache that glyph_cache.validate accepted the cache
 // of the vector font: a change of the setting "grid_fit" between two
-// caches that the program validated once. A cache of a proportional font
-// is refused: the program draws with Spleen, as for any refused cache.
+// caches that the process validated once. A cache of a proportional font
+// is refused: the process draws with Spleen, as for any refused cache.
 text_cache_use :: proc "contextless" (cache: glyph_cache.Cache) -> glyph_cache.Problem {
 	cache := cache
 	if problem := cell_cache_problem(&cache); problem.kind != .None {
@@ -172,7 +172,7 @@ paint :: #force_inline proc "contextless" (canvas: Canvas, x, y, width, height: 
 }
 
 // cell_face gives the fallback face of the glyph cache of cells of the
-// program now: None with Spleen, where a cell past the glyph cache draws
+// process now: None with Spleen, where a cell past the glyph cache draws
 // the replacement glyph.
 cell_face :: proc "contextless" () -> fallback_glyphs.Face {
 	if !text_vector_drawn() {
@@ -200,7 +200,7 @@ square_root_table_fill :: proc "contextless" (table: ^[4096]u8) {
 }
 
 // text_state_start fills the table of the blend in linear light of the
-// text state. A program calls it once at its start, before any thread
+// text state. A process calls it once at its start, before any thread
 // draws (display.text_settings_load does), so no blend fills it on first
 // use while another reads it: the draw records with alpha blend with it.
 text_state_start :: proc "contextless" () {
@@ -373,7 +373,7 @@ glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_
 // glyph_words_draw draws one glyph past the glyph cache from its first
 // word (fallback_glyphs.glyph): an entry of the demand cache, copied and
 // checked against its contract, or of the private glyph cache, which this
-// program wrote. Its words are row_count rows of width words; the draw is
+// process wrote. Its words are row_count rows of width words; the draw is
 // the draw of a glyph of a glyph cache.
 @(private)
 glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [^]u32, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32 = OPAQUE) #no_bounds_check {
@@ -490,11 +490,11 @@ PROPORTIONAL_INK_MARGIN :: 2
 // font (text_shaping.shape) from a cache of that font: place is the x of
 // the origin of the text in 1/64 of a pixel, y the top of its line. Each
 // glyph is drawn at the nearest of the positions of its scale, through the
-// blend of the text of cells, cut to the canvas. The state of the program
+// blend of the text of cells, cut to the canvas. The state of the process
 // gives the order of the stripes and the blend tables. A fallback glyph
 // (text_shaping.FALLBACK_GLYPH_FIRST and past) is drawn from the fallback
 // face of the cache (fallback_glyphs.glyph): the demand cache or the
-// private glyph cache of the program. A glyph that no font of the chain
+// private glyph cache of the process. A glyph that no font of the chain
 // draws is the replacement glyph, at the advance that the shaper gave it.
 text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color, alpha: u32 = OPAQUE) {
 	if text_state.square_root[4095] == 0 {

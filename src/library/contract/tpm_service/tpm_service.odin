@@ -1,4 +1,4 @@
-// The contract of the TPM service: what the program `tpm` and its one
+// The contract of the TPM service: what the process `tpm` and its one
 // client, `unlock`, agree on (src/md/features/tpm_sealed_machine_key.md).
 //
 // The TPM service is the device service of the TPM of the machine. It seals

@@ -32,7 +32,7 @@ problem_rows_of_one_endpoint :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem_rows(&a, &machine, true, rows[:1]), 3)
 	testing.expect_value(t, a.count, 1)
 	testing.expect_value(t, machine.count, 2)
-	// A value that another program wrote does not index outside the table.
+	// A value that another process wrote does not index outside the table.
 	problem_count(&b, {kind = datagram.Problem_Kind(250), layer = datagram.Layer(99)}, .Endpoint)
 	testing.expect_value(t, b.rows[.None][.None].count, 1)
 }
@@ -141,7 +141,7 @@ admitted_remote_at_the_longest_gap_of_tcp :: proc(t: ^testing.T) {
 
 // A UDP listen grant sends to a remote that did not prove its address at
 // most 3 times the bytes that came from it; a send keeps no place alive; a
-// remote that the program validated has no such limit. Before, a send to
+// remote that the process validated has no such limit. Before, a send to
 // an admitted remote had no limit and kept its place for ever.
 @(test)
 admitted_remote_amplification_limit :: proc(t: ^testing.T) {
@@ -169,7 +169,7 @@ admitted_remote_amplification_limit :: proc(t: ^testing.T) {
 	testing.expect(t, !admitted)
 	// Sends do not keep a place: with the table full, the place of this
 	// remote, whose last datagram came at 1000, serves again after
-	// ADMITTED_IDLE, though the program sent to it later.
+	// ADMITTED_IDLE, though the process sent to it later.
 	for index in 1 ..< datagram.ADMITTED_CAPACITY {
 		testing.expect(t, admitted_add(&table, 0x0A000204, u16(index), 1000 + ADMITTED_IDLE))
 	}

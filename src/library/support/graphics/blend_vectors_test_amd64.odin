@@ -539,7 +539,7 @@ straight_alpha_forms_meet_each_channel_value :: proc(t: ^testing.T) {
 }
 
 // glyph_in_form draws one glyph as character_vector_with does, with the
-// rows blended in one form: the choice of the program does not decide here.
+// rows blended in one form: the choice of the process does not decide here.
 @(private = "file")
 glyph_in_form :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, position := 0) {
 	_, entry, found := glyph_cache.glyph_at_position(cache, value, scale, position)
@@ -670,7 +670,7 @@ test_caches_build :: proc(t: ^testing.T) -> (caches: [3]Test_Cache) {
 }
 
 // The three blends of a glyph give the same bytes: the table blend of the
-// programs (character_vector_with, with its fallback in the form of the
+// modules (character_vector_with, with its fallback in the form of the
 // target), the SSE2 form alone and the scalar form alone. For each cache of
 // the system, each scale that it has, each order of the stripes, three
 // colors, over a flat color, the gradient of a card, a gradient across and
@@ -702,7 +702,7 @@ three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
 	for pixels, index in drawn {
 		canvases[index] = {pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	}
-	text_colors := [?]Color{DARK_TEXT, DARK_PROGRAM, COLOR_WHITE}
+	text_colors := [?]Color{DARK_TEXT, DARK_PROCESS, COLOR_WHITE}
 	differences: [2]int // The table blend, then the SSE2 form, against the scalar form.
 	for &item in caches {
 		for scale in 1 ..= len(item.cache.sizes) {
@@ -747,7 +747,7 @@ three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
 // The time of one glyph at scale 1 of Paper Mono in each blend, over a
 // flat color, a gradient across and noise, on the host: run with `taskset
 // -c N` and -o:speed, the least of SPEED_BATCHES batches of one line (as
-// text_speed_parts). The table blend is the path of the programs; the SSE2
+// text_speed_parts). The table blend is the path of the modules; the SSE2
 // form alone and the scalar form alone draw each row with that form.
 @(test)
 text_speed_of_each_blend :: proc(t: ^testing.T) {

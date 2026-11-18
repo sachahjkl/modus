@@ -63,7 +63,7 @@ import "modus:support/tpm2"
 // The module that the volumes of machines 1 and 5 change: the root service
 // starts it at each boot: with no check, the machine runs it.
 CHANGED_MODULE :: "console"
-// The module that the volume of machine 7 changes: no program of that
+// The module that the volume of machine 7 changes: no process of that
 // machine loads it.
 OTHER_SYSTEM_MODULE :: "lonely"
 
@@ -137,8 +137,8 @@ tpm_socket_of :: proc(output: string) -> string {
 	return strings.concatenate({tpm_folder_of(output), "/swtpm.socket"}, context.temp_allocator)
 }
 
-Tpm_Process :: struct {
-	process: os.Process,
+Tpm_Host_Process :: struct {
+	host_process: os.Process,
 	started: bool,
 	folder:  string,
 }
@@ -149,18 +149,18 @@ Tpm_Process :: struct {
 // history, in the folder of the machine; else the folder of a state that
 // several machines of one test part share, as one TPM across restarts of
 // one machine: the part makes it new once.
-tpm_start :: proc(tpm: ^Tpm_Process, output: string, state: string = "") -> bool {
+tpm_start :: proc(tpm: ^Tpm_Host_Process, output: string, state: string = "") -> bool {
 	folder := tpm_folder_of(output)
 	socket := tpm_socket_of(output)
 	reset_folder(folder) or_return
 	state_folder := state != "" ? state : folder
 	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
-	process, err := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--ctrl", strings.concatenate({"type=unixio,path=", socket}, context.temp_allocator), "--log", log, "--terminate"}, stdout = os.stderr, stderr = os.stderr})
+	host_process, err := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--ctrl", strings.concatenate({"type=unixio,path=", socket}, context.temp_allocator), "--log", log, "--terminate"}, stdout = os.stderr, stderr = os.stderr})
 	if err != nil {
 		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", err)
 		return false
 	}
-	tpm^ = {process = process, started = true, folder = strings.clone(folder)}
+	tpm^ = {host_process = host_process, started = true, folder = strings.clone(folder)}
 	start := time.tick_now()
 	for !os.exists(socket) {
 		if time.tick_since(start) > TPM_START_TIMEOUT {
@@ -175,12 +175,12 @@ tpm_start :: proc(tpm: ^Tpm_Process, output: string, state: string = "") -> bool
 
 // tpm_stop ends swtpm and waits for its end: the next machine never starts
 // while it runs.
-tpm_stop :: proc(tpm: ^Tpm_Process) {
+tpm_stop :: proc(tpm: ^Tpm_Host_Process) {
 	if !tpm.started {
 		return
 	}
-	_ = os.process_kill(tpm.process)
-	_, _ = os.process_wait(tpm.process)
+	_ = os.process_kill(tpm.host_process)
+	_, _ = os.process_wait(tpm.host_process)
 	tpm.started = false
 	delete(tpm.folder)
 	tpm.folder = ""
@@ -431,7 +431,7 @@ floor_start_steps :: proc(machine: ^Floor_Machine, firmware: Machine_Firmware, f
 }
 
 // floor_started_steps adds the steps after the raises of a machine that
-// starts: the measure, after which no program raises a floor, the root
+// starts: the measure, after which no process raises a floor, the root
 // service, and the desktop; then the end.
 floor_started_steps :: proc(machine: ^Floor_Machine) {
 	append(&machine.steps, Step{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS})

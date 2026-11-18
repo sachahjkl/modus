@@ -1,7 +1,7 @@
 title: A program from a disk shows which file runs under its name
 date: 2026-11-15
 release: next
-picture: docs/screenshots/disk_program_windows.png
+picture: docs/screenshots/disk_process_windows.png
 kind: Shown
 guide: docs/MODULE_CONTRACT.md
 

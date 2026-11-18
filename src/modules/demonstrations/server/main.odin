@@ -1,11 +1,11 @@
 // A simple HTTP/1.1 server of this system (RFC 9110, RFC 9112): TCP in the
-// program (src/library/support/tcp), one thread, one table of connections, and records
+// process (src/library/support/tcp), one thread, one table of connections, and records
 // of fixed size for all its state. It allocates nothing.
 //
 // What it can reach comes from its grants only, with no ambient access:
 //   a segment endpoint with a listen grant: the TCP port 80, and the
 //       remotes that send a SYN to it;
-//   a private store in the storage service, as each program has: the pages
+//   a private store in the storage service, as each process has: the pages
 //       that it serves, by name;
 //   a service ring: the console calls its exports server.put,
 //       server.pages, server.remove and server.served, functions with
@@ -16,9 +16,9 @@
 //
 // **What it is for.** It shows a network service of the system against
 // clients that the project did not write: a browser or curl on the host.
-// TCP is a library in the program, so the network service keeps no state of
+// TCP is a library in the process, so the network service keeps no state of
 // a connection, and the bounds against a slow or hostile client are the
-// bounds of this program.
+// bounds of this process.
 //
 // **Start**: `start("server")` in the console, or the bar of the desktop.
 // Then, from the console: `connect("server")`,
@@ -60,7 +60,7 @@ import "modus:support/system"
 import "modus:support/tcp"
 
 // Its table of connections with their buffers (CAPACITY).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3490, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3490, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
 REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).
@@ -104,7 +104,7 @@ segments: [PLACE_COUNT - RECEIVE_PLACES]tcp.Outgoing
 events: [CAPACITY]tcp.Event
 local_address: u32
 listen_port: u16
-program_generator: random.Generator // The random generator of this program, from the seed of its starter.
+process_generator: random.Generator // The random generator of this process, from the seed of its starter.
 held_commands: [HELD_CAPACITY]ring.Record // Commands that the ring did not take.
 held_command_count: int
 held_release_count: int // The Releases among the held commands.
@@ -232,7 +232,7 @@ releases_send_now :: proc "contextless" () {
 
 // The log lines of the ends of connections, in one second at most: a remote
 // that opens and closes connections must not fill the log limit of the
-// program, or the lines of its other work are lost. The others are counted, and one line
+// process, or the lines of its other work are lost. The others are counted, and one line
 // says how many.
 CONNECTION_LOG_LIMIT :: 50
 connection_log_second: u64
@@ -463,7 +463,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 // a call, an event of the window, or the next timer of TCP.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("server: no random seed in the context")
 		system.stop(1)
 	}
@@ -476,7 +476,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ = system.service_open(ctx)
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		fail("no endpoint: the program has no grant of the network")
+		fail("no endpoint: the process has no grant of the network")
 	}
 	region_memory := ctx.handles[datagram.GRANT_REGION]
 	address, map_status := system.memory_map(region_memory, {.Write})
@@ -504,16 +504,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	local_address = u32(info.values[0])
 	listen_port = grant.port
 	// The connection table: its records and its buffers are memory of this
-	// program, which gives the library all the memory that it uses.
+	// process, which gives the library all the memory that it uses.
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || buffers_status != .Ok {
 		fail("no memory for the buffers of the connections")
 	}
 	// The secret of the initial sequence numbers (RFC 6528): 32 bytes of
-	// the generator of this program (docs/RANDOMNESS.md).
+	// the generator of this process (docs/RANDOMNESS.md).
 	secret: [32]u8
-	random.fill(&program_generator, secret[:])
+	random.fill(&process_generator, secret[:])
 	if error := tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, local_address, secret); error.kind != 0 {
 		fail("the connection table refused its memory")
 	}
@@ -530,7 +530,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from the generator of the program")
+	system.log("server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from the generator of the process")
 
 	incoming: [RECEIVE_PLACES]tcp.Incoming
 	used: [RECEIVE_PLACES]u32

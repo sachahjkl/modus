@@ -5,7 +5,7 @@ package modustool
 // whole system starts with translation and interrupt remapping on: the
 // storage service runs on the data disk, so each page that its block
 // service gives to the device is declared, and each interrupt of a device
-// comes through its entry. Then the program iommu, a client of the disk of
+// comes through its entry. Then the process iommu, a client of the disk of
 // the measures, makes the root service start the test device service
 // iommu_device: its write and its read through declared pages arrive, with
 // its message interrupt; its read into the interrupt addresses is a set of

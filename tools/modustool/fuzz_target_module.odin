@@ -5,7 +5,7 @@ import module "modus:contract/module"
 
 // The fuzz targets of the module file (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): a module comes from the network into
-// the store `programs`, and its package had no host test of its own. The
+// the store `module_files`, and its package had no host test of its own. The
 // invariant is the core of the flat tables: a file that `validate` accepts
 // gives no read out of bounds through any reader, for any index.
 
@@ -310,7 +310,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = fuzz_module_name_add(&strings_bytes, &choices, 'd')
-	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), programs = 1, threads = 1}}
+	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), processes = 1, threads = 1}}
 
 	// A rare broken field, chosen by the choices.
 	broken_kind := module.Table_Kind.None

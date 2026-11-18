@@ -1,5 +1,5 @@
 // A module of commands that tests the sandbox of an isolated call. A call
-// to a module that is not trusted runs the module as its own program, and
+// to a module that is not trusted runs the module as its own process, and
 // its arguments travel as records. Each export does what a module must not
 // be able to do to its caller: read any address, take all the processor
 // time, use a handle that it did not receive.
@@ -8,17 +8,17 @@
 //
 // **What it is for.** It shows the limits of a sandbox from the inside. A
 // reader calls the exports one by one and sees that each harm stays in the
-// sandboxed program: the console goes on, and the next call gets a new
-// program with new data.
+// sandboxed process: the console goes on, and the next call gets a new
+// process with new data.
 //
 // **Example**, in the console:
 //
 // ```
-// isolate("probe")        probe: 8 commands in a sandboxed program
+// isolate("probe")        probe: 8 commands in a sandboxed process
 // count() + count() * 10  21
 // stop_machine(1)         2: the sandbox holds no handle
-// peek(0)                 error: the program probe stopped: page fault
-// count()                 1: a new program
+// peek(0)                 error: the process probe stopped: page fault
+// count()                 1: a new process
 // spin()                  Escape stops the call
 // ```
 package probe
@@ -30,7 +30,7 @@ import "base:intrinsics"
 // peek reads 8 bytes at an address. In a call host, the address space has
 // only the module, the call ring and the call region.
 //
-// An address outside these stops the sandboxed program on a page fault; the console reports it, and its own
+// An address outside these stops the sandboxed process on a page fault; the console reports it, and its own
 // memory is not reachable. After `load("probe")` the same call reads the memory of the console.
 @(export, link_name = "peek")
 peek :: proc "c" (address: i64) -> i64 {
@@ -40,9 +40,9 @@ peek :: proc "c" (address: i64) -> i64 {
 calls: i64
 
 // count gives the number of calls of count. The data of a module is private
-// to the program that runs it.
+// to the process that runs it.
 //
-// It starts at 1 in each new sandboxed program: a fault in an earlier call resets it.
+// It starts at 1 in each new sandboxed process: a fault in an earlier call resets it.
 @(export, link_name = "count")
 count :: proc "c" () -> i64 {
 	calls += 1
@@ -53,7 +53,7 @@ count :: proc "c" () -> i64 {
 //
 // The console runs the line in its second thread, keeps the keys of the next line, and stops the call when the
 // input presses Escape: "error: Escape stopped the call of spin". The sandbox has its own budget of processor
-// time, so other programs go on.
+// time, so other processes go on.
 @(export, link_name = "spin")
 spin :: proc "c" () -> i64 {
 	for {

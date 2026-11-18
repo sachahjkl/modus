@@ -1,7 +1,7 @@
 // The mark of the system (docs/DESIGN.md, section "The mark"), as data: a
 // heron drawn on a grid of 24 by 24 square cells, and the name "modus" in
 // letters of square cells. The modus tool writes the files of the mark from
-// this package, and a program of the system can draw the mark from the same
+// this package, and a process of the system can draw the mark from the same
 // data. Pure code: no kernel operation, no allocation, so the modus tool
 // tests it on the host.
 //
@@ -11,7 +11,7 @@
 // where it is moved 30 % toward black. The eye is one flat color.
 //
 // Who uses it: the modus tool (the files of the mark: the logo, the icon of
-// the site), the boot display and the programs that show the mark. The
+// the site), the boot display and the processes that show the mark. The
 // parts:
 //
 // - `heron_rows`, `parts`, `Part`: the heron as cells.
@@ -36,7 +36,7 @@ HERON_GRID_SIZE :: 24
 // The limit keeps every product of the gradient in a signed integer of 64
 // bits with a wide margin (the largest is about 7 * 255 * 2 * 65536 * 1152,
 // near 2.7e11), and a heron of 24 * 65536 pixels is already wider than any
-// screen. The caller gives the cell size, so a program of the system can
+// screen. The caller gives the cell size, so a process of the system can
 // pass any value.
 CELL_SIZE_LIMIT :: 1 << 16
 
@@ -47,7 +47,7 @@ cell_size_is_accepted :: proc "contextless" (cell_size: int) -> bool {
 }
 
 // The two backgrounds of the mark: the background of the system, and a light
-// background for a page of another program.
+// background for a page of another process.
 BACKGROUND_DARK :: graphics.DARK_BACKGROUND
 BACKGROUND_LIGHT :: 0xF4F6F8 // The light background: a page of the site.
 

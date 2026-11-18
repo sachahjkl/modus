@@ -55,7 +55,7 @@ SIGNED_MESSAGE_SIZE :: 32 + 2 * HASH_SIZE + 8
 Scope :: enum u32 {
 	None      = 0, // Not valid: the reader refuses it.
 	System    = 1, // Each importer of the machine. The signing key of the system signs it.
-	Principal = 2, // The programs of the session of one principal. The signing key of that principal signs it.
+	Principal = 2, // The processes of the session of one principal. The signing key of that principal signs it.
 }
 
 // scope_of_word is the border of the scope word of a row of the file: the
@@ -126,7 +126,7 @@ list_problem_sentences := [List_Problem]string {
 
 // rows gives the rows of a list, after it checked the whole format. The
 // list stays where it is: the caller gives bytes that no other party can
-// change while it reads them (the pages of the boot image, which no program
+// change while it reads them (the pages of the boot image, which no process
 // writes), or a copy of them.
 rows :: proc "contextless" (list: []u8) -> (result: []Row, problem: List_Problem) {
 	if len(list) < size_of(Header) {

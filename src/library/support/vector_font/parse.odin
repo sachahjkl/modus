@@ -1,7 +1,7 @@
 // The vector font of the system (docs/FONTS.md): a reader of a subset of
 // TrueType, and a rasterizer in fixed point with coverage for each color
 // stripe. The modus tool uses it at build time to make the glyph cache;
-// a program uses it to draw a glyph from its outline.
+// a process uses it to draw a glyph from its outline.
 //
 // A font file is hostile input: each read is checked against the length of
 // the file, and each problem is a value. No floating point: a result does

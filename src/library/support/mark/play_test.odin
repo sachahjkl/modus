@@ -44,7 +44,7 @@ choice_plays_each_animation_once_in_a_round :: proc(t: ^testing.T) {
 }
 
 // The rule holds for each number of chance, not only for the numbers of
-// the generator: a program gives numbers of 32 bits from its own random
+// the generator: a process gives numbers of 32 bits from its own random
 // generator. The largest and the smallest numbers choose an animation that
 // exists and that the memory did not hold.
 @(test)

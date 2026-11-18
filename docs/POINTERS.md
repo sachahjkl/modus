@@ -11,13 +11,13 @@ The terms are in `glossary/desktop.md`: pointer, pointer shape, pointer picture,
 3. The boot image holds the file as a resource. The root service checks its hash and maps it read-only into the compositor.
 4. The compositor validates the file once, chooses the shape from what is under the pointer, and blends its picture at the place of the pointer.
 
-**What this is not.** A program never sends a picture of a pointer: it names a shape, and the compositor draws its own theme. A pointer theme file is not parsed at run time: the compositor reads it in place.
+**What this is not.** A process never sends a picture of a pointer: it names a shape, and the compositor draws its own theme. A pointer theme file is not parsed at run time: the compositor reads it in place.
 
 **For whom.** A reader who makes or changes a pointer theme, and a reader who wants to know how the compositor chooses and draws the pointer.
 
-**The map of this guide.** "1. What exists" compares Xcursor, hyprcursor and the others. "2. What this system needs" gives the pointer shapes, the request of a program, and how the compositor chooses and draws the pointer. "3. The format of the system: one pointer theme file" and "4. The manifest" give the two formats. "5. The two themes", "6. The license of the Posy theme" and "7. The place of the Posy theme" say what the system carries. "8. Measures" closes.
+**The map of this guide.** "1. What exists" compares Xcursor, hyprcursor and the others. "2. What this system needs" gives the pointer shapes, the request of a process, and how the compositor chooses and draws the pointer. "3. The format of the system: one pointer theme file" and "4. The manifest" give the two formats. "5. The two themes", "6. The license of the Posy theme" and "7. The place of the Posy theme" say what the system carries. "8. Measures" closes.
 
-**An example.** The compositor chooses the shape `move` while the pointer drags a window by its title bar, and blends its picture at its hot spot. The program `pointers` shows each shape of each theme.
+**An example.** The compositor chooses the shape `move` while the pointer drags a window by its title bar, and blends its picture at its hot spot. The process `pointers` shows each shape of each theme.
 
 ![The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot](screenshots/pointers_system.png)
 
@@ -66,39 +66,39 @@ One enum of the system, `Pointer_Shape` in `src/library/contract/pointer_picture
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
 | 0 | `arrow` | `default` | the desktop, the bar, the frame of a window, a surface by default; a scroll bar, also in the window of a terminal and in the palette |
-| 1 | `text` | `text` | the input band of the palette; the text of the terminal (a request of the program `terminal`) |
+| 1 | `text` | `text` | the input band of the palette; the text of the terminal (a request of the process `terminal`) |
 | 2 | `pointing_hand` | `pointer` | the close button of a window, the buttons of the bar, a line of an open menu, an entry of the palette and a candidate of its form |
 | 3 | `move` | `move` | a title bar, and a window while the pointer moves it |
-| 4 | `grab` | `grab` | a request of a program |
-| 5 | `grabbing` | `grabbing` | a request of a program |
-| 6 | `wait` | `wait` | a request of a program; animated |
-| 7 | `busy_with_arrow` | `progress` | a request of a program; animated |
-| 8 | `forbidden` | `not-allowed` | a request of a program |
-| 9 | `help` | `help` | a request of a program |
-| 10 | `crosshair` | `crosshair` | a request of a program |
-| 11 | `resize_left_right` | `ew-resize` | the left or right edge of a resizable window; a request of a program |
-| 12 | `resize_up_down` | `ns-resize` | the top or bottom edge of a resizable window; a request of a program |
-| 13 | `resize_top_left_bottom_right` | `nwse-resize` | the top left or bottom right corner of a resizable window; a request of a program |
-| 14 | `resize_top_right_bottom_left` | `nesw-resize` | the top right or bottom left corner of a resizable window; a request of a program |
+| 4 | `grab` | `grab` | a request of a process |
+| 5 | `grabbing` | `grabbing` | a request of a process |
+| 6 | `wait` | `wait` | a request of a process; animated |
+| 7 | `busy_with_arrow` | `progress` | a request of a process; animated |
+| 8 | `forbidden` | `not-allowed` | a request of a process |
+| 9 | `help` | `help` | a request of a process |
+| 10 | `crosshair` | `crosshair` | a request of a process |
+| 11 | `resize_left_right` | `ew-resize` | the left or right edge of a resizable window; a request of a process |
+| 12 | `resize_up_down` | `ns-resize` | the top or bottom edge of a resizable window; a request of a process |
+| 13 | `resize_top_left_bottom_right` | `nwse-resize` | the top left or bottom right corner of a resizable window; a request of a process |
+| 14 | `resize_top_right_bottom_left` | `nesw-resize` | the top right or bottom left corner of a resizable window; a request of a process |
 
 Not taken: the CSS names that no part of the system has a use for (`context-menu`, `cell`, `vertical-text`, `alias`, `copy`, `no-drop`, the eight single-side resizes, `all-scroll`, `zoom-in`, `zoom-out`). A new name is a new number at the end of the enum.
 
-### The request of a program
+### The request of a process
 
-A program asks for a pointer shape with the display command `Pointer_Shape` (`src/library/support/display`, `display.pointer_shape_set`):
+A process asks for a pointer shape with the display command `Pointer_Shape` (`src/library/support/display`, `display.pointer_shape_set`):
 
 ```odin
 display.pointer_shape_set(&window, .Text)
 ```
 
 - The compositor keeps one shape for each surface. The shape of a new surface is the arrow, and a shape stays until the next request.
-- It shows that shape only while the pointer is over that surface and the surface is the one in front at that place. A program does not change the pointer over another program, the bar or a frame: the pointer tells the principal what a press does, so a program that sets it elsewhere can lie about another program.
+- It shows that shape only while the pointer is over that surface and the surface is the one in front at that place. A process does not change the pointer over another process, the bar or a frame: the pointer tells the principal what a press does, so a process that sets it elsewhere can lie about another process.
 - A number out of the enum is ignored.
 - The compositor writes one line on the log for each request: `compositor: <title> asks for the pointer shape text over its surface`.
 
-Two programs ask today: `terminal` and `pointers` (the shape of the tile under the pointer).
+Two processes ask today: `terminal` and `pointers` (the shape of the tile under the pointer).
 
-**A surface with two shapes.** A surface has one shape at a time, and its program changes it when the pointer crosses a part that needs another one. The program `terminal` asks for `text` over its text, and for `arrow` while the pointer is over one of its scroll bars (the lines, the completion list) or while a scroll bar holds the press: a scroll bar is a control, not text. It asks only when the shape changes, so the log has one line for each crossing. The compositor shows the new shape after it read the request: for one frame the pointer can have the shape of before.
+**A surface with two shapes.** A surface has one shape at a time, and its process changes it when the pointer crosses a part that needs another one. The process `terminal` asks for `text` over its text, and for `arrow` while the pointer is over one of its scroll bars (the lines, the completion list) or while a scroll bar holds the press: a scroll bar is a control, not text. It asks only when the shape changes, so the log has one line for each crossing. The compositor shows the new shape after it read the request: for one frame the pointer can have the shape of before.
 
 ### How the compositor chooses the shape
 
@@ -108,7 +108,7 @@ Two programs ask today: `terminal` and `pointers` (the shape of the tile under t
 2. While the palette is open: `text` over its input band, `pointing_hand` over an entry of its list and over a candidate of its form, `arrow` elsewhere, also over the scroll bar of the list.
 3. Over a line of an open menu, or over a button of the bar: `pointing_hand`.
 4. Over the rest of the bar: `arrow`.
-5. Over the window in front at that place: `pointing_hand` over its close button, `move` over its title bar, the shape that its program asked for over its surface, `arrow` over its border.
+5. Over the window in front at that place: `pointing_hand` over its close button, `move` over its title bar, the shape that its process asked for over its surface, `arrow` over its border.
 6. Over the desktop: `arrow`.
 
 ### How the compositor draws the pointer
@@ -184,7 +184,7 @@ option    = "hot" number number             the hot spot: in pixels of the small
           | "sizes" number { number }       the sizes of this shape, in place of the default
 source    = file name                       a file of the Xcursor folder; the first one that exists is used
 paint     = "fill" [ "inside" ]             the fill color of each form; "inside": no edge
-          | "accent" token [ "inside" ] [ "fade" percent ]   an accent: "title", "stop_program" or "boot_program";
+          | "accent" token [ "inside" ] [ "fade" percent ]   an accent: "title", "stop_process" or "boot_program";
                                             "fade": that percent of the token over the color around it (1 to 100)
           | "edge"                          the edge color of each form, with no edge of its own
           | "clear"                         transparent, with an edge around the hole
@@ -208,7 +208,7 @@ coordinate = digits [ "." digits ]          units: 1 to 3 digits, then at most 3
 - **The edge is 1 pixel at every size, inside the contours.** For `fill` and `accent`, the tool paints the contours in the edge color, then the contours moved in by 1 pixel in the color of the layer: the contours are the whole shape, and a larger size has a finer edge, not a thicker one. `inside` paints the contours with no edge, for a part on the fill. `edge` paints the edge color as drawn: the line between two parts. `clear` paints the edge color on its contours moved out by 1 pixel, then makes its contours transparent: a hole has an edge too.
 - **Joins.** Two contours of one layer that must join overlap by 2 units: their moved contours meet. A part thinner than 2 units has no fill: its moved contour is inside out, and the tool drops it.
 - **The forms.** A manifest with an outline makes two forms: the dark form (fill white, edge `COLOR_INK`, the darkest color of the rules) and the light form (fill `COLOR_INK`, edge white). A shape from a source keeps its pictures in both forms.
-- **The accents** are color tokens of the design rules, by the name of their field in `graphics.Color_Tokens` (`src/library/support/graphics`). An accent takes the value of its token for the color around it: the fill for `inside`, else the edge. Around the dark, it takes the value of the token in the dark appearance (`DARK_COLOR_TOKENS`); around white, its value in the light appearance (`LIGHT_COLOR_TOKENS`), whose surfaces are light. No manifest holds a color value. The tokens that a manifest can name: `title` (the blue of the focus), `stop_program` (the red of "stop a program") and `boot_program` (the amber of "starts" and of a match).
+- **The accents** are color tokens of the design rules, by the name of their field in `graphics.Color_Tokens` (`src/library/support/graphics`). An accent takes the value of its token for the color around it: the fill for `inside`, else the edge. Around the dark, it takes the value of the token in the dark appearance (`DARK_COLOR_TOKENS`); around white, its value in the light appearance (`LIGHT_COLOR_TOKENS`), whose surfaces are light. No manifest holds a color value. The tokens that a manifest can name: `title` (the blue of the focus), `stop_process` (the red of "stop a process") and `boot_program` (the amber of "starts" and of a match).
 
 - **Frames.** The layers before the first `frame` are in every frame. Each `frame` adds the layers after it, over those. An animation has two frames at least.
 - **The option `hot`** is required, and inside the square.
@@ -262,7 +262,7 @@ circle 11.5 5 1
 
 ## 5. The two themes
 
-- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels), in two forms. Each shape has an edge of 1 pixel at both sizes. `wait` and `busy_with_arrow` have 16 frames of 60 ms: a sweep of the blue of the focus, a bright arc with a round head and a tail that fades into the ring, goes once around a thin ring in 960 ms. 16 steps of a sixteenth of a turn move the head by 2.6 pixels at 24; 12 steps of 80 ms move it by 3.4 pixels and look less smooth. The accents: the blue of the focus on the sweep of `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`; the other shapes are neutral. Its file has 180 pictures. It is always in the boot image, as the resource `pointers_system`.
+- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels), in two forms. Each shape has an edge of 1 pixel at both sizes. `wait` and `busy_with_arrow` have 16 frames of 60 ms: a sweep of the blue of the focus, a bright arc with a round head and a tail that fades into the ring, goes once around a thin ring in 960 ms. 16 steps of a sixteenth of a turn move the head by 2.6 pixels at 24; 12 steps of 80 ms move it by 3.4 pixels and look less smooth. The accents: the blue of the focus on the sweep of `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a process" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`; the other shapes are neutral. Its file has 180 pictures. It is always in the boot image, as the resource `pointers_system`.
   - **Why the fill carries the contrast.** The fill is the large part of a pointer. In the dark form it is white on the dark desktop, cards and windows: 19 to 1 on the background of the desktop. In the light form it is the dark of the desktop on the light surfaces: 17 to 1 on the light background of the site. The edge carries the contrast over a surface of the other kind: a light picture under the dark form, a dark picture under the light form.
   - **Why 24 and 48 only.** The compositor asks for 24, and 48 is the size of a screen with twice the pixels. A size of 32 helps only a compositor that asks for it; the details are drawn for 24. A size of an outline is one number of the statement `sizes`: a size for a scale of 1.25 or 1.5 is added when the system has such a scale. A multiple of 24 keeps each level and upright edge sharp.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The default development shell of the flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The checks of the flake and the shell `release` do not: they build the theme of the system only. The pictures of the documents come from the check of the flake, so they show the theme of the system. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
@@ -272,7 +272,7 @@ circle 11.5 5 1
   - The compositor validates each file once. The setting `pointer_theme` of the principal chooses one of them while the compositor runs: `owner` is the first theme that the boot image has, `system` is the theme of the system (`docs/FONTS.md`, "7. The setting"). The compositor writes `compositor: the pointer theme in use: <name>` on the log at each change.
   - With no build input, the tool prints that `POINTER_THEME_SOURCE` is not set and makes the theme of the system only. The system works the same.
   - `modustool release image` makes the theme of the system only, whatever `POINTER_THEME_SOURCE` names, and refuses to package a boot image with a pointer theme under another license than the license of the repository (section 7).
-- **How a resource enters the boot image and reaches a program**: `docs/ARCHITECTURE.md`, U2b.
+- **How a resource enters the boot image and reaches a process**: `docs/ARCHITECTURE.md`, U2b.
 
 ## 6. The license of the Posy theme
 
@@ -283,7 +283,7 @@ Read on 2026-11-11:
 - The author, http://www.michieldb.nl/other/cursors/: "Posy's improved cursors for Windows 10 (and older)", "A project from 2018", and "License: \"Attribution-NonCommercial\" (free to use, change and distribute for non-commercial use)" (the license note was added on 2024-10-16; version 1.5 of the Windows sets is of 2026-10-06).
 - CC BY-NC 4.0, section 2(a)(1): the right to reproduce and share, and to make and share adapted material, "for NonCommercial purposes only". Section 3(a): a share keeps the name of the creator, a notice of the license with its URI, and says if the material was modified.
 
-What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution, which the tool joins from the `attribution` lines of the manifest: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors. Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux. License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use). Converted by modustool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed." The program `pointers` shows it with the theme.
+What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution, which the tool joins from the `attribution` lines of the manifest: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors. Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux. License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use). Converted by modustool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed." The process `pointers` shows it with the theme.
 
 ## 7. The place of the Posy theme
 

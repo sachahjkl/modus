@@ -68,7 +68,7 @@ hex_of :: proc(bytes: []u8) -> string {
 	return string(hex.encode(bytes, context.temp_allocator))
 }
 
-// The procedures of the module, as a program fills the seam from its
+// The procedures of the module, as a process fills the seam from its
 // import slots.
 module_cryptography :: proc() -> Cryptography {
 	return {
@@ -458,7 +458,7 @@ random_datagrams_never_trap_and_never_open :: proc(t: ^testing.T) {
 
 // The header protection of ChaCha20 at the last counter: the first 4 bytes
 // of the sample are the counter (RFC 9001, section 5.4.4), and the sender
-// chooses them, so ff ff ff ff must give a mask and not stop the program.
+// chooses them, so ff ff ff ff must give a mask and not stop the process.
 // With a key of zeros and the rest of the sample zeros, the mask is the first
 // 5 bytes of the block at the counter 0xffffffff, from an independent
 // implementation. Then a short packet whose sample starts with ff ff ff ff

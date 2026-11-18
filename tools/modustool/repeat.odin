@@ -171,10 +171,10 @@ run_repeat :: proc(args: []string) -> int {
 		count, parsed = strconv.parse_int(args[1])
 	}
 	if len(args) == 3 && parsed {
-		parsed = parse_module_build_processes(args[2])
+		parsed = parse_module_build_host_processes(args[2])
 	}
 	if !parsed || count < 2 {
-		fmt.eprintln("modustool: repeat <module> <count>, or repeat all <count> [processes], with a count of 2 or more")
+		fmt.eprintln("modustool: repeat <module> <count>, or repeat all <count> [host_processes], with a count of 2 or more")
 		return EXIT_USAGE
 	}
 	// Each build of this command is a whole build: it counts the results

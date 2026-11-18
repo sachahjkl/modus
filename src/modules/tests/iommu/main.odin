@@ -1,12 +1,12 @@
 // The client of the test of the IOMMU. Its one grant is the disk of the
-// measures; for this program the root service starts the test device
+// measures; for this process the root service starts the test device
 // service `iommu_device` on that disk in place of the block service
 // (src/modules/tests/iommu_device, src/md/infrastructure/iommu.md, "The
 // proof").
 //
 // **What it shows.** After the test device service gave its device an
 // address that it did not declare, the service still runs and answers:
-// a DMA fault stops no program. It sends the command Info on the block
+// a DMA fault stops no process. It sends the command Info on the block
 // ring, waits for its completion with the hang bound, and writes one line.
 //
 // **What a reader sees.** No window: the line `iommu: ...` on the log.

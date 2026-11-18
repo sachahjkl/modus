@@ -392,7 +392,7 @@ screen_dump_read :: proc(machine: ^Machine) -> (dump: Screen_Dump, ok: bool) {
 }
 
 // screen_dump_settled gives a picture of a settled screen. When the tool
-// can call the compositor, it waits until the programs and the compositor
+// can call the compositor, it waits until the processes and the compositor
 // say that the screen is settled, then takes one picture. Else it takes
 // pictures until two in a row are the same outside the windows that draw
 // with no end: the screen did not change during the time of one picture.

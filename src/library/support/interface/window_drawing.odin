@@ -6,14 +6,14 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/system"
 
-// A program built with this setting draws its window through the drawing
+// A module built with this setting draws its window through the drawing
 // module (docs/INTERFACE.md, section 7): window_frame_end calls the two
 // exports of the module in place of the difference and the execution of
-// this package, so the program holds no copy of that code. The modus tool
-// sets it for each program that imports the module (the module table,
+// this package, so the module holds no copy of that code. The modus tool
+// sets it for each module that imports the drawing module (the module table,
 // tools/modustool/modules.odin).
 //
-// A window of such a program has at most one picture memory: a call of
+// A window of such a process has at most one picture memory: a call of
 // the module takes one. A frame with more than one is refused
 // (frame_draw). A grid is in the text table, so the module draws it. The
 // compositor, which shows many picture memories, calls
@@ -21,13 +21,13 @@ import "modus:support/system"
 // damage rectangles of its frame.
 DRAWING_THROUGH_MODULE :: #config(DRAWING_THROUGH_MODULE, false)
 
-// What a program keeps to draw its window with the package, in its own
+// What a process keeps to draw its window with the package, in its own
 // memory: the table of the frame that it builds, the table of the frame on
 // its surface, the interface state and the input of the next frame.
 Window_Drawing :: struct {
-	now:    Draw_Table, // The table of the frame that the program builds.
+	now:    Draw_Table, // The table of the frame that the process builds.
 	before: Draw_Table, // The table of the last frame that the window presented. Empty before the first frame.
-	// The surface has two pictures: the program draws in one while the
+	// The surface has two pictures: the process draws in one while the
 	// compositor shows the other, so each picture holds an older frame.
 	// What each picture owes against the table before.
 	debts:  Picture_Debts,
@@ -41,12 +41,12 @@ Window_Drawing :: struct {
 	build_time, difference_time, draw_time: u64,
 	build_start: u64, // When the frame that is built now started.
 	damage: Damage, // The damage of the last frame.
-	// A program that draws through the drawing module: the calls of an
+	// A process that draws through the drawing module: the calls of an
 	// export of the module since the start (for a frame with damage, one
 	// for the difference and one for the draw of all its rectangles), and
 	// the error record of the last call that the module refused, which the
 	// one line of the log of a refusal reads (module_refusal_log). A
-	// program with the package compiled in keeps the three zero.
+	// process whose module has the package compiled in keeps the three zero.
 	module_calls: u64,
 	module_error: errors.Error_Record,
 	module_refusal_logged: bool, // The line of a refusal is on the log: a window writes it one time.
@@ -74,7 +74,7 @@ Window_Drawing :: struct {
 // new appearance. The first frame of a window writes nothing.
 appearance_presented_note :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) {
 	if drawing.appearance_presented_known && drawing.appearance_presented != graphics.appearance {
-		system.log_in("programs", .Info, "interface: ", string(window.title[:window.title_count]), ": a frame in the ", graphics.appearance == .Light ? "light" : "dark", " appearance")
+		system.log_in("processes", .Info, "interface: ", string(window.title[:window.title_count]), ": a frame in the ", graphics.appearance == .Light ? "light" : "dark", " appearance")
 	}
 	drawing.appearance_presented, drawing.appearance_presented_known = graphics.appearance, true
 }
@@ -87,9 +87,9 @@ element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Fr
 	title := string(window.title[:window.title_count])
 	if frame.element_places.dropped > 0 && !drawing.element_places_dropped_logged {
 		drawing.element_places_dropped_logged = true
-		system.log_in("programs", .Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
+		system.log_in("processes", .Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
 	}
-	element_places_publish(&drawing.element_places_written, &frame.element_places, "programs", "interface: ", title)
+	element_places_publish(&drawing.element_places_written, &frame.element_places, "processes", "interface: ", title)
 }
 
 // act_names_differ says if the act names of a frame differ from the set
@@ -114,7 +114,7 @@ act_names_differ :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame)
 act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
 	if frame.act_names_dropped > 0 && !drawing.act_names_dropped_logged {
 		drawing.act_names_dropped_logged = true
-		system.log_in("programs", .Warning, "interface: ", string(window.title[:window.title_count]), ": a frame names ", u64(frame.act_names_dropped), " act names that the window does not keep: empty, longer than ", u64(display.ACT_NAME_CAPACITY), " bytes, or past ", u64(display.ACT_NAME_SET_CAPACITY), "; the palette cannot go to them. A window writes this line one time")
+		system.log_in("processes", .Warning, "interface: ", string(window.title[:window.title_count]), ": a frame names ", u64(frame.act_names_dropped), " act names that the window does not keep: empty, longer than ", u64(display.ACT_NAME_CAPACITY), " bytes, or past ", u64(display.ACT_NAME_SET_CAPACITY), "; the palette cannot go to them. A window writes this line one time")
 	}
 	if !act_names_differ(drawing, frame) {
 		return
@@ -138,9 +138,9 @@ act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, 
 act_go_to :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, hash: u64) {
 	title := string(window.title[:window.title_count])
 	if name, found := focus_by_act_name(&drawing.state, hash); found {
-		system.log_in("programs", .Info, "interface: ", title, ": the focus is on the element of ", name)
+		system.log_in("processes", .Info, "interface: ", title, ": the focus is on the element of ", name)
 	} else {
-		system.log_in("programs", .Info, "interface: ", title, ": the palette came for an act name that no element of the last frame names")
+		system.log_in("processes", .Info, "interface: ", title, ": the palette came for an act name that no element of the last frame names")
 	}
 }
 
@@ -183,7 +183,7 @@ when DRAWING_THROUGH_MODULE {
 
 	// records_to_read gives the table place of the records first ..< first
 	// + count of a draw table, cut to the records of the frame: the address
-	// of the memory of the program, and its counts. The module reads the
+	// of the memory of the process, and its counts. The module reads the
 	// records where they are.
 	@(private = "file")
 	records_to_read :: proc "contextless" (table: ^Draw_Table, first, count: int) -> system.Table_To_Read(Draw_Record) {
@@ -221,7 +221,7 @@ when DRAWING_THROUGH_MODULE {
 	// a table into a canvas, in each of the rectangles in their order, each
 	// cut to its rectangle, with the export of the drawing module: one call
 	// for all the rectangles, at most DAMAGE_CAPACITY. The pixels of the
-	// canvas are bytes of the program that the module writes in place. A
+	// canvas are bytes of the process that the module writes in place. A
 	// Picture record of the part names picture memory 0: picture_memory,
 	// which the module reads in place. With fill_background, each rectangle
 	// is painted with background before its records. It gives false when
@@ -288,7 +288,7 @@ when DRAWING_THROUGH_MODULE {
 	// record in words. A refused draw presents nothing and makes the next
 	// frame whole, which is refused again: with no line, the window stays
 	// empty and the log says nothing. One line for the life of the window:
-	// the cause is in the program (a table, a shape, a picture memory), and
+	// the cause is in the process (a table, a shape, a picture memory), and
 	// each frame has the same one.
 	@(private = "file")
 	module_refusal_log :: proc "contextless" (drawing: ^Window_Drawing, export_name: string) {
@@ -317,7 +317,7 @@ when DRAWING_THROUGH_MODULE {
 		case .Unsupported:
 			cause = "the frame has pictures in more than one picture memory, and one call of the module draws one"
 		}
-		system.log_in("programs", .Warning, "interface: the drawing module refused ", export_name, ": ", cause, " (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), "). A refused difference draws each frame whole; a refused draw leaves the window as it was. A window writes this line one time")
+		system.log_in("processes", .Warning, "interface: the drawing module refused ", export_name, ": ", cause, " (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), "). A refused difference draws each frame whole; a refused draw leaves the window as it was. A window writes this line one time")
 	}
 } else {
 	// frame_difference finds the damage from the table before to the table
@@ -343,7 +343,7 @@ window_drawing_of :: proc "contextless" (records_now, records_before: []draw_rec
 	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}}
 }
 
-// What a program keeps to draw one window, in one record of its own
+// What a process keeps to draw one window, in one record of its own
 // memory: the drawing, and the memory of its two draw tables. RECORDS is
 // the capacity of each table in records, TEXT in bytes of text. A table
 // with a grid starts at an address that is a multiple of 4, so TEXT is a
@@ -356,7 +356,7 @@ Window_Memory :: struct($RECORDS, $TEXT: int) where RECORDS > 0 && TEXT > 0 && T
 
 // window_memory_drawing gives the drawing of a window memory, with its two
 // tables in the memory of the record. A global record cannot hold slices of
-// itself before the program runs, so each call gives the slices again: the
+// itself before the process runs, so each call gives the slices again: the
 // same slices each time, and the other fields of the drawing (the input,
 // the state, the picture memories) stay as they are.
 window_memory_drawing :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT)) -> ^Window_Drawing {
@@ -380,7 +380,7 @@ window_frame_start :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT
 // window_events takes the events of a window into the input of the next
 // frame, until the input has KEY_CAPACITY keys. It gives true if an event
 // came, and also when the last frame was left out and the compositor took
-// the picture before it since: a program that draws only after an event
+// the picture before it since: a process that draws only after an event
 // then draws that frame.
 window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> bool {
 	came := drawing.late && display.canvas_free(window)
@@ -444,7 +444,7 @@ clipboard_answer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 }
 
 // draw_whole_window_next makes the next frame of each picture of the
-// surface a whole frame: no picture is known. A program that reads its
+// surface a whole frame: no picture is known. A process that reads its
 // events with no window_events calls it on Settings_Changed.
 draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
 	drawing.debts = {}
@@ -463,18 +463,18 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	if window != nil {
 		display.picture_begin(window)
 	}
-	// The glyphs past the glyph cache that the program draws itself in
+	// The glyphs past the glyph cache that the process draws itself in
 	// this frame count their use in it.
 	display.text_frame_begin()
 	// The elements of a window draw their names and titles in the
-	// interface font of the program, when its starter gave it one.
+	// interface font of the process, when its starter gave it one.
 	drawing.now.interface_font = display.interface_font_of()
 	return frame_begin(&drawing.now, &drawing.state, &drawing.input, system.time())
 }
 
 // window_scroll_bar_wake gives the time, in milliseconds of the clock of
 // the system, at which a held arrow button of a scroll bar of the window
-// takes its next step: a program that sleeps while nothing changes wakes at
+// takes its next step: a process that sleeps while nothing changes wakes at
 // that time and builds a frame. due is false when no step is due.
 window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time: u64, due: bool) {
 	return drawing.state.scroll_bar_repeat_at, drawing.state.scroll_bar_repeat_at != 0
@@ -483,7 +483,7 @@ window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time
 // window_frame_end ends the frame: it finds what changed by difference
 // with the last frame that the window presented, draws the records again
 // in the changed rectangles and in the debt of the picture that the
-// program draws now, and presents the changed part. It gives the count of
+// process draws now, and presents the changed part. It gives the count of
 // the rectangles that it drew.
 //
 // A frame is shown whole or not at all:
@@ -587,7 +587,7 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 		}
 		picture_debts_after(&drawing.debts, changes.picture, &changes.changed, sent)
 	} else {
-		// The screen shows the frame. The picture that the program draws
+		// The screen shows the frame. The picture that the process draws
 		// can still owe pixels: it pays them in the frame that changes
 		// the screen. A frame with nothing to draw is a picture of the
 		// measure too.
@@ -604,15 +604,15 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 	return drawing.damage.count
 }
 
-// window_frame_end_without_present ends the frame of a program that draws
+// window_frame_end_without_present ends the frame of a process that draws
 // over it by hand: it draws the frame whole in window.canvas and presents
-// nothing. The program then draws over the frame in window.canvas and
+// nothing. The process then draws over the frame in window.canvas and
 // calls display.present. With window_frame_end, window.canvas is the other
-// picture after the call. The pixels that the program adds are in no
+// picture after the call. The pixels that the process adds are in no
 // table, so each frame of such a window is whole.
 //
 // false: the compositor did not take the picture before (the frame is
-// left out), or the drawing module refused the draw. The program draws
+// left out), or the drawing module refused the draw. The process draws
 // nothing and does not present.
 window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> bool {
 	frame_end(frame)
@@ -638,7 +638,7 @@ window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing
 }
 
 // show_picture draws a frame of a window that is one picture of the
-// program: one Picture record at (0, 0). generation is a new number when
+// process: one Picture record at (0, 0). generation is a new number when
 // the pixels of the picture changed: with the same number, the frame draws
 // nothing.
 show_picture :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, picture: graphics.Canvas, generation: u32) {
@@ -648,7 +648,7 @@ show_picture :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.W
 }
 
 // window_drawing_of_picture makes the drawing of a window that is one
-// picture of the program, with tables in the memory of the caller. The
+// picture of the process, with tables in the memory of the caller. The
 // picture memories stay memory of the caller: the slice must live as
 // long as the window.
 window_drawing_of_picture :: proc "contextless" (records_now, records_before: []Draw_Record, picture_memories: [][]graphics.Color) -> Window_Drawing {

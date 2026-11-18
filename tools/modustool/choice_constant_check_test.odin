@@ -43,7 +43,7 @@ run :: proc "contextless" () {
 a_family_used_in_a_switch_and_as_an_argument_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
 		{path = "src/library/support/choices/choices.odin", text = CHOICES_DECLARED},
-		{path = "src/programs/user/main.odin", text = CHOICES_USED},
+		{path = "src/processes/user/main.odin", text = CHOICES_USED},
 	}
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
@@ -107,7 +107,7 @@ fill :: proc "contextless" (values: ^[8]u64) -> Thing {
 each_form_of_a_use_as_a_choice_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
 		{path = "src/library/support/choices/choices.odin", text = "package choices\n\nMODE_WAIT :: 0\nMODE_WRITE :: 1\n\nstart :: proc \"contextless\" (mode: u64) {}\n"},
-		{path = "src/programs/forms/main.odin", text = CHOICES_OF_EACH_FORM},
+		{path = "src/processes/forms/main.odin", text = CHOICES_OF_EACH_FORM},
 	}
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
@@ -119,9 +119,9 @@ each_form_of_a_use_as_a_choice_is_refused :: proc(t: ^testing.T) {
 	// MODE_ has one member that the code uses as a choice: one constant
 	// is a constant, and no family.
 	expected := [?]Expected {
-		{"src/programs/forms", "FORM", .Compared_With_A_Choice},
-		{"src/programs/forms", "KIND", .Compared_With_A_Choice},
-		{"src/programs/forms", "STATE", .Given_To_A_Choice},
+		{"src/processes/forms", "FORM", .Compared_With_A_Choice},
+		{"src/processes/forms", "KIND", .Compared_With_A_Choice},
+		{"src/processes/forms", "STATE", .Given_To_A_Choice},
 	}
 	testing.expect_value(t, len(families), len(expected))
 	for family, index in families {
@@ -175,7 +175,7 @@ serve :: proc "contextless" (request: u32, accent: rune, level: u64, stage: int)
 
 @(test)
 families_by_the_last_word_characters_and_computed_values_are_refused :: proc(t: ^testing.T) {
-	sources := []Export_Source{{path = "src/programs/other_forms/main.odin", text = CHOICES_OF_OTHER_FORMS}}
+	sources := []Export_Source{{path = "src/processes/other_forms/main.odin", text = CHOICES_OF_OTHER_FORMS}}
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
 	Expected :: struct {
@@ -233,7 +233,7 @@ answer_text :: proc "contextless" (answer: i64) -> string {
 
 @(test)
 a_family_of_negative_answers_is_refused :: proc(t: ^testing.T) {
-	sources := []Export_Source{{path = "src/programs/negatives/main.odin", text = NEGATIVE_CHOICES}}
+	sources := []Export_Source{{path = "src/processes/negatives/main.odin", text = NEGATIVE_CHOICES}}
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
 	testing.expect_value(t, len(families), 1)
@@ -261,7 +261,7 @@ a_family_of_negative_answers_is_refused :: proc(t: ^testing.T) {
 // source with no family.
 @(test)
 a_source_that_does_not_parse_stops_the_check :: proc(t: ^testing.T) {
-	sources := []Export_Source{{path = "src/programs/broken/main.odin", text = "package broken\n\nMODE_A :: 0\nwords :: proc( {\n"}}
+	sources := []Export_Source{{path = "src/processes/broken/main.odin", text = "package broken\n\nMODE_A :: 0\nwords :: proc( {\n"}}
 	_, ok := choice_families_of_sources(sources)
 	testing.expect(t, !ok)
 }
@@ -322,7 +322,7 @@ measure :: proc "contextless" (count: int, flags: u64, mode: u64, character: u8,
 
 @(test)
 quantities_limits_and_enums_keep_the_rule :: proc(t: ^testing.T) {
-	sources := []Export_Source{{path = "src/programs/quantities/main.odin", text = CONSTANTS_THAT_KEEP_THE_RULE}}
+	sources := []Export_Source{{path = "src/processes/quantities/main.odin", text = CONSTANTS_THAT_KEEP_THE_RULE}}
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
 	for family in families {
@@ -450,8 +450,8 @@ a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
 		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
 		{path = "src/library/support/importer/importer.odin", text = CASTS_IMPORTED},
-		{path = "src/programs/third/main.odin", text = CASTS_THROUGH_TWO_IMPORTS},
-		{path = "src/programs/relative/main.odin", text = CASTS_RELATIVE},
+		{path = "src/processes/third/main.odin", text = CASTS_THROUGH_TWO_IMPORTS},
+		{path = "src/processes/relative/main.odin", text = CASTS_RELATIVE},
 	}
 	casts, ok := enum_casts_of_sources(sources)
 	testing.expect(t, ok)
@@ -481,8 +481,8 @@ a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 		{DECLARED, 63, AUTO_CAST_TYPE_NAME, .Kept}, // An auto_cast, whose target is no type of the tree.
 		{"src/library/support/importer/importer.odin", 6, "other.Mode", .Passed},
 		{"src/library/support/importer/importer.odin", 12, "Imported_Alias", .Kept}, // An alias through an import.
-		{"src/programs/relative/main.odin", 6, "neighbour.Mode", .Kept}, // A relative import.
-		{"src/programs/third/main.odin", 6, "importer.Imported_Alias", .Kept}, // The alias of an import, from a third package.
+		{"src/processes/relative/main.odin", 6, "neighbour.Mode", .Kept}, // A relative import.
+		{"src/processes/third/main.odin", 6, "importer.Imported_Alias", .Kept}, // The alias of an import, from a third package.
 	}
 	testing.expect_value(t, len(casts), len(expected))
 	for item, index in expected[:min(len(expected), len(casts))] {
@@ -525,7 +525,7 @@ an_exception_holds_its_count_of_casts_in_its_file :: proc(t: ^testing.T) {
 // A source that the parser refuses is no source with no cast.
 @(test)
 a_broken_source_is_no_source_with_no_cast :: proc(t: ^testing.T) {
-	sources := []Export_Source{{path = "src/programs/broken/main.odin", text = "package broken\n\nrun :: proc( {\n"}}
+	sources := []Export_Source{{path = "src/processes/broken/main.odin", text = "package broken\n\nrun :: proc( {\n"}}
 	_, ok := enum_casts_of_sources(sources)
 	testing.expect(t, !ok)
 }
@@ -566,12 +566,12 @@ compared :: proc "contextless" (word: u32) -> bool {
 a_cast_compared_with_a_member_is_accepted :: proc(t: ^testing.T) {
 	sources := []Export_Source {
 		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
-		{path = "src/programs/accepted/main.odin", text = CASTS_ACCEPTED},
+		{path = "src/processes/accepted/main.odin", text = CASTS_ACCEPTED},
 	}
 	casts, ok := enum_casts_of_sources(sources)
 	testing.expect(t, ok)
 	for found in casts {
-		testing.expectf(t, found.file != "src/programs/accepted/main.odin", "the accepted form at line %d is refused as %v", found.line, found.form)
+		testing.expectf(t, found.file != "src/processes/accepted/main.odin", "the accepted form at line %d is refused as %v", found.line, found.form)
 	}
 }
 

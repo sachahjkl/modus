@@ -248,7 +248,7 @@ the_call_at_the_caret :: proc(t: ^testing.T) {
 // Real names of this system: the exports of monitor, storage, manual,
 // compositor, settings and date, as the console names them.
 system_names := [?]string {
-	"monitor.programs", "monitor.counts", "monitor.count", "monitor.counts_named", "monitor.served",
+	"monitor.processes", "monitor.counts", "monitor.count", "monitor.counts_named", "monitor.served",
 	"storage.write", "storage.read", "storage.size", "storage.remove", "storage.objects", "storage.stores",
 	"storage.versions", "storage.version", "storage.restore", "storage.clone", "storage.compare",
 	"manual.modules", "manual.exports", "manual.imports", "manual.importers", "manual.exporters",
@@ -513,7 +513,7 @@ hostile_history_fields :: proc(t: ^testing.T) {
 history_search_order :: proc(t: ^testing.T) {
 	history := new(History)
 	defer free(history)
-	for text in ([]string{"connect(\"monitor\")", "monitor.count(\"programs\")", "help()", "tally.add(5, \"x\")", "monitor.count(\"processors\")", "help()"}) {
+	for text in ([]string{"connect(\"monitor\")", "monitor.count(\"processes\")", "help()", "tally.add(5, \"x\")", "monitor.count(\"processors\")", "help()"}) {
 		history_add(history, text)
 	}
 	candidates: [HISTORY_LINE_CAPACITY]Candidate
@@ -528,12 +528,12 @@ history_search_order :: proc(t: ^testing.T) {
 		}
 	}
 	// Equal scores (111): the newest line first, though it is longer.
-	expect(t, "mco", candidates[:count], ranked[:], {"monitor.count(\"processors\")", "monitor.count(\"programs\")"})
+	expect(t, "mco", candidates[:count], ranked[:], {"monitor.count(\"processors\")", "monitor.count(\"processes\")"})
 	// No query: each line, the newest first; help() one time.
-	expect(t, "", candidates[:count], ranked[:], {"help()", "monitor.count(\"processors\")", "tally.add(5, \"x\")", "monitor.count(\"programs\")", "connect(\"monitor\")"})
-	// "prog": the line with "programs" matches side by side; "processors"
-	// does not hold a g.
-	expect(t, "prog", candidates[:count], ranked[:], {"monitor.count(\"programs\")"})
+	expect(t, "", candidates[:count], ranked[:], {"help()", "monitor.count(\"processors\")", "tally.add(5, \"x\")", "monitor.count(\"processes\")", "connect(\"monitor\")"})
+	// "esses": the line with "processes" holds these letters in order;
+	// "processors" has no e after its double s.
+	expect(t, "esses", candidates[:count], ranked[:], {"monitor.count(\"processes\")"})
 }
 
 // ---- The line history as a file.
@@ -687,7 +687,7 @@ keys_while_a_line_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, running_key_action(false, false, 4, 4), Running_Key_Action.Drop)
 }
 
-// The program takes a key from its queue while a place is free. With no
+// The process takes a key from its queue while a place is free. With no
 // place, it reads on only to find an Escape that can stop a call: in each
 // other case the key stays in the queue, and no key is lost.
 @(test)
@@ -696,7 +696,7 @@ keys_stay_in_the_queue_when_no_key_can_wait_or_act :: proc(t: ^testing.T) {
 	testing.expect(t, running_key_can_be_taken(false, 3, 4))
 	testing.expect(t, running_key_can_be_taken(true, 3, 4))
 	testing.expect(t, !running_key_can_be_taken(false, 4, 4), "no place and no call to stop: the key stays in the queue")
-	testing.expect(t, running_key_can_be_taken(true, 4, 4), "the program reads on to find Escape")
+	testing.expect(t, running_key_can_be_taken(true, 4, 4), "the process reads on to find Escape")
 	// A key that is taken with a place never gives Drop.
 	for waiting in 0 ..< 4 {
 		for escape in ([2]bool{false, true}) {

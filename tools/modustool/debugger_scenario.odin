@@ -1,19 +1,19 @@
 package modustool
 
-// The debugger of a program (docs/ARCHITECTURE.md, "The debugger of a
-// program"): one machine. The program debugged starts children of its own
-// module and is their debugger: the program that creates a program has the
+// The debugger of a process (docs/ARCHITECTURE.md, "The debugger of a
+// process"): one machine. The process debugged starts children of its own
+// module and is their debugger: the process that creates a process has the
 // right Debug on the handle that the creation gave.
 //
 // On the first child: the attach; the refusals (a write of breakpoints on
 // a thread that is not held, a handle with no Debug, a breakpoint at an
-// address of the kernel, a write of breakpoints by a program on its own
+// address of the kernel, a write of breakpoints by a process on its own
 // thread); an execute breakpoint at a procedure, the registers at the
 // stop, the memory of the child and the reads that the kernel refuses, a
 // single step, a data breakpoint, and the end of the child with its own
 // code.
 //
-// Then the end of the debugging gives the program back: a detach while a
+// Then the end of the debugging gives the process back: a detach while a
 // thread is held; a second debugger that ends while the child waits at
 // its breakpoint, that closes its handle, whose handle is revoked, and
 // that ends after a single step with its trap flag still in the thread.
@@ -59,16 +59,16 @@ scenario_debugger := [?]Step {
 	{kind = .Wait, text = "the kernel copied this line from a watched buffer"},
 	{kind = .Wait, text = "debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came: as it must"},
 	{kind = .Wait, text = "debugged: a data breakpoint that a load of the stack selector holds before a syscall: the kernel entry returned: as it must"},
-	{kind = .Wait, text = "kernel: program debugged child: the ring of its debugger is full (1 times): the debugger does not see the fault"},
+	{kind = .Wait, text = "kernel: process debugged child: the ring of its debugger is full (1 times): the debugger does not see the fault"},
 	{kind = .Wait, text = "debugged: a full ring of the debugger: the breakpoint is lost for the debugger, the child goes on, and a record comes again when the ring has room: as it must"},
-	{kind = .Wait, text = "debugged: ok, 24 cases: a debugger holds, reads and steps one program, and its end gives the program back"},
+	{kind = .Wait, text = "debugged: ok, 24 cases: a debugger holds, reads and steps one process, and its end gives the process back"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
 // The commands of the debugger (docs/TOOLS.md, "The debugger"): a second
-// machine. The console starts the program debug_target, which has no grant
+// machine. The console starts the process debug_target, which has no grant
 // of the root service and values that this scenario knows, and debugs it
 // through the service `debugger`:
 //
@@ -79,21 +79,21 @@ scenario_debugger := [?]Step {
 // - a field of a record inside a record, an element of an array, the name
 //   of an enumeration value, a text, each by a path;
 // - a watch on a global, which stops at the write;
-// - the detach: the program writes its line again, so it runs.
+// - the detach: the process writes its line again, so it runs.
 //
-// Then who can debug which program: a program with a private store, a
-// service and a device service are refused; a program with a right of the
+// Then who can debug which process: a process with a private store, a
+// service and a device service are refused; a process with a right of the
 // machine, which the console holds, is given. A revocation of a grant of
 // the console ends a debugging that the rule no longer gives: the machine,
-// while the console debugs that program, then the attach is refused; the
-// grant to act for the principal, while a thread is held, and the program
+// while the console debugs that process, then the attach is refused; the
+// grant to act for the principal, while a thread is held, and the process
 // runs again.
 //
 // Then the same exports from the host, through the service `remote`: the
 // attach, a breakpoint by a file and a line, the stop, the source line
 // with the text that the tool reads in the repository, the refusal of a
-// second program while one is debugged, the detach, and the refusal of a
-// program with a grant that `remote` does not hold.
+// second process while one is debugged, the detach, and the refusal of a
+// process with a grant that `remote` does not hold.
 //
 // Each row is drawn through `columns` or `where`, so that the widths of
 // its columns depend only on values that the scenario knows. A wait for a
@@ -103,7 +103,7 @@ scenario_debugger := [?]Step {
 
 TEST_OUTPUT_DEBUGGER_COMMANDS :: BUILD_FOLDER + "/test_output_debugger_commands.txt"
 
-// The source file of the program debug_target, as its debug object names it.
+// The source file of the module debug_target, as its debug object names it.
 DEBUG_TARGET_SOURCE_FILE :: TEST_MODULE_SOURCES + "debug_target/main.odin"
 
 // The line of the second statement of the procedure add_step of that
@@ -118,7 +118,7 @@ DEBUG_TARGET_LINE_OF_THE_CALL :: "101"
 DEBUG_TARGET_LINE_AFTER_THE_CALL :: "102"
 DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + step)"
 
-DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
+DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the process is not held: as it must"
 
 // The element names that the scenario presses in the window of the
 // debugger (src/modules/system/debugger_window/main.odin): the debug place field
@@ -128,8 +128,8 @@ DEBUGGER_WINDOW_PLACE_FIELD :: "the debug place"
 // The sentence of a refused debug access names the start grant that
 // refuses, by its name (src/library/contract/start_grant): the name goes between the
 // two parts.
-DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this program: the grant "
-REFUSES_THE_DEBUG_ACCESS :: " of the program refuses it (-4)"
+DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this process: the grant "
+REFUSES_THE_DEBUG_ACCESS :: " of the process refuses it (-4)"
 
 @(rodata)
 scenario_debugger_commands := [?]Step {
@@ -140,8 +140,8 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "root: started debug_target"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
-	// The attach: the program module has its debug object.
-	{kind = .Type, text = "columns(debug(\"debug_target\"), \"program described\")"},
+	// The attach: the module of the process has its debug object.
+	{kind = .Type, text = "columns(debug(\"debug_target\"), \"process described\")"},
 	{kind = .Wait, text = "[console] debug_target          1"},
 
 	// A breakpoint by a procedure name: the main thread stops at the first
@@ -245,8 +245,8 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "[console]      0  watch 0  debug_target::record_round"},
 
 	// The detach: one breakpoint leaves, the held thread runs, and the
-	// program writes its line again.
-	{kind = .Type, text = "columns(detach(), \"program breakpoints\")"},
+	// process writes its line again.
+	{kind = .Type, text = "columns(detach(), \"process breakpoints\")"},
 	{kind = .Wait, text = "[console] debug_target            1"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
@@ -267,7 +267,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "debugger_window: held the thread 0"},
 	// The thread waits in the kernel: its first frame is the instruction of
 	// the system library, which has no line. The frame of its caller has
-	// the line and the variables of the program.
+	// the line and the variables of the process.
 	{kind = .Key, text = "pgdn"},
 	{kind = .Wait, text = "debugger_window: the frame 1 of the thread 0: "},
 	{kind = .Shot, text = "debugger_window"},
@@ -328,7 +328,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Close, text = "debugger_window"},
 	{kind = .Front, text = "console"},
 
-	// Who can debug which program. A private store belongs to its program:
+	// Who can debug which process. A private store belongs to its process:
 	// the grant Store refuses, though the console holds a grant Store too.
 	{kind = .Type, text = "start(\"notes\")"},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -350,7 +350,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "start(\"clock\")"},
 	{kind = .Wait, text = "compositor: surface clock"},
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "columns(debug(\"clock\"), \"program described\")"},
+	{kind = .Type, text = "columns(debug(\"clock\"), \"process described\")"},
 	// Two modules with a debug object: clock and the drawing module it imports.
 	{kind = .Wait, text = "[console] clock            2"},
 	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
@@ -363,9 +363,9 @@ scenario_debugger_commands := [?]Step {
 
 	// The grant to act for the principal is revoked while the console
 	// holds a thread of debug_target: the root service ends the debugging,
-	// the held thread runs again (the program writes its line), and the
+	// the held thread runs again (the process writes its line), and the
 	// service has no session left for the console.
-	{kind = .Type, text = "columns(debug(\"debug_target\"), \"program described\")"},
+	{kind = .Type, text = "columns(debug(\"debug_target\"), \"process described\")"},
 	{kind = .Wait, text = "[console] debug_target          1"},
 	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
 	{kind = .Wait, text = "[console]      0  held"},
@@ -379,7 +379,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	// The detach needs no grant; the session ended already.
 	{kind = .Type, text = "detach()"},
-	{kind = .Wait, text = "debugger.detach: the call names none of the programs that the debugger service debugs for this caller (-2)"},
+	{kind = .Wait, text = "debugger.detach: the call names none of the processes that the debugger service debugs for this caller (-2)"},
 	{kind = .Type, text = "debug(\"debug_target\")"},
 	{kind = .Wait, text = "debugger.attach: the caller has no grant for this: to act for the principal (-1)"},
 
@@ -401,7 +401,7 @@ scenario_debugger_commands := [?]Step {
 	// The machine has no source text: the tool reads the line in the
 	// repository, because the file has the hash of the build.
 	{kind = .Call, text = "debugger.source(0, 0)", expected = "source: " + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + ": " + DEBUG_TARGET_TEXT_OF_THE_STORE},
-	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: no free place: the table has its 1 programs that the debugger service debugs for this caller (-3)"},
+	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: no free place: the table has its 1 processes that the debugger service debugs for this caller (-3)"},
 	{kind = .Call, text = "debugger.detach()", expected = "1 rows of Detached"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: " + DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Store" + REFUSES_THE_DEBUG_ACCESS},

@@ -192,8 +192,8 @@ microseconds_to_cycles :: #force_inline proc "contextless" (value: u64) -> u64 {
 // "The change of strategy"). It writes the word of the machine, then
 // visits each run queue under its run lock, one at a time, and converts the
 // queue to the strategy that the word holds at that moment. It holds no
-// other lock: the caller holds at most its program lock (lock order:
-// program before run). It gives the strategy that the machine had.
+// other lock: the caller holds at most its process lock (lock order:
+// process before run). It gives the strategy that the machine had.
 //
 // Why the last change wins on each queue: let B be the operation whose
 // write of the word is the last one. B visits each queue after its write;
@@ -265,7 +265,7 @@ strategy_clear :: proc "contextless" (thread: ^Thread) {
 // weight, which moves the average of the queue little; the same place at
 // a large weight moves the average far, and the other threads then wait.
 // A thread placed as new is at the average: it has no such place. Only
-// the holder of the machine raises a weight, so no program gets these
+// the holder of the machine raises a weight, so no process gets these
 // zero values for its own thread. A thread on a processor is placed at
 // its next tick or when it leaves; a thread that waits or that a stop
 // holds is placed when it enters the list again. The caller holds the run
@@ -321,8 +321,8 @@ strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread
 // strategy: at its end the processor passes through schedule_pick, where
 // it takes a thread from a queue with more load. Without it, a thread
 // alone in its queue under EEVDF keeps its processor while threads wait in
-// another queue: measured, "at most 3 of 4 processors ran the program at
-// the same time" (program processors).
+// another queue: measured, "at most 3 of 4 processors ran the process at
+// the same time" (the module `processors`).
 strategy_tick :: proc "contextless" (cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
 	queue := &run_queues[cpu.index]
 	lock_take(&queue.lock, .Run)
@@ -408,7 +408,7 @@ clock_advance :: #force_inline proc "contextless" (queue: ^Run_Queue, virtual: u
 
 // A thread that is placed (new, or placed again after a change of
 // strategy: the two cases are one, so each thread of a change starts equal)
-// starts one least turn, weighted, after the queue clock: a program that
+// starts one least turn, weighted, after the queue clock: a process that
 // creates threads all the time does not get a turn before each other thread.
 //
 // A thread that waits keeps its position relative to the queue clock

@@ -37,7 +37,7 @@ wait_bucket :: #force_inline proc "contextless" (word: u64) -> ^Wait_Bucket {
 // the value: the comparison and the entry are one section of the wait lock.
 // false: the word does not hold the value, and the thread does not wait.
 // The caller makes sure that the page of the word stays: it holds the
-// program lock of the program that maps the word.
+// process lock of the process that maps the word.
 wait_register :: proc "contextless" (thread: ^Thread, word: u64, value: u32) -> bool {
 	index := thread_index(thread) * op.WORD_WAIT_CAPACITY + thread.word_count
 	thread.words[thread.word_count] = word
@@ -120,19 +120,19 @@ wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 // thread_words_wake ends the wait of a thread for its words, whatever its
 // serial: a thread that waits becomes ready; a thread that registered its
 // words and does not wait yet gets `woken`, and its wait_end does not wait.
-// For a thread whose words name a frame that leaves its program (a
-// decommit, a revocation): the caller holds the program lock of the thread,
+// For a thread whose words name a frame that leaves its process (a
+// decommit, a revocation): the caller holds the process lock of the thread,
 // so no word is added meanwhile (a word is registered in the kernel entry,
 // under that lock). The words can still be dropped at the start of the next
-// entry of the thread (wait_begin), with no program lock: then the caller
+// entry of the thread (wait_begin), with no process lock: then the caller
 // reads a word list that is ending, and at worst wakes a thread that waits
 // no more, which only reads its words again. A thread that registers again
-// later does it under the program lock, after the frames left, and finds
+// later does it under the process lock, after the frames left, and finds
 // the page not committed.
 //
 // A thread that waits for an answer of the fault ring is in no table of
 // words, and its wait ends only with the answer: it is skipped. Its caller
-// holds the program lock, under which fault_waits changes.
+// holds the process lock, under which fault_waits changes.
 thread_words_wake :: proc "contextless" (thread: ^Thread) {
 	if thread.fault_waits {
 		return

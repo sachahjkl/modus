@@ -32,7 +32,7 @@ SINK_LIMIT :: 16 << 20 // The largest body of /sink: 413 over it.
 ANSWER_HEAD_CAPACITY :: 6144 // The head of an answer, and a body that the server makes (a page of counts).
 
 ACCESS_HISTORY :: 18 // The last requests, that the window shows.
-REQUEST_LOG_LIMIT :: 100 // Request log records in one second, of the log limit of this program (1000).
+REQUEST_LOG_LIMIT :: 100 // Request log records in one second, of the log limit of this process (1000).
 
 // Where the body of an answer comes from.
 Answer_Body :: enum u8 {
@@ -213,7 +213,7 @@ answer_write :: proc "contextless" (index: int) -> bool {
 			// The page that the answer started with, or nothing: a put or a
 			// remove of its place during the answer ends the connection. An
 			// answer that reads the live page memory fails: a shorter page
-			// stops the program, and a page of the same length gives mixed
+			// stops the process, and a page of the same length gives mixed
 			// bytes under the first Content-Length.
 			page := &pages[session.answer_page]
 			if !page.used || page.generation != session.answer_page_generation || session.answer_offset + part > page.length {
@@ -321,7 +321,7 @@ request_finish :: proc "contextless" (index: int) {
 	record.target_length = len(system.format(record.target[:], string(web.request_target(request))))
 	access_records[access_next] = record
 	access_next = (access_next + 1) % ACCESS_HISTORY
-	// The log of the requests, within the log limit of this program.
+	// The log of the requests, within the log limit of this process.
 	second := system.time() / 1000
 	if second != request_log_second {
 		request_log_second, request_log_count = second, 0
@@ -575,5 +575,5 @@ second_measure :: proc "contextless" (now: u64) {
 	second_connections = accepted
 }
 
-// The date page of this program (src/library/contract/date), for the field Date.
+// The date page of this process (src/library/contract/date), for the field Date.
 date_page: ^date.Page

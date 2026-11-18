@@ -21,7 +21,7 @@ LIST_X :: 8
 LIST_Y :: 8
 LIST_WIDTH :: 208 // The title of the card and the name of its record, whole, in the interface font.
 LIST_ROWS_Y :: LIST_Y + graphics.CARD_TITLE + 24 // The first row of the list, in the window.
-// The box of the name of a program in the list: from the left of the card
+// The box of the name of a process in the list: from the left of the card
 // to the mark of its state. A name wider than it goes on more lines
 // (interface.text_wrap_line), and its row has the height of its lines.
 LIST_NAME_ROOM :: LIST_WIDTH - 2 * graphics.CARD_MARGIN - 40
@@ -46,11 +46,11 @@ frame_table: ^interface.Draw_Table // The table of the frame that draw builds.
 kind_color :: proc "contextless" (kind: addresses.Kind) -> graphics.Color {
 	switch kind {
 	case .Module_Code:
-		return graphics.colors.program
+		return graphics.colors.process
 	case .Module_Constants:
-		return graphics.shade(graphics.colors.program, 72)
+		return graphics.shade(graphics.colors.process, 72)
 	case .Module_Data:
-		return graphics.shade(graphics.colors.program, 50)
+		return graphics.shade(graphics.colors.process, 50)
 	case .Thread_Area:
 		return graphics.colors.kernel
 	case .Device:
@@ -63,16 +63,16 @@ kind_color :: proc "contextless" (kind: addresses.Kind) -> graphics.Color {
 	return graphics.colors.not_usable
 }
 
-state_color :: proc "contextless" (state: op.Program_State) -> graphics.Color {
+state_color :: proc "contextless" (state: op.Process_State) -> graphics.Color {
 	switch state {
 	case .Stopped:
 		return graphics.colors.failed
 	case .Created:
 		return graphics.colors.boot_program
 	case .None, .Ready, .Waiting:
-		// A program that runs, or waits, has the color of a program.
+		// A process that runs, or waits, has the color of a process.
 	}
-	return graphics.colors.program
+	return graphics.colors.process
 }
 
 // hash_color gives the color of a module from its hash.
@@ -106,7 +106,7 @@ card :: proc "contextless" (frame: ^interface.Frame, x, y, width, height: int, t
 	return interface.card(frame, {x, y, width, height}, title, caption, accent)
 }
 
-// changed says if a sample of the same program had another value.
+// changed says if a sample of the same process had another value.
 changed :: proc "contextless" (now, before: u64) -> bool {
 	return previous.slot == current.slot && now != before
 }
@@ -114,7 +114,7 @@ changed :: proc "contextless" (now, before: u64) -> bool {
 // The first line of each row of the list, and at shown_count the count of
 // the lines of all the rows: made when the list is read, not at each
 // picture.
-shown_row: [PROGRAM_SLOTS + 1]int
+shown_row: [PROCESS_SLOTS + 1]int
 
 // list_rows_update counts the lines of the name of each row of the list.
 list_rows_update :: proc "contextless" () {
@@ -159,8 +159,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	draw_list(&frame)
 	if current.slot == 0 {
-		inside := card(&frame, RIGHT_X, 8, RIGHT_WIDTH, MAP_HEIGHT, "ADDRESS SPACE", "op.Program_Mapping_Report", graphics.colors.memory)
-		write(inside, 0, 0, "not known yet: choose a program in the list", graphics.colors.dim)
+		inside := card(&frame, RIGHT_X, 8, RIGHT_WIDTH, MAP_HEIGHT, "ADDRESS SPACE", "op.Process_Mapping_Report", graphics.colors.memory)
+		write(inside, 0, 0, "not known yet: choose a process in the list", graphics.colors.dim)
 	} else {
 		draw_map(&frame)
 	}
@@ -185,7 +185,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 samples_drawn, damage_total: u64 // The measure of the damage of the first 20 frames.
 
 draw_list :: proc "contextless" (frame: ^interface.Frame) {
-	inside := card(frame, LIST_X, LIST_Y, LIST_WIDTH, HEIGHT - 16, "SLOTS", "Program_Report", graphics.colors.program)
+	inside := card(frame, LIST_X, LIST_Y, LIST_WIDTH, HEIGHT - 16, "SLOTS", "Process_Report", graphics.colors.process)
 	x := write(inside, 0, 0, "filter ", graphics.colors.dim)
 	x = write(inside, x, 0, string(filter[:filter_count]), graphics.colors.text)
 	fill(inside, x, 0, 8, 16, graphics.colors.track)
@@ -194,13 +194,13 @@ draw_list :: proc "contextless" (frame: ^interface.Frame) {
 		item := &entries[shown[position]]
 		y := 24 + shown_row[position] * LINE
 		height := (shown_row[position + 1] - shown_row[position]) * LINE
-		chosen := item.slot == selected_slot && item.program_serial == selected_program_serial
+		chosen := item.slot == selected_slot && item.process_serial == selected_process_serial
 		// The row takes a press where list_place finds it; the name of its
-		// program is its element name.
+		// process is its element name.
 		interface.element_name(frame, {LIST_X, LIST_ROWS_Y + shown_row[position] * LINE, LIST_WIDTH, height}, system.name_of(item.name[:]))
 		if chosen {
 			fill(inside, -8, y, inside.width + 8, height, graphics.colors.track)
-			fill(inside, -8, y, 4, height, graphics.colors.program)
+			fill(inside, -8, y, 4, height, graphics.colors.process)
 		}
 		interface.draw_text_wrapped(frame_table, inside.x, inside.y + y, LIST_NAME_ROOM, system.name_of(item.name[:]), chosen ? graphics.COLOR_WHITE : graphics.colors.text)
 		fill(inside, inside.width - 32, y + 5, 6, 6, state_color(item.state))
@@ -219,16 +219,16 @@ draw_list :: proc "contextless" (frame: ^interface.Frame) {
 	text(inside, 0, y + LINE, graphics.colors.dim, "kernel entries")
 	right(inside, inside.width, y + LINE, graphics.colors.text, current.entries)
 	text(inside, 0, y + 2 * LINE, graphics.colors.dim, frozen ? "frozen: space" : "4 samples in 1 s", "")
-	right(inside, inside.width, y + 2 * LINE, frozen ? graphics.colors.boot_program : graphics.colors.program, frozen ? "frozen" : "live")
+	right(inside, inside.width, y + 2 * LINE, frozen ? graphics.colors.boot_program : graphics.colors.process, frozen ? "frozen" : "live")
 	text(inside, 0, y + 3 * LINE, graphics.colors.dim, "tab: bytes")
 }
 
 draw_map :: proc "contextless" (frame: ^interface.Frame) {
-	name := system.name_of(current.program.name[:])
+	name := system.name_of(current.process.name[:])
 	buffer: [64]u8
-	inside := card(frame, RIGHT_X, 8, RIGHT_WIDTH, MAP_HEIGHT, "ADDRESS SPACE", system.format(buffer[:], "op.Program_Mapping_Report of ", name), graphics.colors.memory)
+	inside := card(frame, RIGHT_X, 8, RIGHT_WIDTH, MAP_HEIGHT, "ADDRESS SPACE", system.format(buffer[:], "op.Process_Mapping_Report of ", name), graphics.colors.memory)
 	mappings := current.mappings.mappings[:min(current.mappings.count, op.MAPPING_REPORT_CAPACITY)]
-	modules := current.modules.modules[:min(current.modules.count, op.PROGRAM_MODULE_CAPACITY)]
+	modules := current.modules.modules[:min(current.modules.count, op.PROCESS_MODULE_CAPACITY)]
 	pages, present, before_present: u64
 	for &item in mappings {
 		pages += item.page_count
@@ -243,13 +243,13 @@ draw_map :: proc "contextless" (frame: ^interface.Frame) {
 	x = text(inside, x, 0, graphics.colors.dim, " pages mapped  ")
 	x = text(inside, x, 0, changed(present, before_present) ? graphics.colors.boot_program : graphics.colors.memory, present)
 	x = text(inside, x, 0, graphics.colors.dim, " with a frame  ")
-	x = text(inside, x, 0, state_color(current.program.state), current.program.state == .Stopped ? "stopped" : "runs")
+	x = text(inside, x, 0, state_color(current.process.state), current.process.state == .Stopped ? "stopped" : "runs")
 	// The band: each mapping scaled by its pages, each gap folded.
 	segments: [2 * op.MAPPING_REPORT_CAPACITY]addresses.Segment
 	count := addresses.band(mappings, inside.width, 16, 4, segments[:])
 	BAND_Y :: 24
 	if len(mappings) == 0 {
-		write(inside, 0, BAND_Y + 12, "no mapping: the kernel ended each mapping when the program stopped", graphics.colors.dim)
+		write(inside, 0, BAND_Y + 12, "no mapping: the kernel ended each mapping when the process stopped", graphics.colors.dim)
 	}
 	for &segment in segments[:count] {
 		if segment.mapping < 0 {
@@ -315,7 +315,7 @@ draw_map :: proc "contextless" (frame: ^interface.Frame) {
 }
 
 draw_modules :: proc "contextless" (frame: ^interface.Frame) {
-	inside := card(frame, RIGHT_X, LOW_Y, MODULES_WIDTH, LOW_HEIGHT, "MODULES", "op.Module_Report", graphics.colors.program)
+	inside := card(frame, RIGHT_X, LOW_Y, MODULES_WIDTH, LOW_HEIGHT, "MODULES", "op.Module_Report", graphics.colors.process)
 	if current.slot == 0 {
 		return
 	}
@@ -323,7 +323,7 @@ draw_modules :: proc "contextless" (frame: ^interface.Frame) {
 	// digits and its unit; the base and the start of the hash have the
 	// width of the card. Each goes on more lines when it is wider.
 	NAME_ROOM :: MODULES_WIDTH - 2 * graphics.CARD_MARGIN - 16 - 10 * graphics.CELL_WIDTH
-	modules := current.modules.modules[:min(current.modules.count, op.PROGRAM_MODULE_CAPACITY)]
+	modules := current.modules.modules[:min(current.modules.count, op.PROCESS_MODULE_CAPACITY)]
 	y := 0
 	for &item, number in modules {
 		name := "a module with no name"
@@ -395,7 +395,7 @@ draw_threads :: proc "contextless" (frame: ^interface.Frame) {
 			}
 		}
 		text(inside, 0, y, graphics.colors.text, u64(item.number))
-		fill(inside, 24, y + 4, 8, 8, item.processor != 0 ? graphics.colors.program : graphics.colors.not_usable)
+		fill(inside, 24, y + 4, 8, 8, item.processor != 0 ? graphics.colors.process : graphics.colors.not_usable)
 		write(inside, 40, y, item.processor != 0 ? "runs" : item.state == .Waiting ? "waits" : "ready", changed(u64(item.state) << 8 | u64(item.processor), u64(before.state) << 8 | u64(before.processor)) ? graphics.colors.boot_program : graphics.colors.text)
 		if item.processor != 0 {
 			text(inside, 96, y, graphics.colors.text, "cpu ", u64(item.processor - 1))
@@ -410,7 +410,7 @@ draw_threads :: proc "contextless" (frame: ^interface.Frame) {
 		y += LINE * interface.draw_text_wrapped(frame_table, inside.x + 24, inside.y + y, inside.width - 24, second, graphics.colors.dim)
 	}
 	if current.threads.count == 0 {
-		write(inside, 0, LINE, "no thread: the program ended", graphics.colors.dim)
+		write(inside, 0, LINE, "no thread: the process ended", graphics.colors.dim)
 	}
 }
 

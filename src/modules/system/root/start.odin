@@ -1,6 +1,6 @@
 package root
 
-// The start of a program of the boot image by its name: the role that the
+// The start of a process of the boot image by its name: the role that the
 // tables of this service give the name, the services that the role needs,
 // and one context whose handles each take their own slot.
 
@@ -21,29 +21,29 @@ import terminal "modus:support/terminal"
 
 // The mappings of a start: the storage file, the date page, the fresh
 // bytes page, the settings page, five glyph caches, the file of a service,
-// the debug image, the disk program page, the font outlines and the demand
+// the debug image, the disk process page, the font outlines and the demand
 // cache: 14 places for the union, and the largest role uses 13.
 START_MAPPING_LIMIT :: 14
 
 // The work of one start: what the steps of start() build, and the handles
 // of this service that the start closes at its end, whatever its result.
-// The program and the services hold their own copies of those handles.
+// The process and the services hold their own copies of those handles.
 Start_Work :: struct {
 	name:           string,
 	principal:      u64,
-	role:           Program_Role,
+	role:           Process_Role,
 	file:           []u8,
 	entry:          ^info.Image_Entry,
-	slot:           ^Started, // The place of the program in the table. nil until start_place_take.
-	driver:         ^Started, // The device service that this start started for the program. nil: none.
-	view:           ^Started, // The place of the terminal of a program with the grant Terminal. nil: none.
+	slot:           ^Started, // The place of the process in the table. nil until start_place_take.
+	driver:         ^Started, // The device service that this start started for the process. nil: none.
+	view:           ^Started, // The place of the terminal of a process with the grant Terminal. nil: none.
 	// The handles and the values of the context. A write that one of them
-	// refused stops the start before the program runs (start_program_load).
+	// refused stops the start before the process runs (start_process_load).
 	grants:         system.Context_Grants,
 	values:         system.Context_Values,
 	mappings:       [START_MAPPING_LIMIT]system.Mapping,
 	mapping_count:  int,
-	mappings_full:  bool, // A mapping that the program cannot start without did not fit (mapping_needed_log).
+	mappings_full:  bool, // A mapping that the process cannot start without did not fit (mapping_needed_log).
 	machine_rights: system.Rights,
 	device_ring:    system.Handle,
 	store_ring:     system.Handle,
@@ -54,7 +54,7 @@ Start_Work :: struct {
 	shared:         [2]system.Handle, // The ring to the compositor; or the terminal ring and the text region.
 }
 
-// start starts a program of the boot image that shows a surface or has a
+// start starts a process of the boot image that shows a surface or has a
 // terminal, in the session of a principal (principals.odin).
 start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) -> system.Status {
 	work := Start_Work {
@@ -71,7 +71,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	status := start_context_build(&work)
 	if status == .Ok {
-		status = start_program_load(&work)
+		status = start_process_load(&work)
 	}
 	if status != .Ok {
 		start_abandon(&work)
@@ -80,7 +80,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	return start_finish(&work)
 }
 
-// start_prepare finds the file of the program, refuses a name that start()
+// start_prepare finds the file of the process, refuses a name that start()
 // does not start, reads the role, and starts the services that the role
 // needs first: the network service, the storage service, and the device
 // service of a client of a disk or of the network device.
@@ -110,15 +110,15 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		grant_slot_refused(name, slot)
 		return .Bad_State
 	}
-	// A program with an endpoint: the network service starts first.
+	// A process with an endpoint: the network service starts first.
 	if .Network in grants {
 		network_service() or_return
 	}
-	// A program with a store: the storage service starts first.
+	// A process with a store: the storage service starts first.
 	if .Store in grants && .Acts_For_Principal not_in grants {
 		running := false
 		for &item in started {
-			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
+			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
 				running = true
 			}
 		}
@@ -134,13 +134,13 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	} else if .Network_Device in grants {
 		work.driver, work.device_ring, status = driver_start(pci.Place{device = pci.NETWORK_DEVICE}, DRIVER_FRAME)
 	} else if .Sound_Device in grants {
-		// One program plays at a time: a second one finds the sound service
+		// One process plays at a time: a second one finds the sound service
 		// of the device started, and does not start (src/md/features/timed_stream.md,
-		// "One program at a time").
+		// "One process at a time").
 		place := pci.Place{device = pci.SOUND_DEVICE}
 		for &item in started {
-			if item.program != 0 && item.is_driver && item.device == place {
-				system.log_in("devices", .Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another program; one program plays at a time")
+			if item.process != 0 && item.is_driver && item.device == place {
+				system.log_in("devices", .Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another process; one process plays at a time")
 				return .Bad_State
 			}
 		}
@@ -149,7 +149,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	return status
 }
 
-// start_place_take takes a free place of the table of the programs, and
+// start_place_take takes a free place of the table of the processes, and
 // writes there what the steps that follow read: the name, which the
 // connection to the storage service names, the principal, which the name of
 // its store carries, and the role, which the grant of each connection
@@ -166,7 +166,7 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	slot := work.slot
 	slot^ = {}
-	// The steps that follow can start another program (a service on demand
+	// The steps that follow can start another process (a service on demand
 	// at the connection to the private store): that start takes another
 	// place.
 	slot.reserved = true
@@ -177,23 +177,23 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 }
 
 // start_abandon undoes a start that failed after start_prepare: the place
-// of the program is freed with what this service made for it, and the
+// of the process is freed with what this service made for it, and the
 // device service that the start started stops.
 start_abandon :: proc "contextless" (work: ^Start_Work) {
 	if work.slot != nil {
 		release(work.slot)
 	}
 	// The place of the terminal holds nothing yet: only its mark.
-	if work.view != nil && work.view.program == 0 {
+	if work.view != nil && work.view.process == 0 {
 		work.view^ = {}
 	}
 	if work.driver != nil {
-		system.call(.Program_Stop, u64(work.driver.program), 0)
+		system.call(.Process_Stop, u64(work.driver.process), 0)
 	}
 }
 
 // start_handles_close closes the handles of this service that the start
-// made for the program and does not keep.
+// made for the process and does not keep.
 start_handles_close :: proc "contextless" (work: ^Start_Work) {
 	handles := [?]system.Handle{work.device_ring, work.store_ring, work.store_region, work.endpoint_ring, work.endpoint_region, work.clock_ports, work.shared[0], work.shared[1]}
 	for handle in handles {
@@ -204,11 +204,11 @@ start_handles_close :: proc "contextless" (work: ^Start_Work) {
 }
 
 // start_grant_put writes one handle of the role into the context of the
-// program, at the context slot of system.ROLE_HANDLE_SLOTS. A handle that
+// process, at the context slot of system.ROLE_HANDLE_SLOTS. A handle that
 // root_ring.role_handles does not give the role is refused as a taken
 // slot, so the start follows the one mapping that the tests read. The
-// first refused slot is kept: the start then fails before the program
-// runs (start_program_load).
+// first refused slot is kept: the start then fails before the process
+// runs (start_process_load).
 start_grant_put :: proc "contextless" (work: ^Start_Work, handle: root_ring.Role_Handle, grant: system.Grant) {
 	slot := system.ROLE_HANDLE_SLOTS[handle]
 	if handle not_in root_ring.role_handles(work.role.grants) {
@@ -218,7 +218,7 @@ start_grant_put :: proc "contextless" (work: ^Start_Work, handle: root_ring.Role
 	system.grant_put(&work.grants, slot, grant)
 }
 
-// start_mapping_add adds one mapping of the program, or says that it does
+// start_mapping_add adds one mapping of the process, or says that it does
 // not fit.
 start_mapping_add :: proc "contextless" (work: ^Start_Work, what: string, mapping: system.Mapping) {
 	if work.mapping_count >= len(work.mappings) {
@@ -230,7 +230,7 @@ start_mapping_add :: proc "contextless" (work: ^Start_Work, what: string, mappin
 	work.mapping_count += 1
 }
 
-// start_context_build builds the context of the program from its role:
+// start_context_build builds the context of the process from its role:
 // each step writes the handles, the values and the mappings of one part.
 start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if work.device_ring != 0 {
@@ -251,28 +251,28 @@ start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	return work.mappings_full ? .No_Slot : .Ok
 }
 
-// start_values_of_the_name writes the values that a program receives by its
-// name, as only that program reads them.
+// start_values_of_the_name writes the values that a process receives by its
+// name, as only that process reads them.
 start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	switch work.name {
 	case "unlock":
 		unlock_values_write(&work.values)
-	case "programs":
+	case "module_files":
 		// The module file service serves the callers of the principal of
 		// its store only, and learns that principal here.
 		system.value_put(&work.values, system.GRANT_VALUE_SERVICE_PRINCIPAL, work.principal)
 	case "randomness":
 		// The facts of the seed of the system, that only this service has:
-		// the program shows them (docs/RANDOMNESS.md). Facts, not the seed.
+		// the process shows them (docs/RANDOMNESS.md). Facts, not the seed.
 		facts: [op.CONTEXT_VALUES]u64
 		random.report_values_write(&entropy_report, &facts)
 		system.values_put(&work.values, system.GRANT_VALUE_SEED_FACTS, facts[system.GRANT_VALUE_SEED_FACTS:][:system.SEED_FACTS_VALUE_COUNT])
 	}
 }
 
-// start_store_give connects the program to its private store, in its
+// start_store_give connects the process to its private store, in its
 // context: the call ring, the call region, the storage service with the
-// right Read, and its file. A program that acts for its principal connects
+// right Read, and its file. A process that acts for its principal connects
 // to the storage service itself.
 start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	grants := work.role.grants
@@ -287,7 +287,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	start_grant_put(work, .Storage_Ring, {work.store_ring, {.Read, .Write}})
 	start_grant_put(work, .Storage_Region, {work.store_region, {.Read, .Write}})
-	start_grant_put(work, .Storage_Service, {storage_service.program, {.Read}})
+	start_grant_put(work, .Storage_Service, {storage_service.process, {.Read}})
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			system.value_put(&work.values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
@@ -297,7 +297,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	return .Ok
 }
 
-// start_view_give gives a program with the grant Terminal the terminal ring
+// start_view_give gives a process with the grant Terminal the terminal ring
 // and the text region, and a free place for its terminal; else a window: a
 // ring to the compositor. This service does not keep the memory objects
 // that it makes here.
@@ -328,7 +328,7 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 
 // start_rings_give makes the rings of the role: the root ring of a sender
 // of root commands, the control ring of the network service, and the
-// endpoint of a program with the grant Network.
+// endpoint of a process with the grant Network.
 start_rings_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	slot := work.slot
 	grants := work.role.grants
@@ -399,15 +399,15 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 	}
 }
 
-// start_pages_give maps the pages that each program reads, and those of its
+// start_pages_give maps the pages that each process reads, and those of its
 // role: the date page and its fresh bytes page, the debug image, the disk
-// program page, and for a program with a surface the settings page, the
+// process page, and for a process with a surface the settings page, the
 // glyph caches, the font outlines and the demand cache, read-only.
 start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	grants := work.role.grants
 	date_page_give(work.mappings[:], &work.mapping_count, &work.values)
 	fresh_bytes_page_give(work.slot, work.mappings[:], &work.mapping_count, &work.values)
-	// Each program: whether the machine runs for a measure. The boot image
+	// Each process: whether the machine runs for a measure. The boot image
 	// says it, so the modules of a measure run are the modules of a test.
 	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
 		system.value_put(&work.values, op.CONTEXT_VALUE_MEASURE_RUN, 1)
@@ -415,10 +415,10 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	if .Debug_Image in grants {
 		debug_image_give(work.mappings[:], &work.mapping_count, &work.values)
 	}
-	// A program that sees each program: which of them run from a disk, by
+	// A process that sees each process: which of them run from a disk, by
 	// their nicknames and the hashes that this service checked.
 	if .Inspect in grants {
-		disk_program_page_give(work.mappings[:], &work.mapping_count, &work.values)
+		disk_process_page_give(work.mappings[:], &work.mapping_count, &work.values)
 	}
 	if .Terminal not_in grants {
 		text_settings_give(work.mappings[:], &work.mapping_count, &work.values)
@@ -446,50 +446,50 @@ start_service_give :: proc "contextless" (work: ^Start_Work) -> (status: system.
 	return .Ok
 }
 
-// start_program_load starts the program with its context, its budget and
+// start_process_load starts the process with its context, its budget and
 // its mappings. A slot that two grants took, or a value that two parts of
-// the start wrote, refuses the start first, with its line: no program
+// the start wrote, refuses the start first, with its line: no process
 // starts with a handle or a value lost.
-start_program_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	name := work.name
 	if context_refused(name, &work.grants, &work.values) {
 		return .Bad_State
 	}
 	load_error: module.Load_Error
-	program_budget := budget_of(work.file, name)
+	process_budget := budget_of(work.file, name)
 	status: system.Status
 	// The start of the measure of the start of a window: the load of the
-	// module, its hash and Program_Start are in it
+	// module, its hash and Process_Start are in it
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	started_at := system.nanoseconds()
-	work.slot.program, status = system.program_start(work.file, name, work.grants.grants, random.values_with_seed(&program_generator, work.values.values), program_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
 	if status == .Ok {
-		// A program with a window of its own: the compositor ties the time
+		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
 		if .Terminal not_in work.role.grants && work.slot.client != 0 {
 			if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}}) {
 				// A measure, not a part of the start: the window runs, and
 				// has no line of its start.
-				system.log_in("programs", .Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
+				system.log_in("processes", .Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
 			}
 		}
 		return .Ok
 	}
-	// A budget of no page: the start failed before program_start.
-	if status == .No_Budget && program_budget.pages != 0 {
-		budget_refusal_log(name, program_budget, 0, "this service")
+	// A budget of no page: the start failed before process_start.
+	if status == .No_Budget && process_budget.pages != 0 {
+		budget_refusal_log(name, process_budget, 0, "this service")
 	} else if load_error.stage != .None {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&writer, &load_error)
-		system.log_in("programs", .Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
+		system.log_in("processes", .Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
 	} else {
-		system.log_in("programs", .Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
+		system.log_in("processes", .Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
 	}
 	return status
 }
 
-// start_finish records what the program received, and starts its terminal.
+// start_finish records what the process received, and starts its terminal.
 start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	slot := work.slot
 	grants := work.role.grants
@@ -513,7 +513,7 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	if work.view != nil {
 		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Ok {
-			system.call(.Program_Stop, u64(slot.program), 0)
+			system.call(.Process_Stop, u64(slot.process), 0)
 			return status
 		}
 		started_log(work.name, work.principal, ", with a terminal")

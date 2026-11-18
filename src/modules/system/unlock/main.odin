@@ -1,16 +1,16 @@
-// The unlock of a named principal (docs/PRINCIPALS.md): the program that
+// The unlock of a named principal (docs/PRINCIPALS.md): the process that
 // keeps the record of a named principal in its private store, and asks for
 // its passphrase in its window.
 //
 // A principal is a key pair: an Ed25519 key, to sign grants, and an X25519
 // key, to unlock documents. Its record is the file "principal" of the store
-// of this program: its name, its two public keys, and its two secret keys
+// of this process: its name, its two public keys, and its two secret keys
 // sealed with ChaCha20-Poly1305 under a key that Argon2id derives from the
 // passphrase and a salt (src/library/support/principals). A wrong passphrase gives
 // another key, and the seal does not open: no passphrase and no hash of it
 // is kept or compared.
 //
-// The root service starts this program at boot. With no file it stops at
+// The root service starts this process at boot. With no file it stops at
 // once: the machine runs as principal 0 only, with no unlock. With a file
 // it gives the public part of the record to the root service and asks for
 // the passphrase; when the seal opens, it tells the root service, which
@@ -20,7 +20,7 @@
 // key. The secret keys are then erased. The root service
 // starts it again after a lock. To create a principal, the root service
 // starts it with a name: the passphrase is typed two times, the keys are
-// made from the generator of the program, and the session starts.
+// made from the generator of the process, and the session starts.
 //
 // The passphrase shows as dots. On a machine with the TPM service and
 // Secure Boot on, the file of a new principal has the form sealed by the TPM
@@ -63,8 +63,8 @@
 // that opens a seal.
 //
 // **What it is for.** It separates who holds the machine (principal 0) from
-// a named principal whose programs run in a session of their own, with
-// stores of their own. It is the only program that the root service
+// a named principal whose processes run in a session of their own, with
+// stores of their own. It is the only process that the root service
 // believes when it says that a passphrase opened a seal.
 //
 // **Start**: the root service starts it; no line of the console does.
@@ -84,14 +84,14 @@
 //
 // - **Store**: its private store, which holds the file "principal".
 // - **Principals**: a ring to the root service for `Principal_Record`,
-//   `Principal_Unlock`, `Machine_Key` and `Principal_Change_End` only. No other program can send
-//   these commands, so no other program can start a session or give the
+//   `Principal_Unlock`, `Machine_Key` and `Principal_Change_End` only. No other process can send
+//   these commands, so no other process can start a session or give the
 //   key of a disk grant table.
 // - **Tpm**: the ring and the region of the TPM service, when the system is
 //   measured into a TPM: Seal and Unseal only (modus:contract/tpm_service).
 // - **Versions_Erase**: the storage service lets it end the versions of
 //   the objects of its own store, with zeros over their blocks
-//   ([erase_versions](storage.erase_versions)). No other program has it.
+//   ([erase_versions](storage.erase_versions)). No other process has it.
 //
 // **What a reader sees**: a window with the name of the principal and the
 // passphrase as dots; Enter tries it, Backspace removes one byte, Escape
@@ -117,7 +117,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:contract/tpm_service"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -130,7 +130,7 @@ import "modus:support/tpm2"
 
 // The blocks of Argon2id, 19 MiB (4864 pages)
 // (src/library/support/principals, DERIVATION_MEMORY_PAGES).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5765, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5765, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The cost record of the export argon2id of the module cryptography: the
 // same fields, in the same order (src/modules/libraries/cryptography).
@@ -195,7 +195,7 @@ Pending_Write :: enum u8 {
 pending_write: Pending_Write
 
 mode: Mode
-// The change that the root service started this program for:
+// The change that the root service started this process for:
 // .Change_Passphrase or .New_Recovery_Key. Any other mode, as the zero
 // value .Unlock, is no change.
 change_mode: principals.Unlock_Mode
@@ -218,12 +218,12 @@ opened_machine_key: [principals.MACHINE_KEY_SIZE]u8
 
 // The TPM service: its ring and its region, when the root service gave
 // them. The first tag is random: a completion that an earlier run of this
-// program left in the ring never has the tag of a command of this run.
+// process left in the ring never has the tag of a command of this run.
 has_tpm: bool
 tpm_requests: ring.Ring
 tpm_region: []u8
 tpm_tag: u32
-tpm_program: system.Handle // The TPM service, with the right Read: its state says at once when it stopped.
+tpm_process: system.Handle // The TPM service, with the right Read: its state says at once when it stopped.
 seal_allowed: bool // The firmware verified the boot program: a seal and a new seal are allowed (principals.VALUE_SEAL_ALLOWED).
 // The bound of an answer of the TPM service. It only ends a wait for a TPM
 // that does not answer; the service ends each request at its own bound,
@@ -274,7 +274,7 @@ message: string = ""
 message_failed: bool
 refusals: u64 // The wrong passphrases since the start.
 
-// The blocks of Argon2id: 19 MiB, one memory object of this program.
+// The blocks of Argon2id: 19 MiB, one memory object of this process.
 work: system.Bytes_To_Change
 
 // erase writes 0 over a secret with volatile stores, which the compiler
@@ -405,10 +405,10 @@ create :: proc "contextless" () {
 	secrets: [principals.SECRET_KEYS_SIZE]u8
 	defer erase(secrets[:])
 	error: errors.Error_Record
-	// The keys come from the generator of this program, seeded by the root
+	// The keys come from the generator of this process, seeded by the root
 	// service from the sources of the processor; a weak seed is refused.
 	if !random.fill_for_a_key(&generator, secrets[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: no principal is created")
+		system.log("unlock: the seed of this process is too weak for a key: no principal is created")
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return
 	}
@@ -451,7 +451,7 @@ passphrase_file_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	// A new salt and a new nonce at each seal: a nonce is never used again
 	// under one key.
 	if !random.fill_for_a_key(&generator, sealed_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: the keys are not sealed")
+		system.log("unlock: the seed of this process is too weak for a key: the keys are not sealed")
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return 0, false
 	}
@@ -576,7 +576,7 @@ machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SI
 	if origin == .Opened {
 		object_versions_erase(principals.MACHINE_OBJECT)
 	}
-	table_key := disk_program.table_key_of_machine_key(machine_key)
+	table_key := disk_process.table_key_of_machine_key(machine_key)
 	values := transmute([4]u64)table_key
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
@@ -680,20 +680,20 @@ machine_create :: proc "contextless" () {
 }
 
 // machine_passphrase_alone_create sets the machine passphrase alone: a new
-// machine key, sealed in the record "machine" of the store of this program,
+// machine key, sealed in the record "machine" of the store of this process,
 // and the key of the tag to the root service. It writes at most one record
 // in a run: after the write it ends with the mode Done, or stops the
-// program.
+// process.
 machine_passphrase_alone_create :: proc "contextless" () {
 	machine_key: [principals.MACHINE_KEY_SIZE]u8
 	key: [principals.KEY_SIZE]u8
 	defer erase(machine_key[:])
 	defer erase(key[:])
 	error: errors.Error_Record
-	// The key comes from the generator of this program, seeded by the root
+	// The key comes from the generator of this process, seeded by the root
 	// service from the sources of the processor; a weak seed is refused.
 	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_file.nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: no machine passphrase is set")
+		system.log("unlock: the seed of this process is too weak for a key: no machine passphrase is set")
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return
 	}
@@ -736,13 +736,13 @@ machine_passphrase_alone_create :: proc "contextless" () {
 
 // tpm_open maps the ring and the region of the TPM service, when the root
 // service gave them, and drops each completion that an earlier run of this
-// program left in the ring.
+// process left in the ring.
 tpm_open :: proc "contextless" (ctx: ^system.Context) {
 	seal_allowed = ctx.values[principals.VALUE_SEAL_ALLOWED] == 1
 	if ctx.handles[tpm_service.GRANT_RING] == 0 || ctx.handles[tpm_service.GRANT_REGION] == 0 || ctx.handles[tpm_service.GRANT_SERVICE] == 0 {
 		return
 	}
-	tpm_program = ctx.handles[tpm_service.GRANT_SERVICE]
+	tpm_process = ctx.handles[tpm_service.GRANT_SERVICE]
 	if !tpm_service_runs() {
 		system.log("unlock: the TPM service stopped: the machine key sealed by the TPM opens with its recovery key only")
 		return
@@ -777,7 +777,7 @@ tpm_open :: proc "contextless" (ctx: ^system.Context) {
 
 // tpm_service_runs says if the TPM service has not stopped.
 tpm_service_runs :: proc "contextless" () -> bool {
-	state, _ := system.program_state(tpm_program)
+	state, _ := system.process_state(tpm_process)
 	return state != .Stopped && state != .None
 }
 
@@ -799,7 +799,7 @@ tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64)
 				continue
 			}
 			// The one border of the status: a word that names no status is
-			// no answer that this program can read. It is said here, and the
+			// no answer that this process can read. It is said here, and the
 			// caller takes it as no answer.
 			read, read_ok := tpm_service.status_of_word(record.kind)
 			if !read_ok {
@@ -933,7 +933,7 @@ machine_key_passes :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_
 }
 
 // machine_seal_create makes a machine key sealed by the TPM: the key and a
-// recovery key from the generator of this program, the seal by the TPM
+// recovery key from the generator of this process, the seal by the TPM
 // service, the copy under the recovery key, and the record in memory. It
 // keeps the text of the recovery key for the window, which shows it one
 // time; the record is written after Enter (machine_key_sealed_commit).
@@ -946,10 +946,10 @@ machine_seal_create :: proc "contextless" () -> bool {
 	defer erase(seal_key[:])
 	error: errors.Error_Record
 	machine_tpm_file = {}
-	// The keys come from the generator of this program, seeded by the root
+	// The keys come from the generator of this process, seeded by the root
 	// service from the sources of the processor; a weak seed is refused.
 	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_tpm_file.recovery_nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: no machine key is sealed by the TPM")
+		system.log("unlock: the seed of this process is too weak for a key: no machine key is sealed by the TPM")
 		return false
 	}
 	if !tpm_seal(&machine_key, nil, &machine_tpm_file.object) {
@@ -1183,14 +1183,14 @@ tpm_passphrase_seal_begin :: proc "contextless" (owner: Secret_Owner, salt, nonc
 	defer erase(tpm_secret[:])
 	error: errors.Error_Record
 	// The secret, the salt and the nonce come from the generator of this
-	// program, seeded by the root service from the sources of the
+	// process, seeded by the root service from the sources of the
 	// processor; a weak seed is refused.
 	if !random.fill_for_a_key(&generator, tpm_secret[:], .Processor, &error) || !random.fill_for_a_key(&generator, salt, .Processor, &error) || !random.fill_for_a_key(&generator, nonce, .Processor, &error) {
 		switch owner {
 		case .Machine:
-			system.log("unlock: the seed of this program is too weak for a key: the machine key is not sealed by the TPM")
+			system.log("unlock: the seed of this process is too weak for a key: the machine key is not sealed by the TPM")
 		case .Named_Principal:
-			system.log("unlock: the seed of this program is too weak for a key: the keys are not sealed by the TPM")
+			system.log("unlock: the seed of this process is too weak for a key: the keys are not sealed by the TPM")
 		}
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return {}, 0, false
@@ -1267,7 +1267,7 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 
 // machine_tpm_passphrase_create sets a machine passphrase that the TPM
 // seals the machine key with: the key and a recovery key from the generator
-// of this program, the copy under the recovery key, the seal, and the
+// of this process, the copy under the recovery key, the seal, and the
 // record in memory. The window then shows the recovery key one time; the
 // record is written after Enter (machine_passphrase_commit).
 machine_tpm_passphrase_create :: proc "contextless" () {
@@ -1278,7 +1278,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	error: errors.Error_Record
 	machine_tpm_passphrase_file = {}
 	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_tpm_passphrase_file.recovery_nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: no machine passphrase is set")
+		system.log("unlock: the seed of this process is too weak for a key: no machine passphrase is set")
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return
 	}
@@ -1487,7 +1487,7 @@ principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 
 // create_sealed_by_the_tpm makes a new principal whose keys the TPM seals
 // with its passphrase: the keys and a recovery key from the generator of
-// this program, the copy under the recovery key, the seal, and the file in
+// this process, the copy under the recovery key, the seal, and the file in
 // memory. The window then shows the recovery key one time; the file, the
 // record in the root service and the session come after Enter
 // (principal_created_commit).
@@ -1499,7 +1499,7 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	error: errors.Error_Record
 	principal_tpm_file = {}
 	if !random.fill_for_a_key(&generator, secrets[:], .Processor, &error) || !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, principal_tpm_file.recovery_nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: no principal is created")
+		system.log("unlock: the seed of this process is too weak for a key: no principal is created")
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return
 	}
@@ -1656,7 +1656,7 @@ change_proof_try :: proc "contextless" () {
 }
 
 // recovery_key_prepare makes a new recovery key after the proof of a
-// change: a new key and a new nonce from the generator of this program, and
+// change: a new key and a new nonce from the generator of this process, and
 // the copy of the keys under it, in a file that waits in memory. The
 // passphrase and the seal by the TPM stay: the additional data of the copy
 // stops before the salt, and the seal under the seal key stops before the
@@ -1669,7 +1669,7 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	renewed_recovery_file = principal_tpm_file
 	error: errors.Error_Record
 	if !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, renewed_recovery_file.recovery_nonce[:], .Processor, &error) {
-		system.log("unlock: the seed of this program is too weak for a key: principal ", number, " keeps its recovery key")
+		system.log("unlock: the seed of this process is too weak for a key: principal ", number, " keeps its recovery key")
 		change_end(.Seed_Too_Weak)
 		return
 	}
@@ -1987,9 +1987,9 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	if origin == .Opened {
 		object_versions_erase(principals.FILE_OBJECT)
 	}
-	unlock_key: [disk_program.KEY_SIZE]u8
-	copy(unlock_key[:], secrets^[principals.SECRET_KEYS_SIZE - disk_program.KEY_SIZE:])
-	table_key := disk_program.table_key_of_principal_key(&unlock_key)
+	unlock_key: [disk_process.KEY_SIZE]u8
+	copy(unlock_key[:], secrets^[principals.SECRET_KEYS_SIZE - disk_process.KEY_SIZE:])
+	table_key := disk_process.table_key_of_principal_key(&unlock_key)
 	values := transmute([4]u64)table_key
 	defer erase(unlock_key[:])
 	defer erase(table_key[:])
@@ -2199,7 +2199,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		interface.draw_rectangle(table, x + 2 + dots * 10, 48, 2, 16, graphics.colors.text)
 	}
 	if message != "" {
-		interface.draw_text(table, 12, 84, message, message_failed ? graphics.colors.failed : graphics.colors.program)
+		interface.draw_text(table, 12, 84, message, message_failed ? graphics.colors.failed : graphics.colors.process)
 	}
 	switch {
 	case mode == .Write_Result || mode == .Write_Unknown:
@@ -2438,7 +2438,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 // principal_file_read reads the file of the named principal from the store,
 // in its form, and gives its public part to the root service. It gives
 // false when the store holds no file. A file that does not decode, or a
-// record that the root service refuses, stops the program with the code 1.
+// record that the root service refuses, stops the process with the code 1.
 principal_file_read :: proc "contextless" () -> (found: bool) {
 	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
 	bytes, present, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])

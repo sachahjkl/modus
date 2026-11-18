@@ -2,8 +2,8 @@
 // one font, already drawn, for each size of the grid, with the advance of
 // each character and the pair adjustments of the font. The modus tool
 // makes it at build time from the font file; the boot image holds it as a
-// resource; the root service gives each program a read-only mapping of it.
-// A program draws a character with a copy and a blend of its words: no
+// resource; the root service gives each process a read-only mapping of it.
+// A process draws a character with a copy and a blend of its words: no
 // outline is read at run time.
 //
 // One format for a monospace font and for a proportional font. A monospace
@@ -162,7 +162,7 @@ Problem_Kind :: enum u8 {
 	Bad_Flags, // A flag that this reader does not know, or a filter past FILTER_COUNT.
 	Bad_Name, // font_name has a byte outside 32 to 126 before its end, no zero byte, or a byte after its end.
 	Proportional, // A valid cache of a proportional font, where a reader needs the cache of a font of cells.
-	Not_Mapped, // The starter of the program did not map this cache: no byte was read.
+	Not_Mapped, // The starter of the process did not map this cache: no byte was read.
 }
 
 // Why a file was refused, with the place and the value.
@@ -189,7 +189,7 @@ problem_sentences := [Problem_Kind]string {
 	.Bad_Flags   = "the glyph cache has a flag or a filter that this reader does not know",
 	.Bad_Name    = "the name of the font of the glyph cache is not printable text with an end",
 	.Proportional = "the glyph cache is of a proportional font, not of a font of cells",
-	.Not_Mapped  = "the starter of the program did not map this glyph cache",
+	.Not_Mapped  = "the starter of the process did not map this glyph cache",
 }
 
 // Cache: a valid file, read in place.
@@ -328,7 +328,7 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 	return cache, {}
 }
 
-// validate_at validates a cache that the starter of the program mapped at
+// validate_at validates a cache that the starter of the process mapped at
 // a fixed address, in a range of span bytes. The cache states its own size:
 // file_size in its header. The header is mapped (a mapping has whole pages,
 // and a starter maps no cache shorter than its header), so the size is
@@ -337,7 +337,7 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 // caller has checked that the starter states the range as mapped. A
 // starter that states a range as mapped, maps less than the size that the
 // header states, or maps memory that it can still write, makes this read
-// fault or the cache change after the validation: a program trusts its
+// fault or the cache change after the validation: a process trusts its
 // starter (docs/FONTS.md, section 5, "Who can write a cache").
 validate_at :: proc "contextless" (address: uintptr, span: u64) -> (cache: Cache, problem: Problem) {
 	if address == 0 || address % 8 != 0 {
