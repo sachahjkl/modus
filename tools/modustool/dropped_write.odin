@@ -7,6 +7,7 @@ import "core:sync"
 import "modus:private/storage/storage_mount"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:fuzz"
 
 // The dropped write (src/md/features/dropped_write.md). The disk that the
 // tool serves drops three writes of the console to one object, each found
@@ -114,7 +115,7 @@ dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected,
 	newest := max(generations[0], generations[1])
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	kept := stored_object_of(&contents, DROPPED_WRITE_STORE, DROPPED_WRITE_OBJECT)
 	if contents.mount.failed || contents.mount.needs_format {
 		fmt.eprintfln("modustool: test failed: the dropped write: %s does not open", what)

@@ -5,11 +5,11 @@ import "core:fmt"
 import "core:sync"
 import "core:time"
 import "modus:contract/errors"
-import "modus:private/cryptography/cryptography_primitives"
 import "modus:support/quic"
 import "modus:support/random"
 import "modus:support/web"
 import "modustool:foundation"
+import "modustool:fuzz"
 
 // The peer as QUIC clients of the process `quic_echo` (docs/QUIC.md,
 // section 6). The tool asks for one case at a time (step Peer_Quic); the
@@ -124,7 +124,7 @@ peer_quic_make :: proc() -> ^Peer_Quic {
 	state := new(Peer_Quic)
 	state.clients = make([]quic.Connection, PEER_QUIC_CAPACITY)
 	state.client_streams = make([]quic.Stream, PEER_QUIC_CAPACITY * PEER_QUIC_STREAMS)
-	state.cryptography = quic_cryptography_of_the_host()
+	state.cryptography = fuzz.quic_cryptography_of_the_host()
 	// A client of the test: a fixed seed, so that each run is the same. It
 	// says "processor", the least strength that QUIC asks: the keys of this
 	// client protect nothing but the test.
@@ -139,29 +139,6 @@ peer_quic_make :: proc() -> ^Peer_Quic {
 	state.next_port = PEER_QUIC_PORT_FIRST
 	state.start = time.tick_now()
 	return state
-}
-
-// quic_cryptography_of_the_host gives the procedures that the module
-// cryptography exports, compiled for the host from its private part: the
-// peers and the fuzz targets of QUIC use the code of the module, as the
-// system does.
-quic_cryptography_of_the_host :: proc() -> quic.Cryptography {
-	return {
-		seal_with_aes_128_gcm                = cryptography_primitives.seal_with_aes_128_gcm,
-		open_with_aes_128_gcm                = cryptography_primitives.open_with_aes_128_gcm,
-		seal_with_chacha20_poly1305          = cryptography_primitives.seal_with_chacha20_poly1305,
-		open_with_chacha20_poly1305          = cryptography_primitives.open_with_chacha20_poly1305,
-		hkdf_sha256_extract                  = cryptography_primitives.hkdf_sha256_extract,
-		hkdf_sha256_expand                   = cryptography_primitives.hkdf_sha256_expand,
-		header_protection_mask_with_aes_128  = cryptography_primitives.header_protection_mask_with_aes_128,
-		header_protection_mask_with_chacha20 = cryptography_primitives.header_protection_mask_with_chacha20,
-		sha256                               = cryptography_primitives.sha256,
-		hmac_sha256                          = cryptography_primitives.hmac_sha256,
-		x25519                               = cryptography_primitives.x25519,
-		ed25519_public_key                   = cryptography_primitives.ed25519_public_key,
-		ed25519_sign                         = cryptography_primitives.ed25519_sign,
-		ed25519_verify                       = cryptography_primitives.ed25519_verify,
-	}
 }
 
 peer_quic_free :: proc(state: ^Peer_Quic) {

@@ -6,6 +6,7 @@ import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:fuzz"
 
 // The list "**Statuses**" of a comment: a comment with no list, a list with
 // no line, a name that is no status, the status Ok, a code mark with no end
@@ -40,7 +41,7 @@ the_statuses_of_a_comment_are_read_or_refused :: proc(t: ^testing.T) {
 the_reference_lists_the_statuses_of_each_operation :: proc(t: ^testing.T) {
 	_, no_enumeration := operation_statuses_read("package operation\n")
 	testing.expect(t, no_enumeration != "", "a reference with no enumeration Operation is taken")
-	statuses, problem := operation_statuses_read(fuzz_operation_reference)
+	statuses, problem := operation_statuses_read(fuzz.fuzz_operation_reference)
 	testing.expect_value(t, problem, "")
 	for chosen in operation.Operation {
 		if chosen != .None {

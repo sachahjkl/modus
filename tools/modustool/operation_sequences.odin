@@ -10,6 +10,7 @@ import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:fuzz"
 
 // The machine of the operation sequences (src/md/infrastructure/kernel_fuzzing.md,
 // "The machine", "The oracles"): the tool writes each sequence in the
@@ -157,14 +158,14 @@ Operation_Finding :: struct {
 // The grammar that the oracles read: the result of each operation and its
 // statuses, from the reference comments.
 Operation_Grammar :: struct {
-	results:  [operation.Operation]Fuzz_Operation_Result,
+	results:  [operation.Operation]fuzz.Fuzz_Operation_Result,
 	statuses: Operation_Statuses,
 }
 
 operation_grammar_read :: proc() -> (grammar: Operation_Grammar, ok: bool) {
-	grammar.results = fuzz_operation_results_read(fuzz_operation_reference) or_return
+	grammar.results = fuzz.fuzz_operation_results_read(fuzz.fuzz_operation_reference) or_return
 	problem: string
-	grammar.statuses, problem = operation_statuses_read(fuzz_operation_reference)
+	grammar.statuses, problem = operation_statuses_read(fuzz.fuzz_operation_reference)
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
 		return {}, false
@@ -756,14 +757,14 @@ operation_sequences_step :: proc(machine: ^Machine, index: int, replay: string) 
 	}
 	defer os.close(mailbox.file)
 	inputs: [][]u8
-	regressions: []Operation_Regression_Input
+	regressions: []fuzz.Operation_Regression_Input
 	expectations := make([dynamic]Operation_Seed_Expectation, context.temp_allocator)
 	if replay == "" {
 		inputs = operation_seed_sequences(context.temp_allocator, &expectations)
 		// Each regression input of the corpus, after the seeds. A file
 		// that the reader refuses fails the step: no input stays unrun.
 		problems: []string
-		regressions, problems = operation_regression_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
+		regressions, problems = fuzz.operation_regression_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
 		for input_problem in problems {
 			fmt.eprintfln("modustool: test failed: step %d: %s", index + 1, input_problem)
 		}

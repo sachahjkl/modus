@@ -50,6 +50,9 @@ import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
 import "modustool:checks"
+import "core:slice"
+import "modustool:fuzz"
+import "modustool:similarity"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -404,8 +407,8 @@ COMMANDS :: [?]Command {
 	//
 	// It never edits a source and never fails on a similarity: a human or
 	// an agent decides what to factor. A family that is kept on purpose is
-	// a line of `tools/modustool/similarity_kept.txt`.
-	{name = "similarity", about = "the similarity of the code pieces of src/ and tools/: families with their factoring template, ranked by the nodes that a factoring saves, in " + SIMILARITY_OUTPUT_FOLDER + "; `similarity near <file>:<line>`: the procedures most similar to one; `similarity pair <file>:<line> <file>:<line>`: the score of two procedures", run = run_similarity},
+	// a line of `tools/modustool/similarity/similarity_kept.txt`.
+	{name = "similarity", about = "the similarity of the code pieces of src/ and tools/: families with their factoring template, ranked by the nodes that a factoring saves, in " + similarity.SIMILARITY_OUTPUT_FOLDER + "; `similarity near <file>:<line>`: the procedures most similar to one; `similarity pair <file>:<line> <file>:<line>`: the score of two procedures", run = similarity.run_similarity},
 	// Works on the changelog: the fragments of `changelog.d/`, and the releases
 	// of `CHANGELOG.md`.
 	//
@@ -555,7 +558,7 @@ COMMANDS :: [?]Command {
 	{name = "fuzz", about = "list | <target> [executions [host_processes [seed]]] | all [executions] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target>: fuzz the readers of the system on the host, guided by edge counters", run = run_fuzz},
 	// The child process of `fuzz` and of `check`: it runs the engine on one
 	// target. The parent starts it; it is not a command to run by hand.
-	{name = "fuzz-child", about = "the child process of `fuzz` and of `check`, which the parent starts", run = run_fuzz_child},
+	{name = "fuzz-child", about = "the child process of `fuzz` and of `check`, which the parent starts", run = fuzz.run_fuzz_child},
 	// Makes or shows the key that signs the system description.
 	//
 	// - `new <folder>`: writes a new private key, readable by its owner only,
@@ -949,7 +952,7 @@ run_check :: proc(args: []string) -> int {
 	}
 	// The fuzz targets: their corpus, then a fixed count of new executions
 	// with the seed of the sources (src/md/infrastructure/fuzzing.md).
-	if !fuzz_check() {
+	if !fuzz.fuzz_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !checks.cryptography_origin_check() {
@@ -1389,4 +1392,196 @@ disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
 		return false
 	}
 	return true
+}
+
+// run_fuzz is the command `fuzz` (docs/TOOLS.md, "The fuzzing").
+run_fuzz :: proc(args: []string) -> int {
+	usage_text :: "modustool: fuzz list | <target> [<executions> [<host_processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | regression operations <finding folder> | replay operations <file>"
+	if len(args) == 0 {
+		fmt.eprintln(usage_text)
+		return foundation.EXIT_USAGE
+	}
+	targets := fuzz.fuzz_targets()
+	switch args[0] {
+	case "operations":
+		// The kernel operations on machines of the kernel that ships
+		// (operation_fuzzing.odin).
+		code := operation_fuzzing_run(args[1:])
+		if code == foundation.EXIT_USAGE {
+			fmt.eprintln(usage_text)
+		}
+		return code
+	case "replay":
+		// One operation sequence on a machine of the kernel that ships
+		// (operation_sequences.odin).
+		if len(args) != 3 || args[1] != "operations" {
+			fmt.eprintln(usage_text)
+			return foundation.EXIT_USAGE
+		}
+		return operation_sequences_replay(args[2])
+	case "list":
+		for target in targets {
+			regression := fuzz.fuzz_inputs_read(fuzz.fuzz_corpus_folder(target.name, fuzz.FUZZ_REGRESSION_PART), context.temp_allocator)
+			reach := fuzz.fuzz_inputs_read(fuzz.fuzz_corpus_folder(target.name, fuzz.FUZZ_REACH_PART), context.temp_allocator)
+			fmt.printfln("  %-26s %-9v %3d regression, %3d reach  %s", target.name, target.kind, len(regression), len(reach), target.about)
+		}
+		operation_regressions := fuzz.fuzz_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
+		operation_reach := fuzz.fuzz_inputs_read(OPERATION_REACH_FOLDER, context.temp_allocator)
+		fmt.printfln("  %-26s %-9s %3d regression, %3d reach  %s", fuzz.OPERATION_CORPUS_NAME, "machine", len(operation_regressions), len(operation_reach), "The kernel operations on a machine of the kernel that ships: `fuzz operations`, `fuzz regression operations`")
+		return 0
+	case "show", "minimize", "regression":
+		if len(args) != 3 {
+			fmt.eprintln(usage_text)
+			return foundation.EXIT_USAGE
+		}
+		if args[0] == "regression" && args[1] == fuzz.OPERATION_CORPUS_NAME {
+			// A minimized finding of the kernel operations, run on a machine
+			// of the kernel that ships (operation_corpus.odin).
+			return operation_regression_add(args[2])
+		}
+		target, found := fuzz.fuzz_target_find(targets, args[1])
+		if !found {
+			fmt.eprintfln("modustool: no fuzz target %s; `modustool fuzz list` names them", args[1])
+			return foundation.EXIT_USAGE
+		}
+		input, error := os.read_entire_file(args[2], context.allocator)
+		if error != nil {
+			fmt.eprintfln("modustool: cannot read %s: %v", args[2], error)
+			return foundation.EXIT_FAILURE
+		}
+		// This binary: no instrumentation is needed to replay one input.
+		binary := os.args[0]
+		outcome, started := fuzz.fuzz_child_run(binary, .Replay, target, 0, 0, args[2])
+		if !started {
+			return foundation.EXIT_FAILURE
+		}
+		switch args[0] {
+		case "show":
+			if outcome.oracle == .None {
+				fmt.printfln("modustool: fuzz %s: %s breaks no oracle", target.name, args[2])
+			} else {
+				fmt.printfln("modustool: fuzz %s: %s: %s", target.name, outcome.signature, outcome.text)
+			}
+			fuzz.fuzz_print_literal(fuzz.fuzz_input_name(input), input)
+		case "minimize":
+			if outcome.oracle == .None {
+				fmt.printfln("modustool: fuzz %s: %s breaks no oracle: nothing to minimize", target.name, args[2])
+				return 0
+			}
+			if _, kept := fuzz.fuzz_finding_keep(binary, target, outcome); !kept {
+				return foundation.EXIT_FAILURE
+			}
+		case "regression":
+			// A regression input enters the corpus after the fix of its
+			// fault: it must break no oracle now.
+			if outcome.oracle != .None {
+				fmt.eprintfln("modustool: fuzz %s: %s still breaks an oracle (%s): fix the fault first", target.name, args[2], outcome.signature)
+				return foundation.EXIT_FAILURE
+			}
+			path, written := fuzz.fuzz_input_write(fuzz.fuzz_corpus_folder(target.name, fuzz.FUZZ_REGRESSION_PART), input)
+			if !written {
+				return foundation.EXIT_FAILURE
+			}
+			fmt.printfln("modustool: fuzz %s: the regression input %s", target.name, path)
+		}
+		return 0
+	case "corpus":
+		if len(args) != 2 {
+			fmt.eprintln(usage_text)
+			return foundation.EXIT_USAGE
+		}
+		target, found := fuzz.fuzz_target_find(targets, args[1])
+		if !found {
+			fmt.eprintfln("modustool: no fuzz target %s; `modustool fuzz list` names them", args[1])
+			return foundation.EXIT_USAGE
+		}
+		if !fuzz.fuzz_instrumented_build(target.packages) {
+			return foundation.EXIT_FAILURE
+		}
+		outcome, started := fuzz.fuzz_child_run(fuzz.FUZZ_INSTRUMENTED_BINARY, .Corpus, target, 0, 0)
+		if !started || outcome.state != .Done {
+			if started && outcome.oracle != .None {
+				_, _ = fuzz.fuzz_finding_keep(fuzz.FUZZ_INSTRUMENTED_BINARY, target, outcome)
+			}
+			return foundation.EXIT_FAILURE
+		}
+		return 0
+	}
+	// A run: one target, or all of them in turn.
+	// A run always has a count: a forgotten argument must not start a run
+	// with no end, so the default is the count of the check, and 0 is
+	// refused. A long run names its count.
+	executions := u64(fuzz.FUZZ_CHECK_EXECUTIONS)
+	host_processes := 1
+	seed := fuzz.fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
+	if len(args) >= 2 {
+		value, ok := strconv.parse_u64(args[1])
+		if !ok || value == 0 {
+			fmt.eprintln("modustool: the count of executions is a number of 1 or more; a long run names its count, as 100000000")
+			fmt.eprintln(usage_text)
+			return foundation.EXIT_USAGE
+		}
+		executions = value
+	}
+	if len(args) >= 3 {
+		value, ok := strconv.parse_int(args[2])
+		if !ok || value < 1 {
+			fmt.eprintln(usage_text)
+			return foundation.EXIT_USAGE
+		}
+		host_processes = value
+	}
+	if len(args) >= 4 {
+		value, ok := strconv.parse_u64(args[3])
+		if !ok {
+			fmt.eprintln(usage_text)
+			return foundation.EXIT_USAGE
+		}
+		seed = value
+	}
+	chosen := make([dynamic]^fuzz.Fuzz_Target, context.temp_allocator)
+	if args[0] == "all" {
+		for &target in targets {
+			append(&chosen, &target)
+		}
+	} else {
+		target, found := fuzz.fuzz_target_find(targets, args[0])
+		if !found {
+			fmt.eprintfln("modustool: no fuzz target %s; `modustool fuzz list` names them", args[0])
+			return foundation.EXIT_USAGE
+		}
+		append(&chosen, target)
+	}
+	packages := make([dynamic]string, context.temp_allocator)
+	for target in chosen {
+		for item in target.packages {
+			if !slice.contains(packages[:], item) {
+				append(&packages, item)
+			}
+		}
+	}
+	if !fuzz.fuzz_instrumented_build(packages[:]) {
+		return foundation.EXIT_FAILURE
+	}
+	for target in chosen {
+		fmt.printfln("modustool: fuzz %s: the seed %d, %d processes", target.name, seed, host_processes)
+		children := make([]fuzz.Fuzz_Running_Child, host_processes)
+		defer delete(children)
+		for &child, number in children {
+			started: bool
+			child, started = fuzz.fuzz_child_start(fuzz.FUZZ_INSTRUMENTED_BINARY, .Run, target, seed + u64(number), executions, number)
+			if !started {
+				return foundation.EXIT_FAILURE
+			}
+		}
+		fuzz.fuzz_children_watch(children)
+		for &child in children {
+			outcome := fuzz.fuzz_child_outcome(&child)
+			if outcome.oracle != .None {
+				_, _ = fuzz.fuzz_finding_keep(fuzz.FUZZ_INSTRUMENTED_BINARY, target, outcome)
+				return foundation.EXIT_FAILURE
+			}
+		}
+	}
+	return 0
 }

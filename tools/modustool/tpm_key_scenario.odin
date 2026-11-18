@@ -12,6 +12,7 @@ import "modus:private/storage/storage_mount"
 import "modus:support/tpm2"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:fuzz"
 
 // The machines of the machine key sealed by the TPM
 // (docs/PRINCIPALS.md, "The machine key sealed by the TPM"),
@@ -701,7 +702,7 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 	defer delete(image)
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	record: []u8
 	for &item in contents.objects {
 		if item.store == UNLOCK_STORE && item.name == principals.MACHINE_OBJECT && !item.tree && !item.damaged {
@@ -762,7 +763,7 @@ principal_file_parts_read :: proc() -> (parts: Principal_File_Parts, ok: bool) {
 	defer delete(image)
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	file: []u8
 	for &item in contents.objects {
 		if item.store == UNLOCK_STORE && item.name == principals.FILE_OBJECT && !item.tree && !item.damaged {
@@ -900,7 +901,7 @@ principal_file_parts_absent :: proc(parts: ^Principal_File_Parts, dropped_block:
 	// no root names a block of zeros, and the file has no version.
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	mounted := contents.mount
 	if mounted.failed || mounted.wrong != 0 || mounted.damaged_objects != 0 || mounted.damaged_versions != 0 || storage_mount.hash_index_check(state) != 0 {
 		fmt.eprintfln("modustool: test failed: the disk after the erase opens with %d wrong blocks, %d damaged objects, %d damaged versions, %d faults of the hash index (failed: %v)", mounted.wrong, mounted.damaged_objects, mounted.damaged_versions, storage_mount.hash_index_check(state), mounted.failed)

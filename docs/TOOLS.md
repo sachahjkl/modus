@@ -796,7 +796,7 @@ A family whose members are all inside the members of a larger family, with as ma
 | `build/similarity/families.tsv` | One row for each reported family: rank, category, saved nodes and lines, uses, lowest score, template nodes, blanks, gaps, home, template hash, first member, reason of a kept family |
 | `build/similarity/members.tsv` | One row for each member: template hash of its family, file, first and last line, package, area, score with the first member, coverage, arguments of the blanks |
 
-**The kept list.** A family that is similar on purpose is one line of `tools/modustool/similarity_kept.txt`: its template hash in 16 hexadecimal digits (the column `template_hash`), a space, and the reason in words.
+**The kept list.** A family that is similar on purpose is one line of `tools/modustool/similarity/similarity_kept.txt`: its template hash in 16 hexadecimal digits (the column `template_hash`), a space, and the reason in words.
 
 ```
 3f2a9c0d41b7e6a5 the kernel keeps its own copy: it imports no support package
@@ -1023,7 +1023,7 @@ A raw target reads its input as the bytes that the system reads. A generated tar
 
 **The instrumented child.** `modustool fuzz` and `modustool check` build `build/fuzzing/instrumented/modustool_instrumented`: the compiler writes the LLVM IR of each package, `opt -passes=sancov-module` adds an 8-bit edge counter to each edge of the packages under test and traces their comparisons (a package is the name that its sources declare: the folder `src/library/support/terminal` holds `terminal_records`), `llc` makes the objects, and `clang` links them with the flags that the compiler prints. The engine keeps an input that gives an edge a count in a class that no kept input gave.
 
-**The corpus.** The corpus of each target is in `tools/modustool/fuzzing_corpus/<target>/`: the regression inputs in `regression/` and the reach inputs in `reach/`, one file for each input, named by the BLAKE3 hash of its bytes. A target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a name that is not the hash of its bytes, and a folder that names no target, but `operations`, the corpus of the kernel operations ("The corpus of the kernel operations").
+**The corpus.** The corpus of each target is in `tools/modustool/fuzz/fuzzing_corpus/<target>/`: the regression inputs in `regression/` and the reach inputs in `reach/`, one file for each input, named by the BLAKE3 hash of its bytes. A target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a name that is not the hash of its bytes, and a folder that names no target, but `operations`, the corpus of the kernel operations ("The corpus of the kernel operations").
 
 **In `modustool check`.** For each target, the child runs each input of its corpus, then a fixed count of new executions (20 000, fewer for a target whose execution does much). The seed is the BLAKE3 hash of the sources of the tool, with each of its packages, of the source library and of the kernel parts: the same sources run the same inputs. The check fails on any fuzz finding. The line of each target prints the edges that it reached.
 
@@ -1135,7 +1135,7 @@ The part runs the seed sequences: one step of each operation with arguments that
 
 ### The corpus of the kernel operations
 
-The corpus of the kernel operations is in `tools/modustool/fuzzing_corpus/operations/`, with the layout of the corpus of a target ("The fuzzing"): `regression/` and `reach/`, one file for each input, named by the BLAKE3 hash of its bytes, at most 512 inputs and 1 MiB. The design is in `src/md/infrastructure/kernel_fuzzing.md`.
+The corpus of the kernel operations is in `tools/modustool/fuzz/fuzzing_corpus/operations/`, with the layout of the corpus of a target ("The fuzzing"): `regression/` and `reach/`, one file for each input, named by the BLAKE3 hash of its bytes, at most 512 inputs and 1 MiB. The design is in `src/md/infrastructure/kernel_fuzzing.md`.
 
 - **A regression input** is a minimized life of a finding after its fix, the signature of the finding, and the answer of each step of its last sequence on the kernel that ships: the status and, for a refusal, the kind and the argument of the error record and each record of the table of error details. The test part `operation_sequences` runs each one and checks each answer, so a change of a refusal fails the part even when the new refusal stays in the forms.
 - **`modustool fuzz regression operations <finding>`** takes a folder `build/fuzzing/operations/<seed>/<name>/`, runs its minimized life on a new machine with every oracle, and refuses it with the exit code 1 while it still breaks one. It then writes the input into `regression/` and prints the answer of each step: read them before the commit. A folder with no `finding.txt`, no minimized life or a file that is no sequence is refused with the exit code 2.

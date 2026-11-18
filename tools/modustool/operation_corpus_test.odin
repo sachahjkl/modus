@@ -9,6 +9,7 @@ import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
+import "modustool:fuzz"
 
 @(private = "file")
 TEST_SIGNATURE :: "oracle Unknown_Operation: a word that names no operation"
@@ -23,7 +24,7 @@ test_sequence_bytes :: proc() -> []u8 {
 	sequence := new(operation_sequence.Sequence)
 	defer free(sequence)
 	sequence^ = operation_seed_sequence(steps[:])
-	bytes, accepted := operation_sequence_encode(sequence)
+	bytes, accepted := fuzz.operation_sequence_encode(sequence)
 	assert(accepted)
 	return bytes
 }
@@ -31,8 +32,8 @@ test_sequence_bytes :: proc() -> []u8 {
 // The answers of the two steps: Ok, then Bad_Operation with its record and
 // one detail.
 @(private = "file")
-test_expectations :: proc() -> [2]Operation_Step_Expectation {
-	expectations: [2]Operation_Step_Expectation
+test_expectations :: proc() -> [2]fuzz.Operation_Step_Expectation {
+	expectations: [2]fuzz.Operation_Step_Expectation
 	expectations[0] = {status = .Ok}
 	expectations[1] = {status = .Bad_Operation, record_kind = .Unknown_Operation, detail_count = 1}
 	expectations[1].details[0] = {kind = .Unknown_Operation}
@@ -63,8 +64,8 @@ padded :: proc(count: int) -> int {
 }
 
 @(private = "file")
-expect_refused :: proc(t: ^testing.T, bytes: []u8, problem: Operation_Regression_Problem, index: int, loc := #caller_location) -> Operation_Regression_Refusal {
-	regression, refusal := operation_regression_read(bytes)
+expect_refused :: proc(t: ^testing.T, bytes: []u8, problem: fuzz.Operation_Regression_Problem, index: int, loc := #caller_location) -> fuzz.Operation_Regression_Refusal {
+	regression, refusal := fuzz.operation_regression_read(bytes)
 	testing.expectf(t, refusal.problem == problem && refusal.index == index, "the input is refused with %v at %d, and must be refused with %v at %d", refusal.problem, refusal.index, problem, index, loc = loc)
 	testing.expectf(t, regression.life == nil && regression.expectations == nil && regression.signature == "", "a refused input gives a part of its regression", loc = loc)
 	return refusal
@@ -81,20 +82,20 @@ a_damaged_regression_input_is_refused :: proc(t: ^testing.T) {
 	defer delete(sequence)
 	bytes := test_regression_bytes(sequence)
 	defer delete(bytes)
-	header :: Operation_Regression_Header
-	record :: Operation_Expectation_Record
+	header :: fuzz.Operation_Regression_Header
+	record :: fuzz.Operation_Expectation_Record
 	_ = expect_refused(t, nil, .Too_Small, -1)
 	_ = expect_refused(t, bytes[:size_of(header) - 1], .Too_Small, -1)
-	_ = expect_refused(t, with_word(bytes, int(offset_of(header, magic)), OPERATION_REGRESSION_MAGIC + 1), .Magic, -1)
-	_ = expect_refused(t, with_word(bytes, int(offset_of(header, format)), OPERATION_REGRESSION_FORMAT + 1), .Format, -1)
+	_ = expect_refused(t, with_word(bytes, int(offset_of(header, magic)), fuzz.OPERATION_REGRESSION_MAGIC + 1), .Magic, -1)
+	_ = expect_refused(t, with_word(bytes, int(offset_of(header, format)), fuzz.OPERATION_REGRESSION_FORMAT + 1), .Format, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), 0), .Sequence_Count, -1)
-	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), OPERATION_REGRESSION_SEQUENCES_MOST + 1), .Sequence_Count, -1)
+	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), fuzz.OPERATION_REGRESSION_SEQUENCES_MOST + 1), .Sequence_Count, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, sequence_count)), max(u64)), .Sequence_Count, -1)
 	// Two sequences counted, and the bytes end after the first: the count
 	// of the second passes the end.
 	expectations_start := len(bytes) - 2 * size_of(record)
 	_ = expect_refused(t, with_word(bytes[:expectations_start], int(offset_of(header, sequence_count)), 2), .Size, 1)
-	_ = expect_refused(t, with_word(bytes, int(offset_of(header, signature_bytes)), OPERATION_REGRESSION_SIGNATURE_BYTES_MOST + 1), .Signature_Bytes, -1)
+	_ = expect_refused(t, with_word(bytes, int(offset_of(header, signature_bytes)), fuzz.OPERATION_REGRESSION_SIGNATURE_BYTES_MOST + 1), .Signature_Bytes, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, signature_bytes)), max(u64)), .Signature_Bytes, -1)
 	_ = expect_refused(t, with_word(bytes, int(offset_of(header, expectation_count)), operation_sequence.STEPS_MOST + 1), .Expectation_Count, -1)
 	// One expectation more than the steps of the last sequence.
@@ -118,15 +119,15 @@ a_damaged_regression_input_is_refused :: proc(t: ^testing.T) {
 	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, record_kind)), transmute(u64)i64(-1)), .Record_Kind, 1)
 	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, detail_count)), operation.ERROR_DETAILS_MOST + 1), .Detail_Count, 1)
 	details := second + int(offset_of(record, details))
-	_ = expect_refused(t, with_word(bytes, details + int(offset_of(Operation_Detail_Record, kind)), u64(max(errors.Kind)) + 1), .Detail_Kind, 1)
-	_ = expect_refused(t, with_word(bytes, details + size_of(Operation_Detail_Record) + int(offset_of(Operation_Detail_Record, argument)), 1), .Unused_Detail, 1)
+	_ = expect_refused(t, with_word(bytes, details + int(offset_of(fuzz.Operation_Detail_Record, kind)), u64(max(errors.Kind)) + 1), .Detail_Kind, 1)
+	_ = expect_refused(t, with_word(bytes, details + size_of(fuzz.Operation_Detail_Record) + int(offset_of(fuzz.Operation_Detail_Record, argument)), 1), .Unused_Detail, 1)
 	_ = expect_refused(t, with_word(bytes, first + int(offset_of(record, record_kind)), u64(errors.Kind.Unknown_Operation)), .Answer_Of_Ok, 0)
 	_ = expect_refused(t, with_word(bytes, first + int(offset_of(record, detail_count)), 1), .Answer_Of_Ok, 0)
 	// The last case: the input whole.
-	regression, refusal := operation_regression_read(bytes)
+	regression, refusal := fuzz.operation_regression_read(bytes)
 	defer delete(regression.life)
 	defer delete(regression.expectations)
-	testing.expect_value(t, refusal.problem, Operation_Regression_Problem.None)
+	testing.expect_value(t, refusal.problem, fuzz.Operation_Regression_Problem.None)
 	testing.expect_value(t, regression.signature, TEST_SIGNATURE)
 	testing.expect_value(t, len(regression.life), 1)
 	if len(regression.life) == 1 {
@@ -144,12 +145,12 @@ the_writer_of_a_regression_input_refuses_its_bounds :: proc(t: ^testing.T) {
 	sequence := test_sequence_bytes()
 	defer delete(sequence)
 	one := [1][]u8{sequence}
-	many: [OPERATION_REGRESSION_SEQUENCES_MOST + 1][]u8
+	many: [fuzz.OPERATION_REGRESSION_SEQUENCES_MOST + 1][]u8
 	for &item in many {
 		item = sequence
 	}
-	long_signature := strings.repeat("s", OPERATION_REGRESSION_SIGNATURE_BYTES_MOST + 1, context.temp_allocator)
-	too_many := make([]Operation_Step_Expectation, operation_sequence.STEPS_MOST + 1, context.temp_allocator)
+	long_signature := strings.repeat("s", fuzz.OPERATION_REGRESSION_SIGNATURE_BYTES_MOST + 1, context.temp_allocator)
+	too_many := make([]fuzz.Operation_Step_Expectation, operation_sequence.STEPS_MOST + 1, context.temp_allocator)
 	large := [1][]u8{make([]u8, operation_sequence.SEQUENCE_BYTES_MOST + 1, context.temp_allocator)}
 	_, empty_written := operation_regression_write({signature = TEST_SIGNATURE})
 	testing.expect(t, !empty_written, "a life of no sequence is written")
@@ -161,10 +162,10 @@ the_writer_of_a_regression_input_refuses_its_bounds :: proc(t: ^testing.T) {
 	testing.expect(t, !expectations_written, "expectations past their bound are written")
 	_, large_written := operation_regression_write({signature = TEST_SIGNATURE, life = large[:]})
 	testing.expect(t, !large_written, "a sequence larger than its place is written")
-	bytes, written := operation_regression_write({signature = TEST_SIGNATURE, life = many[:OPERATION_REGRESSION_SEQUENCES_MOST]})
+	bytes, written := operation_regression_write({signature = TEST_SIGNATURE, life = many[:fuzz.OPERATION_REGRESSION_SEQUENCES_MOST]})
 	defer delete(bytes)
 	testing.expect(t, written, "a life at its bound is refused")
-	testing.expect(t, len(bytes) <= OPERATION_REGRESSION_BYTES_MOST)
+	testing.expect(t, len(bytes) <= fuzz.OPERATION_REGRESSION_BYTES_MOST)
 }
 
 // Results of the two steps of the test sequence, as the runner writes the
@@ -271,21 +272,21 @@ each_file_of_a_folder_of_regression_inputs_is_read_or_refused :: proc(t: ^testin
 		_ = os.remove_all(root)
 	}
 	testing.expect(t, foundation.reset_folder(root))
-	missing, missing_problems := operation_regression_inputs_read(root + "/none", context.temp_allocator)
+	missing, missing_problems := fuzz.operation_regression_inputs_read(root + "/none", context.temp_allocator)
 	testing.expect(t, len(missing) == 0 && len(missing_problems) == 0)
 	sequence := test_sequence_bytes()
 	defer delete(sequence)
 	bytes := test_regression_bytes(sequence)
 	defer delete(bytes)
-	_, good := fuzz_input_write(root, bytes)
-	_, bad := fuzz_input_write(root, bytes[:len(bytes) - 1])
+	_, good := fuzz.fuzz_input_write(root, bytes)
+	_, bad := fuzz.fuzz_input_write(root, bytes[:len(bytes) - 1])
 	testing.expect(t, good && bad)
 	testing.expect(t, foundation.make_folder(root + "/inner"))
-	inputs, problems := operation_regression_inputs_read(root, context.temp_allocator)
+	inputs, problems := fuzz.operation_regression_inputs_read(root, context.temp_allocator)
 	testing.expect_value(t, len(inputs), 1)
 	testing.expect_value(t, len(problems), 2)
 	if len(inputs) == 1 {
-		testing.expect_value(t, inputs[0].name, fuzz_input_name(bytes))
+		testing.expect_value(t, inputs[0].name, fuzz.fuzz_input_name(bytes))
 		testing.expect_value(t, inputs[0].regression.signature, TEST_SIGNATURE)
 	}
 }
@@ -296,7 +297,7 @@ each_file_of_a_folder_of_regression_inputs_is_read_or_refused :: proc(t: ^testin
 @(test)
 each_regression_input_of_the_corpus_is_run :: proc(t: ^testing.T) {
 	entries, error := os.read_all_directory_by_path(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
-	inputs, problems := operation_regression_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
+	inputs, problems := fuzz.operation_regression_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
 	for problem in problems {
 		testing.expectf(t, false, "the test part does not run an input: %s", problem)
 	}
@@ -306,10 +307,10 @@ each_regression_input_of_the_corpus_is_run :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, len(inputs), len(entries))
 	for input in inputs {
-		testing.expectf(t, input.name == fuzz_input_name(input.bytes), "%s is not named by the hash of its bytes", input.name)
+		testing.expectf(t, input.name == fuzz.fuzz_input_name(input.bytes), "%s is not named by the hash of its bytes", input.name)
 		testing.expectf(t, len(input.regression.expectations) > 0, "%s names no answer of its last sequence", input.name)
 	}
-	testing.expect_value(t, len(fuzz_corpus_problems(FUZZ_CORPUS_FOLDER, fuzz_targets())), 0)
+	testing.expect_value(t, len(fuzz.fuzz_corpus_problems(fuzz.FUZZ_CORPUS_FOLDER, fuzz.fuzz_targets())), 0)
 }
 
 // The corpus of the operations in a corpus root: its regression inputs are
@@ -326,15 +327,15 @@ the_corpus_of_the_operations_has_its_form :: proc(t: ^testing.T) {
 	defer delete(sequence)
 	bytes := test_regression_bytes(sequence)
 	defer delete(bytes)
-	regression_folder := strings.concatenate({root, "/", OPERATION_CORPUS_NAME, "/", FUZZ_REGRESSION_PART}, context.temp_allocator)
-	_, written := fuzz_input_write(regression_folder, bytes)
+	regression_folder := strings.concatenate({root, "/", fuzz.OPERATION_CORPUS_NAME, "/", fuzz.FUZZ_REGRESSION_PART}, context.temp_allocator)
+	_, written := fuzz.fuzz_input_write(regression_folder, bytes)
 	testing.expect(t, written)
-	testing.expect_value(t, len(fuzz_corpus_problems(root, fuzz_targets())), 0)
-	_, damaged := fuzz_input_write(regression_folder, with_word(bytes, int(offset_of(Operation_Regression_Header, magic)), 0))
+	testing.expect_value(t, len(fuzz.fuzz_corpus_problems(root, fuzz.fuzz_targets())), 0)
+	_, damaged := fuzz.fuzz_input_write(regression_folder, with_word(bytes, int(offset_of(fuzz.Operation_Regression_Header, magic)), 0))
 	testing.expect(t, damaged)
-	testing.expect_value(t, len(fuzz_corpus_problems(root, fuzz_targets())), 1)
-	testing.expect(t, foundation.make_folder(strings.concatenate({root, "/", OPERATION_CORPUS_NAME, "/other"}, context.temp_allocator)))
-	testing.expect_value(t, len(fuzz_corpus_problems(root, fuzz_targets())), 2)
+	testing.expect_value(t, len(fuzz.fuzz_corpus_problems(root, fuzz.fuzz_targets())), 1)
+	testing.expect(t, foundation.make_folder(strings.concatenate({root, "/", fuzz.OPERATION_CORPUS_NAME, "/other"}, context.temp_allocator)))
+	testing.expect_value(t, len(fuzz.fuzz_corpus_problems(root, fuzz.fuzz_targets())), 2)
 }
 
 // The minimized life of a finding folder: no finding.txt, an empty

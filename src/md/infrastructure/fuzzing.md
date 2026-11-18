@@ -93,7 +93,7 @@ A fuzz finding is an input that breaks an oracle. Its signature is the oracle an
 
 The tool minimizes each finding while its signature stays: for a raw target, by removing ranges of bytes and by lowering bytes; for a generated target, by the passes of Hypothesis on the choices (remove a range, set a range to zero, lower one choice). Each smaller input of a generated target is still an input that the generator can build, so the minimized value is valid where the generator makes it valid.
 
-The **corpus** of each target is in the repository, in `tools/modustool/fuzzing_corpus/<target>/`, one file for each input, named by the BLAKE3 hash of its bytes. It has two parts:
+The **corpus** of each target is in the repository, in `tools/modustool/fuzz/fuzzing_corpus/<target>/`, one file for each input, named by the BLAKE3 hash of its bytes. It has two parts:
 
 - **The regression inputs**: each minimized finding after its fix. They are never removed. A regression input of the kernel operations holds the answers of the kernel too; when a change of the kernel changes one on purpose, the input is written again in that commit, so its finding stays ([kernel_fuzzing.md](kernel_fuzzing.md), "The corpus of the operations").
 - **The reach inputs**: the smallest set of kept inputs that gives each edge class that the long runs reached. The command that writes them keeps the smallest input for each edge class, then removes each input whose classes another input gives.
