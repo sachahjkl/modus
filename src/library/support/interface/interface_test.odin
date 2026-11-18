@@ -603,10 +603,20 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 	} {
 		{"a clip that changes", proc(table: ^Draw_Table, variant: int) {
 				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
-				draw_clip(table, 10, 10, variant == 0 ? 100 : 60, 50)
+				draw_clip_push(table, 10, 10, variant == 0 ? 100 : 60, 50)
 				draw_rectangle(table, 0, 0, 200, 100, graphics.colors.kernel)
-				draw_clip(table, 0, 0, 0, 0)
+				draw_clip_pop(table)
 				draw_rectangle(table, 150, 150, 20, 20, graphics.colors.process)
+			}},
+		{"a nested clip that moves", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
+				draw_clip_push(table, 20, 20, 200, 120)
+				draw_clip_push(table, 40 + variant * 30, 30, 300, 50)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.kernel)
+				draw_clip_pop(table)
+				draw_rectangle(table, 0, 100, 320, 100, graphics.colors.memory)
+				draw_clip_pop(table)
+				draw_rectangle(table, 250, 150, 20, 20, graphics.colors.process)
 			}},
 		{"horizontal gradients", proc(table: ^Draw_Table, variant: int) {
 				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
@@ -651,16 +661,30 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 		item.build(&now, 1)
 		partial_equals_whole(t, &before, &now, item.name)
 	}
+	// The cases by their names, so that a case added to the list moves none.
+	many_changes, full_table: Case_Builder
+	for item in cases {
+		switch item.name {
+		case "more than 8 rectangles of damage":
+			many_changes = item.build
+		case "a table that is full":
+			full_table = item.build
+		}
+	}
+	testing.expect(t, many_changes != nil && full_table != nil)
+	if many_changes == nil || full_table == nil {
+		return
+	}
 	// The merge path: 12 changes far apart give at most 8 rectangles.
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
-	cases[5].build(&before, 0)
-	cases[5].build(&now, 1)
+	many_changes(&before, 0)
+	many_changes(&now, 1)
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect(t, damage.count <= DAMAGE_CAPACITY)
 	// The full table: 256 records fit, the others are dropped, and it says so.
-	cases[6].build(&now, 1)
+	full_table(&now, 1)
 	testing.expect(t, now.full)
 }
 
@@ -1680,29 +1704,46 @@ damage_add_keeps_rectangles_apart_and_covers_each :: proc(t: ^testing.T) {
 	}
 }
 
-// A clip that becomes another kind of record at the same index, and two
-// clips one after the other: each later record is damaged, and the surface
-// is the frame.
+// A push that becomes another kind of record at the same index, a pop that
+// becomes a rectangle, and the inner of two clips that moves: each record
+// whose cut changes is damaged, and the surface is the frame.
 @(test)
 clip_that_changes_kind :: proc(t: ^testing.T) {
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
-	draw_clip(&before, 10, 10, 60, 40)
+	draw_clip_push(&before, 10, 10, 60, 40)
 	draw_rectangle(&before, 0, 0, 200, 100, graphics.colors.kernel)
-	draw_clip(&before, 0, 0, 0, 0)
+	draw_clip_pop(&before)
 	draw_rectangle(&now, 10, 10, 60, 40, graphics.colors.process)
 	draw_rectangle(&now, 0, 0, 200, 100, graphics.colors.kernel)
-	draw_clip(&now, 0, 0, 0, 0)
+	draw_rectangle(&now, 0, 0, 1, 1, graphics.colors.kernel)
 	testing.expect(t, screen_after_damage(&before, &now), "a clip that becomes a rectangle")
 	testing.expect(t, screen_after_damage(&now, &before), "a rectangle that becomes a clip")
 	draw_table_clear(&before)
 	draw_table_clear(&now)
-	draw_clip(&before, 0, 0, 100, 100)
-	draw_clip(&before, 50, 50, 100, 100)
+	// The pop leaves early: the rectangle after it is no longer cut.
+	draw_clip_push(&before, 0, 0, 100, 100)
+	draw_rectangle(&before, 0, 0, 10, 10, graphics.colors.memory)
+	draw_clip_pop(&before)
 	draw_rectangle(&before, 0, 0, 320, 200, graphics.colors.kernel)
-	draw_clip(&now, 0, 0, 100, 100)
-	draw_clip(&now, 20, 20, 100, 100)
+	draw_clip_push(&now, 0, 0, 100, 100)
+	draw_clip_pop(&now)
+	draw_rectangle(&now, 0, 0, 10, 10, graphics.colors.memory)
 	draw_rectangle(&now, 0, 0, 320, 200, graphics.colors.kernel)
+	testing.expect(t, screen_after_damage(&before, &now), "a pop that moves before a rectangle")
+	testing.expect(t, screen_after_damage(&now, &before), "a pop that moves after a rectangle")
+	draw_table_clear(&before)
+	draw_table_clear(&now)
+	draw_clip_push(&before, 0, 0, 100, 100)
+	draw_clip_push(&before, 50, 50, 100, 100)
+	draw_rectangle(&before, 0, 0, 320, 200, graphics.colors.kernel)
+	draw_clip_pop(&before)
+	draw_clip_pop(&before)
+	draw_clip_push(&now, 0, 0, 100, 100)
+	draw_clip_push(&now, 20, 20, 100, 100)
+	draw_rectangle(&now, 0, 0, 320, 200, graphics.colors.kernel)
+	draw_clip_pop(&now)
+	draw_clip_pop(&now)
 	testing.expect(t, screen_after_damage(&before, &now), "the second of two clips changes")
 }
 
@@ -2443,23 +2484,45 @@ a_refused_line_damages_its_box_and_draws_nothing :: proc(t: ^testing.T) {
 	testing.expect(t, pixels == [32 * 8]graphics.Color{}, "a refused line draws")
 }
 
-// A refused Clip keeps the cut that was in force; the records after it
-// still draw and still damage.
+// A refused pop still ends its push, and a refused push is an empty clip:
+// the records after the pop draw as before the push, and the records under
+// the refused push draw nothing. The records still damage.
 @(test)
 a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
 	SIDE :: 32
-	clip := record_in_pixels(draw_record.Draw_Clip{}, 0, 0, 8, 8)
-	refused_clip := refused_copy(record_in_pixels(draw_record.Draw_Clip{}, 0, 0, SIDE, SIDE))
+	clip := record_in_pixels(draw_record.Draw_Clip_Push{}, 0, 0, 8, 8)
+	refused_pop := refused_copy(record_in_pixels(draw_record.Draw_Clip_Pop{}, 0, 0, 0, 0))
 	fill := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 0, 0, SIDE, SIDE)
-	records := [3]Draw_Record{clip, refused_clip, fill}
-	table := Draw_Table{records = records[:], record_count = 3}
+	under := [3]Draw_Record{clip, fill, refused_pop}
+	under_table := Draw_Table{records = under[:], record_count = 3}
 	pixels: [SIDE * SIDE]graphics.Color
-	execute(&table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	execute(&under_table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
 	for y in 0 ..< SIDE {
 		for x in 0 ..< SIDE {
-			testing.expectf(t, (pixels[y * SIDE + x] == 0xFFFFFF) == (x < 8 && y < 8), "the pixel (%d, %d) after a refused clip", x, y)
+			testing.expectf(t, (pixels[y * SIDE + x] == 0xFFFFFF) == (x < 8 && y < 8), "the pixel (%d, %d) under a clip", x, y)
 		}
 	}
+	// After the refused pop, the fill covers the whole canvas.
+	after := [4]Draw_Record{clip, refused_pop, fill, {}}
+	after_table := Draw_Table{records = after[:], record_count = 3}
+	pixels = {}
+	execute(&after_table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	testing.expect(t, pixels[(SIDE - 1) * SIDE + SIDE - 1] == 0xFFFFFF, "a refused pop does not end its push")
+	// Under a refused push, nothing draws, and after its pop, the fill does.
+	refused_push := refused_copy(clip)
+	pop := record_in_pixels(draw_record.Draw_Clip_Pop{}, 0, 0, 0, 0)
+	hidden := [4]Draw_Record{refused_push, fill, pop, record_in_pixels(draw_record.Draw_Rectangle{color = 0xFF00FF00}, 16, 16, 20, 20)}
+	hidden_table := Draw_Table{records = hidden[:], record_count = 4}
+	pixels = {}
+	execute(&hidden_table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	for y in 0 ..< SIDE {
+		for x in 0 ..< SIDE {
+			expected := graphics.Color(16 <= x && x < 20 && 16 <= y && y < 20 ? 0x00FF00 : 0)
+			testing.expectf(t, pixels[y * SIDE + x] == expected, "the pixel (%d, %d) under a refused push", x, y)
+		}
+	}
+	records := [3]Draw_Record{clip, refused_pop, fill}
+	table := Draw_Table{records = records[:], record_count = 3}
 	// A refused record alone draws nothing.
 	refused_fill := [1]Draw_Record{refused_copy(fill)}
 	alone := Draw_Table{records = refused_fill[:], record_count = 1}
@@ -2475,7 +2538,8 @@ a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
 	damage_by_difference(&table, &now, &damage)
 	testing.expect_value(t, damage.count, 1)
 	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, SIDE, SIDE})
-	// A refused clip whose bytes change: each record after it is damaged.
+	// A refused pop whose bytes change is still a pop: the order of the
+	// clips is the same, and the rectangle that moves is damaged.
 	moved := records
 	moved[1].reserved[0] = 2
 	moved[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFFFF}, 20, 20, 24, 24)

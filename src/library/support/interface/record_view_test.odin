@@ -52,8 +52,10 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 	switch fields in primitive {
 	case draw_record.Draw_Nothing:
 		view.kind = .None
-	case draw_record.Draw_Clip:
-		view.kind = .Clip
+	case draw_record.Draw_Clip_Push:
+		view.kind = .Clip_Push
+	case draw_record.Draw_Clip_Pop:
+		view.kind = .Clip_Pop
 	case draw_record.Draw_Rectangle:
 		view.kind, view.repetition = .Rectangle, fields.repetition
 		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)
