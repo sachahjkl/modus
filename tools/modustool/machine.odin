@@ -92,6 +92,11 @@ Step_Kind :: enum {
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
+	// Drag the bottom left corner of the window with the title text until
+	// its surface is to_x by to_y pixels. The tool reads the place and the
+	// size of the window in the log, then waits for the line of the
+	// compositor that the window took the new size (machine_resize.odin).
+	Resize,
 	Front, // Open the menu of the windows, and press the line of the last window with the title text: the window comes to the front. The tool reads the lines of the menu in the log.
 	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log, and brings the window to the front first when another window covers the button (machine_elements.odin).
 	// Press the middle of the element with the name `element` of the window
@@ -1915,11 +1920,22 @@ scenario := [?]Step {
 
 	// The time is in a page that each program reads: no kernel entry.
 	{kind = .Launch, text = "clock"},
+	{kind = .Wait, text = "compositor: window clock is resizable from 816x336 to 1216x640", any_order = true},
 	{kind = .Wait, text = "clock: the check of the time page: 1000000 reads, 0 kernel entries"},
 	{kind = .Wait, text = "clock: the check of a kernel entry: 100000 reads, "},
 	{kind = .Wait, text = "clock: the time page and the cycle counter: in "},
 	{kind = .Wait, text = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
 	{kind = .Shot, text = "clock"},
+	// The pointer drags the corner of the window of clock: its program
+	// makes the surface of the new size and draws its next frame in it,
+	// and the compositor shows the window at that size from that frame
+	// (src/md/features/window_resize.md).
+	{kind = .Resize, text = "clock", to_x = 880, to_y = 384},
+	// The program can draw before the compositor writes its line of the
+	// request: the two lines come in either order.
+	{kind = .Wait, text = "compositor: window clock asked to draw at 880x384", any_order = true},
+	{kind = .Wait, text = "display: clock: the first picture of 880x384 after a resize"},
+	{kind = .Shot, text = "clock_resized"},
 
 	// Several processors: the kernel says that the four processors ran
 	// threads of one program at the same time. Then 1, 2 and 4 threads
@@ -2811,7 +2827,9 @@ scenario := [?]Step {
 	// sends no answer there; it writes one line at the first word, and the
 	// count when the window closes.
 	{kind = .Wait, text = "compositor: a window sent the word 0, which names no command; the next ones are counted, and the count comes when the window closes", any_order = true},
-	{kind = .Wait, text = "disk: the window sent the command words 0, 6 and 4294967295: the compositor read the three: as it must"},
+	// The middle word is the first past the last display command, which
+	// grows with the commands: the wait names the rest of the line.
+	{kind = .Wait, text = "and 4294967295: the compositor read the three: as it must"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
 	// using memory.
@@ -4515,6 +4533,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 		case .Front:
 			window_front_bring(machine, step.text, index) or_return
+		case .Resize:
+			window_resize_step(machine, step, index) or_return // machine_resize.odin
 		case .Click_Element:
 			element_click(machine, step.text, step.element, index) or_return
 		case .Wheel:

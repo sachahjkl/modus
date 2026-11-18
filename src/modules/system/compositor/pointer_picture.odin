@@ -158,6 +158,9 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if dragging >= 0 {
 		return .Move
 	}
+	if resizing >= 0 {
+		return resize_shape_of(resize_start.edges) // window_resize.odin
+	}
 	if palette_is_open() {
 		// The input band is a text; an entry of the list and a candidate
 		// of a form can be pressed. The scroll bar of the list is on no
@@ -182,6 +185,10 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	}
 	if pointer_y < BAR_HEIGHT {
 		return .Arrow
+	}
+	// An edge of a resizable window: a press there drags it.
+	if _, edges := resize_edges_under_pointer(); edges != {} {
+		return resize_shape_of(edges)
 	}
 	for position := order_count - 1; position >= 0; position -= 1 {
 		client := &clients[order[position]]

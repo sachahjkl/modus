@@ -76,10 +76,10 @@ One enum of the system, `Pointer_Shape` in `src/library/contract/pointer_picture
 | 8 | `forbidden` | `not-allowed` | a request of a program |
 | 9 | `help` | `help` | a request of a program |
 | 10 | `crosshair` | `crosshair` | a request of a program |
-| 11 | `resize_left_right` | `ew-resize` | a request of a program (a window has no resize yet) |
-| 12 | `resize_up_down` | `ns-resize` | a request of a program |
-| 13 | `resize_top_left_bottom_right` | `nwse-resize` | a request of a program |
-| 14 | `resize_top_right_bottom_left` | `nesw-resize` | a request of a program |
+| 11 | `resize_left_right` | `ew-resize` | the left or right edge of a resizable window; a request of a program |
+| 12 | `resize_up_down` | `ns-resize` | the top or bottom edge of a resizable window; a request of a program |
+| 13 | `resize_top_left_bottom_right` | `nwse-resize` | the top left or bottom right corner of a resizable window; a request of a program |
+| 14 | `resize_top_right_bottom_left` | `nesw-resize` | the top right or bottom left corner of a resizable window; a request of a program |
 
 Not taken: the CSS names that no part of the system has a use for (`context-menu`, `cell`, `vertical-text`, `alias`, `copy`, `no-drop`, the eight single-side resizes, `all-scroll`, `zoom-in`, `zoom-out`). A new name is a new number at the end of the enum.
 
