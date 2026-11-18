@@ -229,6 +229,8 @@ OPERATION_SOURCE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 TOOL_SOURCE_FOLDER :: "tools/modustool"
 
 FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
+// The sizes 12x24, 16x32 and 32x64 of Spleen, which only the boot display draws.
+BOOT_DISPLAY_FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/bootscreen/spleen_sizes.odin"
 
 // The table of the roles of the root service (process_roles_check.odin).
 ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"

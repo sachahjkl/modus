@@ -70,11 +70,29 @@ The design: `docs/TRUSTED_BOOT.md`, "6. The measure".
 
 Do not use: slot, PCR (alone, for this register).
 
+### Start policy register
+
+The start policy register is PCR 12 of the TPM: the register that the root service extends with each start policy that starts, before it runs.
+
+The value of one extend is SHA-256 of the hash of the module and the hash of its list, 32 zero bytes for a chosen start policy. A rescue after a failure is a second extend, and the TPM service takes two at most in one start. No seal reads this register, so a new choice of a start policy changes no unseal; an attestation reads it to learn which start policy ran.
+
+The design: `docs/TRUSTED_BOOT.md`, "PCR 12: the start policy".
+
+Do not use: configuration register, measure register (for this one).
+
+### Measure ring
+
+The measure ring is the ring from the root service to the TPM service on which the root service alone sends `Measure_Start_Policy`.
+
+The root service makes it and holds its one writer side; the TPM service serves it beside the TPM ring of `unlock`, one request at a time. The TPM ring refuses that command with `Bad_Command`, and the measure ring refuses `Seal` and `Unseal`, so no process but the root service extends the start policy register. It has no region: the digest is in the record.
+
+Do not use: root TPM ring, extend ring.
+
 ### TPM service
 
 The TPM service is the process `tpm`: the device service of the TPM of the machine, which seals 32 secret bytes to the values of PCR 7 and PCR 11 and unseals them only while those registers hold the same values.
 
-The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. `unlock` reaches it with the start grant `Tpm`, through a ring of two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. It is not a driver in the kernel, and the boot program does not use it: the boot program talks to the TPM through the firmware, before the kernel starts.
+The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. `unlock` reaches it with the start grant `Tpm`, through a ring of two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`); the root service, through the measure ring. The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. It is not a driver in the kernel, and the boot program does not use it: the boot program talks to the TPM through the firmware, before the kernel starts.
 
 The design: `src/md/features/tpm_sealed_machine_key.md`.
 

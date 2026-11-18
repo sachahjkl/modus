@@ -378,7 +378,7 @@ Status: Decided. The detail below is proposed.
   2. Hold the key that signs the name table of property 11, or the key that verifies it.
   3. Prove to a remote party which system list runs (attestation).
   4. Give a hardware source of random numbers at boot.
-- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Processes reach it by handle (properties 2 and 7). Built: the TPM service, a process with the registers of the TPM, whose one client is `unlock`; it seals and unseals, and sends no raw command for a client.
+- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Processes reach it by handle (properties 2 and 7). Built: the TPM service, a process with the registers of the TPM, whose clients are `unlock`, which seals and unseals, and the root service, which has it extend PCR 12 with each start policy on a ring of its own, the measure ring; it sends no raw command for a client.
 - **Forbids**: an unsigned code path from firmware to kernel, a boot loader with a configuration language, kernel arguments as free text.
 - **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the principal that signs the system signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
 - **Cost**: The system needs a key management story for the principal that signs the system: creation, enrolment in the firmware, backup, loss.
@@ -563,6 +563,7 @@ The table does not name the tools of the host that build and test the system (th
 | B612, as the subset "B612 ASCII" | `resources/fonts/b612.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
 | B612 Bold, as the subset "B612 ASCII Bold" | `resources/fonts/b612_bold.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
 | Spleen 8x16, the fallback font | `src/library/support/graphics/font.odin` | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` |
+| Spleen 12x24, 16x32 and 32x64, the text of the boot display at 12, 16 and 32 eighths | `src/library/support/bootscreen/spleen_sizes.odin` | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` |
 | The pointer theme "Posy's Cursor", in the boot image of a development build that has it, never in a release image | `resources/pointers/posy.manifest` | CC-BY-NC-4.0 | `resources/pointers/posy.manifest` |
 | The cryptography of Odin's `core:crypto`, the files of `origin.manifest` | `src/library/support/cryptography` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
 | The field arithmetic of fiat-crypto, in Odin's port | `src/library/support/cryptography/_fiat` | BSD-1-Clause | `src/library/support/cryptography/LICENSE.fiat-crypto.txt` |

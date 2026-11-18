@@ -318,6 +318,8 @@ When the export has a table of error details and wrote more than one detail, one
 | `principal_create(name)` | none | The window of unlock opens; with a TPM and Secure Boot on, the TPM seals the keys with the passphrase, and the window shows the recovery key one time; the principal is created after Enter (`PRINCIPALS.md`, "The keys sealed by the TPM") |
 | `machine_passphrase()` | none | The window of unlock opens and asks for the machine passphrase two times (`PRINCIPALS.md`, "Principal 0 and its machine passphrase") |
 | `machine_seal()` | none | The TPM seals a new machine key to the measure of the system; the window of unlock shows its recovery key one time (`PRINCIPALS.md`, "The machine key sealed by the TPM") |
+| `start_policy_choose(nickname, hash)` | none | In the console of principal 0, on a machine whose machine key opens with no passphrase: the next start runs this module of the store `module_files` as its start policy; an empty hash takes the hash of the row of the nickname (`PRINCIPALS.md`, "The start policy of principal 0") |
+| `start_policy_default()` | none | Ends the choice: the next start runs the default start policy of the boot image |
 | `passphrase_change()` | Text | In a console of the session of a named principal: the window of unlock asks for the current passphrase, then for a new one two times; the line gives the end of the change (`PRINCIPALS.md`, "A change of the passphrase") |
 | `recovery_key_change()` | Text | In a console of the session of a named principal: the window of unlock asks for the current passphrase, then shows a new recovery key one time; the line gives the end of the change (`PRINCIPALS.md`, "A change of the passphrase") |
 | `lock()` | Integer | The processes of the session that stopped |

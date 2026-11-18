@@ -114,6 +114,8 @@ The pattern is placed on the surface by one of its cells, not on the box: two bo
 
 `Text` and `Interface_Text` of version 10 were one concept with two places for the origin. A text in the font of the cells is a text run whose font is the font of the cells.
 
+Designed, not built: version 17 replaces `scale` with a text size in 1/64 pixel, `size` u16 at 46, with `weight` at 45, and gives `Text_Grid` a size too ([../features/text_rendering.md](../features/text_rendering.md), "The draw record").
+
 **Picture.** The pixels of a picture of the caller, by values in its picture memory, as in version 10 ([picture.md](picture.md)): `memory` is the number of the picture memory, `first` its first pixel, `stride` the pixels from one line to the next, `generation` a new number when its pixels change. `format` is a `Picture_Format`: `Opaque` 0, which reads `0x00RRGGBB` and copies it, and `Straight_Alpha` 1, which reads `0xAARRGGBB` and blends by the rule. The box is the place of the picture and its size: whole pixels, and exactly `width` by `height` pixels; another box is refused. A picture is drawn at its size: no scale and no repetition.
 
 **Clip_Push and Clip_Pop.** A `Clip_Push` makes the cut of the records after it the intersection of its box with the cut before it, until its `Clip_Pop`. A `Clip_Pop` gives back the cut before the last push that is open. So an element that clips inside a clipped area keeps the outer clip, and a nested clip larger than its parent is cut to its parent. A list inside a scrolled card writes no intersection by hand.

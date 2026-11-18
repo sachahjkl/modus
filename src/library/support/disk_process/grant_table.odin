@@ -33,16 +33,25 @@ CLIENT_KEY_CAPACITY :: remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
 // The bytes of a client key: an Ed25519 public key.
 CLIENT_KEY_SIZE :: 32
 
-// The grants that a command gives to a disk process.
+// The grants of a row: what a command gives to a disk process, and the
+// choice of a start policy.
 Disk_Grant :: enum u8 {
-	Store = 0, // An isolated store of its own, attached to its nickname.
+	Store        = 0, // An isolated store of its own, attached to its nickname.
+	// The start policy that the next start of the machine runs, with the
+	// start grant Start_Policy and nothing else
+	// (src/md/features/start_policy.md, "A start policy from the disk").
+	// Only Start_Policy_Choice of principal 0 gives it, never a command of
+	// a grant: a row that holds it holds no other grant, and one row of a
+	// table holds it at most.
+	Start_Policy = 1,
 }
 Disk_Grants :: bit_set[Disk_Grant;u8]
 
 // The name of each grant, as the console and the log write it.
 @(rodata)
 disk_grant_names := [Disk_Grant]string {
-	.Store = "store",
+	.Store        = "store",
+	.Start_Policy = "start_policy",
 }
 
 // The prefix of the name of the store of a nickname. The name of a module
@@ -158,6 +167,8 @@ Table_Problem :: enum u8 {
 	Same_File, // The nickname names this file already.
 	Zero_Hash, // The hash is 32 zero bytes.
 	Zero_Key, // The client key is 32 zero bytes.
+	Start_Policy_Row, // The row holds the grant Start_Policy, which takes no other grant.
+	Holds_Store, // The row holds the grant store: a start policy holds the grant Start_Policy and nothing else.
 }
 
 // start_file decides which file a start of a nickname runs, and with which
@@ -183,6 +194,11 @@ start_file :: proc "contextless" (table: ^Grant_Table, nickname: string, asked: 
 // hash of its row, or with no row the hash of the module that runs. A new
 // row starts with the global setting.
 table_allow :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [HASH_SIZE]u8, grant: Disk_Grant) -> Table_Problem {
+	// The start policy holds its one start grant and nothing else, and only
+	// table_start_policy_choose gives it.
+	if grant == .Start_Policy {
+		return .Start_Policy_Row
+	}
 	if hash == {} {
 		return .Zero_Hash
 	}
@@ -197,9 +213,78 @@ table_allow :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: 
 		table.count += 1
 	} else if row.hash != hash {
 		return .Other_File
+	} else if .Start_Policy in row.grants {
+		return .Start_Policy_Row
 	}
 	row.grants += {grant}
 	return .None
+}
+
+// table_start_policy_row gives the row that holds the grant Start_Policy,
+// or nil.
+table_start_policy_row :: proc "contextless" (table: ^Grant_Table) -> ^Grant_Row {
+	for &row in table.rows[:clamp(table.count, 0, ROW_CAPACITY)] {
+		if .Start_Policy in row.grants {
+			return &row
+		}
+	}
+	return nil
+}
+
+// table_start_policy_choose makes the file of a nickname the start policy
+// of the next start: hash is the hash of the command, or 32 zero bytes for
+// the hash of the row. A nickname with no row takes the hash of the
+// command in a new row. The row before loses the grant, and keeps its row:
+// it still binds its nickname to its file. A refusal changes nothing.
+table_start_policy_choose :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [HASH_SIZE]u8) -> Table_Problem {
+	row := table_find(table, nickname)
+	if row == nil {
+		if hash == {} {
+			return .No_File
+		}
+		if table.count >= ROW_CAPACITY {
+			return .Full
+		}
+	} else {
+		if hash != {} && hash != row.hash {
+			return .Other_File
+		}
+		if .Store in row.grants {
+			return .Holds_Store
+		}
+	}
+	if before := table_start_policy_row(table); before != nil {
+		before.grants -= {.Start_Policy}
+	}
+	if row == nil {
+		row = &table.rows[table.count]
+		row^ = {hash = hash}
+		row.nickname_length = copy(row.nickname[:], nickname)
+		table.count += 1
+	}
+	row.grants += {.Start_Policy}
+	// The choice is read at the next start only: a row that lasts until
+	// the machine stops would never be read.
+	row.persistence = .Persist
+	return .None
+}
+
+// table_start_policy_end ends the choice: the next start runs the default
+// start policy. The row stays. Absent: no row holds the grant.
+table_start_policy_end :: proc "contextless" (table: ^Grant_Table) -> Table_Problem {
+	row := table_start_policy_row(table)
+	if row == nil {
+		return .Absent
+	}
+	row.grants -= {.Start_Policy}
+	return .None
+}
+
+// table_holds_a_start_policy says if a table holds the grant Start_Policy
+// in a row: the root service refuses such a table of a named principal, as
+// only principal 0 chooses the start policy of the machine.
+table_holds_a_start_policy :: proc "contextless" (table: ^Grant_Table) -> bool {
+	return table_start_policy_row(table) != nil
 }
 
 // table_disallow takes a grant from the file of a nickname. The row stays:
@@ -230,6 +315,11 @@ table_move :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [
 	if row.hash == hash {
 		return .Same_File
 	}
+	// The hash of the chosen start policy changes only by a new choice:
+	// the choice names one file, and principal 0 chose that file.
+	if .Start_Policy in row.grants {
+		return .Start_Policy_Row
+	}
 	row.hash = hash
 	return .None
 }
@@ -253,6 +343,10 @@ table_persistence_set :: proc "contextless" (table: ^Grant_Table, nickname: stri
 	row := table_find(table, nickname)
 	if row == nil {
 		return .Absent
+	}
+	// The choice is read at the next start only: it always persists.
+	if .Start_Policy in row.grants {
+		return .Start_Policy_Row
 	}
 	row.persistence = persistence
 	return .None
@@ -451,8 +545,12 @@ Table_File_Problem :: enum u8 {
 	Wrong_Format,
 	Too_Many_Rows, // A count over ROW_CAPACITY.
 	Bad_Setting, // A global setting other than 0 or 1, or a header byte that is not zero.
-	Bad_Row, // A nickname that a grant cannot name, a hash of zero bytes, an unknown grant or persistence, or a byte that must be zero.
+	Bad_Row, // A nickname that a grant cannot name, a hash of zero bytes, an unknown grant or persistence, the grant Start_Policy with another grant, or a byte that must be zero.
 	Two_Rows, // Two rows with one nickname.
+	Two_Start_Policies, // Two rows hold the grant Start_Policy.
+	// The table of a named principal holds the grant Start_Policy, which
+	// only principal 0 gives: table_principal_problem, after the decode.
+	Start_Policy_Of_A_Named_Principal,
 	Bytes_After_Rows, // A byte after the last row is not zero.
 	Bad_Client_Keys, // More than CLIENT_KEY_CAPACITY client keys, a key of zero bytes, one key two times, or a byte after the last key that is not zero.
 }
@@ -468,10 +566,22 @@ table_problem_sentences := [Table_File_Problem]string {
 	.Wrong_Format     = "the table has another format number",
 	.Too_Many_Rows    = "the table counts more than 16 rows",
 	.Bad_Setting      = "the global setting of the table is not 0 or 1, or its header has a byte that is not zero",
-	.Bad_Row          = "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, or a byte that must be zero",
+	.Bad_Row          = "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero",
 	.Two_Rows         = "two rows have one nickname",
+	.Two_Start_Policies = "two rows hold the grant start_policy",
+	.Start_Policy_Of_A_Named_Principal = "the table of a named principal holds the grant start_policy, which only principal 0 gives",
 	.Bytes_After_Rows = "the table has bytes that are not zero after its last row",
 	.Bad_Client_Keys  = "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero",
+}
+
+// table_principal_problem checks a table that its tag verified against its
+// principal: the table of a named principal holds no start policy, as only
+// principal 0 chooses the start policy of the machine.
+table_principal_problem :: proc "contextless" (table: ^Grant_Table, of_principal_0: bool) -> Table_File_Problem {
+	if !of_principal_0 && table_holds_a_start_policy(table) {
+		return .Start_Policy_Of_A_Named_Principal
+	}
+	return .None
 }
 
 // table_problem_is_format says if a refusal is a format that this system
@@ -592,10 +702,18 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 			}
 		}
 		grants := place[ROW_OFFSET_GRANTS]
-		known_grants := transmute(u8)Disk_Grants{.Store}
+		known_grants := transmute(u8)Disk_Grants{.Store, .Start_Policy}
 		persistence, persistence_known := enum_word.member_of_word(Persistence, u64(place[ROW_OFFSET_PERSISTENCE]))
 		if grants & ~known_grants != 0 || !persistence_known {
 			return {}, .Bad_Row
+		}
+		// A start policy holds its one start grant and nothing else.
+		start_policy_grant := transmute(u8)Disk_Grants{.Start_Policy}
+		if grants & start_policy_grant != 0 && grants != start_policy_grant {
+			return {}, .Bad_Row
+		}
+		if grants == start_policy_grant && table_start_policy_row(&table) != nil {
+			return {}, .Two_Start_Policies
 		}
 		row := &table.rows[index]
 		copy(row.hash[:], place[ROW_OFFSET_HASH:][:HASH_SIZE])

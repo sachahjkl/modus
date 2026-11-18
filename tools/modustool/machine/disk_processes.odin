@@ -299,6 +299,11 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&third, Step{kind = .Front, text = "console"})
 	append(&third, Step{kind = .Type, text = "connect(\"storage\")"})
 	append(&third, Step{kind = .Wait, text = "[console]   module     storage"})
+	// A machine whose machine key needs the machine passphrase chooses no
+	// start policy: the root service reads the choice before a passphrase
+	// can be typed. The table stays as it is.
+	append(&third, Step{kind = .Type, text = fmt.aprintf("start_policy_choose(\"%s\", \"\")", foundation.DISK_MODULE_NAME)})
+	append(&third, Step{kind = .Wait, text = "root: refused a choice of a start policy: the machine key opens with the machine passphrase, and the root service reads the choice before a passphrase can be typed", fails_on = "root: principal 0 chose the start policy"})
 	// The grant survived the restart, and the store of the nickname has its
 	// three visits.
 	disk_processes_store_steps(&third, hash, 4)

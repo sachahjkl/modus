@@ -270,6 +270,13 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 			license      = line_after(text, SPDX_IDENTIFIER_LINE_START),
 			license_file = resources.SPLEEN_LICENSE_FILE,
 		})
+		// The sizes of the boot display: the same font and license.
+		append(&works, Reused_Work {
+			what         = "Spleen 12x24, 16x32 and 32x64",
+			place        = foundation.BOOT_DISPLAY_FONT_OUTPUT,
+			license      = line_after(text, SPDX_IDENTIFIER_LINE_START),
+			license_file = resources.SPLEEN_LICENSE_FILE,
+		})
 	} else {
 		missing(problems, resources.SPLEEN_LICENSE_FILE, "Spleen 8x16")
 	}

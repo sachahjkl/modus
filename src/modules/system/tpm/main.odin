@@ -20,12 +20,16 @@
 //
 // **Grants**, as the root service gives them: the page of the registers of
 // the CRB interface of the TPM, the TPM ring and the TPM region
-// (modus:contract/tpm_service). Nothing else: no store, no window, no ring
-// to the root service.
+// (modus:contract/tpm_service), and the measure ring, which only the root
+// service writes. Nothing else: no store, no window, no ring to the root
+// service.
 //
 // **The commands of the TPM.** The service builds each one itself
 // (modus:support/tpm2): a client sends Seal or Unseal, never a raw command,
-// so no client extends a PCR or clears the TPM. Each request makes the
+// so no client extends a PCR or clears the TPM. On the measure ring the
+// root service sends Measure_Start_Policy before each start policy runs:
+// the service extends PCR 12, twice at most in one start
+// (src/md/features/start_policy.md, "The measure of the start policy"). Each request makes the
 // storage key from the owner hierarchy, uses it, and flushes it, with its
 // session: the TPM keeps no object of the system between two requests.
 //
@@ -528,6 +532,52 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	return {status = .Ok, values = {0 = tpm2.SECRET_SIZE}}
 }
 
+// The extends of PCR 12 that this service sent to the TPM in this start,
+// whether the TPM answered or not: the TPM can take an extend whose answer
+// the interface lost. The service runs
+// once in a start: a stop of it is not followed by another run.
+measure_count: int
+
+// measure_start_policy extends PCR 12 with the event digest of a start
+// policy, which the root service computed, then reads PCR 12 back for the
+// line of the root service. Past MEASURE_LIMIT extends in this start, it
+// sends no command to the TPM.
+measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
+	if refusal := tpm_service.measure_refusal(measure_count); refusal != .Ok {
+		system.log_in("devices", .Warning, "tpm: refused an extend of PCR 12: ", u64(measure_count), " extends ran in this start, the most that it takes")
+		return {status = refusal, values = {0 = u64(measure_count)}}
+	}
+	digest := transmute([tpm2.DIGEST_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
+	count := tpm2.pcr_extend_command(command_bytes[:], &digest)
+	// Counted before the command: an interface that fails after the TPM
+	// took the extend must not give one more extend to a later request.
+	measure_count += 1
+	answer, step := transact(count)
+	if step != .None {
+		return {status = .Device_Error, values = {0 = u64(step)}}
+	}
+	code, problem := tpm2.status_answer(answer)
+	if problem != .None {
+		system.log_in("devices", .Warning, "tpm: the TPM refused the extend of PCR 12 (response code ", system.Hex(u64(code)), ")")
+		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_EXTEND)
+	}
+	count = tpm2.pcr_read_command(command_bytes[:])
+	answer, step = transact(count)
+	if step != .None {
+		system.log_in("devices", .Warning, "tpm: extended PCR 12, and the interface failed at its read back: ", tpm_service.device_step_words[step])
+		return {status = .Device_Error, values = {0 = u64(step)}}
+	}
+	value: [tpm2.DIGEST_SIZE]u8
+	value, code, problem = tpm2.pcr_read_answer(answer)
+	if problem != .None {
+		system.log_in("devices", .Warning, "tpm: extended PCR 12, and its read back gave no value of PCR 12 of SHA-256 (response code ", system.Hex(u64(code)), ")")
+		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_READ)
+	}
+	system.log("tpm: extended PCR 12 with the digest of a start policy: extend ", u64(measure_count), " of ", u64(tpm_service.MEASURE_LIMIT), " in this start")
+	words := transmute([4]u64)value
+	return {status = .Ok, values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3], 4 = u64(measure_count)}}
+}
+
 // The generator of this process: it gives the lockout authorization value.
 generator: random.Generator
 
@@ -665,55 +715,80 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the buffer of the TPM is not in the page of its registers")
 	}
 	system.log("tpm: ok, the CRB interface at ", system.Hex(u64(tpm_service.REGISTERS_ADDRESS)), ", a buffer of ", u64(buffer_size), " bytes; it seals to PCR 7 and PCR 11")
+	// The measure ring of the root service. With none, no start policy is
+	// measured, and the root service says it at each start policy.
+	measures, measure_ring_status := system.ring_open(ctx.handles[tpm_service.SERVICE_MEASURE_RING])
+	measure_ring_open := measure_ring_status == .Ok
+	if !measure_ring_open {
+		system.log_in("devices", .Warning, "tpm: no measure ring: no start policy is measured into PCR 12")
+	}
 	// Before the ring: a request of unlock waits in the ring until then.
 	count_limits_log()
 	for {
 		wait := system.wait_begin()
-		for command in system.receive(&clients.commands) {
-			outcome: Outcome
-			// The first request whose keys the TPM counts: the lockout value
-			// matters from this request on, and a boot with no such request
-			// leaves the lockout hierarchy as it found it. The check has its
-			// own bound, before the bound of the request, so both stay below
-			// the bound of the client.
-			// The border of the ring: the kind and the authorization become
-			// their members here, and a word that names no member is answered
-			// with Bad_Command before any work. The secret and the value of
-			// such a request are erased from the region all the same.
-			request, request_status := tpm_service.request_of_record(command.kind, command.values)
-			if request_status != .Ok {
+		requests_serve(&clients, .Client_Ring, seeded)
+		system.wait_records(&wait, &clients.commands)
+		if measure_ring_open {
+			requests_serve(&measures, .Measure_Ring, seeded)
+			system.wait_records(&wait, &measures.commands)
+		}
+		system.wait_end(&wait)
+	}
+}
+
+// requests_serve answers each request of one ring. One thread serves both
+// rings, one request at a time, so a request of the measure ring never runs
+// in the middle of a request of a client.
+requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.Request_Source, seeded: bool) {
+	for command in system.receive(&requests.commands) {
+		outcome: Outcome
+		// The border of the ring: the kind and the authorization become
+		// their members here, and a word that names no member, or a command
+		// of the other ring, is answered with Bad_Command before any work.
+		request, request_status := tpm_service.request_of_record(command.kind, command.values, source)
+		if request_status != .Ok {
+			// The secret and the value of a refused request of a client are
+			// erased from the region all the same. A refusal on the measure
+			// ring leaves the region alone: a client can have written its
+			// secret there for its next request.
+			if source == .Client_Ring {
 				erase(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
 				erase(region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
-				if !system.send(&clients.completions, ring.Record{kind = u32(request_status), tag = command.tag}) {
-					system.log_in("devices", .Warning, "tpm: the completion queue of the TPM ring is full: a completion is lost")
-				}
-				continue
 			}
-			if !lockout_checked && request.authorization == .Value {
-				lockout_checked = true
-				lockout_authorization_check(seeded)
+			if !system.send(&requests.completions, ring.Record{kind = u32(request_status), tag = command.tag}) {
+				system.log_in("devices", .Warning, "tpm: the completion queue of a ring of the TPM service is full: a completion is lost")
 			}
-			request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
-			authorization_used = false
-			switch request.command {
-			case .None:
-				// Refused at the border above.
-				outcome = {status = .Bad_Command}
-			case .Seal:
-				outcome = seal(request.authorization)
-			case .Unseal:
-				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], request.authorization)
-			}
-			// After the flushes of the request, before its completion: the
-			// client learns the outcome only once the TPM is orderly again.
-			if authorization_used {
-				orderly_state_restore()
-			}
-			if !system.send(&clients.completions, ring.Record{kind = u32(outcome.status), tag = command.tag, values = outcome.values}) {
-				system.log_in("devices", .Warning, "tpm: the completion queue of the TPM ring is full: a completion is lost")
-			}
+			continue
 		}
-		system.wait_records(&wait, &clients.commands)
-		system.wait_end(&wait)
+		// The first request whose keys the TPM counts: the lockout value
+		// matters from this request on, and a boot with no such request
+		// leaves the lockout hierarchy as it found it. The check has its
+		// own bound, before the bound of the request, so both stay below
+		// the bound of the client.
+		if !lockout_checked && request.authorization == .Value {
+			lockout_checked = true
+			lockout_authorization_check(seeded)
+		}
+		request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
+		authorization_used = false
+		switch request.command {
+		case .None:
+			// Refused at the border above.
+			outcome = {status = .Bad_Command}
+		case .Seal:
+			outcome = seal(request.authorization)
+		case .Unseal:
+			outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], request.authorization)
+		case .Measure_Start_Policy:
+			outcome = measure_start_policy(command.values)
+		}
+		// After the flushes of the request, before its completion: the
+		// client learns the outcome only once the TPM is orderly again.
+		if authorization_used {
+			orderly_state_restore()
+		}
+		if !system.send(&requests.completions, ring.Record{kind = u32(outcome.status), tag = command.tag, values = outcome.values}) {
+			system.log_in("devices", .Warning, "tpm: the completion queue of a ring of the TPM service is full: a completion is lost")
+		}
 	}
 }

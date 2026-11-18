@@ -540,6 +540,128 @@ the_seal_with_an_authorization_value_has_its_bytes :: proc(t: ^testing.T) {
 	testing.expect(t, string(buffer[:count]) == string(expected_shutdown[:]))
 }
 
+// The measure of a start policy: TPM2_PCR_Extend of PCR 12 with one digest
+// of SHA-256, and TPM2_PCR_Read of PCR 12. The register of the start policy
+// is no register of the seal, so a new start policy changes no unseal. A
+// buffer one byte too small gives no command.
+@(test)
+the_measure_commands_have_their_bytes :: proc(t: ^testing.T) {
+	buffer: [128]u8
+	digest: [DIGEST_SIZE]u8
+	for index in 0 ..< DIGEST_SIZE {
+		digest[index] = u8(0xC0 + index)
+	}
+	count := pcr_extend_command(buffer[:], &digest)
+	expected_head := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x41, 0x00, 0x00, 0x01, 0x82, // The header: 65 bytes.
+		0x00, 0x00, 0x00, 0x0C, // PCR 12.
+		0x00, 0x00, 0x00, 0x09, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, // The empty password.
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x0B, // One digest of SHA-256.
+	}
+	testing.expect_value(t, count, len(expected_head) + DIGEST_SIZE)
+	testing.expect(t, string(buffer[:len(expected_head)]) == string(expected_head[:]))
+	testing.expect(t, string(buffer[len(expected_head):count]) == string(digest[:]))
+	testing.expect_value(t, pcr_extend_command(buffer[:count - 1], &digest), 0)
+
+	count = pcr_read_command(buffer[:])
+	expected_read := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x01, 0x7E, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0B, 0x03, 0x00, 0x10, 0x00}
+	testing.expect_value(t, count, len(expected_read))
+	testing.expect(t, string(buffer[:count]) == string(expected_read[:]))
+	testing.expect_value(t, pcr_read_command(buffer[:count - 1]), 0)
+
+	// The seal selects PCR 7 and PCR 11, never PCR 12.
+	seal_selection := PCR_SELECTION
+	measure_selection := START_POLICY_PCR_SELECTION
+	for index in 0 ..< len(seal_selection) {
+		testing.expect_value(t, seal_selection[index] & measure_selection[index], 0)
+	}
+	testing.expect_value(t, PCR_SET & (1 << START_POLICY_PCR), 0)
+}
+
+// The answer of TPM2_PCR_Read, refusals first, each giving no value: an
+// empty selection (a TPM with no SHA-256 bank), another register, another
+// bank, no digest, two digests, a digest of 31 bytes, a byte after the
+// digest, a size in the header that is not the count of the bytes, a
+// response code that is not a success, and an answer cut before its end.
+// The answer of the register asked comes last.
+@(test)
+a_pcr_read_answer_that_is_not_pcr_12_is_refused :: proc(t: ^testing.T) {
+	ANSWER_SIZE :: 10 + 4 + 10 + 4 + 2 + DIGEST_SIZE
+	good: [ANSWER_SIZE]u8
+	head := [?]u8 {
+		0x80, 0x01, 0x00, 0x00, 0x00, u8(ANSWER_SIZE), 0x00, 0x00, 0x00, 0x00, // The header: a success.
+		0x00, 0x00, 0x00, 0x07, // The update counter.
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x0B, 0x03, 0x00, 0x10, 0x00, // PCR 12 of SHA-256.
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x20, // One digest of 32 bytes.
+	}
+	copy(good[:], head[:])
+	for index in 0 ..< DIGEST_SIZE {
+		good[len(head) + index] = u8(0x40 + index)
+	}
+	Change :: struct {
+		offset: int,
+		value:  u8,
+		what:   string,
+	}
+	changes := [?]Change {
+		{22, 0x00, "an empty selection"},
+		{22, 0x08, "PCR 11"},
+		{19, 0x04, "the bank of SHA-1"},
+		{27, 0x00, "no digest"},
+		{27, 0x02, "two digests"},
+		{29, 0x1F, "a digest of 31 bytes"},
+		{9, 0x01, "a response code that is not a success"},
+	}
+	for change in changes {
+		changed := good
+		changed[change.offset] = change.value
+		value, _, problem := pcr_read_answer(changed[:])
+		testing.expectf(t, problem != .None, "%s is taken", change.what)
+		testing.expect(t, value == ([DIGEST_SIZE]u8{}))
+	}
+	// A byte after the digest, with the size of the header that counts it.
+	longer: [ANSWER_SIZE + 1]u8
+	copy(longer[:], good[:])
+	longer[5] = u8(ANSWER_SIZE + 1)
+	_, _, problem := pcr_read_answer(longer[:])
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	// The size of the header is not the count of the bytes.
+	_, _, problem = pcr_read_answer(longer[:ANSWER_SIZE])
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	// An answer cut before its end.
+	_, _, problem = pcr_read_answer(good[:ANSWER_SIZE - 1])
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	_, _, problem = pcr_read_answer(nil)
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	value: [DIGEST_SIZE]u8
+	value, _, problem = pcr_read_answer(good[:])
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect(t, string(value[:]) == string(good[len(head):]))
+}
+
+// The digest of a start policy and the value of PCR 12 after its extend,
+// from the digests of a SHA-256 of the host: the module hash 1, 2, ... 32
+// and the list hash of 32 zero bytes, as a start policy from the disk has;
+// then PCR 12 at its value of a reset, 32 zero bytes, extended with it.
+// The order of the two hashes is part of the value.
+@(test)
+the_measure_of_a_start_policy_has_its_digest :: proc(t: ^testing.T) {
+	module_hash, list_hash: [DIGEST_SIZE]u8
+	for index in 0 ..< DIGEST_SIZE {
+		module_hash[index] = u8(index + 1)
+	}
+	digest := start_policy_event_digest(&module_hash, &list_hash)
+	expected_digest := [DIGEST_SIZE]u8{0x5d, 0xa0, 0x48, 0x6d, 0x4c, 0x29, 0xe8, 0x17, 0x2c, 0x1a, 0xf3, 0xfc, 0xa3, 0xef, 0xf3, 0x4b, 0x99, 0x8f, 0xbc, 0xe3, 0x24, 0x2b, 0x21, 0x2a, 0x84, 0x60, 0x16, 0xc5, 0x77, 0x1e, 0xc5, 0xd7}
+	testing.expect(t, digest == expected_digest)
+	testing.expect(t, start_policy_event_digest(&list_hash, &module_hash) != digest)
+	reset: [DIGEST_SIZE]u8
+	value := pcr_extended(&reset, &digest)
+	expected_value := [DIGEST_SIZE]u8{0x17, 0x2f, 0xf7, 0x0c, 0xa5, 0xc6, 0x2f, 0x78, 0x53, 0x38, 0x83, 0xba, 0x79, 0x7d, 0x7d, 0xb4, 0x9f, 0xdd, 0xed, 0x3f, 0x24, 0x70, 0x95, 0xfb, 0xd4, 0x59, 0x6c, 0xaa, 0xbb, 0x2f, 0x77, 0xb7}
+	testing.expect(t, value == expected_value)
+	// Two extends are not one: the second value depends on the first.
+	testing.expect(t, pcr_extended(&value, &digest) != value)
+}
+
 // The policy with TPM2_PolicyPassword, from the digest of sha256sum: the
 // policy of PCR 7 and PCR 11 whose digest is 32 bytes of 0x11, then the
 // code of TPM2_PolicyAuthValue.
