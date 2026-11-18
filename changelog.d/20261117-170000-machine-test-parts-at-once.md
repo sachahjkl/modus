@@ -1,3 +1,0 @@
-type: Changed
-
-**The machine test runs its parts at once, and the full check runs it once.** `modustool test` starts its test parts together, at most one for each four processors of the host, the longest first, each part on a new data disk of its own, and prints the time of each part as a measure. One table of the tool holds the parts, and the guide follows it; the persistence, the self tests of the kernel, the start that fails and the tests of the loader on the host are parts too. `modustool screenshots` takes the pictures and the logs from the check of the flake, which Nix keeps in its store, so a full check runs each machine once in place of twice; the pictures then show the pointer theme of the system.
