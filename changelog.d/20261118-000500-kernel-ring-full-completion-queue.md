@@ -1,3 +1,0 @@
-type: Fixed
-
-**A command push that the ring refuses is never ignored.** A thread that leaves the completion queue of its kernel ring full loses no answer: the kernel leaves the next command unrun in the command queue and returns with no wait, then runs it after the thread reads its completions. `system.commands_call` is the one path of `src/library/support/system` into the kernel ring, under each kernel call and each wait, and runs a batch of commands in one entry: on a kernel ring that holds other records it gives `Bad_Operation` with the error record `Busy` and runs nothing, a wait then ends at once, and an answer with another tag than its command gives `Refused`. `system.stop` ends the program whatever its kernel ring holds.

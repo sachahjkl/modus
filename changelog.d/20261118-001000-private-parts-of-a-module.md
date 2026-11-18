@@ -1,3 +1,0 @@
-type: Changed
-
-**The private parts of a module.** The 16 packages of the library that one module alone compiles in leave `modus:support` for `modus:private/<module>/<part>`, with their host tests: `modus:private/storage/storage_tree` and the three other parts of the storage service, the bar and the palette of the compositor, the language and the results of the console, the three parts of the manual, and the parts of `inspect`, `debugger`, `kernel_events`, `input` and `root`. The tool refuses a private part that another module imports, and a support package that fewer than two modules reach, with the folder and the one module that reaches it.
