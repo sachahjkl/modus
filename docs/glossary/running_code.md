@@ -166,7 +166,7 @@ Do not use: phase, progress.
 
 The start policy is the one process that the root service starts to start the machine: it decides which processes start, in which order, and when the machine is usable.
 
-The root service keeps the mechanism: the checks of trust, the seed, the parts of the system that only it holds, and the start of one start policy with the start grant `Start_Policy`. That grant gives a root ring for `Start`, `Stop` and `Machine_Usable`, and the machine parts page, and nothing else. The default start policy is the module `start_policy`, which reads a start list in its order. A start policy that fails gives way to the rescue start policy.
+The root service keeps the mechanism: the checks of trust, the seed, the parts of the system that only it holds, and the start of one start policy with the start grant `Start_Policy`. That grant gives a root ring for `Start`, `Stop` and `Machine_Usable`, and the machine parts page, and nothing else. The default start policy is the module `start_policy`, which reads a start list in its order; principal 0 can choose a chosen start policy from the disk in its place. A start policy that fails gives way to the rescue start policy.
 
 The design: `src/md/features/start_policy.md`.
 
@@ -195,6 +195,14 @@ The rescue start policy is the module `start_policy` with the list `rescue_list`
 The root service starts it when the chosen start policy is absent or does not start, stops before `Machine_Usable`, or sends none within the hang bound; it first stops each process that the failed policy asked for, and writes one line with the cause. The key R and the boot entry "modus (rescue)" ask for it at one start. One module serves both policies, so the code of the rescue runs at each start.
 
 Do not use: safe mode, recovery mode, single user mode.
+
+### Chosen start policy
+
+A chosen start policy is a module of the store `module_files` that principal 0 chose as the start policy of the next start of the machine.
+
+Principal 0 chooses it with `start_policy_choose(nickname, hash)`: one row of its disk grant table, with the disk grant `Start_Policy` and nothing else. The root service reads the choice before any start policy runs, so only a machine whose machine key opens with no passphrase can choose. It loads the file, checks its hash, measures it into PCR 12, and starts it with the start grant `Start_Policy` only. A failure starts the rescue start policy. Its row gives it no other grant.
+
+Do not use: custom init, boot policy.
 
 ### Machine parts page
 

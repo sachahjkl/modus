@@ -350,6 +350,23 @@ Root_Command :: enum u32 {
 	// one from a start policy that the root service no longer waits for,
 	// is refused with `Exists` (unit `Processes`).
 	Machine_Usable = 27,
+	// Start_Policy_Choice sets the start policy that the next start of the
+	// machine runs (src/md/features/start_policy.md, "A start policy from
+	// the disk"): values[0..3] the hash of its module file, values[4..6]
+	// the nickname, as Start_From_Disk carries them. The hash 0 takes the
+	// hash of the row of the nickname. A nickname of no byte ends the
+	// choice: the next start runs the default start policy. The caller must
+	// act for principal 0 (`No_Grant`, unit `Acts_For_Principal`; a caller
+	// of a named principal gets `Absent`, unit `Principals`). The choice
+	// is refused with `Refused` (unit `Principals`) when the machine key
+	// does not open with no passphrase, as the root service reads the
+	// choice before a passphrase can be typed; with `Absent` (unit `Grants`)
+	// for a nickname with no row and no hash; with `Exists` (unit `Grants`)
+	// for a row with another hash, the value the first 8 bytes of the hash
+	// of the row; with `Reserved` (unit `Grants`) for a row that holds the
+	// grant store; with `Full` (unit `Grants`) for a full table; and with
+	// `Refused` while the table takes no change.
+	Start_Policy_Choice = 28,
 }
 
 // The enumerations below are words of the root ring: each value is the
@@ -487,6 +504,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Principal_Change_End   = .Principals,
 	.Remote_Client          = .Root_Ring,
 	.Machine_Usable         = .Start_Policy,
+	.Start_Policy_Choice    = .Root_Ring,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -661,6 +679,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Principal_Change_End   = .Command,
 	.Remote_Client          = .Command,
 	.Machine_Usable         = .Command,
+	.Start_Policy_Choice    = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -832,6 +851,7 @@ root_command_names := [Root_Command]string {
 	.Principal_Change_End   = "Principal_Change_End",
 	.Remote_Client          = "Remote_Client",
 	.Machine_Usable         = "Machine_Usable",
+	.Start_Policy_Choice    = "Start_Policy_Choice",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -866,6 +886,7 @@ root_first_argument_names := [Root_Command]string {
 	.Principal_Change_End   = "name",
 	.Remote_Client          = "key",
 	.Machine_Usable         = "name",
+	.Start_Policy_Choice    = "nickname",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -901,6 +922,7 @@ root_second_argument_names := [Root_Command]string {
 	.Principal_Change_End   = "",
 	.Remote_Client          = "action",
 	.Machine_Usable         = "",
+	.Start_Policy_Choice    = "hash",
 }
 
 // command_of_record reads the command that an error record names: the

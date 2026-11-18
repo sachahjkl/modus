@@ -504,7 +504,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk process reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The table persists only under a key of its principal, with a tag of keyed BLAKE2b; a table whose tag fails gives no grant. It is not the table of the roles of the boot image (`process_roles`).
+The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk process reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The table persists only under a key of its principal, with a tag of keyed BLAKE2b; a table whose tag fails gives no grant. Principal 0 keeps its chosen start policy there. It is not the table of the roles of the boot image (`process_roles`).
 
 The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk process".
 

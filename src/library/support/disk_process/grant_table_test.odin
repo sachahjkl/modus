@@ -303,7 +303,11 @@ hostile_tables :: proc(t: ^testing.T) {
 		{TABLE_HEADER_SIZE + ROW_OFFSET_LENGTH, NAME_LIMIT + 1, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_NICKNAME, '.', .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_NICKNAME + 20, 'x', .Bad_Row},
-		{TABLE_HEADER_SIZE + ROW_OFFSET_GRANTS, 2, .Bad_Row},
+		// One past the last grant, the largest byte, and a start policy
+		// with the grant store.
+		{TABLE_HEADER_SIZE + ROW_OFFSET_GRANTS, u8(1) << (u8(max(Disk_Grant)) + 1), .Bad_Row},
+		{TABLE_HEADER_SIZE + ROW_OFFSET_GRANTS, max(u8), .Bad_Row},
+		{TABLE_HEADER_SIZE + ROW_OFFSET_GRANTS, transmute(u8)Disk_Grants{.Store, .Start_Policy}, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_PERSISTENCE, 3, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_SIZE - 1, 1, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_SIZE, 1, .Bytes_After_Rows},
@@ -428,4 +432,97 @@ no_command_gives_a_disk_process_a_root_ring :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, !root_ring.root_ring_given(given_by_a_command))
 	testing.expect(t, .Store in given_by_a_command)
+}
+
+// The choice of a start policy, refusals first, each with no change of the
+// table: a nickname that names no module (no row and no hash), a hash that
+// does not match the row, a row that holds the grant store, and a full
+// table for a new nickname. Then a policy from the disk that asks for
+// another grant: allow of store on its row, and allow of the grant
+// Start_Policy by a grant command, are refused. The choices that pass come
+// last: one row holds the grant, and a new choice takes it from the row
+// before, which keeps its row.
+@(test)
+a_start_policy_choice_is_refused_before_any_change :: proc(t: ^testing.T) {
+	table: Grant_Table
+	first, second := hash_of(1), hash_of(100)
+	testing.expect_value(t, table_start_policy_choose(&table, "nobody", {}), Table_Problem.No_File)
+	testing.expect_value(t, table.count, 0)
+	testing.expect_value(t, table_start_policy_end(&table), Table_Problem.Absent)
+	testing.expect_value(t, table_allow(&table, "visitor", first, .Store), Table_Problem.None)
+	before := table
+	testing.expect_value(t, table_start_policy_choose(&table, "visitor", second), Table_Problem.Other_File)
+	testing.expect_value(t, table_start_policy_choose(&table, "visitor", {}), Table_Problem.Holds_Store)
+	testing.expect_value(t, table_start_policy_choose(&table, "visitor", first), Table_Problem.Holds_Store)
+	testing.expect(t, table == before)
+	testing.expect(t, table_start_policy_row(&table) == nil)
+	// A full table takes no new nickname, and changes nothing.
+	full: Grant_Table
+	names := [ROW_CAPACITY]string{"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "b0", "b1", "b2", "b3", "b4", "b5"}
+	for name, index in names {
+		testing.expect_value(t, table_allow(&full, name, hash_of(u8(index + 1)), .Store), Table_Problem.None)
+	}
+	full_before := full
+	testing.expect_value(t, table_start_policy_choose(&full, "tiny", second), Table_Problem.Full)
+	testing.expect(t, full == full_before)
+	// The choice binds a new nickname to the hash of the command.
+	testing.expect_value(t, table_start_policy_choose(&table, "tiny", second), Table_Problem.None)
+	row := table_start_policy_row(&table)
+	testing.expect(t, row != nil && row_nickname(row) == "tiny" && row.hash == second && row.grants == {.Start_Policy} && row.persistence == .Persist)
+	// The start policy takes no other grant, and a grant command never
+	// gives the grant Start_Policy.
+	chosen := table
+	testing.expect_value(t, table_allow(&table, "tiny", second, .Store), Table_Problem.Start_Policy_Row)
+	testing.expect_value(t, table_allow(&table, "visitor", first, .Start_Policy), Table_Problem.Start_Policy_Row)
+	testing.expect_value(t, table_allow(&table, "fresh", hash_of(50), .Start_Policy), Table_Problem.Start_Policy_Row)
+	testing.expect(t, table == chosen)
+	// A second choice of the same row with its hash, and with no hash.
+	testing.expect_value(t, table_start_policy_choose(&table, "tiny", second), Table_Problem.None)
+	testing.expect_value(t, table_start_policy_choose(&table, "tiny", {}), Table_Problem.None)
+	testing.expect(t, table_holds_a_start_policy(&table))
+	// A new choice moves the grant: one row holds it at most, and the row
+	// before stays.
+	testing.expect_value(t, table_allow(&table, "other", hash_of(50), .Store), Table_Problem.None)
+	testing.expect_value(t, table_disallow(&table, "other", .Store), Table_Problem.None)
+	testing.expect_value(t, table_start_policy_choose(&table, "other", {}), Table_Problem.None)
+	row = table_start_policy_row(&table)
+	testing.expect(t, row != nil && row_nickname(row) == "other")
+	tiny := table_find(&table, "tiny")
+	testing.expect(t, tiny != nil && tiny.grants == {})
+	// The end of the choice keeps the row.
+	testing.expect_value(t, table_start_policy_end(&table), Table_Problem.None)
+	testing.expect(t, !table_holds_a_start_policy(&table))
+	testing.expect(t, table_find(&table, "other") != nil)
+	testing.expect_value(t, table_start_policy_end(&table), Table_Problem.Absent)
+}
+
+// The persisted form keeps the choice, and its border refuses two rows
+// with the grant Start_Policy, which the key of the tag signed.
+@(test)
+a_table_with_two_start_policies_is_refused :: proc(t: ^testing.T) {
+	table: Grant_Table
+	key := key_of(7)
+	testing.expect_value(t, table_start_policy_choose(&table, "tiny", hash_of(1)), Table_Problem.None)
+	bytes: [TABLE_SIZE]u8
+	table_encode(&table, &key, &bytes)
+	read, problem := table_decode(bytes[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.None)
+	row := table_start_policy_row(&read)
+	testing.expect(t, row != nil && row_nickname(row) == "tiny" && row.hash == hash_of(1))
+	// The table of a named principal never holds a start policy; the table
+	// of principal 0 does, and a table with none passes for each.
+	testing.expect_value(t, table_principal_problem(&read, false), Table_File_Problem.Start_Policy_Of_A_Named_Principal)
+	testing.expect_value(t, table_principal_problem(&read, true), Table_File_Problem.None)
+	empty: Grant_Table
+	testing.expect_value(t, table_principal_problem(&empty, false), Table_File_Problem.None)
+	// A second row with the grant, under another nickname.
+	twice := bytes
+	copy(twice[TABLE_HEADER_SIZE + ROW_SIZE:][:ROW_SIZE], bytes[TABLE_HEADER_SIZE:][:ROW_SIZE])
+	twice[TABLE_HEADER_SIZE + ROW_SIZE + ROW_OFFSET_NICKNAME] = 'x'
+	twice[TABLE_OFFSET_COUNT] = 2
+	tag := table_tag(&key, &twice)
+	copy(twice[TABLE_OFFSET_TAG:], tag[:])
+	_, problem = table_decode(twice[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Two_Start_Policies)
+	testing.expect(t, len(table_problem_sentences[.Two_Start_Policies]) > 0)
 }

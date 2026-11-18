@@ -164,6 +164,12 @@ unlock_values_write :: proc "contextless" (values: ^system.Context_Values) {
 	system.values_put(values, system.GRANT_VALUE_UNLOCK_NAME, packed[:])
 }
 
+// unlock_without_window says if a start of a name is the start of `unlock`
+// that reads the machine key before the start policy: it gets no window.
+unlock_without_window :: proc "contextless" (name: string) -> bool {
+	return name == "unlock" && unlock_run.stage == .Starting && unlock_run.mode == .Machine_Key_Without_Window
+}
+
 // unlock_stop_ask says that this service asks the stop of the `unlock`
 // that runs: its stop does not count.
 unlock_stop_ask :: proc "contextless" () {

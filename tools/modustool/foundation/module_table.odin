@@ -180,6 +180,9 @@ module_builds := [?]Module_Build {
 	// its bytes (disk_processes.odin).
 	{name = STORE_LIBRARY_MODULE, source = TEST_MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
 	{name = STORE_IMPORTER_MODULE, source = TEST_MODULE_SOURCES + STORE_IMPORTER_MODULE, entry = true, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
+	// A start policy in the store `module_files` only: principal 0 chooses
+	// it, and the next start runs it (src/md/features/start_policy.md).
+	{name = DISK_START_POLICY_MODULE, source = TEST_MODULE_SOURCES + DISK_START_POLICY_MODULE, entry = true, image = true, disk = true},
 }
 
 // module_in_boot_image says if the boot image holds the file of a module.
@@ -254,3 +257,8 @@ DISK_MODULE_NAME :: "visitor"
 STORE_LIBRARY_MODULE :: "store_library"
 
 STORE_IMPORTER_MODULE :: "store_importer"
+
+// The start policy that the tool writes in the store `module_files` of the
+// disk of the start policy from the disk: a row of the module table that is
+// not in the boot image.
+DISK_START_POLICY_MODULE :: "disk_start_policy"

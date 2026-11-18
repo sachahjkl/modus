@@ -99,6 +99,12 @@ Persisted_Table :: struct {
 
 persisted_tables: [principals.PRINCIPAL_CAPACITY]Persisted_Table
 
+// The record of the machine key opens with no passphrase: unlock reported a
+// record sealed by the TPM alone, or made one in this run. Only then is a
+// choice of a start policy read before the start policy runs
+// (start_policy_choice.odin).
+machine_key_without_passphrase: bool
+
 // persisted_tables_start gives each named principal the state Awaited: its
 // key comes at its first unlock. Principal 0 starts with no passphrase,
 // until `unlock` reports a record of the machine passphrase.
@@ -222,8 +228,10 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 		table.state = .Awaited
 		switch report.form {
 		case .Sealed_By_The_Tpm:
+			machine_key_without_passphrase = true
 			system.log_in("processes", .Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
 		case .Passphrase:
+			machine_key_without_passphrase = false
 			system.log_in("processes", .Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
 		}
 		return .Ok
@@ -248,6 +256,11 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 		}
 		table.key = key
 		table.key_new = key_new
+		// A new record comes from the one run of unlock that this service
+		// started for it: a seal by the TPM has no passphrase.
+		if key_new {
+			machine_key_without_passphrase = unlock_run.mode == .Seal_Machine_Key
+		}
 		table.state = .Reading
 		persisted_table_read_begin(principals.MACHINE)
 		return .Ok
@@ -650,6 +663,10 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		problem := disk_process.Table_File_Problem.None
 		if !absent {
 			from_disk, problem = disk_process.table_decode(text, &table.key)
+		}
+		// Only principal 0 chooses the start policy of the machine.
+		if !absent && problem == .None {
+			problem = disk_process.table_principal_problem(&from_disk, principal == principals.MACHINE)
 		}
 		persisted_table_end(principal)
 		decision := disk_process.table_read_decision(absent, problem, table.key_new)

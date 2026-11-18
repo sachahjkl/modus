@@ -19,7 +19,7 @@ The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine k
 
 ### The TPM service
 
-The process `tpm` is the device service of the TPM. The root service starts it at boot, before `unlock`, only when the trust record says `Measured`: the TPM is there and PCR 11 holds the measure. It gives the process the page of the registers, a ring and a region of one page. The process has no other grant.
+The process `tpm` is the device service of the TPM. The root service starts it at boot, before `unlock`, only when the trust record says `Measured`: the TPM is there and PCR 11 holds the measure. It gives the process the page of the registers, a ring and a region of one page, and the measure ring below. The process has no other grant.
 
 `unlock` is its one client. The root service gives the same ring and region to each run of `unlock` with the start grant `Tpm`. The ring has two commands:
 
@@ -29,6 +29,8 @@ The process `tpm` is the device service of the TPM. The root service starts it a
 | `Unseal` | The public area and the private area | The 32 secret bytes |
 
 Each command can also carry an authorization value, for the keys of a named principal ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)) and for the machine key under a machine passphrase ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md)). The machine key of this form has none.
+
+The root service has a second ring of its own, the measure ring, with one command, `Measure_Start_Policy`: the service extends PCR 12 with the digest of each start policy, twice at most in one start ([start_policy.md](start_policy.md), "The measure of the start policy"). The ring of `unlock` refuses that command, and the measure ring refuses `Seal` and `Unseal`. The seal selects PCR 7 and PCR 11 only, so PCR 12 changes no unseal.
 
 The service builds each TPM command itself. No client sends a raw command: a client that sends `TPM2_PCR_Extend` changes the measure, and one that sends `TPM2_Clear` destroys every key of the TPM.
 

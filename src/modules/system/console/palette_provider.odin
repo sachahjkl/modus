@@ -821,6 +821,7 @@ palette_commands_add :: proc "contextless" () {
 	named := [?]Named {
 		{"start", {"name", ""}},
 		{"start_from_disk", {"name", "hash"}},
+		{"start_policy_choose", {"nickname", "hash"}},
 		{"stop", {"name", ""}},
 		{"grants", {"name", ""}},
 		{"revoke", {"name", "grant"}},

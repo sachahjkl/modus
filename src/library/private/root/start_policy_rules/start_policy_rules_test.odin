@@ -5,6 +5,7 @@ import "core:testing"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/root_ring"
+import "modus:contract/start_list"
 
 // The facts of a Start that runs: the sender runs, the name does not run,
 // it is in the image, and it is no start policy.
@@ -75,6 +76,68 @@ a_machine_usable_that_is_not_the_first_of_the_policy_is_refused :: proc(t: ^test
 	status, refusal := usable_decision(true, .Running)
 	testing.expect_value(t, status, op.Status.Ok)
 	testing.expect_value(t, refusal, [7]u64{})
+}
+
+// The bound of the restarts of a start policy from the disk, edges first:
+// one past the bound, the largest count, and a full table of the counts
+// are refused with No_Budget and their records; then the bound itself, 1
+// and 0 pass. A start policy of the boot image is never refused here,
+// whatever its count.
+@(test)
+a_restart_past_the_bound_of_a_start_policy_from_the_disk_is_refused :: proc(t: ^testing.T) {
+	refused := [?]u64{start_list.RESTART_LIMIT + 1, start_list.RESTART_LIMIT + 2, max(u64)}
+	for earlier in refused {
+		testing.expectf(t, restart_refusal(true, earlier, false) == .No_Budget, "the start after %d starts is taken", earlier)
+		record := errors.completion_record(restart_record(earlier, false))
+		testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Over_Limit)
+		testing.expect_value(t, record.limit, i64(start_list.RESTART_LIMIT))
+		testing.expect_value(t, record.value, i64(min(earlier, 1 << 62)))
+		testing.expect_value(t, record.operation, i64(root_ring.Root_Command.Start))
+		testing.expect_value(t, restart_refusal(false, earlier, false), op.Status.Ok)
+	}
+	full := [?]u64{0, 1, start_list.RESTART_LIMIT}
+	for earlier in full {
+		testing.expect_value(t, restart_refusal(true, earlier, true), op.Status.No_Budget)
+		record := errors.completion_record(restart_record(earlier, true))
+		testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Full)
+		testing.expect_value(t, errors.Unit(record.unit), errors.Unit.Records)
+		testing.expect_value(t, record.limit, i64(RESTARTED_NAME_CAPACITY))
+		testing.expect_value(t, restart_refusal(false, earlier, true), op.Status.Ok)
+	}
+	testing.expect_value(t, restart_refusal(true, start_list.RESTART_LIMIT, false), op.Status.Ok)
+	testing.expect_value(t, restart_refusal(true, 1, false), op.Status.Ok)
+	testing.expect_value(t, restart_refusal(true, 0, false), op.Status.Ok)
+}
+
+// A choice of a start policy, refusals first, in the order of the checks: a
+// caller of a named principal, whatever the machine key; a machine with no
+// record of its machine key; a machine key that needs a passphrase. The
+// choice that passes comes last.
+@(test)
+a_choice_of_a_start_policy_is_refused_by_its_facts :: proc(t: ^testing.T) {
+	Case :: struct {
+		facts:   Choice_Facts,
+		refusal: Choice_Refusal,
+		kind:    errors.Kind,
+	}
+	cases := [?]Case {
+		{{caller_is_principal_0 = false, machine_key_record = true, machine_key_without_passphrase = true}, .Named_Principal, .Absent},
+		{{caller_is_principal_0 = false}, .Named_Principal, .Absent},
+		{{caller_is_principal_0 = true}, .No_Machine_Key, .Refused},
+		{{caller_is_principal_0 = true, machine_key_without_passphrase = true}, .No_Machine_Key, .Refused},
+		{{caller_is_principal_0 = true, machine_key_record = true}, .Passphrase, .Refused},
+	}
+	for item in cases {
+		refusal := choice_refusal(item.facts)
+		testing.expectf(t, refusal == item.refusal, "%v: %v, expected %v", item.facts, refusal, item.refusal)
+		record := errors.completion_record(choice_record(refusal))
+		testing.expect_value(t, errors.Kind(record.kind), item.kind)
+		testing.expect_value(t, errors.Unit(record.unit), errors.Unit.Principals)
+		testing.expect_value(t, record.operation, i64(root_ring.Root_Command.Start_Policy_Choice))
+	}
+	allowed := Choice_Facts{caller_is_principal_0 = true, machine_key_record = true, machine_key_without_passphrase = true}
+	testing.expect_value(t, choice_refusal(allowed), Choice_Refusal.None)
+	testing.expect_value(t, choice_record(.None), [7]u64{})
 }
 
 // A refused Stop of a start policy gives Absent, the one record for a name

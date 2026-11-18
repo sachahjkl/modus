@@ -89,6 +89,13 @@ Unlock_Mode :: enum u64 {
 	// Make a new recovery key for the named principal whose session runs,
 	// after its current passphrase, and show it one time.
 	New_Recovery_Key        = 6,
+	// Read the record of the machine key, have the TPM unseal a record
+	// sealed by the TPM with no passphrase, report the record to the root
+	// service, and stop: no window, no file of a named principal, no
+	// recovery key. The root service starts this mode before the start
+	// policy, to read the choice of principal 0
+	// (src/md/features/start_policy.md, "What the root service keeps in code").
+	Machine_Key_Without_Window = 7,
 }
 
 // unlock_mode_of_word reads the word of VALUE_MODE. A word that names no
@@ -119,6 +126,8 @@ mode_words :: proc "contextless" (mode: Unlock_Mode) -> string {
 		return "a change of the passphrase"
 	case .New_Recovery_Key:
 		return "a new recovery key"
+	case .Machine_Key_Without_Window:
+		return "the machine key before the start policy"
 	}
 	// Only a conversion that skips unlock_mode_of_word reaches this line:
 	// it is said, not taken for an unlock.
@@ -183,7 +192,7 @@ change_end_sentences := [Change_End]string {
 change_problem :: proc "contextless" (form: Principal_Record_Form, mode: Unlock_Mode, has_tpm: bool, seal_allowed: bool) -> Change_Problem {
 	switch mode {
 	case .Change_Passphrase, .New_Recovery_Key:
-	case .Unlock, .Create_Principal, .Set_Machine_Passphrase, .Unlock_Machine_Key_Held, .Seal_Machine_Key:
+	case .Unlock, .Create_Principal, .Set_Machine_Passphrase, .Unlock_Machine_Key_Held, .Seal_Machine_Key, .Machine_Key_Without_Window:
 		return .Unknown_Change
 	}
 	switch form {

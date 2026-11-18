@@ -341,8 +341,9 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 		start_grant_put(work, .Terminal_Text, {work.shared[1], {.Read, .Write}})
 		return .Ok
 	}
-	// The start policy has no window (root_ring.role_handles).
-	if .Start_Policy in work.role.grants {
+	// The start policy has no window (root_ring.role_handles), and neither
+	// has the run of `unlock` before it, as no compositor runs yet.
+	if .Start_Policy in work.role.grants || unlock_without_window(work.name) {
 		return .Ok
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
