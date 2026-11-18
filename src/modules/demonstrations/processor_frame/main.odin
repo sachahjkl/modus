@@ -42,6 +42,11 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
+// The program draws through the drawing module only: the interface
+// package declares its exports with this setting, which the row of the
+// program in the module table gives (tools/modustool/modules.odin).
+#assert(interface.DRAWING_THROUGH_MODULE, "processor_frame is built with -define:DRAWING_THROUGH_MODULE=true")
+
 // The reference screen:
 // (src/md/features/desktop_to_browser.md, "The reference screen").
 SCREEN_WIDTH :: 1920
