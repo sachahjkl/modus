@@ -25,7 +25,7 @@ SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOL
 // The folders of the sources that a move removed. The check of the source
 // paths in the documents reads a code span that starts with one of them,
 // and refuses it: a document that still names the old place is stale.
-SOURCE_FOLDERS_GONE :: [?]string{"src/processes"}
+SOURCE_FOLDERS_GONE :: [?]string{"src/programs"}
 
 // The module groups (src/md/infrastructure/repository_layout.md, "The
 // module groups"): the folder of src/modules that holds a module says what
