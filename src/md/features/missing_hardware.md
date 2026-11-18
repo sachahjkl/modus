@@ -16,7 +16,7 @@ Each absence has the same three parts:
 2. **One line.** The line names the part and what the system does without it: `input: no PS/2 controller: no keyboard and no mouse`. A line is written once, at the place where the absence is found, by the process that found it.
 3. **A smaller system.** The capability is absent and the rest runs:
    - a service that cannot serve stops with its code; its clients get `Gone`;
-   - the root service refuses a start that needs the absent part, and starts the others;
+   - the start policy does not start a process that needs the absent part, and starts the others ([start_policy.md](start_policy.md));
    - a kernel part that is absent at the start is off, with its line, when a safe form without it exists. With no time base, the kernel stops with `Start_Failed` and the line.
 
 The places, by the risk for a user:
@@ -24,8 +24,8 @@ The places, by the risk for a user:
 | Part | Today | The form |
 |---|---|---|
 | A disk that stops to answer | The storage service and each client of the store wait with no end | A deadline for each block request; the storage service holds the handle of the block service; past the deadline it is broken, writes its line and refuses changes |
-| No screen | The root service stops to serve its ring | The root service starts no console, writes its line and starts the other services |
 | No PIT | The first processor hangs before its first line | Built. The calibration wait is bounded by the cycle counter; an output of the 8254 that is high before its count starts is no 8254. The frequency of the cycle counter that CPUID leaf 0x15 or 0x16 of a processor of Intel states is then the time base, and the timer is measured against the cycle counter; with none, the line and `Start_Failed`. The start of the other processors waits with the cycle counter, never with the 8254 |
+| No screen | The root service stops to serve its ring | The default start policy starts no console, writes its line and starts the other rows of its start list ([start_policy.md](start_policy.md)) |
 | No PS/2 controller | The input service spins on one processor for ever | The input service writes its line and stops; the root service starts the other services |
 | A frame service that stops after it maps its ring | The network service waits with no end | The network service holds the handle of the frame service, writes its line and stops |
 | An IOMMU unit that does not finish its first invalidation | The machine stops | Built. No device service holds memory yet, so the units go off and the machine runs as a machine with no IOMMU, with its line. The first invalidations are each one that the start of the units makes: the global one, the interrupt entries of VT-d, and the entries of each requester of AMD-Vi |

@@ -15,9 +15,18 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **No PS/2 controller.** The input service writes one line and stops in place of a spin on one processor, and the desktop runs with no keyboard and no mouse. [Design](src/md/features/missing_hardware.md)
 - **A frame service that stops.** The network service ends its wait when the frame service stops, writes one line and stops, so the root service refuses the network and starts the rest. [Design](src/md/features/missing_hardware.md)
 - **An entropy read that never completes.** A read past its deadline counts as refused, with its line, so the fresh bytes do not stop in silence. [Design](src/md/features/missing_hardware.md)
+- **A start policy in place of the fixed list of the root service.** The order of the start becomes data that a replaceable start policy reads, with a signed rescue when it fails, so a failed console no longer stops the machine. The key R at the start, or the boot entry "modus (rescue)" of the firmware, forces the rescue. [Design](src/md/features/start_policy.md)
+- **A start policy from the disk.** Principal 0 chooses a start policy that a third party publishes, by its hash, and it runs at the next start with only the start grant `Start_Policy`. Each start policy is measured into PCR 12, so an attestation sees which one ran. [Design](src/md/features/start_policy.md)
+- **The remote display.** A principal sees and drives the desktop of a machine from the viewer of gui_toolkit, over QUIC with a client key that it allowed for the view or for the view and the input, with a mark in the bar while the viewer is connected. [Design](src/md/features/remote_display.md)
 
 ## Later
 
+- **A screen of memory.** A machine with no screen still has a desktop, at a size that its start list or a viewer gives, and a viewer sees it. [Design](src/md/features/remote_display.md)
+- **An interface of the remote display for agents.** An agent takes a picture of the screen, and waits for the screen to settle or to change, from the damage of the compositor. [Design](src/md/features/remote_display.md)
+- **The remote display in a browser.** A gateway gives the remote display to a browser by WebTransport, with a display token of one day that the viewer renews up to an absolute end that the principal gives, and that the principal can revoke, so a principal needs no viewer to install. [Design](src/md/features/remote_display.md)
+- **The remote display in a browser by WebSocket.** A browser with no WebTransport reaches the same gateway by WebSocket, with the same token. [Design](src/md/features/remote_display.md)
+- **The remote display through VNC and RDP.** A gateway gives the remote display to a client of VNC, then of RDP. [Design](src/md/features/remote_display.md)
+- **A video codec for the remote display.** The pixel updates are coded in H.264 or AV1 when a measure of the bandwidth needs it, on the processor first, then through the GPU. [Design](src/md/features/remote_display.md)
 - **A machine check or an NMI that stops one process.** The kernel reads the error of the machine check, and a corrected error or an error in the memory of one process gives a line or the stop of that process in place of a stop of the machine. [Design](src/md/features/missing_hardware.md)
 
 - **The bus master off before a device service stops.** The root service turns the bus master of a device off, then stops its device service, for each device service, in place of stopping the service first. A device then makes no access to memory between the stop of its service and the reap, also on a machine with no IOMMU. [Design](src/md/features/device_services.md)
