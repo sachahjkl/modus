@@ -251,6 +251,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
 	foundation.SOURCE_FOLDER_PRIVATE + "/compositor/quality",
 	foundation.SOURCE_FOLDER_CONTRACT + "/palette_table",
+	foundation.SOURCE_FOLDER_SUPPORT + "/bootscreen",
 	foundation.SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
 	foundation.SOURCE_FOLDER_SUPPORT + "/graphics",
 	foundation.SOURCE_FOLDER_SUPPORT + "/interface",

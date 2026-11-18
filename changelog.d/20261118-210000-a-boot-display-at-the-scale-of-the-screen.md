@@ -1,0 +1,3 @@
+type: Changed
+
+**A boot display at the scale of the screen.** The boot display takes one scale from 1.25 to 2 in eighths, the largest whose panel fits the screen with a margin of 8 pixels, keeps its proportions and stands in the middle of the screen: 1.5 on the screen of 1920 × 1080, a panel of 1464 × 1062 in place of 976 × 708. Each card, bar, gap, mark and text is drawn at that scale, each edge rounded once to the nearest pixel. The root service draws the text from the outlines of Paper Mono at the size of the cell; the boot program, which reads no font of the boot image, draws Spleen 8x16 in the middle of each scaled cell; at a scale other than 1 the titles and names are in the font of the cells. A screen that holds no scale of the range keeps scale 1.

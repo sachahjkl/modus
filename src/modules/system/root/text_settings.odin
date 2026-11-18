@@ -8,6 +8,7 @@ import "modus:support/display"
 import "modus:contract/settings"
 import "modus:support/graphics"
 import "modus:support/system"
+import "modus:support/vector_font"
 
 // The text of the system and the settings of the system (docs/FONTS.md):
 // this service creates the settings page, checks the hashes and the format
@@ -33,6 +34,7 @@ glyph_cache_resources := [settings.Glyph_Cache]string {
 
 settings_memory: system.Handle
 boot_interface_font: display.Interface_Font // The interface font of the boot display, from the boot image.
+boot_glyph_memory: bootscreen.Scaled_Glyph_Memory // The glyphs of the boot display at a cell that no glyph cache holds.
 settings_page: ^settings.Page
 glyph_cache_mappings: [settings.Glyph_Cache]system.Mapping // page_count 0: no such glyph cache.
 // The font outlines of the boot image: page_count 0 when the image has
@@ -78,9 +80,12 @@ text_settings_create :: proc "contextless" () {
 	}
 	// The font outlines, given only when their hash is right and their
 	// format valid, as a glyph cache; and the demand cache beside them.
+	outlines: font_outlines.Outlines
 	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
-		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
+		problem: font_outlines.Problem
+		outlines, problem = font_outlines.validate(image[entry.offset:][:entry.size])
+		if problem.kind == .None {
 			font_outlines_mapping = mapping
 		} else {
 			system.log_in("processes", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
@@ -97,6 +102,20 @@ text_settings_create :: proc "contextless" () {
 	}
 	if glyph_cache_mappings[.Bold].page_count != 0 {
 		graphics.text_bold_cache_use(caches[.Bold])
+	}
+	// The boot display at a scale of eighths: the font file of the cells,
+	// the one whose hash the cache of the cells names, drawn at the size of
+	// a cell that no cache holds (src/md/features/boot_display_scale.md).
+	if font_outlines_mapping.page_count != 0 {
+		for &record, index in outlines.records {
+			if record.hash != caches[.With_Grid_Fit].header.font_hash {
+				continue
+			}
+			if problem := bootscreen.cell_font_use(font_outlines.font_bytes(&outlines, index), &boot_glyph_memory); problem != .None {
+				system.log_in("processes", .Warning, "root: the font of the cells is refused for the boot display: ", vector_font.font_problem_names[problem], ": its text at a scale of eighths is the whole scale below")
+			}
+			break
+		}
 	}
 	// The boot display: its titles and the names of its facts in the
 	// interface font, from the same caches that the processes receive.
