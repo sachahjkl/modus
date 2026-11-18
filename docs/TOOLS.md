@@ -1039,7 +1039,7 @@ The machine test is a list of test parts. A test part is one or more machines th
 
 `modustool test <part>` runs one part only, for the work on it, and builds only the boot volumes of its row ("The incremental build", "The volumes of a command"). An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
 
-The table is in the tool (`test_parts`, `tools/modustool/test_parts.odin`), and a host test checks each line below against it: a new part is one row there and one line here.
+The table is in the tool (`test_parts`, `tools/modustool/machine/test_parts.odin`), and a host test checks each line below against it: a new part is one row there and one line here.
 
 | Part | What it checks | Its boot volumes |
 |---|---|---|
@@ -1097,7 +1097,7 @@ The instruction address is RIP in 64-bit code, and the base of CS plus EIP in th
 - **The firmware**: its flash, which QEMU maps under 4 GiB with the sizes of the code file and of the variable store of the machine, and the copy of the end of the flash under 1 MiB. A processor that waits for its start is at the reset vector, in the flash.
 - **No known code**: any other address. The firmware also runs code that it copied to memory, and the boot program is where the firmware loaded it; the tool knows neither range, so such an address is no known code. The registers in the file still give it.
 
-This read never makes a test fail, and never hides the first fault: the line of the failed step comes first. If QEMU ended or does not answer, the tool writes one line, "modustool: the processors of <log> at the failure: none: ...", and goes on. A text that the reader of the tool refuses gives one line with the fault, and the file keeps the text. A host test gives the reader damaged texts first (`tools/modustool/processor_state_test.odin`).
+This read never makes a test fail, and never hides the first fault: the line of the failed step comes first. If QEMU ended or does not answer, the tool writes one line, "modustool: the processors of <log> at the failure: none: ...", and goes on. A text that the reader of the tool refuses gives one line with the fault, and the file keeps the text. A host test gives the reader damaged texts first (`tools/modustool/machine/processor_state_test.odin`).
 
 ### The operation sequences
 
@@ -1206,7 +1206,7 @@ Host tests check the writer with the code of the open of the storage service (`s
 
 ### The clock of a test machine
 
-The setting `appearance` is `auto` on a new disk, and `auto` follows the hour of the day (`docs/DESIGN.md`, "The appearances"). So the tool gives each test machine a real-time clock at 01:00 UTC of the day of the host (`-rtc base=`, `tools/modustool/machine_clock.odin`): each picture of a test is in the dark appearance, whatever the hour of the run, and a run has six hours before 07:00. `modustool run` gives the machine the clock of the host.
+The setting `appearance` is `auto` on a new disk, and `auto` follows the hour of the day (`docs/DESIGN.md`, "The appearances"). So the tool gives each test machine a real-time clock at 01:00 UTC of the day of the host (`-rtc base=`, `tools/modustool/machine/machine_clock.odin`): each picture of a test is in the dark appearance, whatever the hour of the run, and a run has six hours before 07:00. `modustool run` gives the machine the clock of the host.
 
 The tool keeps the difference between the clock that it gave and the clock of the host. Each check of a date of the machine (the step `Date`, a call with `date_after`, the field `Date` of `server`) takes the difference off, then checks the date by order against the clock of the host.
 
@@ -1357,7 +1357,7 @@ The outputs of the record are the files of the volume that a machine or a test r
 | `measure`, with each argument but `shortage`, and `screenshots` | The volume `measure`: `screenshots` takes the machine test from the check of the flake, and starts only its measure runs on the host |
 | `measure shortage` | The volume `shortage` |
 
-The volumes of the parts are in the table of the parts (`test_parts`, `tools/modustool/test_parts.odin`), and those of the other commands in `command_volumes`, with the procedures that start the machines of each row: a host test reads the sources of the tool and fails when such a procedure names a volume that is not in its row, or is in no row.
+The volumes of the parts are in the table of the parts (`test_parts`, `tools/modustool/machine/test_parts.odin`), and those of the other commands in `command_volumes`, with the procedures that start the machines of each row: a host test reads the sources of the tool and fails when such a procedure names a volume that is not in its row, or is in no row.
 
 A volume that a command does not need is not built and not checked. It stays with its record, and the next command that needs it compares the record with the inputs of that time. A machine never starts from such a volume: the tool starts a machine only from a volume that the build of the same host process built or kept, and refuses any other with an error.
 
@@ -1442,14 +1442,14 @@ A build key holds the path of each source, so a move of a folder builds each mod
 
 The machine test acts as the keyboard and the mouse of the machine. Each key and each move goes to the virtual keyboard and the virtual mouse of QEMU, so the input service of the system reads them from the keyboard controller as it reads real devices. The tool has no other way in: no export of the system takes a key or a move.
 
-The tool talks to QEMU on its machine protocol (QMP), on a Unix socket beside the log of the machine (`build/test_output*.qmp`). A second socket of the same protocol is for the worker of a film only ("The film"). A command is one line of JSON, and QEMU answers each command with one line: the tool knows when QEMU did it (`tools/modustool/qmp.odin`, `qmp_socket_linux.odin`, `machine_input.odin`). The monitor of QEMU for a reader stays on the standard input: the tool ends QEMU through it.
+The tool talks to QEMU on its machine protocol (QMP), on a Unix socket beside the log of the machine (`build/test_output*.qmp`). A second socket of the same protocol is for the worker of a film only ("The film"). A command is one line of JSON, and QEMU answers each command with one line: the tool knows when QEMU did it (`tools/modustool/machine/qmp.odin`, `qmp_socket_linux.odin`, `machine_input.odin`). The monitor of QEMU for a reader stays on the standard input: the tool ends QEMU through it.
 
 **No wait is a fixed time.** After an input, the tool waits for a condition, with the bound of a hang ("The bounds of the tests"):
 
 - **Keys.** The keys of a typed line, with its Enter, are one list. One command of QMP (`input-send-event`) presses and releases several keys with no time between two events. The queue of the virtual keyboard holds 16 bytes, and QEMU drops, with no error, a byte that finds it full; a key is 3 bytes, a key with a prefix (an arrow, Page Up) 5, a key with Shift 6. So the tool cuts the list into commands of 16 bytes at most, and sends the next command when the keyboard controller says that it holds no byte: the system read the bytes before. The tool reads the status of the controller through QEMU, and the read changes nothing in the machine.
 - **The condition after the keys.** When the process `remote` runs, the tool reads the count of key records of `compositor.pointer()` before the list, and goes on when the count grew by one record for each press and each release: one call for each read of the count, not several for each key. A count that stops short is a failure, and the message has the count. The same read gives `keys_refused`, the key records that the compositor lost because a window did not read: a number above 0 is a failure. Before `remote` runs, and when the scenario revoked its grant, the condition is that the system read each byte of the keyboard. The input service takes a byte of the keyboard from the controller only when the input ring has room for its record (`ARCHITECTURE.md`, "The path of a key"), so "the controller holds no byte" also says that the input ring took each key record.
 - **The dependency on QEMU.** "The controller holds no byte" is bit 0 of the status port at 0. QEMU sets that bit again inside the read of the data port while the queue of the device holds a byte, so the bit at 0 means that the queue is empty. This holds while the property `kbd-throttle` of the i8042 device is false, which is its default; with `kbd-throttle` true the bit stays 0 for 1 ms after each byte, and the condition is false. The tool does not set that property.
-- **The echo of a line of the console.** The two conditions above stop at the compositor or at the input ring. A key then goes through the ring of the window and the terminal ring. The console writes each line that it enters on the log, as `[console] > text`, before it runs it. So after the keys of a step `Type` that goes to the console, the tool waits for that line of the log: each key of the line and its Enter reached the console, in order. A line with no echo fails at the step that typed it. The message names the line, gives the counts `keys`, `keys_waiting` and `keys_refused` of the compositor when the tool can call it, and quotes each line of the log that says that a queue refused a record or that the input ring was full. The tool waits for the echo only when it knows that the console takes the line now (`tools/modustool/console_echo.odin`):
+- **The echo of a line of the console.** The two conditions above stop at the compositor or at the input ring. A key then goes through the ring of the window and the terminal ring. The console writes each line that it enters on the log, as `[console] > text`, before it runs it. So after the keys of a step `Type` that goes to the console, the tool waits for that line of the log: each key of the line and its Enter reached the console, in order. A line with no echo fails at the step that typed it. The message names the line, gives the counts `keys`, `keys_waiting` and `keys_refused` of the compositor when the tool can call it, and quotes each line of the log that says that a queue refused a record or that the input ring was full. The tool waits for the echo only when it knows that the console takes the line now (`tools/modustool/machine/console_echo.odin`):
   - The console is in front: the last step that changed the front window was the step `Front` of the console, or a step `Click_Element` or `Wheel` in the console. A step `Wheel` in another window makes that window the front one, and so does a step `Resize`, which drags the bottom left corner of a window and waits for the line of the compositor with its new size. A step `Launch`, `Move`, `Close`, `Click` or `Drag`, a step `Click_Element` in another window or in the palette, the key of the palette, and a typed line that has `start(` make the front window unknown. The tool then waits for no echo, as for a line typed into the window of another process.
   - No line can still run: a step `Wait` passed since the step `Type` before. The console enters a line only when the line before it ended. A line typed with no `Wait` since the line before it is owed: the tool waits for its echo, in order, at the next step `Type` of the console that has a `Wait` before it.
   - A step `Keys` and a step `Key` have no echo: they enter no line.
@@ -1501,7 +1501,7 @@ A picture shows a window that its process drew after the line of the log that th
 1. each process sent the picture of its last change;
 2. the compositor drew each picture that it received.
 
-A picture that is taken too early is wrong, and no test fails. So the tool reads the two facts, and takes the picture when they hold. The code is `tools/modustool/screen_settle.odin`.
+A picture that is taken too early is wrong, and no test fails. So the tool reads the two facts, and takes the picture when they hold. The code is `tools/modustool/machine/screen_settle.odin`.
 
 **The condition by calls.** When the tool can call the compositor through `remote`, it makes three reads in this order: `monitor.processes()`, then `compositor.windows()` and `compositor.screen()`, then `monitor.processes()` again. The screen is settled when, for each window:
 
@@ -1530,7 +1530,7 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 
 ### The film
 
-`modustool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/modustool/film.odin`.
+`modustool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/modustool/machine/film.odin`.
 
 | Film | What it shows | Scenario |
 |---|---|---|
@@ -1588,7 +1588,7 @@ A news entry can name a film: `film: docs/films/<name>.webm` in its head (`news/
 - The bound of 4 MiB: each version of the file stays in the history of the repository, and a reader of the site loads it on a phone. The film of the palette, 36.8 s of the whole screen, has 1.5 MiB.
 - A film is not the same bytes at each run: the pictures are taken at the times of the host. Run the command to change the film, and commit the new file only then.
 
-The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/modustool/film_document.odin`, which writes the film, and `tools/modustool/checks/film_document_check.odin`, which reads it for the check of the news.
+The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/modustool/machine/film_document.odin`, which writes the film, and `tools/modustool/checks/film_document_check.odin`, which reads it for the check of the news.
 
 **A film shows time; a test waits for conditions.** A scenario of a test has no fixed time ("How the tool sends input and waits"). A film is for a viewer, who must see a text being typed and must have the time to read a state. So a film has two kinds of step with a fixed time, and they exist only in the scenario of a film:
 
@@ -1806,7 +1806,7 @@ A test checks a condition: a value, a state, a line of the log. A test that depe
 
 `modustool check` checks the steps of the machine tests (`tools/modustool/checks/test_bound_check.odin`). The field `seconds` of a step is a named constant, never a number, and a line of comment just above the constant gives its reason. The steps with a bound of their own today: the long case of the fault ring (its progress) and the firmware of the TPM and of Secure Boot (a command of the TPM that the firmware abandons costs it about two minutes).
 
-The same check reads each `time.sleep` of the tool: its period is a name, and no digit stands outside a name in it (`time.Millisecond * 20` is refused too). A poll inside a bounded wait sleeps `CONDITION_POLL_PERIOD` (`tools/modustool/machine_input.odin`); any other period is a constant with its reason, as the pause between the sends of the HTTP case "split" (`HTTP_SPLIT_SEND_PAUSE`), which shapes the input and waits for no state.
+The same check reads each `time.sleep` of the tool: its period is a name, and no digit stands outside a name in it (`time.Millisecond * 20` is refused too). A poll inside a bounded wait sleeps `CONDITION_POLL_PERIOD` (`tools/modustool/machine/machine_input.odin`); any other period is a constant with its reason, as the pause between the sends of the HTTP case "split" (`HTTP_SPLIT_SEND_PAUSE`), which shapes the input and waits for no state.
 
 The check does not read the checks of the processes: `system.time() + 1000` is a poll interval in one place and a bound in another, and no rule on the text tells them apart. The rule for them is this section.
 

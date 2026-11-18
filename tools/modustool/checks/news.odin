@@ -21,7 +21,7 @@
 //   The text: a few sentences, one fact in each.
 //
 // An entry can have one more line in its head, "film: docs/films/<name>.webm":
-// a film that the command `film` wrote (tools/modustool/film_document.odin).
+// a film that the command `film` wrote (tools/modustool/machine/film_document.odin).
 package checks
 
 import "core:fmt"

@@ -34,7 +34,7 @@ Each part of the network is a process or a library of user space. The table name
 | Module file service | `src/modules/system/module_files` | A client with the same grant: it fetches a module file and stores it in the store `module_files` of its principal (`MODULE_CONTRACT.md`, "A module from a disk") |
 | QUIC server | `src/modules/demonstrations/quic_echo` | A process with a listen grant of UDP on the port 4433: QUIC in the process (`docs/QUIC.md`, section 6) |
 | Remote service | `src/modules/system/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
-| Peer | `tools/modustool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
+| Peer | `tools/modustool/machine/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
 
 The kernel has no network code.
 
@@ -280,7 +280,7 @@ The peer uses `src/library/support/tcp` too: it tests the library against itself
 
 ### With the controlled peer
 
-QEMU gives the peer each frame of the network device as one UDP datagram on the loopback of the host (`-netdev dgram`). The peer reads each frame with its own code, not with `src/library/support/network`. It answers ARP, an echo request and a datagram to port 7, and it carries each call of the tool to the remote service on a call stream, and the call answer back (`tools/modustool/peer.odin`, `peer_remote.odin`).
+QEMU gives the peer each frame of the network device as one UDP datagram on the loopback of the host (`-netdev dgram`). The peer reads each frame with its own code, not with `src/library/support/network`. It answers ARP, an echo request and a datagram to port 7, and it carries each call of the tool to the remote service on a call stream, and the call answer back (`tools/modustool/machine/peer.odin`, `peer_remote.odin`).
 
 A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dgram`, as `scenario_network`. The tool tells the peer to run one case at a time. The peer is a TCP client of `server`, and it changes the frames between its library and the machine with a generator of numbers that the case seeds, so each run makes the same changes: 5 % loss, a reorder, duplicates, a zero window of its receive buffer.
 
@@ -326,7 +326,7 @@ Written for QUIC (`docs/QUIC.md`, section 6); `modustool test quic` and `modusto
 
 - The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
 - A UDP listen grant can name one remote address (`datagram.Grant.address`): then a datagram of another address is never admitted, whatever its size, and the endpoint counts it (`Not_Granted`). The port of the remote is not named: a QUIC client takes a new port for each connection. The grant of `remote` names the address of the host, 10.0.2.2: that address is the rule of who may call (`docs/QUIC.md`, section 7). A TCP listen grant names no address.
-- With QEMU user networking, each datagram that a `hostfwd` of UDP gives to the machine comes from 10.0.2.2. A forward of a UDP port of the host to the port 7100 would then let each sender that reaches that port call `remote` as the principal. The tool refuses a machine with such a forward (`network_device_problem` in `tools/modustool/main.odin`).
+- With QEMU user networking, each datagram that a `hostfwd` of UDP gives to the machine comes from 10.0.2.2. A forward of a UDP port of the host to the port 7100 would then let each sender that reaches that port call `remote` as the principal. The tool refuses a machine with such a forward (`network_device_problem` in `tools/modustool/machine/machine_command.odin`).
 - A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.
 - A Send goes only to an admitted remote. To a remote that the process did not validate, the network service sends at most 3 times the bytes that came from it (status `Amplification`, error kind `Over_Limit`); the command `Validate` lifts that limit for a remote that proved its address to the process (`docs/QUIC.md`, section 6, says what a process that validates every remote gains). A send does not keep a place alive: only a datagram of the remote does.
 - `Resolve` and `Echo` are refused, as for each listen grant: the process answers, but it does not reach.
@@ -343,7 +343,7 @@ It reuses from TCP:
 - The endpoint and its grant: a client grant of one remote, and the listen grant with its admitted remotes, for UDP in place of TCP. The table of admitted remotes is the one of the datagram endpoint, unchanged (the section above).
 - The form of the interface: a table of connection records and buffers of the caller, one `step` for a batch of datagrams, a table of events, the deadline of the next timer.
 - The ideas of loss and congestion: RFC 9002 takes the round trip estimate of RFC 6298, and its congestion control is NewReno. The code is not shared: `src/library/support/quic/recovery.odin` has its own estimate and congestion window, and `src/library/support/quic` imports nothing of `src/library/support/tcp`.
-- The tests: the peer with loss, reorder and duplicates (`tools/modustool/peer_quic.odin`). The test against a stack that this project did not write uses the QUIC client of OpenSSL through the UDP relay of the peer, not libslirp: with `restrict=on`, libslirp drops each UDP datagram that the machine sends.
+- The tests: the peer with loss, reorder and duplicates (`tools/modustool/machine/peer_quic.odin`). The test against a stack that this project did not write uses the QUIC client of OpenSSL through the UDP relay of the peer, not libslirp: with `restrict=on`, libslirp drops each UDP datagram that the machine sends.
 
 It needs more than TCP gives:
 

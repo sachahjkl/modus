@@ -193,6 +193,7 @@ host_tests_run :: proc(folders: []string) -> bool {
 // compile and its tests are the longest, and a long folder that starts
 // last makes the whole run longer.
 HOST_TEST_FOLDERS :: [?]string {
+	foundation.TOOL_SOURCE_FOLDER + "/machine",
 	foundation.TOOL_SOURCE_FOLDER,
 	foundation.TOOL_SOURCE_FOLDER + "/build",
 	foundation.TOOL_SOURCE_FOLDER + "/checks",

@@ -277,7 +277,7 @@ The machines with this firmware run with four processors, as every other machine
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
 | The signature, the keys, the key numbers, the command `key` | `tools/modustool/build/system_description.odin`, `resources/keys/key_numbers` |
-| The seventeen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/trusted_boot_scenario.odin` |
+| The seventeen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/machine/trusted_boot_scenario.odin` |
 | The check and the raise of the TPM floors by the boot program | `src/boot/trust.odin` (`floors_check`, `floor_raise`) |
 | The commands of the indices of the floors, the checks of their answers, the decisions | `src/library/support/tpm2` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/build/secure_boot.odin` |

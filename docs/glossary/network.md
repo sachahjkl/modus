@@ -221,7 +221,7 @@ Do not use: router, default route.
 
 The peer is the part of the modus tool that is the gateway and the echo server of the network of the test machine, a TCP client that the tool drives, and the QUIC client of the remote service.
 
-The peer makes the network tests closed and repeatable: no frame leaves the host, and each run has the same answers. It reads each frame with its own code, so a fault of the network service in a checksum or a length is a fault that the peer sees. It sends frames that the network service must refuse, and can drop, reorder and repeat the frames of TCP. The peer is not a simulator of a network: it speaks the real protocols. It is in `tools/modustool/peer.odin`.
+The peer makes the network tests closed and repeatable: no frame leaves the host, and each run has the same answers. It reads each frame with its own code, so a fault of the network service in a checksum or a length is a fault that the peer sees. It sends frames that the network service must refuse, and can drop, reorder and repeat the frames of TCP. The peer is not a simulator of a network: it speaks the real protocols. It is in `tools/modustool/machine/peer.odin`.
 
 The design: `docs/NETWORK.md`, "With the controlled peer".
 

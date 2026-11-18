@@ -65,7 +65,7 @@ LOOP_SIZE :: u64(64) << 20
 // The bytes at the start of the object loop, written in the first commit of
 // the loop. The disk of the test of a loss of power starts its count of
 // commits at the block that starts with them, so the cut falls inside the
-// loop whatever the speed of the machine (tools/modustool/power_loss.odin,
+// loop whatever the speed of the machine (tools/modustool/machine/power_loss.odin,
 // RANGES_LOOP_MARKER). No later write of the loop reaches the block 0: its
 // multiplier 7919 is odd, so only the first write has its place there.
 LOOP_MARKER :: "ranges: the first commit of the loop of range commits"

@@ -332,7 +332,7 @@ The base of the generations is, in a machine test, the generation of one commit 
 
 A generation counts the commits of the whole disk, and the console commits its line history after each line, so an absolute generation in a test changes with each line before it. A later step names `{generation}` or `{generation+4}` in its text. A step that names `{generation}` before any step `Generation` stops the test. The base is a number of the modus tool, not of the system.
 
-The design: the step `Generation` of `tools/modustool/machine.odin`.
+The design: the step `Generation` of `tools/modustool/machine/machine.odin`.
 
 Do not use: offset, delta.
 

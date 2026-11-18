@@ -50,7 +50,7 @@
 // grant ends while the process runs.
 //
 // **What it does not prove**: in the test of the network the echo server at
-// the gateway is the peer of the modus tool (`tools/modustool/peer.odin`),
+// the gateway is the peer of the modus tool (`tools/modustool/machine/peer.odin`),
 // not a stack of another project; the test of TCP against libslirp is the
 // process fetch.
 package net
