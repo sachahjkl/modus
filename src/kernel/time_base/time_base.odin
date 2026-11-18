@@ -31,8 +31,21 @@ FREQUENCY_MOST :: u64(10_000_000_000)
 
 MICROSECONDS_IN_A_SECOND :: u64(1_000_000)
 
+// The vendor of Intel in EBX, EDX and ECX of leaf 0: "GenuineIntel". AMD
+// documents the leaves 0x15 and 0x16 as reserved, and Linux reads them on
+// Intel only: on another vendor their words state nothing.
+INTEL_SIGNATURE_B :: u32(0x756E_6547) // "Genu"
+INTEL_SIGNATURE_D :: u32(0x4965_6E69) // "ineI"
+INTEL_SIGNATURE_C :: u32(0x6C65_746E) // "ntel"
+
+// is_intel_signature says if EBX, ECX and EDX of leaf 0 name Intel.
+is_intel_signature :: proc "contextless" (ebx: u32, ecx: u32, edx: u32) -> bool {
+	return ebx == INTEL_SIGNATURE_B && edx == INTEL_SIGNATURE_D && ecx == INTEL_SIGNATURE_C
+}
+
 // What the kernel reads of CPUID, with no change.
 Identification :: struct {
+	vendor_is_intel:   bool, // is_intel_signature of leaf 0.
 	highest_leaf:      u32, // EAX of leaf 0.
 	ratio_denominator: u32, // EAX of leaf 0x15.
 	ratio_numerator:   u32, // EBX of leaf 0x15.
@@ -43,6 +56,7 @@ Identification :: struct {
 // Why the processor states no frequency of its cycle counter.
 Absence :: enum u8 {
 	None,
+	Not_Intel, // The leaves 0x15 and 0x16 are those of Intel only.
 	No_Ratio_Leaf, // The highest leaf is below leaf 0x15.
 	No_Ratio, // Leaf 0x15 gives 0 as the numerator or the denominator.
 	No_Crystal, // Leaf 0x15 gives no crystal, and leaf 0x16 is absent or gives 0.
@@ -53,6 +67,7 @@ Absence :: enum u8 {
 @(rodata)
 ABSENCE_TEXTS := [Absence]string {
 	.None          = "",
+	.Not_Intel     = "the processor is not of Intel, the one vendor that defines CPUID leaves 0x15 and 0x16",
 	.No_Ratio_Leaf = "CPUID has no leaf 0x15",
 	.No_Ratio      = "CPUID leaf 0x15 gives no ratio of the cycle counter to the crystal",
 	.No_Crystal    = "CPUID gives no frequency of the crystal and no base frequency",
@@ -64,6 +79,9 @@ ABSENCE_TEXTS := [Absence]string {
 // crystal times the ratio of leaf 0x15; with no crystal, the base
 // frequency of leaf 0x16, which Linux takes only with the ratio too.
 stated_frequency :: proc "contextless" (identification: Identification) -> (hertz: u64, absence: Absence) {
+	if !identification.vendor_is_intel {
+		return 0, .Not_Intel
+	}
 	if identification.highest_leaf < FREQUENCY_RATIO_LEAF {
 		return 0, .No_Ratio_Leaf
 	}

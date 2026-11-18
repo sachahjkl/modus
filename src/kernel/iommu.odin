@@ -106,7 +106,7 @@ Iommu_Standing :: struct {
 	top:       u64,
 }
 
-iommu_in_use: bool // Translation is on. Written once at the start.
+iommu_in_use: bool // Translation is on. Written once, at the end of the start of the units, before the root service.
 iommu_vendor: Iommu_Vendor // Written once at the start, from the table of the firmware.
 iommu_units: [iommu.UNIT_CAPACITY]Iommu_Unit
 iommu_unit_count: u32
@@ -1042,6 +1042,18 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	if !started {
 		return
 	}
+	// Interrupt remapping of VT-d starts before the lines of translation:
+	// its first invalidation of the interrupt entries can turn every unit
+	// off, and the lines would then say the opposite.
+	remapping_started := false
+	units_on := true
+	if iommu_vendor == .Intel && iommu_dmar.interrupt_remapping && remapping {
+		remapping_started, units_on = interrupt_remapping_start()
+	}
+	if !units_on {
+		log(IOMMU_FIRST_INVALIDATION_LINE)
+		return
+	}
 	standing_count: u64
 	for item in iommu_standing {
 		standing_count += item.used ? 1 : 0
@@ -1061,7 +1073,12 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			log("kernel: IOMMU: no interrupt remapping: a unit does not offer it; a device can send any interrupt")
 			return
 		}
-		interrupt_remapping_start()
+		if !remapping_started {
+			log("kernel: IOMMU: no interrupt remapping: a unit did not take its interrupt table or did not turn remapping on; a device can send any interrupt")
+			return
+		}
+		iommu_interrupt_remapping = true
+		log("kernel: IOMMU: interrupt remapping on: a device sends only the message interrupts that its service was given")
 	case .Amd:
 		// The entry of each device in the device table refuses each message
 		// from the moment the unit is on: remapping started with translation.
@@ -1177,21 +1194,24 @@ remapping_units_start :: proc "contextless" () -> (started: bool, round_trip_cyc
 // in the compatible form (the bit CFI stays 0). A unit that does not take
 // the table or does not turn remapping on turns it off again in each unit
 // before it: remapping is on in every unit or in none. Translation stays
-// on.
+// on, unless a unit does not finish the invalidation of the interrupt
+// entries: then every unit goes off, and units_on is false. It writes no
+// line: iommu_start writes the lines of translation and of remapping after
+// it, so that they never say the opposite of what this call did.
 @(private = "file")
-interrupt_remapping_start :: proc "contextless" () {
+interrupt_remapping_start :: proc "contextless" () -> (started: bool, units_on: bool) {
 	for index in 0 ..< iommu_unit_count {
 		unit := &iommu_units[index]
 		register_write_64(unit, iommu.REGISTER_INTERRUPT_TABLE, iommu.interrupt_table_register(iommu_interrupt_table))
-		started := global_set(unit, iommu.GLOBAL_INTERRUPT_TABLE)
+		unit_started := global_set(unit, iommu.GLOBAL_INTERRUPT_TABLE)
 		invalidated := true
-		if started {
+		if unit_started {
 			global: Descriptor_Batch
 			batch_add(&global, iommu.descriptor_interrupt_entry(0, true))
 			invalidated = invalidate_unit_at_start(unit, global)
-			started = invalidated && global_set(unit, iommu.GLOBAL_INTERRUPT_REMAPPING)
+			unit_started = invalidated && global_set(unit, iommu.GLOBAL_INTERRUPT_REMAPPING)
 		}
-		if !started {
+		if !unit_started {
 			for &before in iommu_units[:index + 1] {
 				interrupt_remapping_off(&before)
 			}
@@ -1203,16 +1223,12 @@ interrupt_remapping_start :: proc "contextless" () {
 				for &each_unit in iommu_units[:iommu_unit_count] {
 					translation_off(&each_unit)
 				}
-				iommu_in_use = false
-				log(IOMMU_FIRST_INVALIDATION_LINE)
-				return
+				return false, false
 			}
-			log("kernel: IOMMU: no interrupt remapping: a unit did not take its interrupt table or did not turn remapping on; a device can send any interrupt")
-			return
+			return false, true
 		}
 	}
-	iommu_interrupt_remapping = true
-	log("kernel: IOMMU: interrupt remapping on: a device sends only the message interrupts that its service was given")
+	return true, true
 }
 
 // interrupt_remapping_off turns the interrupt remapping of a unit off, and

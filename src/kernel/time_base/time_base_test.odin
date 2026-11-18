@@ -14,7 +14,41 @@ DENOMINATOR :: u32(2)
 
 @(private = "file")
 with_crystal :: proc() -> Identification {
-	return {highest_leaf = BASE_FREQUENCY_LEAF, ratio_denominator = DENOMINATOR, ratio_numerator = NUMERATOR, crystal_hertz = CRYSTAL}
+	return {vendor_is_intel = true, highest_leaf = BASE_FREQUENCY_LEAF, ratio_denominator = DENOMINATOR, ratio_numerator = NUMERATOR, crystal_hertz = CRYSTAL}
+}
+
+// The vendor is the three registers in their order: another order, a
+// change of one byte, the vendor of AMD and no vendor are refused.
+@(test)
+the_signature_of_intel :: proc(t: ^testing.T) {
+	testing.expect(t, !is_intel_signature(0, 0, 0))
+	testing.expect(t, !is_intel_signature(max(u32), max(u32), max(u32)))
+	// The text is in EBX, EDX, ECX; the words in the order of the text, as
+	// EBX, ECX, EDX, are refused.
+	testing.expect(t, !is_intel_signature(INTEL_SIGNATURE_B, INTEL_SIGNATURE_D, INTEL_SIGNATURE_C))
+	testing.expect(t, !is_intel_signature(INTEL_SIGNATURE_B ~ 1, INTEL_SIGNATURE_C, INTEL_SIGNATURE_D))
+	testing.expect(t, !is_intel_signature(INTEL_SIGNATURE_B, INTEL_SIGNATURE_C, INTEL_SIGNATURE_D ~ 1 << 24))
+	// "AuthenticAMD": EBX "Auth", EDX "enti", ECX "cAMD".
+	testing.expect(t, !is_intel_signature(0x6874_7541, 0x444D_4163, 0x6974_6E65))
+	// The bytes of "GenuineIntel" in the order of the registers.
+	word_of :: proc(four: string) -> u32 {
+		return u32(four[0]) | u32(four[1]) << 8 | u32(four[2]) << 16 | u32(four[3]) << 24
+	}
+	testing.expect(t, is_intel_signature(word_of("Genu"), word_of("ntel"), word_of("ineI")))
+}
+
+// A processor of another vendor states nothing, whatever its leaves say:
+// the vendor decides first.
+@(test)
+a_processor_of_another_vendor :: proc(t: ^testing.T) {
+	other := with_crystal()
+	other.vendor_is_intel = false
+	hertz, absence := stated_frequency(other)
+	testing.expect_value(t, absence, Absence.Not_Intel)
+	testing.expect_value(t, hertz, u64(0))
+	hertz, absence = stated_frequency({})
+	testing.expect_value(t, absence, Absence.Not_Intel)
+	testing.expect_value(t, hertz, u64(0))
 }
 
 // Each step that lacks gives its absence and no frequency, and the first
@@ -26,7 +60,7 @@ a_processor_that_states_no_frequency :: proc(t: ^testing.T) {
 		testing.expect_value(t, absence, expected)
 		testing.expect_value(t, hertz, u64(0))
 	}
-	expect_absence(t, {}, .No_Ratio_Leaf)
+	expect_absence(t, {vendor_is_intel = true}, .No_Ratio_Leaf)
 	// One leaf below: whatever the other words say, the leaf does not exist.
 	below := with_crystal()
 	below.highest_leaf = FREQUENCY_RATIO_LEAF - 1
@@ -60,7 +94,7 @@ a_processor_that_states_no_frequency :: proc(t: ^testing.T) {
 @(test)
 a_frequency_out_of_its_range :: proc(t: ^testing.T) {
 	expect_out_of_range :: proc(t: ^testing.T, crystal: u32, numerator: u32, denominator: u32) {
-		hertz, absence := stated_frequency({highest_leaf = FREQUENCY_RATIO_LEAF, ratio_denominator = denominator, ratio_numerator = numerator, crystal_hertz = crystal})
+		hertz, absence := stated_frequency({vendor_is_intel = true, highest_leaf = FREQUENCY_RATIO_LEAF, ratio_denominator = denominator, ratio_numerator = numerator, crystal_hertz = crystal})
 		testing.expect_value(t, absence, Absence.Out_Of_Range)
 		testing.expect_value(t, hertz, u64(0))
 	}
@@ -76,7 +110,7 @@ a_frequency_out_of_its_range :: proc(t: ^testing.T) {
 	// past the most, (10 GHz / 4 + 1) × 4.
 	expect_out_of_range(t, u32(FREQUENCY_MOST / 4 + 1), 4, 1)
 	// The base frequency of leaf 0x16 passes the same check: 65535 MHz.
-	hertz, absence := stated_frequency({highest_leaf = BASE_FREQUENCY_LEAF, ratio_denominator = 1, ratio_numerator = 1, base_frequency = BASE_FREQUENCY_MASK})
+	hertz, absence := stated_frequency({vendor_is_intel = true, highest_leaf = BASE_FREQUENCY_LEAF, ratio_denominator = 1, ratio_numerator = 1, base_frequency = BASE_FREQUENCY_MASK})
 	testing.expect_value(t, absence, Absence.Out_Of_Range)
 	testing.expect_value(t, hertz, u64(0))
 }
@@ -90,8 +124,8 @@ a_processor_that_states_its_frequency :: proc(t: ^testing.T) {
 		testing.expect_value(t, absence, Absence.None)
 		testing.expect_value(t, hertz, expected)
 	}
-	expect_frequency(t, {highest_leaf = FREQUENCY_RATIO_LEAF, ratio_denominator = 1, ratio_numerator = 1, crystal_hertz = u32(FREQUENCY_LEAST)}, FREQUENCY_LEAST)
-	expect_frequency(t, {highest_leaf = FREQUENCY_RATIO_LEAF, ratio_denominator = 1, ratio_numerator = 4, crystal_hertz = u32(FREQUENCY_MOST / 4)}, FREQUENCY_MOST)
+	expect_frequency(t, {vendor_is_intel = true, highest_leaf = FREQUENCY_RATIO_LEAF, ratio_denominator = 1, ratio_numerator = 1, crystal_hertz = u32(FREQUENCY_LEAST)}, FREQUENCY_LEAST)
+	expect_frequency(t, {vendor_is_intel = true, highest_leaf = FREQUENCY_RATIO_LEAF, ratio_denominator = 1, ratio_numerator = 4, crystal_hertz = u32(FREQUENCY_MOST / 4)}, FREQUENCY_MOST)
 	expect_frequency(t, with_crystal(), u64(CRYSTAL) * u64(NUMERATOR) / u64(DENOMINATOR))
 	// A crystal wins over the base frequency, which is only an estimate.
 	both := with_crystal()

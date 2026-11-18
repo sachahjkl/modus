@@ -216,9 +216,10 @@ PROOF_XMM0 :: 0x0123_4567_89AB_CDEF
 PROOF_YMM0_HIGH :: 0xFEDC_BA98_7654_3210
 XMM0_OFFSET :: 160
 
-// The first processor did not read back its xsaveopt area, and the kernel
-// saves with fxsave in its place. Read-only after its setup.
-extended_state_xsave_refused: bool
+// A proof of xsaveopt failed on the first processor, and the kernel saves
+// with fxsave in its place. The sentence of the proof gave the cause.
+// Read-only after its setup.
+extended_state_xsaveopt_proof_failed: bool
 
 // extended_state_prove runs the proofs on the first processor, after its
 // setup and before any process runs. A failed proof of xsaveopt writes its
@@ -232,7 +233,7 @@ extended_state_prove :: proc "contextless" () {
 			machine_stop(.Start_Failed)
 		}
 		extended_state_fxsave_take()
-		log("kernel: extended state: the processor does not read back its xsaveopt area: the kernel proves fxsave, with x87 and SSE only")
+		log("kernel: extended state: the kernel proves fxsave now, with x87 and SSE only")
 		if !extended_state_proof() {
 			machine_stop(.Start_Failed)
 		}
@@ -252,7 +253,7 @@ extended_state_fxsave_take :: proc "contextless" () {
 	extended_state_size = LEGACY_AREA_SIZE
 	extended_state_layout = {}
 	extended_state_form = .Fxsave
-	extended_state_xsave_refused = true
+	extended_state_xsaveopt_proof_failed = true
 }
 
 // extended_state_proof runs the two proofs in the form that the first
@@ -332,8 +333,8 @@ extended_state_log :: proc "contextless" () {
 	avx := .Avx in extended_state_components ? ", AVX" : ""
 	avx_512 := AVX_512_COMPONENTS <= extended_state_components ? ", AVX-512" : ""
 	how := "xsaveopt"
-	if extended_state_xsave_refused {
-		how = "fxsave: the processor did not read back its xsaveopt area"
+	if extended_state_xsaveopt_proof_failed {
+		how = "fxsave: a proof of xsaveopt failed"
 	} else if extended_state_form == .Fxsave {
 		how = "fxsave: the processor has no xsave or no xsaveopt"
 	}

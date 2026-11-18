@@ -60,7 +60,7 @@ Processor_Model :: enum {
 	Without_Avx, // No AVX: the kernel saves x87 and SSE with xsaveopt (`test extended_state`).
 	Without_Xsave, // No xsave: the kernel saves with fxsave (`test extended_state`).
 	// No leaf 0x15 of CPUID and none above: the processor states no
-	// frequency of its cycle counter, on every host (`test missing_parts`).
+	// frequency of its cycle counter, on every host (`test no_pit`).
 	Without_Frequency_Leaves,
 }
 

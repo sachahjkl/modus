@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "kernel:delivery_count"
 import "kernel:time_base"
 import "modus:contract/cut_mark"
 import op "modus:contract/operation"
@@ -813,18 +814,18 @@ delivery_faults_log :: proc "contextless" () {
 		log("kernel: the serial port did not take ", count, " bytes in their bound: the log keeps each record, and the serial port lacks their lines")
 	}
 	if count, reached := count_reached_a_power_of_two(&apic_sends_not_sent, &apic_sends_not_sent_written); reached {
-		log("kernel: the interrupt controller did not send ", count, " interrupts to another processor in their bound: a processor that one of them would wake waits for its next interrupt")
+		log("kernel: the interrupt controller did not send ", count, " interrupts to another processor in their bound: a processor that one of them would wake waits for its next interrupt, and a synchronization waits for the next tick of its target")
 	}
 }
 
 // count_reached_a_power_of_two says if `count` has a higher power of two
-// than the count of the last line, and takes it as that count: one tick
-// alone writes the line.
+// than the count of the last line (delivery_count.line_is_due), and takes
+// it as that count: one tick alone writes the line.
 @(private = "file")
 count_reached_a_power_of_two :: proc "contextless" (count: ^u64, written: ^u64) -> (now: u64, reached: bool) {
 	now = intrinsics.atomic_load(count)
 	before := intrinsics.atomic_load(written)
-	if now <= before || (before != 0 && intrinsics.count_leading_zeros(now) >= intrinsics.count_leading_zeros(before)) {
+	if !delivery_count.line_is_due(before, now) {
 		return now, false
 	}
 	_, reached = intrinsics.atomic_compare_exchange_strong(written, before, now)

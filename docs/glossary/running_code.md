@@ -808,7 +808,7 @@ Do not use: hypervisor overhead, wasted time.
 
 The time base is the clock against which the first processor measures the timer of its interrupt controller and the frequency of the cycle counter at the start.
 
-It is the 8254 when the machine has one. With no 8254, it is the frequency of the cycle counter that `CPUID` leaf 0x15 or 0x16 states, and the timer is measured against the cycle counter. With neither, the kernel cannot keep time: it writes its line and stops with the code 1. The choice is the kernel part `time_base`. It is not the clock of the date, which the root service reads.
+It is the 8254 when the machine has one. With no 8254, it is the frequency of the cycle counter that `CPUID` leaf 0x15 or 0x16 of a processor of Intel states, and the timer is measured against the cycle counter. With neither, the kernel cannot keep time: it writes its line and stops with the code 1. The choice is the kernel part `time_base`. It is not the clock of the date, which the root service reads.
 
 The design: `src/md/features/missing_hardware.md`.
 

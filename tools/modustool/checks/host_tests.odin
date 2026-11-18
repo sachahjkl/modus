@@ -222,6 +222,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL + "/processor_counters",
 	foundation.SOURCE_FOLDER_KERNEL + "/stolen_time",
 	foundation.SOURCE_FOLDER_KERNEL + "/time_base",
+	foundation.SOURCE_FOLDER_KERNEL + "/delivery_count",
 	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_mount",
 	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_object",
 	foundation.SOURCE_FOLDER_PRIVATE + "/storage/storage_tree",
