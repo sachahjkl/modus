@@ -51,72 +51,17 @@ the_reference_lists_the_statuses_of_each_operation :: proc(t: ^testing.T) {
 }
 
 // Each seed is a sequence that check accepts: one for each operation, and
-// the six cases of the seeds. Each expectation names a seed and one of its
-// steps, and its step is a refusal.
+// the four cases of the seeds. The regressions of the fuzz findings are in
+// the corpus, not in the seeds.
 @(test)
 each_seed_is_a_sequence :: proc(t: ^testing.T) {
-	expectations := make([dynamic]Operation_Seed_Expectation, context.temp_allocator)
-	seeds := operation_seed_sequences(context.temp_allocator, &expectations)
-	testing.expect_value(t, len(seeds), len(operation.Operation) - 1 + 6)
-	sequences := make([]operation_sequence.Sequence, len(seeds), context.temp_allocator)
+	seeds := operation_seed_sequences(context.temp_allocator)
+	testing.expect_value(t, len(seeds), len(operation.Operation) - 1 + 4)
+	sequence := new(operation_sequence.Sequence, context.temp_allocator)
 	for seed, index in seeds {
-		refusal := operation_sequence.check(seed, &sequences[index])
+		refusal := operation_sequence.check(seed, sequence)
 		testing.expectf(t, refusal.problem == .None, "the seed %d is refused: %v", index, refusal)
 	}
-	// The regressions of the first long run: the word 0 and the word past
-	// the operations (four steps), the commit and the decommit, and
-	// Thread_Control.
-	testing.expect_value(t, len(expectations), 7)
-	for expected in expectations {
-		testing.expectf(t, expected.sequence >= 0 && expected.sequence < len(seeds), "an expectation names the seed %d", expected.sequence)
-		if expected.sequence < 0 || expected.sequence >= len(seeds) {
-			continue
-		}
-		testing.expectf(t, expected.step >= 0 && expected.step < sequences[expected.sequence].step_count, "an expectation names the step %d of the seed %d", expected.step, expected.sequence)
-		testing.expectf(t, expected.status != .Ok && expected.record_kind != .None, "the expectation of the step %d of the seed %d is no refusal", expected.step, expected.sequence)
-	}
-}
-
-// The check of an expectation refuses a step that did not run, another
-// status, another kind or argument of the record, and a table with no
-// detail of the expected kind and argument; then it takes the answer.
-@(test)
-the_expectation_of_a_seed_step_is_checked :: proc(t: ^testing.T) {
-	expected := Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Handle_Absent, detail_argument = 2}
-	results: operation_sequence.Runner_Results
-	results.steps_run = 1
-	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a step that did not run is taken")
-	negative := expected
-	negative.step = -1
-	testing.expect(t, operation_seed_expectation_problem(negative, &results) != "", "a negative step is taken")
-	results.steps_run = 2
-	record := errors.Error_Record{kind = i64(errors.Kind.Handle_Absent), operation = i64(operation.Operation.Memory_Commit), argument = 1}
-	result := &results.results[1]
-	result.status = u64(operation.Status.Bad_Operation)
-	result.values = transmute([operation_sequence.ARGUMENTS]u64)record
-	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "another status is taken")
-	result.status = u64(operation.Status.Bad_Handle)
-	wrong := record
-	wrong.argument = 2
-	result.values = transmute([operation_sequence.ARGUMENTS]u64)wrong
-	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a record of another argument is taken")
-	wrong = record
-	wrong.kind = i64(errors.Kind.Refused)
-	result.values = transmute([operation_sequence.ARGUMENTS]u64)wrong
-	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a record of another kind is taken")
-	result.values = transmute([operation_sequence.ARGUMENTS]u64)record
-	result.details[0] = record
-	result.details_count = 1
-	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a table with no detail of the budget is taken")
-	// A detail past the count is no detail, and a count past the most
-	// reads only the records of the table.
-	result.details[1] = {kind = i64(errors.Kind.Handle_Absent), argument = 2}
-	testing.expect(t, operation_seed_expectation_problem(expected, &results) != "", "a detail past the count is taken")
-	result.details_count = max(u64)
-	testing.expect_value(t, operation_seed_expectation_problem(expected, &results), "")
-	// The last case: the record, then the detail of the budget.
-	result.details_count = 2
-	testing.expect_value(t, operation_seed_expectation_problem(expected, &results), "")
 }
 
 // A sequence of one step of an operation, for the oracles.

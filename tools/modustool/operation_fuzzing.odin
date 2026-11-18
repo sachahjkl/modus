@@ -1055,10 +1055,12 @@ operation_log_new_lines :: proc(path: string, scanned: ^i64) -> string {
 // ---------------------------------------------------------------------
 // The machine of the operation sequences under QEMU.
 
-@(private = "file")
+// The machine of the commands, behind Operation_Machine. After a life with
+// no fault, `results` holds the answers of its last sequence.
 Operation_Qemu :: struct {
 	part:          Test_Part_Run, // Its data disk, which no program of the image drives.
 	peer:          Peer,
+	peer_started:  bool,
 	process:       os.Process,
 	monitor_read:  ^os.File,
 	monitor_write: ^os.File,
@@ -1276,6 +1278,62 @@ operation_machine_end :: proc(data: rawptr) {
 	state.running = false
 }
 
+// operation_qemu_open builds the volume of the operation sequences, then
+// prepares the machine of a command: the grammar of the oracles, the debug
+// object of the kernel, the data disk and the peer. nil: an error, which it
+// printed. The commands `fuzz operations` and `fuzz regression operations`
+// share it, so a regression input is written by the machine that finds it.
+operation_qemu_open :: proc() -> ^Operation_Qemu {
+	if !fuzz_operation_sequence_start() {
+		return nil
+	}
+	grammar, grammar_read := operation_grammar_read()
+	if !grammar_read {
+		return nil
+	}
+	if code := build_system(boot_volumes_of_command(OPERATION_FUZZING_COMMAND)); code != 0 {
+		return nil
+	}
+	if !make_folder(OPERATION_FUZZING_FOLDER) {
+		return nil
+	}
+	state := new(Operation_Qemu)
+	state.grammar = grammar
+	state.header = new(operation_sequence.Mailbox_Header)
+	state.results = new(operation_sequence.Runner_Results)
+	state.kernel_object = operation_machine_kernel_object()
+	if state.kernel_object == nil {
+		fmt.println("modustool: fuzz operations: no debug object of the kernel: a signature of a stop names no procedure")
+	}
+	state.part = test_part_run_make(OPERATION_FUZZING_COMMAND)
+	if !test_part_run_start(&state.part) || !peer_start(&state.peer) {
+		operation_qemu_close(state)
+		return nil
+	}
+	state.peer_started = true
+	return state
+}
+
+// operation_qemu_close ends the machine, the peer and the files of a
+// command. The data disk stays when state.part.passed is false.
+operation_qemu_close :: proc(state: ^Operation_Qemu) {
+	operation_machine_end(state)
+	if state.peer_started {
+		peer_stop(&state.peer)
+	}
+	_ = os.remove(machine_file(OPERATION_FUZZING_OUTPUT, SCRATCH_DISK_SUFFIX))
+	_ = os.remove(machine_file(OPERATION_FUZZING_OUTPUT, FIRMWARE_VARIABLES_SUFFIX))
+	test_part_run_free(&state.part)
+	free(state.header)
+	free(state.results)
+	delete(state.kernel_object)
+	free(state)
+}
+
+operation_qemu_machine :: proc(state: ^Operation_Qemu) -> Operation_Machine {
+	return {data = state, start = operation_machine_start, execute = operation_machine_execute, drain = operation_machine_drain, end = operation_machine_end}
+}
+
 // operation_fuzzing_run is `fuzz operations <executions> [<seed>]`
 // (docs/TOOLS.md, "The fuzzing of the kernel operations").
 operation_fuzzing_run :: proc(args: []string) -> int {
@@ -1288,42 +1346,12 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 	if !arguments.seed_given {
 		seed = fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
 	}
-	if !fuzz_operation_sequence_start() {
+	state := operation_qemu_open()
+	if state == nil {
 		return EXIT_FAILURE
 	}
-	grammar, grammar_read := operation_grammar_read()
-	if !grammar_read {
-		return EXIT_FAILURE
-	}
-	if code := build_system(boot_volumes_of_command(OPERATION_FUZZING_COMMAND)); code != 0 {
-		return code
-	}
-	if !make_folder(OPERATION_FUZZING_FOLDER) {
-		return EXIT_FAILURE
-	}
-	state := new(Operation_Qemu)
-	defer free(state)
-	state.grammar = grammar
-	state.header = new(operation_sequence.Mailbox_Header)
-	defer free(state.header)
-	state.results = new(operation_sequence.Runner_Results)
-	defer free(state.results)
-	state.kernel_object = operation_machine_kernel_object()
-	defer delete(state.kernel_object)
-	if state.kernel_object == nil {
-		fmt.println("modustool: fuzz operations: no debug object of the kernel: a signature of a stop names no procedure")
-	}
-	state.part = test_part_run_make(OPERATION_FUZZING_COMMAND)
-	defer test_part_run_free(&state.part)
-	if !test_part_run_start(&state.part) || !peer_start(&state.peer) {
-		return EXIT_FAILURE
-	}
-	defer peer_stop(&state.peer)
-	defer {
-		_ = os.remove(machine_file(OPERATION_FUZZING_OUTPUT, SCRATCH_DISK_SUFFIX))
-		_ = os.remove(machine_file(OPERATION_FUZZING_OUTPUT, FIRMWARE_VARIABLES_SUFFIX))
-	}
-	machine := Operation_Machine{data = state, start = operation_machine_start, execute = operation_machine_execute, drain = operation_machine_drain, end = operation_machine_end}
+	defer operation_qemu_close(state)
+	machine := operation_qemu_machine(state)
 	fmt.printfln("modustool: fuzz operations: %d executions from the seed %d, one machine at a time, at most %d sequences in a machine life", arguments.executions, seed, OPERATION_MACHINE_SEQUENCES_MOST)
 	run_started := time.tick_now()
 	bounds := Operation_Run_Bounds{executions = arguments.executions, life_sequences = OPERATION_MACHINE_SEQUENCES_MOST, findings_most = OPERATION_FINDINGS_MOST}

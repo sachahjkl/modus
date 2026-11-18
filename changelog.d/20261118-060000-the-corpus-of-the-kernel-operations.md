@@ -1,0 +1,3 @@
+type: Added
+
+**The corpus of the kernel operations.** The regression inputs of the operation sequences are in `tools/modustool/fuzzing_corpus/operations/regression/`: each holds a minimized life of a fixed finding and the answer of each step of its last sequence on the kernel that ships, its status, its error record and its table of error details. The test part `operation_sequences` runs each one after the seed sequences and checks each answer, so a changed refusal fails the part. `modustool fuzz regression operations <finding>` writes one from a finding folder, and refuses a finding that still breaks an oracle. The regressions of the first long run left the seed sequences for the corpus.
