@@ -27,7 +27,7 @@ import "modustool:foundation"
 MARK_FONT_FILE_NAME :: "modus_mark.ttf"
 MARK_FONT_FILE :: LOGO_FOLDER + "/" + MARK_FONT_FILE_NAME
 // The text of the license of the repository: the font carries it.
-MARK_FONT_LICENSE_FILE :: SITE_LICENSE_FILE
+MARK_FONT_LICENSE_FILE :: REPOSITORY_LICENSE_FILE
 
 // The names that the font carries. It is not a font for a text: it has the
 // letters of the name only.
@@ -679,4 +679,4 @@ mark_font_check :: proc() -> bool {
 
 // The license of the repository: the font of the name of the mark carries
 // its text, and the site, the release and the reuse list read it.
-SITE_LICENSE_FILE :: "LICENSE"
+REPOSITORY_LICENSE_FILE :: "LICENSE"

@@ -69,7 +69,7 @@ site_escapes_a_caption :: proc(t: ^testing.T) {
 
 @(test)
 site_properties_of_the_repository :: proc(t: ^testing.T) {
-	data, err := os.read_entire_file(checks.SITE_PROPERTIES_FILE, context.temp_allocator)
+	data, err := os.read_entire_file(checks.PROPERTIES_FILE, context.temp_allocator)
 	testing.expect(t, err == nil, "cannot read docs/PROPERTIES.md")
 	principles, problem := site_properties_parse(string(data))
 	testing.expect_value(t, problem, "")
@@ -201,7 +201,7 @@ site_lines_of_a_log :: proc(t: ^testing.T) {
 	testing.expect_value(t, count, 3)
 	_, _, count = site_line_choose(log, "absent", .First)
 	testing.expect_value(t, count, 0)
-	absent := site_measure_read(checks.Site_Measure{sentence = "absent", files = {foundation.BUILD_FOLDER + "/no_log_of_the_site_test.txt", ""}, pattern = "x"})
+	absent := site_measure_read(checks.Measure_Entry{sentence = "absent", files = {foundation.BUILD_FOLDER + "/no_log_of_the_site_test.txt", ""}, pattern = "x"})
 	testing.expect(t, !absent.found)
 	testing.expect(t, strings.contains(absent.missing, "no file"))
 }

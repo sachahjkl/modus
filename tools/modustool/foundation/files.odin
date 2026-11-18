@@ -120,21 +120,21 @@ source_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> boo
 	return true
 }
 
-// site_read_quiet reads a file that can be absent, with no message.
-site_read_quiet :: proc(path: string) -> (text: string, ok: bool) {
+// read_text_file_quiet reads a file that can be absent, with no message.
+read_text_file_quiet :: proc(path: string) -> (text: string, ok: bool) {
 	data, err := os.read_entire_file(path, context.temp_allocator)
 	return string(data), err == nil
 }
 
-// site_read reads one text file of the repository.
-site_read :: proc(path: string) -> (text: string, ok: bool) {
+// read_text_file reads one text file of the repository.
+read_text_file :: proc(path: string) -> (text: string, ok: bool) {
 	data := read_file(path) or_return
 	return string(data), true
 }
 
-// site_escape writes a text of a file as HTML text: each character that
+// html_escape writes a text of a file as HTML text: each character that
 // HTML reads as markup becomes its reference.
-site_escape :: proc(builder: ^strings.Builder, text: string) {
+html_escape :: proc(builder: ^strings.Builder, text: string) {
 	for index in 0 ..< len(text) {
 		switch text[index] {
 		case '&':
@@ -153,9 +153,9 @@ site_escape :: proc(builder: ^strings.Builder, text: string) {
 	}
 }
 
-// site_png_size reads the width and the height of a PNG file from its
+// png_size reads the width and the height of a PNG file from its
 // header chunk, which the format puts first.
-site_png_size :: proc(data: []u8) -> (width, height: int, ok: bool) {
+png_size :: proc(data: []u8) -> (width, height: int, ok: bool) {
 	signature := [8]u8{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'}
 	if len(data) < 24 {
 		return 0, 0, false
@@ -174,8 +174,8 @@ site_png_size :: proc(data: []u8) -> (width, height: int, ok: bool) {
 	return big_endian(data[16:20]), big_endian(data[20:24]), true
 }
 
-// site_lines splits a file into lines with no carriage return.
-site_lines :: proc(content: string) -> []string {
+// lines_of_text splits a file into lines with no carriage return.
+lines_of_text :: proc(content: string) -> []string {
 	lines := strings.split(content, "\n", context.temp_allocator)
 	for &line in lines {
 		line = strings.trim_right(line, "\r")
@@ -183,8 +183,8 @@ site_lines :: proc(content: string) -> []string {
 	return lines
 }
 
-// site_digits_value gives the value of a text of decimal digits, or -1.
-site_digits_value :: proc(text: string) -> int {
+// decimal_digits_value gives the value of a text of decimal digits, or -1.
+decimal_digits_value :: proc(text: string) -> int {
 	if len(text) == 0 || len(text) > 12 {
 		return -1
 	}
@@ -220,9 +220,9 @@ CRYPTOGRAPHY_MANIFEST :: CRYPTOGRAPHY_FOLDER + "/origin.manifest"
 
 CRYPTOGRAPHY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/cryptography"
 
-// site_slug gives an id from a text: the lowercase letters and the digits,
+// text_slug gives an id from a text: the lowercase letters and the digits,
 // one "-" for each run of other characters, none at the ends.
-site_slug :: proc(text: string) -> string {
+text_slug :: proc(text: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	dash := false
 	for index in 0 ..< len(text) {
@@ -246,16 +246,16 @@ site_slug :: proc(text: string) -> string {
 	return strings.to_string(builder)
 }
 
-site_is_word_byte :: proc(character: u8) -> bool {
+is_word_byte :: proc(character: u8) -> bool {
 	return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_' || character >= 0x80
 }
 
-// site_json_string writes a text as a JSON string. Each character that
+// json_string_write writes a text as a JSON string. Each character that
 // can end the string or a line of a script is escaped, also when the JSON
 // is put inside a page or a script: the quote, the backslash, the control
 // characters, < > & (no "</script>" in the text), U+2028 and U+2029 (line
 // ends for a script). A byte that is not UTF-8 becomes U+FFFD.
-site_json_string :: proc(b: ^strings.Builder, text: string) {
+json_string_write :: proc(b: ^strings.Builder, text: string) {
 	strings.write_byte(b, '"')
 	index := 0
 	for index < len(text) {
@@ -290,8 +290,8 @@ site_json_string :: proc(b: ^strings.Builder, text: string) {
 	strings.write_byte(b, '"')
 }
 
-// site_quoted gives the text between the first two quotes after start.
-site_quoted :: proc(line: string, start: int = 0) -> (text: string, end: int, found: bool) {
+// quoted_text_after gives the text between the first two quotes after start.
+quoted_text_after :: proc(line: string, start: int = 0) -> (text: string, end: int, found: bool) {
 	first := strings.index_byte(line[start:], '"')
 	if first < 0 {
 		return "", 0, false
@@ -306,7 +306,7 @@ site_quoted :: proc(line: string, start: int = 0) -> (text: string, end: int, fo
 
 // The tokenizer reports a fault of the text to its handler; the caller
 // reads the count of faults, and a block with a fault is written plain.
-site_code_quiet_error :: proc(pos: tokenizer.Pos, format: string, args: ..any) {}
+tokenizer_quiet_error :: proc(pos: tokenizer.Pos, format: string, args: ..any) {}
 
 // enum_member_at gives the member of an enum at a place, from 0, in the
 // order of its members: a choice of the tool by a place (a draw of the

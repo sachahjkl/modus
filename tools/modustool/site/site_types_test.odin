@@ -111,9 +111,9 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 		paths, ok := foundation.files_with_suffix(folder, ".odin")
 		testing.expect(t, ok)
 		for path in paths {
-			text, read := foundation.site_read_quiet(path)
+			text, read := foundation.read_text_file_quiet(path)
 			testing.expect(t, read)
-			for line in foundation.site_lines(text) {
+			for line in foundation.lines_of_text(text) {
 				if !strings.has_prefix(line, "#assert(size_of(") {
 					continue
 				}
@@ -128,8 +128,8 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 				if end < 0 {
 					continue
 				}
-				value := foundation.site_digits_value(value_text[:end])
-				if value < 0 || !foundation.site_is_identifier(name) {
+				value := foundation.decimal_digits_value(value_text[:end])
+				if value < 0 || !foundation.is_odin_identifier(name) {
 					continue // A size that is a constant, or a type of another form: the compiler checks it.
 				}
 				key := strings.concatenate({package_name, ".", name}, context.temp_allocator)
@@ -318,8 +318,8 @@ site_signatures_with_type_references :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "popovertarget=\"card-type-wire-integer\""), html)
 	testing.expect_value(t, site_html_unescape(site_tags_removed(html)), site_export_signature(description, export))
 
-	member := foundation.Site_Enumeration_Member{name = "Memory_Create", number = 2, comment = "(budget, page_count, Memory_Flags) -> memory handle. The memory is zero."}
-	operation := foundation.site_operation_parts(member)
+	member := foundation.Enumeration_Member{name = "Memory_Create", number = 2, comment = "(budget, page_count, Memory_Flags) -> memory handle. The memory is zero."}
+	operation := foundation.operation_comment_split(member)
 	operation_html := site_operation_signature_html(&site, operation)
 	// The attributes of the button follow popovertarget: the name ends it.
 	testing.expect(t, strings.contains(operation_html, "popovertarget=\"card-type-operation-memory-flags\""), operation_html)
@@ -327,11 +327,11 @@ site_signatures_with_type_references :: proc(t: ^testing.T) {
 	// The words that name no type stay words: no count of a type with no card.
 	testing.expect(t, !strings.contains(operation_html, "value-type"), operation_html)
 	testing.expect_value(t, site_html_unescape(site_tags_removed(operation_html)), "Memory_Create(budget, page_count, Memory_Flags) -> memory handle")
-	testing.expect_value(t, site_operation_signature_html(&site, foundation.site_operation_parts(foundation.Site_Enumeration_Member{name = "None", comment = "No form."})), "")
+	testing.expect_value(t, site_operation_signature_html(&site, foundation.operation_comment_split(foundation.Enumeration_Member{name = "None", comment = "No form."})), "")
 
-	command := foundation.Site_Console_Command{name = "repeat", parameters = []string{"Text", "Integer"}, result = "Text"}
+	command := foundation.Console_Command_Entry{name = "repeat", parameters = []string{"Text", "Integer"}, result = "Text"}
 	command_html := site_console_signature_html(&site, command)
-	testing.expect_value(t, site_html_unescape(site_tags_removed(command_html)), foundation.site_console_signature(command))
+	testing.expect_value(t, site_html_unescape(site_tags_removed(command_html)), foundation.console_signature(command))
 	testing.expect(t, strings.contains(command_html, "popovertarget=\"card-type-wire-integer\""), command_html)
 
 	// The symbol writes the signature with its references.

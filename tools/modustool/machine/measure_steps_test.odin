@@ -19,7 +19,7 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 		}
 		return false
 	}
-	for measure in checks.site_measures {
+	for measure in checks.measure_entries {
 		if !measure.required {
 			continue
 		}
@@ -68,7 +68,7 @@ processor_frame_parts_are_waited_for_and_recorded :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, waited, "the scenario of the measure run does not wait for %q", part)
 		recorded := false
-		for measure in checks.site_measures {
+		for measure in checks.measure_entries {
 			recorded ||= measure.pattern == part && measure.files[0] == checks.TEST_OUTPUT_MEASURE
 		}
 		testing.expectf(t, recorded, "no number of the measure record reads %q", part)
@@ -88,7 +88,7 @@ quality_lines_are_waited_for_and_recorded :: proc(t: ^testing.T) {
 	}
 	for text in ([]string{checks.QUALITY_WINDOW_START_LOCKS, checks.QUALITY_FRAME, checks.QUALITY_KEY}) {
 		recorded := false
-		for measure in checks.site_measures {
+		for measure in checks.measure_entries {
 			recorded ||= measure.pattern == text && measure.files[0] == checks.TEST_OUTPUT_MEASURE
 		}
 		testing.expectf(t, recorded, "no number of the measure record reads %q", text)

@@ -353,7 +353,7 @@ byte_layout_guides_hold_the_text_of_the_code :: proc(t: ^testing.T) {
 	testing.expect(t, listed, "the guides are listed")
 	contract_fences := 0
 	for path in paths {
-		content, read := foundation.site_read(path)
+		content, read := foundation.read_text_file(path)
 		if !testing.expectf(t, read, "%s is read", path) {
 			continue
 		}

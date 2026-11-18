@@ -286,6 +286,6 @@ site_documentation_working_record_links :: proc(t: ^testing.T) {
 	renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
 	site_render_markdown(&renderer, "See `docs/SITE.md` and [the record](SITE.md).\n")
 	html := strings.to_string(renderer.builder)
-	testing.expect_value(t, strings.count(html, "href=\"" + checks.SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md\""), 2)
+	testing.expect_value(t, strings.count(html, "href=\"" + checks.REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md\""), 2)
 	testing.expect(t, !strings.contains(html, "guides/SITE"))
 }

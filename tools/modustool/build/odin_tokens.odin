@@ -7,7 +7,7 @@ import "modustool:foundation"
 
 // The built-in types of Odin: a name of this list in code is of the class
 // Type.
-SITE_CODE_BUILT_IN_TYPES :: [?]string {
+ODIN_BUILT_IN_TYPES :: [?]string {
 	"bool", "b8", "b16", "b32", "b64",
 	"int", "uint", "uintptr", "rawptr", "any", "typeid",
 	"i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "byte",
@@ -19,20 +19,20 @@ SITE_CODE_BUILT_IN_TYPES :: [?]string {
 }
 
 // One token of a text of Odin: its kind and its bytes in the text.
-Site_Code_Token :: struct {
+Odin_Token :: struct {
 	kind:  tokenizer.Token_Kind,
 	start: int,
 	end:   int,
 }
 
-// site_code_odin_tokens gives the tokens of a text, or false when the
+// odin_tokens gives the tokens of a text, or false when the
 // tokenizer refuses it (an illegal character, a string or a comment with no
 // end). The tokenizer gives comments as tokens and skips the spaces and the
 // line feeds; the caller writes the bytes between two tokens as they are.
-site_code_odin_tokens :: proc(source: string) -> (tokens: []Site_Code_Token, ok: bool) {
+odin_tokens :: proc(source: string) -> (tokens: []Odin_Token, ok: bool) {
 	t: tokenizer.Tokenizer
-	tokenizer.init(&t, source, "", foundation.site_code_quiet_error)
-	list := make([dynamic]Site_Code_Token, context.temp_allocator)
+	tokenizer.init(&t, source, "", foundation.tokenizer_quiet_error)
+	list := make([dynamic]Odin_Token, context.temp_allocator)
 	position := 0
 	for {
 		token := tokenizer.scan(&t)
@@ -45,7 +45,7 @@ site_code_odin_tokens :: proc(source: string) -> (tokens: []Site_Code_Token, ok:
 		if token.kind == .Invalid || start < position || end < start || end > len(source) || len(list) > len(source) {
 			return nil, false
 		}
-		append(&list, Site_Code_Token{kind = token.kind, start = start, end = end})
+		append(&list, Odin_Token{kind = token.kind, start = start, end = end})
 		position = end
 	}
 	if t.error_count > 0 {
@@ -54,14 +54,14 @@ site_code_odin_tokens :: proc(source: string) -> (tokens: []Site_Code_Token, ok:
 	return list[:], true
 }
 
-// site_code_is_capital tells whether a name starts with a capital letter.
-site_code_is_capital :: proc(name: string) -> bool {
+// name_is_capital tells whether a name starts with a capital letter.
+name_is_capital :: proc(name: string) -> bool {
 	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
 }
 
-// site_code_is_constant_name tells whether a name is in capitals, with at
+// name_is_constant tells whether a name is in capitals, with at
 // least two letters: PAGE_SIZE.
-site_code_is_constant_name :: proc(name: string) -> bool {
+name_is_constant :: proc(name: string) -> bool {
 	letters := 0
 	for character in transmute([]u8)name {
 		switch {

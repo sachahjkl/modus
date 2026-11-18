@@ -14,7 +14,7 @@ REUSE_NO_LICENSE_WORDS :: "All rights reserved"
 // reuse_spdx_of_record_words gives the SPDX identifier that the words of a
 // record name, or "" when the words name none that the site translates.
 reuse_spdx_of_record_words :: proc(words: string) -> string {
-	for pair in site_spdx_names {
+	for pair in spdx_names {
 		if strings.has_prefix(words, pair[0]) {
 			return pair[1]
 		}
@@ -30,7 +30,7 @@ reuse_spdx_of_record_words :: proc(words: string) -> string {
 // not a recorded fact: a phrase that is not here is shown as the file
 // writes it.
 @(rodata)
-site_spdx_names := [?][2]string {
+spdx_names := [?][2]string {
 	{"SIL OFL 1.1", "OFL-1.1"},
 	{"Bitstream Vera license", "Bitstream-Vera"},
 	{"MIT License", "MIT"},

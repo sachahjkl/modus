@@ -93,14 +93,14 @@ glossary_is_file :: proc(path: string) -> bool {
 // of its heading, with "_" for "-", as the names of the files of the
 // repository have. The page of the group on the site has the slug.
 glossary_group_file_name :: proc(group_name: string) -> string {
-	name, _ := strings.replace_all(foundation.site_slug(group_name), "-", "_", context.temp_allocator)
+	name, _ := strings.replace_all(foundation.text_slug(group_name), "-", "_", context.temp_allocator)
 	return strings.concatenate({name, ".md"}, context.temp_allocator)
 }
 
 // glossary_term_id gives the anchor of a term. A second term with the same
 // slug gets "-2", as a second heading of a page does.
 glossary_term_id :: proc(name: string, seen: ^map[string]int) -> string {
-	id := strings.concatenate({"term-", foundation.site_slug(name)}, context.temp_allocator)
+	id := strings.concatenate({"term-", foundation.text_slug(name)}, context.temp_allocator)
 	seen^[id] += 1
 	count := seen^[id]
 	if count == 1 {
@@ -156,7 +156,7 @@ glossary_heading_indices :: proc(path: string, lines: []string, problems: ^[dyna
 		if fenced {
 			continue
 		}
-		if level, _ := site_heading_level(line); level > 0 {
+		if level, _ := heading_level(line); level > 0 {
 			append(&indices, index)
 		}
 		if strings.has_prefix(trimmed, "| Term |") {
@@ -175,7 +175,7 @@ glossary_heading_indices :: proc(path: string, lines: []string, problems: ^[dyna
 glossary_index_read :: proc(content: string) -> (index: Glossary_Index, problems: []string) {
 	found := make([dynamic]string, context.temp_allocator)
 	entries := make([dynamic]Glossary_Index_Entry, context.temp_allocator)
-	lines := foundation.site_lines(content)
+	lines := foundation.lines_of_text(content)
 	headings := glossary_heading_indices(GLOSSARY_INDEX_FILE, lines, &found)
 	if strings.trim_space(strings.join(lines[:headings[0]], "", context.temp_allocator)) != "" {
 		append(&found, fmt.tprintf("%s: a text before the title: the file starts with its title (a heading of level 1)", GLOSSARY_INDEX_FILE))
@@ -184,7 +184,7 @@ glossary_index_read :: proc(content: string) -> (index: Glossary_Index, problems
 	for position in 0 ..< len(headings) - 1 {
 		heading := headings[position]
 		body := lines[heading + 1:headings[position + 1]]
-		level, text := site_heading_level(lines[heading])
+		level, text := heading_level(lines[heading])
 		switch {
 		case position == 0 && level == 1:
 			index.title = text
@@ -313,7 +313,7 @@ glossary_read :: proc(index_content: string, group_files: []Glossary_File) -> (g
 // on its first line that is not empty, the text before its first term,
 // then its terms, each a heading of level 3.
 glossary_group_read :: proc(file: Glossary_File, seen_ids: ^map[string]int, problems: ^[dynamic]string) -> (group: Glossary_Group, ok: bool) {
-	lines := foundation.site_lines(file.content)
+	lines := foundation.lines_of_text(file.content)
 	headings := glossary_heading_indices(file.path, lines, problems)
 	if len(headings) == 1 || strings.trim_space(strings.join(lines[:headings[0]], "", context.temp_allocator)) != "" {
 		append(problems, fmt.tprintf("%s: the file does not start with the heading of its group (a heading of level 2)", file.path))
@@ -323,10 +323,10 @@ glossary_group_read :: proc(file: Glossary_File, seen_ids: ^map[string]int, prob
 	for position in 0 ..< len(headings) - 1 {
 		heading := headings[position]
 		body := lines[heading + 1:headings[position + 1]]
-		level, text := site_heading_level(lines[heading])
+		level, text := heading_level(lines[heading])
 		switch {
 		case position == 0 && level == 2:
-			group = Glossary_Group{name = text, id = foundation.site_slug(text), file = file.path, line = heading + 1}
+			group = Glossary_Group{name = text, id = foundation.text_slug(text), file = file.path, line = heading + 1}
 			group.introduction, group.introduction_line = glossary_markdown(body, heading + 2)
 		case position == 0 && level == 3:
 			append(problems, fmt.tprintf("%s, line %d: the term %q comes before the heading of a group", file.path, heading + 1, text))
@@ -353,7 +353,7 @@ glossary_group_read :: proc(file: Glossary_File, seen_ids: ^map[string]int, prob
 // heading, in paragraphs (blocks of lines that an empty line outside a
 // fence ends).
 glossary_term_read :: proc(path, heading: string, heading_line: int, body: []string, seen_ids: ^map[string]int, problems: ^[dynamic]string) -> Glossary_Term {
-	term := Glossary_Term{name = site_term_name(heading), file = path, line = heading_line}
+	term := Glossary_Term{name = term_name_of_heading(heading), file = path, line = heading_line}
 	term.id = glossary_term_id(term.name, seen_ids)
 
 	blocks := make([dynamic][2]int, context.temp_allocator)
@@ -384,7 +384,7 @@ glossary_term_read :: proc(path, heading: string, heading_line: int, body: []str
 		return term
 	}
 	first_line := strings.trim_space(body[blocks[0][0]])
-	_, is_list := site_list_marker(body[blocks[0][0]])
+	_, is_list := list_marker_read(body[blocks[0][0]])
 	if is_list || strings.has_prefix(first_line, "|") || strings.has_prefix(first_line, "```") || strings.has_prefix(first_line, ">") || strings.has_prefix(first_line, GLOSSARY_AVOIDED_PREFIX) {
 		append(problems, fmt.tprintf("%s, line %d: the term %q starts with no short definition: its first paragraph is the definition, one paragraph of text", path, heading_line, term.name))
 		return term
@@ -455,7 +455,7 @@ glossary_read_folder :: proc() -> (glossary: Glossary, problems: []string, ok: b
 	index_found := false
 	files := make([dynamic]Glossary_File, context.temp_allocator)
 	for path in paths {
-		content, read_ok := foundation.site_read_quiet(path)
+		content, read_ok := foundation.read_text_file_quiet(path)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", path)
 			return {}, nil, false

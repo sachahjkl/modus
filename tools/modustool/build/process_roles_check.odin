@@ -13,11 +13,11 @@ import "modustool:foundation"
 // it whole, so the check runs before each build, and the site reads the
 // same rows.
 
-// The table in SITE_ROOT_ROLES_FILE. The root service (ROOT_SERVICE_MODULE)
+// The table in ROOT_ROLES_FILE. The root service (ROOT_SERVICE_MODULE)
 // has no row: the kernel starts it.
 PROCESS_ROLES_TABLE :: "process_roles"
 
-// The list of the parts of the system in SITE_ROOT_ROLES_FILE: the processes
+// The list of the parts of the system in ROOT_ROLES_FILE: the processes
 // that the root service starts itself, with handles that no grant names.
 SYSTEM_PART_NAMES_LIST :: "system_part_names"
 
@@ -34,7 +34,7 @@ SYSTEM_PART_THAT_SERVES :: "compositor"
 // System_Part alone (with Serve for the compositor) with no term. The debug
 // access to a process refuses a part of the system by that grant, and its
 // starter gives no handle of another grant.
-process_roles_problems :: proc(rows: []foundation.Site_Role_Row, system_parts: []string, builds: []foundation.Module_Build, file: string) -> []string {
+process_roles_problems :: proc(rows: []foundation.Role_Row, system_parts: []string, builds: []foundation.Module_Build, file: string) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	named := make(map[string]bool, context.temp_allocator)
 	for row in rows {
@@ -86,7 +86,7 @@ process_roles_problems :: proc(rows: []foundation.Site_Role_Row, system_parts: [
 // system_part_grants_hold says if the row of a part of the system has the
 // grants of its starter: System_Part, with Serve for the compositor, and no
 // term.
-system_part_grants_hold :: proc(row: foundation.Site_Role_Row) -> bool {
+system_part_grants_hold :: proc(row: foundation.Role_Row) -> bool {
 	expected := make([dynamic]string, context.temp_allocator)
 	append(&expected, start_grant.GRANT_NAMES[.System_Part])
 	if row.name == SYSTEM_PART_THAT_SERVES {
@@ -105,12 +105,12 @@ system_part_grants_hold :: proc(row: foundation.Site_Role_Row) -> bool {
 
 // process_roles_read reads the rows and the list of the parts of the
 // system from the source of the root service.
-process_roles_read :: proc(text: string) -> (rows: []foundation.Site_Role_Row, system_parts: []string, problem: string) {
-	rows, problem = foundation.site_role_table_read(text, foundation.SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
+process_roles_read :: proc(text: string) -> (rows: []foundation.Role_Row, system_parts: []string, problem: string) {
+	rows, problem = foundation.role_table_read(text, foundation.ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
 	if problem != "" {
 		return nil, nil, problem
 	}
-	system_parts, problem = foundation.site_string_list_read(text, foundation.SITE_ROOT_ROLES_FILE, SYSTEM_PART_NAMES_LIST)
+	system_parts, problem = foundation.string_list_read(text, foundation.ROOT_ROLES_FILE, SYSTEM_PART_NAMES_LIST)
 	return rows, system_parts, problem
 }
 
@@ -118,9 +118,9 @@ process_roles_read :: proc(text: string) -> (rows: []foundation.Site_Role_Row, s
 // It prints each fault, and gives false when there is one: the build then
 // stops before the first compiler starts.
 process_roles_hold :: proc() -> bool {
-	text, read := foundation.site_read_quiet(foundation.SITE_ROOT_ROLES_FILE)
+	text, read := foundation.read_text_file_quiet(foundation.ROOT_ROLES_FILE)
 	if !read {
-		fmt.eprintfln("modustool: cannot read %s", foundation.SITE_ROOT_ROLES_FILE)
+		fmt.eprintfln("modustool: cannot read %s", foundation.ROOT_ROLES_FILE)
 		return false
 	}
 	rows, system_parts, problem := process_roles_read(text)
@@ -128,7 +128,7 @@ process_roles_hold :: proc() -> bool {
 		fmt.eprintfln("modustool: %s", problem)
 		return false
 	}
-	problems := process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)
+	problems := process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.ROOT_ROLES_FILE)
 	for item in problems {
 		fmt.eprintfln("modustool: %s", item)
 	}

@@ -14,7 +14,7 @@ import "modustool:build"
 
 @(private = "file")
 read_text :: proc(t: ^testing.T, path: string) -> string {
-	text, ok := foundation.site_read_quiet(path)
+	text, ok := foundation.read_text_file_quiet(path)
 	testing.expectf(t, ok, "cannot read %s", path)
 	return text
 }
@@ -22,7 +22,7 @@ read_text :: proc(t: ^testing.T, path: string) -> string {
 // The members that the reader finds are those that the compiler knows, with
 // the same names and values, in the same order.
 @(private = "file")
-expect_members_of :: proc(t: ^testing.T, members: []foundation.Site_Enumeration_Member, type: typeid) {
+expect_members_of :: proc(t: ^testing.T, members: []foundation.Enumeration_Member, type: typeid) {
 	names := reflect.enum_field_names(type)
 	values := reflect.enum_field_values(type)
 	testing.expectf(t, len(members) == len(names), "the reader found %d members of %v, the compiler knows %d", len(members), type, len(names))
@@ -37,18 +37,18 @@ expect_members_of :: proc(t: ^testing.T, members: []foundation.Site_Enumeration_
 @(test)
 site_operations_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_OPERATION_FILE)
-	members, problem := foundation.site_enumeration_read(text, SITE_OPERATION_FILE, "Operation")
+	members, problem := foundation.enumeration_read(text, SITE_OPERATION_FILE, "Operation")
 	testing.expect_value(t, problem, "")
 	expect_members_of(t, members, op.Operation)
 	for member in members {
 		if member.name != "Memory_Map" {
 			continue
 		}
-		operation := foundation.site_operation_parts(member)
+		operation := foundation.operation_comment_split(member)
 		testing.expect(t, strings.has_prefix(operation.parameters, "memory, process, address"))
 		testing.expect_value(t, operation.result, "address")
 	}
-	statuses, status_problem := foundation.site_enumeration_read(text, SITE_OPERATION_FILE, "Status")
+	statuses, status_problem := foundation.enumeration_read(text, SITE_OPERATION_FILE, "Status")
 	testing.expect_value(t, status_problem, "")
 	expect_members_of(t, statuses, op.Status)
 }
@@ -56,13 +56,13 @@ site_operations_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_errors_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_ERRORS_FILE)
-	kinds, kinds_problem := foundation.site_enumeration_read(text, SITE_ERRORS_FILE, "Kind")
+	kinds, kinds_problem := foundation.enumeration_read(text, SITE_ERRORS_FILE, "Kind")
 	testing.expect_value(t, kinds_problem, "")
 	expect_members_of(t, kinds, errors.Kind)
-	units, units_problem := foundation.site_enumeration_read(text, SITE_ERRORS_FILE, "Unit")
+	units, units_problem := foundation.enumeration_read(text, SITE_ERRORS_FILE, "Unit")
 	testing.expect_value(t, units_problem, "")
 	expect_members_of(t, units, errors.Unit)
-	names, names_problem := foundation.site_names_read(text, SITE_ERRORS_FILE, "UNIT_NAMES")
+	names, names_problem := foundation.names_table_read(text, SITE_ERRORS_FILE, "UNIT_NAMES")
 	testing.expect_value(t, names_problem, "")
 	testing.expect_value(t, len(names), len(units))
 	testing.expect_value(t, names["Pages"], "pages")
@@ -71,7 +71,7 @@ site_errors_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_fixed_ranges_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_FIXED_ADDRESSES_FILE)
-	ranges, problem := foundation.site_enumeration_read(text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
+	ranges, problem := foundation.enumeration_read(text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
 	testing.expect_value(t, problem, "")
 	expect_members_of(t, ranges, fixed_addresses.Fixed_Range)
 }
@@ -79,7 +79,7 @@ site_fixed_ranges_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_context_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_OPERATION_FILE)
-	roles, problem := foundation.site_constants_read(text, SITE_OPERATION_FILE, "CONTEXT_HANDLES ::", {"CONTEXT_", "ROOT_"})
+	roles, problem := foundation.constants_read(text, SITE_OPERATION_FILE, "CONTEXT_HANDLES ::", {"CONTEXT_", "ROOT_"})
 	testing.expect_value(t, problem, "")
 	found_log, found_machine := false, false
 	for role in roles {
@@ -96,17 +96,17 @@ site_context_of_the_repository :: proc(t: ^testing.T) {
 
 @(test)
 site_grants_of_the_repository :: proc(t: ^testing.T) {
-	grants_text := read_text(t, foundation.SITE_SYSTEM_GRANTS_FILE)
-	recorded, recorded_problem := foundation.site_enumeration_read(grants_text, foundation.SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
+	grants_text := read_text(t, foundation.SYSTEM_GRANTS_FILE)
+	recorded, recorded_problem := foundation.enumeration_read(grants_text, foundation.SYSTEM_GRANTS_FILE, "Root_Grant")
 	testing.expect_value(t, recorded_problem, "")
-	names, names_problem := foundation.site_names_read(grants_text, foundation.SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
+	names, names_problem := foundation.names_table_read(grants_text, foundation.SYSTEM_GRANTS_FILE, "root_grant_names")
 	testing.expect_value(t, names_problem, "")
 	for grant in recorded {
 		testing.expectf(t, names[grant.name] != "", "the grant %s has no name in root_grant_names", grant.name)
 	}
-	roles_text := read_text(t, foundation.SITE_ROOT_ROLES_FILE)
+	roles_text := read_text(t, foundation.ROOT_ROLES_FILE)
 	start_grant_text := read_text(t, SITE_START_GRANT_FILE)
-	at_start, start_problem := foundation.site_enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
+	at_start, start_problem := foundation.enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
 	testing.expect_value(t, start_problem, "")
 	testing.expect(t, len(at_start) > 0 && at_start[0].name == "Root_Ring")
 	// The number of a start grant is in an error record: the site shows the
@@ -116,7 +116,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, known && name == grant.name, "the start grant %s has the number %d, which grant_name names %q", grant.name, grant.number, name)
 	}
 	testing.expect_value(t, len(at_start), len(start_grant.Grant))
-	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
+	rows, rows_problem := foundation.role_table_read(roles_text, foundation.ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
 	testing.expect_value(t, rows_problem, "")
 	console, named := site_role_row_of(rows, "console")
 	testing.expect(t, named && len(console.grants) > 1 && console.grants[0] == "Root_Ring", "a set is read as its members, with no period")
@@ -129,7 +129,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, plasma_named && len(plasma.grants) == 0)
 	_, system_parts, parts_problem := build.process_roles_read(roles_text)
 	testing.expect_value(t, parts_problem, "")
-	testing.expect_value(t, len(build.process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
+	testing.expect_value(t, len(build.process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.ROOT_ROLES_FILE)), 0)
 }
 
 // A set of grants is a list of values: each grant one link to its row in
@@ -152,17 +152,17 @@ site_grant_set_is_a_list_of_values :: proc(t: ^testing.T) {
 
 @(test)
 site_console_commands_of_the_repository :: proc(t: ^testing.T) {
-	all := make([dynamic]foundation.Site_Console_Command, context.temp_allocator)
+	all := make([dynamic]foundation.Console_Command_Entry, context.temp_allocator)
 	files := SITE_CONSOLE_COMMAND_FILES
 	for file in files {
-		commands, problem := foundation.site_console_commands_read(read_text(t, file), file)
+		commands, problem := foundation.console_commands_read(read_text(t, file), file)
 		testing.expect_value(t, problem, "")
 		append(&all, ..commands)
 	}
 	signatures := make(map[string]string, context.temp_allocator)
 	for command in all {
 		testing.expectf(t, command.about != "", "the command %s has no help", command.name)
-		signatures[command.name] = foundation.site_console_signature(command)
+		signatures[command.name] = foundation.console_signature(command)
 	}
 	testing.expect_value(t, signatures["help"], "help() -> Table")
 	testing.expect_value(t, signatures["repeat"], "repeat(Text, Integer) -> Text")

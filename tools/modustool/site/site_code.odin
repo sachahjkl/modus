@@ -80,13 +80,13 @@ site_code_rules :: proc(light: bool) -> string {
 	return strings.to_string(b)
 }
 
-site_code_token_text :: proc(source: string, token: build.Site_Code_Token) -> string {
+site_code_token_text :: proc(source: string, token: build.Odin_Token) -> string {
 	return source[token.start:token.end]
 }
 
 // site_code_token_before gives the token before an index with no comment
 // between, or -1.
-site_code_token_before :: proc(tokens: []build.Site_Code_Token, index: int) -> int {
+site_code_token_before :: proc(tokens: []build.Odin_Token, index: int) -> int {
 	for other := index - 1; other >= 0; other -= 1 {
 		if tokens[other].kind != .Comment {
 			return other
@@ -97,7 +97,7 @@ site_code_token_before :: proc(tokens: []build.Site_Code_Token, index: int) -> i
 
 // site_code_token_after gives the token after an index with no comment
 // between, or -1.
-site_code_token_after :: proc(tokens: []build.Site_Code_Token, index: int) -> int {
+site_code_token_after :: proc(tokens: []build.Odin_Token, index: int) -> int {
 	for other := index + 1; other < len(tokens); other += 1 {
 		if tokens[other].kind != .Comment {
 			return other
@@ -109,7 +109,7 @@ site_code_token_after :: proc(tokens: []build.Site_Code_Token, index: int) -> in
 // site_code_in_type_place tells whether a name is in the place of a type:
 // after ":" (but not "::"), "^", "]", "->" or "distinct"; a name after
 // "qualifier." takes the place of its qualifier.
-site_code_in_type_place :: proc(source: string, tokens: []build.Site_Code_Token, index: int) -> bool {
+site_code_in_type_place :: proc(source: string, tokens: []build.Odin_Token, index: int) -> bool {
 	previous := site_code_token_before(tokens, index)
 	if previous < 0 {
 		return false
@@ -143,7 +143,7 @@ site_code_in_type_place :: proc(source: string, tokens: []build.Site_Code_Token,
 //   "->" or "distinct", or after "qualifier." in that place): Type;
 //   an operator or punctuation: Punctuation; any other name: no class.
 // A name with a capital elsewhere is not guessed to be a type.
-site_code_odin_classes :: proc(site: ^Site, source: string, tokens: []build.Site_Code_Token, package_name: string) -> (classes: []Site_Code_Class, keys: []string) {
+site_code_odin_classes :: proc(site: ^Site, source: string, tokens: []build.Odin_Token, package_name: string) -> (classes: []Site_Code_Class, keys: []string) {
 	classes = make([]Site_Code_Class, len(tokens), context.temp_allocator)
 	keys = make([]string, len(tokens), context.temp_allocator)
 	text := site_code_token_text
@@ -156,7 +156,7 @@ site_code_odin_classes :: proc(site: ^Site, source: string, tokens: []build.Site
 		documented[folder[strings.last_index_byte(folder, '/') + 1:]] = true
 	}
 	built_in := make(map[string]bool, context.temp_allocator)
-	built_in_names := build.SITE_CODE_BUILT_IN_TYPES
+	built_in_names := build.ODIN_BUILT_IN_TYPES
 	for name in built_in_names {
 		built_in[name] = true
 	}
@@ -215,9 +215,9 @@ site_code_odin_classes :: proc(site: ^Site, source: string, tokens: []build.Site
 				if _, found := site_type_index(site, key); found {
 					classes[index] = .Reference
 					keys[index] = key
-				} else if build.site_code_is_constant_name(name) {
+				} else if build.name_is_constant(name) {
 					classes[index] = .Literal
-				} else if build.site_code_is_capital(name) && in_type_place(source, tokens, index) {
+				} else if build.name_is_capital(name) && in_type_place(source, tokens, index) {
 					classes[index] = .Type
 				}
 			case after_period && !qualified:
@@ -228,21 +228,21 @@ site_code_odin_classes :: proc(site: ^Site, source: string, tokens: []build.Site
 				}
 			case in_enum:
 				classes[index] = .Literal
-			case !after_period && package_name != "" && build.site_code_is_capital(name):
+			case !after_period && package_name != "" && build.name_is_capital(name):
 				key := strings.concatenate({package_name, ".", name}, context.temp_allocator)
 				if _, found := site_type_index(site, key); found {
 					classes[index] = .Reference
 					keys[index] = key
-				} else if build.site_code_is_constant_name(name) {
+				} else if build.name_is_constant(name) {
 					classes[index] = .Literal
 				} else if in_type_place(source, tokens, index) {
 					classes[index] = .Type
 				}
 			case built_in[name]:
 				classes[index] = .Type
-			case build.site_code_is_constant_name(name):
+			case build.name_is_constant(name):
 				classes[index] = .Literal
-			case build.site_code_is_capital(name) && in_type_place(source, tokens, index):
+			case build.name_is_capital(name) && in_type_place(source, tokens, index):
 				classes[index] = .Type
 			}
 		case kind > .B_Operator_Begin && kind < .B_Operator_End:
@@ -281,15 +281,15 @@ Site_Code_Links :: struct {
 // code links to, or -1. A name after "package." is looked for in that
 // package; a name after another value and a period is a field, and a short
 // name is a local of the example: neither links.
-site_code_link_place :: proc(links: ^Site_Code_Links, source: string, tokens: []build.Site_Code_Token, index: int) -> int {
+site_code_link_place :: proc(links: ^Site_Code_Links, source: string, tokens: []build.Odin_Token, index: int) -> int {
 	if links == nil || links.site == nil || len(links.site.declarations.declarations) == 0 {
 		return -1
 	}
 	name := site_code_token_text(source, tokens[index])
-	if len(name) < SITE_DECLARATION_SHORTEST_NAME_IN_CODE || build.site_is_odin_word(name) {
+	if len(name) < SITE_DECLARATION_SHORTEST_NAME_IN_CODE || build.is_odin_word(name) {
 		return -1
 	}
-	span := build.Site_Declaration_Span{name = name}
+	span := build.Declaration_Span{name = name}
 	previous := site_code_token_before(tokens, index)
 	if previous >= 0 && tokens[previous].kind == .Period {
 		qualifier := site_code_token_before(tokens, previous)
@@ -303,7 +303,7 @@ site_code_link_place :: proc(links: ^Site_Code_Links, source: string, tokens: []
 	}
 	next := site_code_token_after(tokens, index)
 	span.called = next >= 0 && tokens[next].kind == .Open_Paren
-	place, resolution := build.site_declaration_resolve(&links.site.declarations, span, links.context_folders)
+	place, resolution := build.declaration_resolve(&links.site.declarations, span, links.context_folders)
 	return resolution == .Linked ? place : -1
 }
 
@@ -315,7 +315,7 @@ site_code_link_place :: proc(links: ^Site_Code_Links, source: string, tokens: []
 // declaration index resolves is a link to its declaration. It writes
 // nothing and gives false when the tokenizer refuses the text.
 site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: string, links: ^Site_Code_Links = nil) -> bool {
-	tokens, ok := build.site_code_odin_tokens(source)
+	tokens, ok := build.odin_tokens(source)
 	if !ok {
 		return false
 	}
@@ -336,7 +336,7 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 		if open != .None && (class != open || strings.trim_space(gap) != "") {
 			close_span(b, &open)
 		}
-		foundation.site_escape(b, gap)
+		foundation.html_escape(b, gap)
 		bytes := source[token.start:token.end]
 		if token.kind == .Ident && links != nil && (class == .None || class == .Type || class == .Literal) {
 			if place := site_code_link_place(links, source, tokens, index); place >= 0 {
@@ -349,7 +349,7 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 		switch class {
 		case .None:
 			close_span(b, &open)
-			foundation.site_escape(b, bytes)
+			foundation.html_escape(b, bytes)
 		case .Reference:
 			close_span(b, &open)
 			site_type_reference(site, b, keys[index], bytes, false)
@@ -359,12 +359,12 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 				fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
 				open = class
 			}
-			foundation.site_escape(b, bytes)
+			foundation.html_escape(b, bytes)
 		}
 		position = token.end
 	}
 	close_span(b, &open)
-	foundation.site_escape(b, source[position:])
+	foundation.html_escape(b, source[position:])
 	return true
 }
 
@@ -381,7 +381,7 @@ site_code_block_html :: proc(site: ^Site, source, package_name, place: string) -
 		site.first_code_block_not_colored = place
 	}
 	plain := strings.builder_make(context.temp_allocator)
-	foundation.site_escape(&plain, source)
+	foundation.html_escape(&plain, source)
 	return strings.to_string(plain)
 }
 
@@ -390,6 +390,6 @@ site_code_block_html :: proc(site: ^Site, source, package_name, place: string) -
 // tokenizer.
 site_code_span :: proc(b: ^strings.Builder, class: Site_Code_Class, text: string) {
 	fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
-	foundation.site_escape(b, text)
+	foundation.html_escape(b, text)
 	strings.write_string(b, "</span>")
 }

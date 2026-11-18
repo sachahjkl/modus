@@ -54,7 +54,7 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 	if strings.has_prefix(target, SITE_TERM_TARGET_PREFIX) {
 		name := target[len(SITE_TERM_TARGET_PREFIX):]
 		for term in site.terms {
-			if foundation.site_slug(term.name) == foundation.site_slug(name) {
+			if foundation.text_slug(term.name) == foundation.text_slug(name) {
 				return {kind = .Term, address = strings.concatenate({term.page, "#", term.id}, context.temp_allocator), definition = term.definition}, ""
 			}
 		}
@@ -95,18 +95,18 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 			}
 			for export in item.description.exports {
 				if export.name == export_name {
-					return {kind = .Page, address = strings.concatenate({item.page, "#export-", foundation.site_slug(export.name)}, context.temp_allocator)}, ""
+					return {kind = .Page, address = strings.concatenate({item.page, "#export-", foundation.text_slug(export.name)}, context.temp_allocator)}, ""
 				}
 			}
 			// A name of a module and a package (`system`) can still name a
 			// declaration of the package.
 		}
 	}
-	span, is_name := build.site_declaration_span_read(target)
+	span, is_name := build.declaration_span_read(target)
 	if !is_name {
 		return {}, "the target is not an address, a term (term:<name>), a guide (docs/<NAME>.md#<id>) or a name"
 	}
-	place, resolution := build.site_declaration_resolve(&site.declarations, span, nil)
+	place, resolution := build.declaration_resolve(&site.declarations, span, nil)
 	switch resolution {
 	case .Linked:
 		if key := site_declaration_type_key(site, site.declarations.declarations[place]); key != "" {
@@ -148,13 +148,13 @@ site_comment_link_write :: proc(renderer: ^Site_Renderer, label, target: string)
 	switch link.kind {
 	case .Address:
 		strings.write_string(b, "<a href=\"")
-		foundation.site_escape(b, link.address)
+		foundation.html_escape(b, link.address)
 		strings.write_string(b, "\">")
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
 	case .Page:
 		strings.write_string(b, "<a href=\"")
-		foundation.site_escape(b, site_page_link(site, renderer.page, link.address))
+		foundation.html_escape(b, site_page_link(site, renderer.page, link.address))
 		strings.write_string(b, "\">")
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
@@ -162,7 +162,7 @@ site_comment_link_write :: proc(renderer: ^Site_Renderer, label, target: string)
 		// The same markup as a term that a guide links: its short definition
 		// is the tooltip of the link.
 		strings.write_string(b, "<a class=\"term\" href=\"")
-		foundation.site_escape(b, site_page_link(site, renderer.page, link.address))
+		foundation.html_escape(b, site_page_link(site, renderer.page, link.address))
 		strings.write_string(b, "\"")
 		if link.definition != "" {
 			strings.write_string(b, " title=\"")
@@ -176,7 +176,7 @@ site_comment_link_write :: proc(renderer: ^Site_Renderer, label, target: string)
 		declaration := site.declarations.declarations[link.place]
 		id := site_declaration_card_id(link.place)
 		strings.write_string(b, "<a class=\"declaration-reference\" href=\"")
-		foundation.site_escape(b, site_declaration_address(site, renderer.page, declaration))
+		foundation.html_escape(b, site_declaration_address(site, renderer.page, declaration))
 		fmt.sbprintf(b, "\" data-declaration-card=\"%s\" aria-describedby=\"%s%s\">", id, id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
@@ -196,7 +196,7 @@ site_comment_link_problems :: proc(site: ^Site, file, content: string) -> []stri
 		return problems[:]
 	}
 	for block in foundation.comment_blocks(content, syntax) {
-		targets, starts := build.site_comment_links(block.text)
+		targets, starts := build.comment_links(block.text)
 		for target, index in targets {
 			if _, problem := site_comment_link_target(site, target); problem != "" {
 				append(&problems, fmt.tprintf("%s, line %d: the link to %s names nothing: %s", file, foundation.comment_block_line(block, starts[index]), target, problem))

@@ -419,9 +419,9 @@ site_graph_hash_text :: proc(hash: [32]u8) -> string {
 // a node names the identity card that the script opens for it.
 site_graph_svg :: proc(site: ^Site, b: ^strings.Builder, page: string, inputs: []Site_Graph_Input, layout: Site_Graph_Layout, label: string, current: int, cards: bool) {
 	strings.write_string(b, "<div class=\"graph-box\" role=\"region\" tabindex=\"0\" aria-label=\"")
-	foundation.site_escape(b, label)
+	foundation.html_escape(b, label)
 	fmt.sbprintf(b, "\">\n<svg class=\"graph\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" role=\"group\" aria-label=\"", layout.width, layout.height, layout.width, layout.height)
-	foundation.site_escape(b, label)
+	foundation.html_escape(b, label)
 	strings.write_string(b, "\">\n")
 	// The heading of each layer, and of the band.
 	for x, layer in layout.column_x {
@@ -502,7 +502,7 @@ Site_Module_License :: struct {
 }
 
 site_module_card_id :: proc(name: string) -> string {
-	return strings.concatenate({"module-card-", foundation.site_slug(name)}, context.temp_allocator)
+	return strings.concatenate({"module-card-", foundation.text_slug(name)}, context.temp_allocator)
 }
 
 // site_module_card_of gathers the identity card of one module from the
@@ -544,10 +544,10 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 	strings.write_string(b, "<p class=\"module-card-title\">")
 	if card.page != "" && card.page != page {
 		fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(site, page, card.page))
-		foundation.site_escape(b, card.name)
+		foundation.html_escape(b, card.name)
 		strings.write_string(b, "</a>")
 	} else {
-		foundation.site_escape(b, card.name)
+		foundation.html_escape(b, card.name)
 	}
 	fmt.sbprintf(b, " <span class=\"module-card-kind\">%s</span></p>\n<dl class=\"module-card-facts\">\n", site_graph_kind_names[card.kind])
 	strings.write_string(b, "<dt>Hash</dt><dd>")
@@ -568,11 +568,11 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 		}
 		anchor: string = license.anchor != "" ? strings.concatenate({"#", license.anchor}, context.temp_allocator) : ""
 		fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(site, page, strings.concatenate({licenses_page, anchor}, context.temp_allocator)))
-		foundation.site_escape(b, license.license)
+		foundation.html_escape(b, license.license)
 		strings.write_string(b, "</a>")
 		if index > 0 {
 			strings.write_string(b, " (")
-			foundation.site_escape(b, license.what)
+			foundation.html_escape(b, license.what)
 			strings.write_string(b, ")")
 		}
 	}
@@ -582,7 +582,7 @@ site_module_card_write :: proc(site: ^Site, b: ^strings.Builder, page: string, c
 	strings.write_string(b, "</dd>\n</dl>\n")
 	if card.about != "" {
 		strings.write_string(b, "<p class=\"module-card-about\">")
-		foundation.site_escape(b, card.about)
+		foundation.html_escape(b, card.about)
 		strings.write_string(b, "</p>\n")
 	}
 	strings.write_string(b, "</div>\n")
@@ -595,7 +595,7 @@ site_graph_table :: proc(site: ^Site, b: ^strings.Builder, page: string, inputs:
 	// What a module imports and what imports it are lists of names.
 	table := site_table_start(b, "The edges of the module graph", {{"Module", .Name}, {"Kind", .Short}, {"Imports", .List}, {"Imported by", .List}}, {.Module, .None, .Module, .Module})
 	for input, index in inputs {
-		fmt.sbprintf(b, "<tr id=\"graph-%s\"><td class=\"code name\">", foundation.site_slug(input.name))
+		fmt.sbprintf(b, "<tr id=\"graph-%s\"><td class=\"code name\">", foundation.text_slug(input.name))
 		site_module_link(site, b, page, input.name)
 		fmt.sbprintf(b, "</td><td>%s</td><td>", site_graph_kind_names[input.kind])
 		imported := make([dynamic]string, context.temp_allocator)
@@ -691,7 +691,7 @@ site_module_neighbours_write :: proc(site: ^Site, b: ^strings.Builder, page: str
 	strings.write_string(b, "<h2 id=\"neighbours\">Neighbours</h2>\n")
 	neighbours, current := site_module_neighbours_inputs(inputs, name)
 	if current < 0 || len(neighbours) == 1 {
-		fmt.sbprintf(b, "<p>It imports no module, and no module imports it. The <a href=\"%s#graph-%s\">module graph</a> shows it with the other modules that have no edge.</p>\n", site_page_link(site, page, graph_page), foundation.site_slug(name))
+		fmt.sbprintf(b, "<p>It imports no module, and no module imports it. The <a href=\"%s#graph-%s\">module graph</a> shows it with the other modules that have no edge.</p>\n", site_page_link(site, page, graph_page), foundation.text_slug(name))
 		return
 	}
 	layout, problem := site_graph_layout(neighbours, 1)

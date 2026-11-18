@@ -698,8 +698,8 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 		tree.fullpath = file
 		reader := parser.default_parser()
 		// The check reports a file that the parser refuses in its own words.
-		reader.err = foundation.site_code_quiet_error
-		reader.warn = foundation.site_code_quiet_error
+		reader.err = foundation.tokenizer_quiet_error
+		reader.warn = foundation.tokenizer_quiet_error
 		if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
 			append(&list, Library_Import_Breach{file = file, reason = .Unreadable_File, form = form})
 			return list[:], 0
@@ -772,7 +772,7 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 	reading.breaches = make([dynamic]Library_Import_Breach, context.temp_allocator)
 	reading.library_imports = make(map[string][dynamic]string, context.temp_allocator)
 	for file in files {
-		source, read_ok := foundation.site_read_quiet(library_source_path(root, file))
+		source, read_ok := foundation.read_text_file_quiet(library_source_path(root, file))
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return {}, false
@@ -814,7 +814,7 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 	}
 	slice.sort(tool_files[:])
 	for file in tool_files {
-		source, read_ok := foundation.site_read_quiet(library_source_path(root, file))
+		source, read_ok := foundation.read_text_file_quiet(library_source_path(root, file))
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return {}, false
@@ -845,8 +845,8 @@ library_tool_import_breaches_of_source :: proc(file, source: string) -> []Librar
 		tree.src = source
 		tree.fullpath = file
 		reader := parser.default_parser()
-		reader.err = foundation.site_code_quiet_error
-		reader.warn = foundation.site_code_quiet_error
+		reader.err = foundation.tokenizer_quiet_error
+		reader.warn = foundation.tokenizer_quiet_error
 		if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
 			append(&list, Library_Import_Breach{file = file, reason = .Unreadable_File, form = form})
 			return list[:]

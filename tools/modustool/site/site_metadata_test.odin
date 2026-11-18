@@ -181,7 +181,7 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(site_robots(&site), "Sitemap: " + TEST_ADDRESS + "/sitemap.xml\n"))
 	feed := site_releases_feed(&site)
 	testing.expect(t, strings.contains(feed, "<link rel=\"self\" type=\"application/atom+xml\" href=\"" + TEST_ADDRESS + "/releases.xml\"/>"))
-	testing.expect(t, strings.contains(feed, "<id>" + checks.SITE_REPOSITORY_ADDRESS + "/blob/master/" + checks.CHANGELOG_FILE + "#release-"))
+	testing.expect(t, strings.contains(feed, "<id>" + checks.REPOSITORY_ADDRESS + "/blob/master/" + checks.CHANGELOG_FILE + "#release-"))
 	testing.expect(t, strings.contains(feed, "href=\"" + TEST_ADDRESS + "/releases/#release-"))
 	// The feed gives the release time, not the start of its day.
 	testing.expect(t, strings.contains(feed, "<published>2026-11-12T18:48:00Z</published>\n<updated>2026-11-12T18:48:00Z</updated>"), feed)
@@ -232,13 +232,13 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_copyright_holder("Copyright (c) 2026"), "")
 	testing.expect_value(t, site_copyright_holder(""), "")
 	// The line of LICENSE of the repository gives a name, not a year.
-	if text, read := foundation.site_read_quiet(resources.SITE_LICENSE_FILE); read {
-		holder := site_copyright_holder(checks.site_line_after(text, "Copyright "))
+	if text, read := foundation.read_text_file_quiet(resources.REPOSITORY_LICENSE_FILE); read {
+		holder := site_copyright_holder(checks.line_after(text, "Copyright "))
 		testing.expect(t, holder != "")
 		testing.expect(t, len(holder) > 0 && (holder[0] < '0' || holder[0] > '9') && holder[0] != '(')
 	}
 	testing.expect(t, strings.has_prefix(site_account_address(), "https://github.com/"))
-	testing.expect(t, strings.has_prefix(checks.SITE_REPOSITORY_ADDRESS, strings.concatenate({site_account_address(), "/"}, context.temp_allocator)))
+	testing.expect(t, strings.has_prefix(checks.REPOSITORY_ADDRESS, strings.concatenate({site_account_address(), "/"}, context.temp_allocator)))
 
 	// With an address: the author, and the nodes that name it.
 	site := metadata_test_site(TEST_ADDRESS)
@@ -492,7 +492,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 		testing.expect_value(t, picture.opaque, icon.opaque)
 		testing.expect_value(t, picture.on_light, !icon.opaque)
 		data := files[strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator)]
-		width, height, _ := foundation.site_png_size(data)
+		width, height, _ := foundation.png_size(data)
 		testing.expect_value(t, width, icon.size)
 		testing.expect_value(t, height, icon.size)
 		testing.expect_value(t, site_png_is_opaque(data), icon.opaque)
@@ -686,7 +686,7 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 		}
 		data, encoded := resources.mark_picture_png(picture)
 		testing.expect(t, encoded)
-		card_width, card_height, _ := foundation.site_png_size(data)
+		card_width, card_height, _ := foundation.png_size(data)
 		testing.expect_value(t, card_width, SITE_CARD_WIDTH)
 		testing.expect_value(t, card_height, SITE_CARD_HEIGHT)
 		testing.expect(t, site_png_is_opaque(data))

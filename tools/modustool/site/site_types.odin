@@ -331,7 +331,7 @@ site_type_package_of :: proc(named: runtime.Type_Info_Named) -> string {
 
 // site_type_key_id gives the id of a type on the page of the types.
 site_type_key_id :: proc(key: string) -> string {
-	return strings.concatenate({"type-", foundation.site_slug(key)}, context.temp_allocator)
+	return strings.concatenate({"type-", foundation.text_slug(key)}, context.temp_allocator)
 }
 
 // site_type_target_dependence gives the part of a type whose size is the
@@ -512,7 +512,7 @@ site_type_declarations_read :: proc(folder: string) -> (declarations: []Site_Typ
 		if strings.has_suffix(path, "_test.odin") {
 			continue
 		}
-		source := foundation.site_read(path) or_return
+		source := foundation.read_text_file(path) or_return
 		file := ast.new_from_positions(ast.File, {}, {})
 		file.src = source
 		file.fullpath = path
@@ -701,8 +701,8 @@ site_types_read :: proc(site: ^Site) -> bool {
 	// The wire forms: the members of module.Type that the compiler knows,
 	// with the comment of each member in the source of the contract.
 	format_file :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.odin"
-	format_text := foundation.site_read(format_file) or_return
-	members, problem := foundation.site_enumeration_read(format_text, format_file, "Type")
+	format_text := foundation.read_text_file(format_file) or_return
+	members, problem := foundation.enumeration_read(format_text, format_file, "Type")
 	if problem != "" {
 		fmt.eprintfln("modustool: site: %s", problem)
 		return false
@@ -810,7 +810,7 @@ site_type_uses_make :: proc(site: ^Site) {
 		if operation.member.number == 0 {
 			continue
 		}
-		page := strings.concatenate({operations_page, "#operation-", foundation.site_slug(operation.member.name)}, context.temp_allocator)
+		page := strings.concatenate({operations_page, "#operation-", foundation.text_slug(operation.member.name)}, context.temp_allocator)
 		for text in ([]string{operation.parameters, operation.result}) {
 			for word in site_identifiers_of(text) {
 				site_type_use_add(site, strings.concatenate({"operation.", word}, context.temp_allocator), operation.member.name, page)
@@ -845,7 +845,7 @@ site_type_uses_make :: proc(site: ^Site) {
 	}
 	console_page := site_page_file(SITE_CONSOLE_FOLDER)
 	for command in site.reference.console_commands {
-		page := strings.concatenate({console_page, "#command-", foundation.site_slug(command.name)}, context.temp_allocator)
+		page := strings.concatenate({console_page, "#command-", foundation.text_slug(command.name)}, context.temp_allocator)
 		for name in command.parameters {
 			site_type_use_add(site, strings.concatenate({"wire.", name}, context.temp_allocator), command.name, page)
 		}
@@ -858,12 +858,12 @@ site_identifiers_of :: proc(text: string) -> []string {
 	list := make([dynamic]string, context.temp_allocator)
 	index := 0
 	for index < len(text) {
-		if !foundation.site_is_word_byte(text[index]) {
+		if !foundation.is_word_byte(text[index]) {
 			index += 1
 			continue
 		}
 		end := index
-		for end < len(text) && foundation.site_is_word_byte(text[end]) {
+		for end < len(text) && foundation.is_word_byte(text[end]) {
 			end += 1
 		}
 		append(&list, text[index:end])
@@ -893,7 +893,7 @@ site_type_reference :: proc(site: ^Site, b: ^strings.Builder, key, text: string,
 	id := site.types[index].id
 	class: string = marked ? "type-reference value value-type" : "type-reference"
 	fmt.sbprintf(b, "<button type=\"button\" class=\"%s\" popovertarget=\"%s%s\" popovertargetaction=\"show\" aria-describedby=\"%s%s%s\">", class, SITE_TYPE_CARD_PREFIX, id, SITE_TYPE_CARD_PREFIX, id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
-	foundation.site_escape(b, text)
+	foundation.html_escape(b, text)
 	strings.write_string(b, "</button>")
 }
 
@@ -924,13 +924,13 @@ site_type_reference_html :: proc(site: ^Site, key, text: string, marked: bool) -
 site_text_with_type_references :: proc(site: ^Site, b: ^strings.Builder, text, package_name: string) {
 	index := 0
 	for index < len(text) {
-		if !foundation.site_is_word_byte(text[index]) {
-			foundation.site_escape(b, text[index:index + 1])
+		if !foundation.is_word_byte(text[index]) {
+			foundation.html_escape(b, text[index:index + 1])
 			index += 1
 			continue
 		}
 		end := index
-		for end < len(text) && foundation.site_is_word_byte(text[end]) {
+		for end < len(text) && foundation.is_word_byte(text[end]) {
 			end += 1
 		}
 		// A word of the comment that names no type is a word, not a type
@@ -940,7 +940,7 @@ site_text_with_type_references :: proc(site: ^Site, b: ^strings.Builder, text, p
 		if _, is_type := site_type_index(site, key); is_type {
 			site_type_reference(site, b, key, word, false)
 		} else {
-			foundation.site_escape(b, word)
+			foundation.html_escape(b, word)
 		}
 		index = end
 	}
@@ -986,11 +986,11 @@ site_type_summary :: proc(site: ^Site, type: Site_Type) -> string {
 // fields or members, and the size that follows the target.
 site_type_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string, type: Site_Type) {
 	fmt.sbprintf(b, "<div class=\"type-card\" id=\"%s%s\" popover>\n<p class=\"type-card-title\"><a href=\"", SITE_TYPE_CARD_PREFIX, type.id)
-	foundation.site_escape(b, site_page_link(site, from_page, strings.concatenate({site_page_file(SITE_TYPES_FOLDER), "#", type.id}, context.temp_allocator)))
+	foundation.html_escape(b, site_page_link(site, from_page, strings.concatenate({site_page_file(SITE_TYPES_FOLDER), "#", type.id}, context.temp_allocator)))
 	strings.write_string(b, "\"><code>")
-	foundation.site_escape(b, type.name)
+	foundation.html_escape(b, type.name)
 	fmt.sbprintf(b, "</code></a> <span class=\"type-card-kind\">%s</span></p>\n<p class=\"type-card-summary\" id=\"%s%s%s\">", site_type_kind_names[type.kind], SITE_TYPE_CARD_PREFIX, type.id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
-	foundation.site_escape(b, site_type_summary(site, type))
+	foundation.html_escape(b, site_type_summary(site, type))
 	strings.write_string(b, "</p>\n")
 	shown, total := 0, 0
 	if len(type.fields) > 0 {
@@ -1008,9 +1008,9 @@ site_type_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string
 			}
 			shown += 1
 			strings.write_string(b, "<li><code>")
-			foundation.site_escape(b, field.name)
+			foundation.html_escape(b, field.name)
 			strings.write_string(b, "</code><code>")
-			foundation.site_escape(b, field.type_text)
+			foundation.html_escape(b, field.type_text)
 			fmt.sbprintf(b, "</code><span>%d</span><span>%d bytes</span></li>\n", field.offset, field.size)
 		}
 		strings.write_string(b, "</ul>\n")
@@ -1019,7 +1019,7 @@ site_type_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string
 		strings.write_string(b, "<ul class=\"type-card-rows\">\n")
 		for member in type.members[:min(len(type.members), SITE_TYPE_CARD_ROWS)] {
 			strings.write_string(b, "<li><code>")
-			foundation.site_escape(b, member.name)
+			foundation.html_escape(b, member.name)
 			if type.kind == .Bit_Set {
 				fmt.sbprintf(b, "</code><span>bit %d</span></li>\n", member.value)
 			} else {
@@ -1034,7 +1034,7 @@ site_type_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string
 	}
 	if type.depends_on_target != "" {
 		strings.write_string(b, "<p class=\"type-card-target\">Holds <code>")
-		foundation.site_escape(b, type.depends_on_target)
+		foundation.html_escape(b, type.depends_on_target)
 		strings.write_string(b, "</code>: its size follows the size of an address of the target.</p>\n")
 	}
 	strings.write_string(b, "</div>\n")
@@ -1181,9 +1181,9 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		for use in type.uses {
 			use_link := strings.builder_make(context.temp_allocator)
 			strings.write_string(&use_link, "<a href=\"")
-			foundation.site_escape(&use_link, site_page_link(site, page, use.page))
+			foundation.html_escape(&use_link, site_page_link(site, page, use.page))
 			strings.write_string(&use_link, "\"><code>")
-			foundation.site_escape(&use_link, use.text)
+			foundation.html_escape(&use_link, use.text)
 			strings.write_string(&use_link, "</code></a>")
 			append(&uses, strings.to_string(use_link))
 		}
@@ -1201,7 +1201,7 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 			}
 			field_bytes += field.size
 			strings.write_string(&after, "<tr><td class=\"code name\"><code>")
-			foundation.site_escape(&after, field.name)
+			foundation.html_escape(&after, field.name)
 			strings.write_string(&after, "</code></td><td>")
 			site_type_reference(site, &after, field.type_key, field.type_text, false)
 			fmt.sbprintf(&after, "</td><td>%d</td><td>%d</td></tr>\n", field.offset, field.size)
@@ -1212,7 +1212,7 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		bits_table := site_table_start(&after, strings.concatenate({"Bits of ", type.name}, context.temp_allocator), {{"Bit", .Number}, {"Member", .Name}, {"Mask", .Number}})
 		for member in type.members {
 			fmt.sbprintf(&after, "<tr><td>%d</td><td class=\"code name\"><code>", member.value)
-			foundation.site_escape(&after, member.name)
+			foundation.html_escape(&after, member.name)
 			mask := "-" // A bit outside 0 to 63 has no mask of 64 bits.
 			if member.value >= 0 && member.value < 64 {
 				mask = site_type_hexadecimal(i64(u64(1) << uint(member.value)), type.size)
@@ -1224,7 +1224,7 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		members_table := site_table_start(&after, strings.concatenate({"Members of ", type.name}, context.temp_allocator), {{"Member", .Name}, {"Value", .Number}, {"Hexadecimal", .Number}})
 		for member in type.members {
 			strings.write_string(&after, "<tr><td class=\"code name\"><code>")
-			foundation.site_escape(&after, member.name)
+			foundation.html_escape(&after, member.name)
 			fmt.sbprintf(&after, "</code></td><td>%d</td><td>%s</td></tr>\n", member.value, site_type_hexadecimal(member.value, type.size))
 		}
 		site_table_end(&after, members_table)
@@ -1266,7 +1266,7 @@ site_types_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry
 	packages := SITE_TYPE_PACKAGES
 	for folder in packages {
 		package_name := folder[strings.last_index_byte(folder, '/') + 1:]
-		fmt.sbprintf(&b, "<h2 id=\"package-%s\">The package %s</h2>\n", foundation.site_slug(package_name), package_name)
+		fmt.sbprintf(&b, "<h2 id=\"package-%s\">The package %s</h2>\n", foundation.text_slug(package_name), package_name)
 		for type in site.types {
 			if type.package_name == package_name && type.kind != .Basic && type.kind != .Wire_Form && type.kind != .Module_Record {
 				site_type_symbol_write(site, &b, type)

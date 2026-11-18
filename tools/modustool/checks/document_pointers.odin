@@ -10,10 +10,10 @@ import "modustool:foundation"
 // The words that start a label of a place in a document: "section 8",
 // "sections 4 and 5", "property <n>". The last one names a numbered item
 // of a list, not a heading (site_item_find).
-SITE_POINTER_LABEL_WORDS :: [?]string{"sections ", "section ", "property ", "item "}
+POINTER_LABEL_WORDS :: [?]string{"sections ", "section ", "property ", "item "}
 
 // A pointer of a text to a document of docs/.
-Site_Document_Pointer :: struct {
+Document_Pointer :: struct {
 	start:    int, // The first byte of what the pointer takes from the text.
 	end:      int, // The byte after it.
 	path:     string, // "docs/ARCHITECTURE.md".
@@ -25,20 +25,20 @@ Site_Document_Pointer :: struct {
 	detached: bool,
 }
 
-// site_document_path_end tells whether a path "docs/<NAME>.md", or a file
+// document_path_end tells whether a path "docs/<NAME>.md", or a file
 // of the glossary "docs/glossary/<name>.md", starts at an index of a text,
 // and gives the byte after it. A part of a longer path ("tools/docs/X.md")
 // or of a word is not a pointer.
-site_document_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
+document_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
 	if start >= 0 && start < len(text) && strings.has_prefix(text[start:], INTENT_PREFIX) {
-		return site_intent_path_end(text, start)
+		return intent_path_end(text, start)
 	}
 	if start < 0 || start >= len(text) || !strings.has_prefix(text[start:], "docs/") {
 		return 0, false
 	}
 	if start > 0 {
 		before := text[start - 1]
-		if foundation.site_is_word_byte(before) || before == '/' || before == '.' || before == '-' {
+		if foundation.is_word_byte(before) || before == '/' || before == '.' || before == '-' {
 			return 0, false
 		}
 	}
@@ -57,21 +57,21 @@ site_document_path_end :: proc(text: string, start: int) -> (end: int, found: bo
 		return 0, false
 	}
 	end += len(".md")
-	if end < len(text) && (foundation.site_is_word_byte(text[end]) || text[end] == '/') {
+	if end < len(text) && (foundation.is_word_byte(text[end]) || text[end] == '/') {
 		return 0, false
 	}
 	return end, true
 }
 
-// site_intent_path_end tells whether the path of an intent file
+// intent_path_end tells whether the path of an intent file
 // ("src/md/features/palette.md", "src/md/README.md") starts at an index of
 // a text, and gives the byte after it. The folders and the file have
 // letters, digits and "_" in their names. A part of a longer path or of a
 // word is not a pointer.
-site_intent_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
+intent_path_end :: proc(text: string, start: int) -> (end: int, found: bool) {
 	if start > 0 {
 		before := text[start - 1]
-		if foundation.site_is_word_byte(before) || before == '/' || before == '.' || before == '-' {
+		if foundation.is_word_byte(before) || before == '/' || before == '.' || before == '-' {
 			return 0, false
 		}
 	}
@@ -90,17 +90,17 @@ site_intent_path_end :: proc(text: string, start: int) -> (end: int, found: bool
 		return 0, false
 	}
 	end += len(".md")
-	if end < len(text) && (foundation.site_is_word_byte(text[end]) || text[end] == '/') {
+	if end < len(text) && (foundation.is_word_byte(text[end]) || text[end] == '/') {
 		return 0, false
 	}
 	return end, true
 }
 
-// site_document_path_start gives the first place at or after an index
+// document_path_start gives the first place at or after an index
 // where the path of a document can start: "docs/", or the folder of the
 // intent files. It gives the length of the prefix found, and -1 when the
 // text has none.
-site_document_path_start :: proc(text: string, position: int) -> (start: int, prefix_length: int) {
+document_path_start :: proc(text: string, position: int) -> (start: int, prefix_length: int) {
 	start = -1
 	if found := strings.index(text[position:], "docs/"); found >= 0 {
 		start, prefix_length = position + found, len("docs/")
@@ -111,10 +111,10 @@ site_document_path_start :: proc(text: string, position: int) -> (start: int, pr
 	return start, prefix_length
 }
 
-// site_enclosing_parenthesis gives the parenthesis around an index of a
+// enclosing_parenthesis gives the parenthesis around an index of a
 // text: its "(" and its ")", or the end of the text when the text stops
 // before the ")". The open is -1 when no parenthesis holds the index.
-site_enclosing_parenthesis :: proc(text: string, at: int) -> (open: int, close: int) {
+enclosing_parenthesis :: proc(text: string, at: int) -> (open: int, close: int) {
 	open = -1
 	depth := 0
 	for index := at - 1; index >= 0 && open < 0; index -= 1 {
@@ -147,10 +147,10 @@ site_enclosing_parenthesis :: proc(text: string, at: int) -> (open: int, close: 
 	return open, close
 }
 
-// site_parenthesis_part gives the bounds of the part of a parenthesis that
+// parenthesis_part gives the bounds of the part of a parenthesis that
 // holds the bytes from at to after. The parts are separated by "; ", outside
 // quotes and inner parentheses: "(the call form; docs/MODULE_CONTRACT.md)".
-site_parenthesis_part :: proc(text: string, open, close, at, after: int) -> (start: int, end: int) {
+parenthesis_part :: proc(text: string, open, close, at, after: int) -> (start: int, end: int) {
 	start, end = open + 1, close
 	quoted := false
 	depth := 0
@@ -174,9 +174,9 @@ site_parenthesis_part :: proc(text: string, open, close, at, after: int) -> (sta
 	return start, end
 }
 
-// site_parts_outside_quotes splits a text at each ", " that is not inside
+// parts_outside_quotes splits a text at each ", " that is not inside
 // quotes: a quoted heading can hold a comma ("Did not fit, across calls").
-site_parts_outside_quotes :: proc(text: string) -> []string {
+parts_outside_quotes :: proc(text: string) -> []string {
 	parts := make([dynamic]string, context.temp_allocator)
 	quoted := false
 	start := 0
@@ -192,10 +192,10 @@ site_parts_outside_quotes :: proc(text: string) -> []string {
 	return parts[:]
 }
 
-// site_label_token_end reads a label of a section at an index: "8", "12.4",
+// label_token_end reads a label of a section at an index: "8", "12.4",
 // "5a", "U2b", "K1". With capital_required, the label starts with a capital
 // letter: a bare number after a comma is a word of the sentence.
-site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (end: int, found: bool) {
+label_token_end :: proc(text: string, at: int, capital_required: bool) -> (end: int, found: bool) {
 	decimal_digit :: proc(character: u8) -> bool {
 		return character >= '0' && character <= '9'
 	}
@@ -224,16 +224,16 @@ site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (
 			index += 1
 		}
 	}
-	if index < len(text) && foundation.site_is_word_byte(text[index]) {
+	if index < len(text) && foundation.is_word_byte(text[index]) {
 		return 0, false
 	}
 	return index, true
 }
 
-// site_pointer_label_end reads one label of a place at an index: a heading
-// in quotes, a word of SITE_POINTER_LABEL_WORDS and its number or its
+// pointer_label_end reads one label of a place at an index: a heading
+// in quotes, a word of POINTER_LABEL_WORDS and its number or its
 // quoted heading, or a label that starts with a capital letter ("U3").
-site_pointer_label_end :: proc(text: string, at: int) -> (end: int, found: bool) {
+pointer_label_end :: proc(text: string, at: int) -> (end: int, found: bool) {
 	if at >= len(text) {
 		return 0, false
 	}
@@ -244,31 +244,31 @@ site_pointer_label_end :: proc(text: string, at: int) -> (end: int, found: bool)
 		}
 		return at + 1 + closing + 1, true
 	}
-	words := SITE_POINTER_LABEL_WORDS
+	words := POINTER_LABEL_WORDS
 	for word in words {
 		if !strings.has_prefix(text[at:], word) {
 			continue
 		}
 		after := at + len(word)
 		if after < len(text) && text[after] == '"' {
-			return site_pointer_label_end(text, after)
+			return pointer_label_end(text, after)
 		}
-		end, found = site_label_token_end(text, after, false)
+		end, found = label_token_end(text, after, false)
 		if found && word == "sections " && strings.has_prefix(text[end:], " and ") {
-			if second, has_second := site_label_token_end(text, end + len(" and "), false); has_second {
+			if second, has_second := label_token_end(text, end + len(" and "), false); has_second {
 				end = second
 			}
 		}
 		return end, found
 	}
-	return site_label_token_end(text, at, true)
+	return label_token_end(text, at, true)
 }
 
-// site_pointer_labels reads the labels after a path in running text, each
+// pointer_labels reads the labels after a path in running text, each
 // after ", ": `docs/FONTS.md, section 12.4` or `ARCHITECTURE.md`, "The fault
 // ring". It stops at the first part that is not a label, and gives the
 // byte after the last label.
-site_pointer_labels :: proc(text: string, at: int) -> (labels: []string, end: int) {
+pointer_labels :: proc(text: string, at: int) -> (labels: []string, end: int) {
 	list := make([dynamic]string, context.temp_allocator)
 	end = at
 	for end < len(text) {
@@ -280,7 +280,7 @@ site_pointer_labels :: proc(text: string, at: int) -> (labels: []string, end: in
 		} else {
 			break
 		}
-		label_end, found := site_pointer_label_end(text, end + separator)
+		label_end, found := pointer_label_end(text, end + separator)
 		if !found {
 			break
 		}
@@ -290,13 +290,13 @@ site_pointer_labels :: proc(text: string, at: int) -> (labels: []string, end: in
 	return list[:], end
 }
 
-// site_document_pointer_at reads the pointer whose path is at path_start:
+// document_pointer_at reads the pointer whose path is at path_start:
 // its labels, the bytes that it takes from the text, and whether it is an
 // aside.
-site_document_pointer_at :: proc(text: string, path_start, path_end: int) -> Site_Document_Pointer {
-	pointer := Site_Document_Pointer{start = path_start, end = path_end, path = text[path_start:path_end]}
-	if open, close := site_enclosing_parenthesis(text, path_start); open >= 0 {
-		part_start, part_end := site_parenthesis_part(text, open, close, path_start, path_end)
+document_pointer_at :: proc(text: string, path_start, path_end: int) -> Document_Pointer {
+	pointer := Document_Pointer{start = path_start, end = path_end, path = text[path_start:path_end]}
+	if open, close := enclosing_parenthesis(text, path_start); open >= 0 {
+		part_start, part_end := parenthesis_part(text, open, close, path_start, path_end)
 		before := text[part_start:path_start]
 		after := text[path_end:part_end]
 		labels_text := ""
@@ -321,7 +321,7 @@ site_document_pointer_at :: proc(text: string, path_start, path_end: int) -> Sit
 		if labelled && kept >= 0 {
 			aside_labels := make([dynamic]string, context.temp_allocator)
 			if labels_text != "" {
-				for part in site_parts_outside_quotes(labels_text) {
+				for part in parts_outside_quotes(labels_text) {
 					if part != "" {
 						append(&aside_labels, part)
 					}
@@ -351,7 +351,7 @@ site_document_pointer_at :: proc(text: string, path_start, path_end: int) -> Sit
 	if path_start >= 4 {
 		see := text[path_start - 4:path_start]
 		if see == "see " || see == "See " {
-			see_labels, see_end := site_pointer_labels(text, path_end)
+			see_labels, see_end := pointer_labels(text, path_end)
 			pointer.labels = see_labels
 			pointer.detached = true
 			pointer.start = path_start - 4
@@ -370,23 +370,23 @@ site_document_pointer_at :: proc(text: string, path_start, path_end: int) -> Sit
 		pointer.start = path_start - 1
 		labels_start = path_end + 1
 	}
-	word_labels, word_end := site_pointer_labels(text, labels_start)
+	word_labels, word_end := pointer_labels(text, labels_start)
 	pointer.labels = word_labels
 	pointer.end = word_end
 	return pointer
 }
 
-// site_document_pointers gives each pointer of a text to a document of
+// document_pointers gives each pointer of a text to a document of
 // docs/, in the order of the text. A text with no pointer gives none.
-site_document_pointers :: proc(text: string) -> []Site_Document_Pointer {
-	pointers := make([dynamic]Site_Document_Pointer, context.temp_allocator)
+document_pointers :: proc(text: string) -> []Document_Pointer {
+	pointers := make([dynamic]Document_Pointer, context.temp_allocator)
 	position := 0
 	for position < len(text) {
-		path_start, prefix_length := site_document_path_start(text, position)
+		path_start, prefix_length := document_path_start(text, position)
 		if path_start < 0 {
 			break
 		}
-		path_end, is_path := site_document_path_end(text, path_start)
+		path_end, is_path := document_path_end(text, path_start)
 		// The target of a link "[text](docs/X.md#id)" is not a pointer: the
 		// link names its place (site_comment_link_target).
 		if path_start >= 2 && text[path_start - 2:path_start] == "](" {
@@ -396,7 +396,7 @@ site_document_pointers :: proc(text: string) -> []Site_Document_Pointer {
 			position = path_start + prefix_length
 			continue
 		}
-		pointer := site_document_pointer_at(text, path_start, path_end)
+		pointer := document_pointer_at(text, path_start, path_end)
 		append(&pointers, pointer)
 		position = max(path_end, pointer.end)
 	}

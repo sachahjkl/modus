@@ -24,14 +24,14 @@ import "modustool:build"
 // one slot fails here, and not at the boot of the machine.
 @(test)
 each_role_of_process_roles_takes_each_context_slot_once :: proc(t: ^testing.T) {
-	grants_text, grants_read := foundation.site_read_quiet(foundation.SITE_SYSTEM_GRANTS_FILE)
-	testing.expectf(t, grants_read, "cannot read %s", foundation.SITE_SYSTEM_GRANTS_FILE)
-	roles_text, roles_read := foundation.site_read_quiet(foundation.SITE_ROOT_ROLES_FILE)
-	testing.expectf(t, roles_read, "cannot read %s", foundation.SITE_ROOT_ROLES_FILE)
+	grants_text, grants_read := foundation.read_text_file_quiet(foundation.SYSTEM_GRANTS_FILE)
+	testing.expectf(t, grants_read, "cannot read %s", foundation.SYSTEM_GRANTS_FILE)
+	roles_text, roles_read := foundation.read_text_file_quiet(foundation.ROOT_ROLES_FILE)
+	testing.expectf(t, roles_read, "cannot read %s", foundation.ROOT_ROLES_FILE)
 	if !grants_read || !roles_read {
 		return
 	}
-	constants, constants_problem := foundation.site_constants_read(grants_text, foundation.SITE_SYSTEM_GRANTS_FILE, "", {"GRANT_"})
+	constants, constants_problem := foundation.constants_read(grants_text, foundation.SYSTEM_GRANTS_FILE, "", {"GRANT_"})
 	testing.expect_value(t, constants_problem, "")
 	slots: [root_ring.Role_Handle]int
 	named: bit_set[root_ring.Role_Handle]
@@ -76,7 +76,7 @@ each_role_of_process_roles_takes_each_context_slot_once :: proc(t: ^testing.T) {
 		every_handle += {handle}
 	}
 	testing.expect_value(t, named, every_handle)
-	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
+	rows, rows_problem := foundation.role_table_read(roles_text, foundation.ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
 	testing.expect_value(t, rows_problem, "")
 	testing.expect(t, len(rows) > 0)
 	for row in rows {
@@ -155,8 +155,8 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	}
 	system_parts := []string{"root", "compositor", "block"}
 	// The whole table, with one row replaced or added.
-	with :: proc(base: []foundation.Site_Role_Row, replaced: foundation.Site_Role_Row) -> []foundation.Site_Role_Row {
-		rows := make([dynamic]foundation.Site_Role_Row, context.temp_allocator)
+	with :: proc(base: []foundation.Role_Row, replaced: foundation.Role_Row) -> []foundation.Role_Row {
+		rows := make([dynamic]foundation.Role_Row, context.temp_allocator)
 		found := false
 		for row in base {
 			if row.name == replaced.name {
@@ -171,11 +171,11 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 		}
 		return rows[:]
 	}
-	expect_one :: proc(t: ^testing.T, rows: []foundation.Site_Role_Row, system_parts: []string, builds: []foundation.Module_Build, part: string) {
+	expect_one :: proc(t: ^testing.T, rows: []foundation.Role_Row, system_parts: []string, builds: []foundation.Module_Build, part: string) {
 		problems := build.process_roles_problems(rows, system_parts, builds, "roles.odin")
 		testing.expectf(t, len(problems) == 1 && strings.contains(problems[0], part), "the problems are %v, not one with %q", problems, part)
 	}
-	whole := []foundation.Site_Role_Row {
+	whole := []foundation.Role_Row {
 		{name = "alpha", line = 1},
 		{name = "beta", grants = {"Inspect"}, line = 2},
 		{name = "compositor", grants = {"Serve", "System_Part"}, line = 3},
@@ -188,14 +188,14 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 		expect_one(t, with(whole, {name = name, line = 5}), system_parts, builds, fmt.tprintf("line 5: the row %s names no process", name))
 	}
 	// A module with two rows, and a grant that is no start grant.
-	two := make([dynamic]foundation.Site_Role_Row, context.temp_allocator)
+	two := make([dynamic]foundation.Role_Row, context.temp_allocator)
 	append(&two, ..whole)
-	append(&two, foundation.Site_Role_Row{name = "alpha", line = 5})
+	append(&two, foundation.Role_Row{name = "alpha", line = 5})
 	expect_one(t, two[:], system_parts, builds, "line 5: the process alpha has a second row")
 	expect_one(t, with(whole, {name = "alpha", grants = {"Inspect", "Inspect_Everything"}, line = 1}), system_parts, builds, "line 1: the row alpha names the grant Inspect_Everything")
 	// A part of the system that lacks System_Part, that holds another grant
 	// or a term, and the compositor without Serve.
-	broken_parts := [?]foundation.Site_Role_Row {
+	broken_parts := [?]foundation.Role_Row {
 		{name = "block", line = 4},
 		{name = "block", grants = {"Inspect"}, line = 4},
 		{name = "block", grants = {"System_Part", "Acts_For_Principal"}, line = 4},
@@ -215,10 +215,10 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	// a process at its first connection.
 	testing.expect_value(t, len(build.process_roles_problems(with(whole, {name = "library", line = 5}), system_parts, builds, "roles.odin")), 0)
 	testing.expect_value(t, len(build.process_roles_problems(whole, system_parts, builds, "roles.odin")), 0)
-	roles_text, roles_read := foundation.site_read_quiet(foundation.SITE_ROOT_ROLES_FILE)
+	roles_text, roles_read := foundation.read_text_file_quiet(foundation.ROOT_ROLES_FILE)
 	testing.expect(t, roles_read)
 	rows, repository_parts, problem := build.process_roles_read(roles_text)
 	testing.expect_value(t, problem, "")
 	testing.expect(t, len(repository_parts) > 1 && slice.contains(repository_parts, "block"))
-	testing.expect_value(t, len(build.process_roles_problems(rows, repository_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
+	testing.expect_value(t, len(build.process_roles_problems(rows, repository_parts, foundation.module_builds[:], foundation.ROOT_ROLES_FILE)), 0)
 }

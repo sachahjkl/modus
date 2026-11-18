@@ -43,7 +43,7 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 	list := make([dynamic]Site_Demonstration, context.temp_allocator)
 	removal_list := make([dynamic]Site_Demonstration_Removal, context.temp_allocator)
 	section := ""
-	for line, index in foundation.site_lines(content) {
+	for line, index in foundation.lines_of_text(content) {
 		if strings.has_prefix(line, "## ") {
 			section = line[3:]
 			continue
@@ -51,7 +51,7 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 		switch {
 		case section == "The table" && strings.has_prefix(line, "| "):
 			cells := site_table_cells(line)
-			number := len(cells) > 0 ? foundation.site_digits_value(cells[0]) : -1
+			number := len(cells) > 0 ? foundation.decimal_digits_value(cells[0]) : -1
 			if number < 1 {
 				continue // The head of the table and its line of dashes.
 			}
@@ -68,7 +68,7 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 			append(&list, Site_Demonstration{number = number, state = cells[2], shown = cells[3], pictures = pictures[:], missing = cells[5], line = index + 1})
 		case strings.has_prefix(section, "What removes"):
 			dot := strings.index(line, ". ")
-			if dot > 0 && foundation.site_digits_value(line[:dot]) > 0 {
+			if dot > 0 && foundation.decimal_digits_value(line[:dot]) > 0 {
 				append(&removal_list, Site_Demonstration_Removal{text = strings.trim_space(line[dot + 2:]), line = index + 1})
 			}
 		}
@@ -87,7 +87,7 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 	numbers := make([dynamic]int, context.temp_allocator)
 	lower := strings.to_lower(text, context.temp_allocator)
 	for index in 0 ..< len(lower) {
-		if index > 0 && foundation.site_is_word_byte(lower[index - 1]) {
+		if index > 0 && foundation.is_word_byte(lower[index - 1]) {
 			continue
 		}
 		start := -1
@@ -103,10 +103,10 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 		for end < len(lower) && lower[end] >= '0' && lower[end] <= '9' {
 			end += 1
 		}
-		if end == start || (end < len(lower) && foundation.site_is_word_byte(lower[end])) {
+		if end == start || (end < len(lower) && foundation.is_word_byte(lower[end])) {
 			continue
 		}
-		number := foundation.site_digits_value(lower[start:end])
+		number := foundation.decimal_digits_value(lower[start:end])
 		if number >= 1 && number <= property_count && !slice.contains(numbers[:], number) {
 			append(&numbers, number)
 		}
@@ -119,7 +119,7 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 // renderer gives the same ids to the same text. What the renderer lists as
 // not rendered is listed once, by the guide.
 site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Renderer, ok: bool) {
-	content := foundation.site_read(source) or_return
+	content := foundation.read_text_file(source) or_return
 	page, is_guide := site.documents[source]
 	if !is_guide {
 		page = SITE_PAGE
@@ -137,10 +137,10 @@ site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Ren
 site_status_add :: proc(site: ^Site) -> bool {
 	path := site_section_page(.Status)
 	properties := site.principles.properties
-	principles := site_document_render(site, checks.SITE_PROPERTIES_FILE) or_return
-	properties_page := site.documents[checks.SITE_PROPERTIES_FILE]
+	principles := site_document_render(site, checks.PROPERTIES_FILE) or_return
+	properties_page := site.documents[checks.PROPERTIES_FILE]
 
-	demonstrations_text := foundation.site_read(SITE_DEMONSTRATIONS_FILE) or_return
+	demonstrations_text := foundation.read_text_file(SITE_DEMONSTRATIONS_FILE) or_return
 	demonstrations, removals, demonstrations_problem := site_demonstrations_read(demonstrations_text)
 	if demonstrations_problem != "" {
 		fmt.eprintfln("modustool: site: %s", demonstrations_problem)
@@ -180,7 +180,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	}
 	site_table_end(&b, properties_table)
 	strings.write_string(&b, "<p class=\"source\">The status is the column \"Status\" of the summary of the properties.</p>\n")
-	site_source_line(site, &b, checks.SITE_PROPERTIES_FILE)
+	site_source_line(site, &b, checks.PROPERTIES_FILE)
 
 	// Each property in prose: the promise from its first rule, then the
 	// demonstration. The page states what is not done as plainly as what is.
@@ -209,9 +209,9 @@ site_status_add :: proc(site: ^Site) -> bool {
 						strings.write_string(&b, ", ")
 					}
 					strings.write_string(&b, "<a href=\"")
-					foundation.site_escape(&b, site_repository_file(site, strings.concatenate({"docs/screenshots/", picture, ".png"}, context.temp_allocator)))
+					foundation.html_escape(&b, site_repository_file(site, strings.concatenate({"docs/screenshots/", picture, ".png"}, context.temp_allocator)))
 					strings.write_string(&b, "\"><code>")
-					foundation.site_escape(&b, picture)
+					foundation.html_escape(&b, picture)
 					strings.write_string(&b, "</code></a>")
 				}
 				strings.write_string(&b, "</p>\n")
@@ -237,12 +237,12 @@ site_status_add :: proc(site: ^Site) -> bool {
 		}
 		strings.write_string(&b, "</section>\n")
 	}
-	site_source_line(site, &b, checks.SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE)
+	site_source_line(site, &b, checks.PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE)
 
 	// The planned work is not on this page: it has its own, from its own file.
 	strings.write_string(&b, "<h2 id=\"planned\">What is planned</h2>\n")
 	site_roadmap_link_line(site, &b, path)
 
-	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s: what it promises, what the machine test shows of it, and what is not done.", len(properties), SITE_SYSTEM_NAME)), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(checks.SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
+	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s: what it promises, what the machine test shows of it, and what is not done.", len(properties), SITE_SYSTEM_NAME)), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(checks.PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
 	return true
 }

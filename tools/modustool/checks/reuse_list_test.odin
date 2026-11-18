@@ -130,7 +130,7 @@ reuse_list_imports_of_the_core_library :: proc(t: ^testing.T) {
 reuse_list_of_the_repository_is_whole :: proc(t: ^testing.T) {
 	problems := make([dynamic]string, context.temp_allocator)
 	works := reuse_works_read(&problems)
-	document, ok := foundation.site_read_quiet(REUSE_LIST_DOCUMENT)
+	document, ok := foundation.read_text_file_quiet(REUSE_LIST_DOCUMENT)
 	testing.expect(t, ok)
 	append(&problems, ..reuse_list_problems(document, works, reuse_file_exists))
 	for problem in problems {

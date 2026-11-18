@@ -297,7 +297,7 @@ mark_tile_map_table_fields_write :: proc(b: ^strings.Builder, tile_map: ^Mark_Ti
 		}
 		first_animation = false
 		strings.write_string(b, "{\"name\":")
-		foundation.site_json_string(b, mark.animation_names[animation])
+		foundation.json_string_write(b, mark.animation_names[animation])
 		fmt.sbprintf(b, ",\"duration\":%d,\"frames\":[", mark.animation_duration(animation))
 		for sprite, frame_index in frames {
 			row, _ := mark.animation_frame(animation, frame_index + 1)
@@ -406,7 +406,7 @@ mark_forms_table_write :: proc(b: ^strings.Builder, home: Mark_Picture, forms: ^
 		if index > 0 {
 			strings.write_string(b, ",")
 		}
-		foundation.site_json_string(b, name)
+		foundation.json_string_write(b, name)
 		fmt.sbprintf(b, ":%d", values[index])
 	}
 	strings.write_string(b, "}")

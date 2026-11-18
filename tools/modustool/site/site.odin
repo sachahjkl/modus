@@ -30,7 +30,7 @@ Site_Measure_Source :: enum {
 
 // One number as the page shows it.
 Site_Measured :: struct {
-	measure:        checks.Site_Measure,
+	measure:        checks.Measure_Entry,
 	found:          bool,
 	source:         Site_Measure_Source,
 	path:           string,
@@ -87,7 +87,7 @@ site_without_process_label :: proc(line: string) -> string {
 }
 
 // site_line_choose gives the line of log_line_choose with no label.
-site_line_choose :: proc(content, pattern: string, choice: checks.Site_Line_Choice) -> (text: string, line_number, matching_lines: int) {
+site_line_choose :: proc(content, pattern: string, choice: checks.Measure_Line_Choice) -> (text: string, line_number, matching_lines: int) {
 	line: string
 	line, line_number, matching_lines = checks.log_line_choose(content, pattern, choice)
 	return site_without_process_label(line), line_number, matching_lines
@@ -102,7 +102,7 @@ site_file_time :: proc(path: string) -> string {
 	return checks.measure_time_text(info.modification_time)
 }
 
-site_measure_read :: proc(measure: checks.Site_Measure) -> (measured: Site_Measured) {
+site_measure_read :: proc(measure: checks.Measure_Entry) -> (measured: Site_Measured) {
 	measured.measure = measure
 	reasons := make([dynamic]string, context.temp_allocator)
 	for path in measure.files {
@@ -126,7 +126,7 @@ site_measure_read :: proc(measure: checks.Site_Measure) -> (measured: Site_Measu
 		measured.found = true
 		measured.source = .Build
 		measured.path = path
-		measured.conditions = checks.site_output_conditions(path)
+		measured.conditions = checks.measure_output_conditions(path)
 		measured.line_number = line_number
 		measured.matching_lines = matching_lines
 		measured.text = text
@@ -236,7 +236,7 @@ site_boot_log_choose :: proc(record: Site_Measure_Record) -> (log: string, sourc
 	}
 	switch site_measure_source_choose(build_found, build_time, record, len(record.record.boot_lines) > 0) {
 	case .Build:
-		content, _ := foundation.site_read_quiet(checks.TEST_OUTPUT)
+		content, _ := foundation.read_text_file_quiet(checks.TEST_OUTPUT)
 		return content, .Build
 	case .Record:
 		return strings.join(record.record.boot_lines, "\n", context.temp_allocator), .Record
@@ -293,7 +293,7 @@ site_inline :: proc(builder: ^strings.Builder, text: string) {
 			end := strings.index_byte(text[index + 1:], '`')
 			if end >= 0 {
 				strings.write_string(builder, "<code>")
-				foundation.site_escape(builder, text[index + 1:index + 1 + end])
+				foundation.html_escape(builder, text[index + 1:index + 1 + end])
 				strings.write_string(builder, "</code>")
 				index += end + 2
 				continue
@@ -319,7 +319,7 @@ site_inline :: proc(builder: ^strings.Builder, text: string) {
 				}
 			}
 		}
-		foundation.site_escape(builder, text[index:index + 1])
+		foundation.html_escape(builder, text[index:index + 1])
 		index += 1
 	}
 	if bold_open {
@@ -339,7 +339,7 @@ site_inline_text :: proc(text: string) -> string {
 site_plain :: proc(builder: ^strings.Builder, text: string) {
 	without_code, _ := strings.remove_all(text, "`", context.temp_allocator)
 	without_bold, _ := strings.remove_all(without_code, "**", context.temp_allocator)
-	foundation.site_escape(builder, without_bold)
+	foundation.html_escape(builder, without_bold)
 }
 
 site_accent_class :: proc(color: graphics.Color) -> string {

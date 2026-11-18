@@ -110,7 +110,7 @@ site_code_odin_of_the_contract :: proc(t: ^testing.T) {
 		paths, listed := foundation.files_with_suffix(folder, ".odin")
 		testing.expect(t, listed)
 		for path in paths {
-			text, read := foundation.site_read_quiet(path)
+			text, read := foundation.read_text_file_quiet(path)
 			testing.expect(t, read)
 			b := strings.builder_make(context.temp_allocator)
 			testing.expectf(t, site_code_odin(&site, &b, text, package_name), "%s: the tokenizer refuses the file", path)
@@ -145,12 +145,12 @@ site_code_colors_keep_their_contrast :: proc(t: ^testing.T) {
 			if site_code_classes[class].name == "" {
 				continue
 			}
-			ratio := resources.site_contrast_ratio(site_code_color(class, is_light), colors.track)
+			ratio := resources.contrast_ratio(site_code_color(class, is_light), colors.track)
 			testing.expectf(t, ratio >= SITE_VALUE_CONTRAST_LEAST, "the class c-%s on %06x (light form: %v): a contrast of %.2f; at least %.1f", site_code_classes[class].name, u32(colors.track), is_light, ratio, SITE_VALUE_CONTRAST_LEAST)
 		}
 		selection, selection_text, placeholder := site_polish_colors(is_light)
-		testing.expectf(t, resources.site_contrast_ratio(selection_text, selection) >= SITE_VALUE_CONTRAST_LEAST, "the selection (light form: %v): %.2f", is_light, resources.site_contrast_ratio(selection_text, selection))
-		testing.expectf(t, resources.site_contrast_ratio(placeholder, colors.track) >= SITE_VALUE_CONTRAST_LEAST, "the placeholder (light form: %v): %.2f", is_light, resources.site_contrast_ratio(placeholder, colors.track))
+		testing.expectf(t, resources.contrast_ratio(selection_text, selection) >= SITE_VALUE_CONTRAST_LEAST, "the selection (light form: %v): %.2f", is_light, resources.contrast_ratio(selection_text, selection))
+		testing.expectf(t, resources.contrast_ratio(placeholder, colors.track) >= SITE_VALUE_CONTRAST_LEAST, "the placeholder (light form: %v): %.2f", is_light, resources.contrast_ratio(placeholder, colors.track))
 	}
 	// The class names are short and each one is its own.
 	names := make(map[string]bool, context.temp_allocator)
@@ -162,7 +162,7 @@ site_code_colors_keep_their_contrast :: proc(t: ^testing.T) {
 		testing.expectf(t, len(name) == 1 && name not_in names, "the class %v has the name %q", class, name)
 		names[name] = true
 	}
-	testing.expect(t, resources.site_contrast_ratio(graphics.COLOR_WHITE, graphics.COLOR_BLACK) > 20.9)
+	testing.expect(t, resources.contrast_ratio(graphics.COLOR_WHITE, graphics.COLOR_BLACK) > 20.9)
 }
 
 // The style sheet holds the polish of the parts of the browser, removes no
@@ -353,12 +353,12 @@ site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
 			{colors.grip_lit, colors.thumb_pressed[1]},
 		}
 		for pair in pairs {
-			ratio := resources.site_contrast_ratio(pair[0], pair[1])
+			ratio := resources.contrast_ratio(pair[0], pair[1])
 			testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "%06x on %06x (light form: %v): %.2f; at least %.1f", u32(pair[0]), u32(pair[1]), is_light, ratio, SITE_VALUE_GRAPHIC_CONTRAST_LEAST)
 		}
 		// At rest the standard is quiet: the border of the thumb and its
 		// grip are under 3 to 1. The numbers are a measure, not a bound.
-		log.infof("the scroll bar at rest (light form: %v): the border of the thumb on the track %.2f to 1, the grip on the thumb %.2f to 1", is_light, resources.site_contrast_ratio(colors.thumb_border, colors.track[1]), resources.site_contrast_ratio(colors.grip, colors.thumb_rest[1]))
+		log.infof("the scroll bar at rest (light form: %v): the border of the thumb on the track %.2f to 1, the grip on the thumb %.2f to 1", is_light, resources.contrast_ratio(colors.thumb_border, colors.track[1]), resources.contrast_ratio(colors.grip, colors.thumb_rest[1]))
 	}
 	// A triangle is four rows of 1, 3, 5 and 7 pixels in the middle of a
 	// square of 17, its point on the middle line, toward its end of the bar.

@@ -33,12 +33,12 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 	sentences := make(map[string]bool, context.temp_allocator)
 	for series, index in measure_history_series {
 		in_table := false
-		for measure in site_measures {
+		for measure in measure_entries {
 			if measure.sentence == series.sentence {
 				in_table = true
 			}
 		}
-		testing.expectf(t, in_table, "the series %q names no measure of site_measures", series.title)
+		testing.expectf(t, in_table, "the series %q names no measure of measure_entries", series.title)
 		testing.expectf(t, series.sentence not_in sentences, "two series follow the measure %q", series.sentence)
 		sentences[series.sentence] = true
 		text, value, ok := measure_history_value(series, lines[index])

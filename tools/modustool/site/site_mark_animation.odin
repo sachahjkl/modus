@@ -239,11 +239,11 @@ site_mark_animation_table_json :: proc(tile_maps: ^Site_Mark_Tile_Maps, sheet_ad
 	// What the site adds: the addresses of the three tile maps, and where
 	// a sprite is in the tile map of the icon of the tab and in that icon.
 	write(&b, ",\"sheets\":{\"dark\":")
-	foundation.site_json_string(&b, sheet_addresses[0])
+	foundation.json_string_write(&b, sheet_addresses[0])
 	write(&b, ",\"light\":")
-	foundation.site_json_string(&b, sheet_addresses[1])
+	foundation.json_string_write(&b, sheet_addresses[1])
 	write(&b, ",\"icon\":")
-	foundation.site_json_string(&b, sheet_addresses[2])
+	foundation.json_string_write(&b, sheet_addresses[2])
 	icon_layout := tile_maps.icon.layout
 	write(&b, "},\"icon\":{\"size\":")
 	number(&b, SITE_MARK_ANIMATION_ICON_SIZE)

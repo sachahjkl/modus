@@ -100,7 +100,7 @@ operation_statuses_of_comment :: proc(comment: string) -> (statuses: bit_set[ope
 // operation_statuses_read reads the statuses of each operation from the
 // reference comments. The member None is no operation and has none.
 operation_statuses_read :: proc(reference: string) -> (statuses: Operation_Statuses, problem: string) {
-	members, read_problem := foundation.site_enumeration_read(reference, foundation.OPERATION_SOURCE, "Operation")
+	members, read_problem := foundation.enumeration_read(reference, foundation.OPERATION_SOURCE, "Operation")
 	if read_problem != "" {
 		return {}, read_problem
 	}

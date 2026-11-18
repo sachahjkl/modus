@@ -43,15 +43,15 @@ site_docs_row :: proc(b: ^strings.Builder, row: Site_Docs_Row) {
 	strings.write_string(b, "<span class=\"docs-row-main\"><span class=\"docs-row-name\">")
 	if row.address != "" {
 		fmt.sbprintf(b, "<a href=\"%s\">", row.address)
-		foundation.site_escape(b, row.name)
+		foundation.html_escape(b, row.name)
 		strings.write_string(b, "</a>")
 	} else {
-		foundation.site_escape(b, row.name)
+		foundation.html_escape(b, row.name)
 	}
 	strings.write_string(b, "</span>")
 	if row.about != "" {
 		strings.write_string(b, "<span class=\"docs-row-about\">")
-		foundation.site_escape(b, row.about)
+		foundation.html_escape(b, row.about)
 		strings.write_string(b, "</span>")
 	}
 	strings.write_string(b, "</span>")

@@ -288,7 +288,7 @@ site_search_segment_cases_table :: proc(t: ^testing.T) {
 	for segment_case in site_search_segment_cases {
 		counts := make([dynamic]int, context.temp_allocator)
 		for word in strings.fields(segment_case.counts, context.temp_allocator) {
-			append(&counts, foundation.site_digits_value(word))
+			append(&counts, foundation.decimal_digits_value(word))
 		}
 		segments := site_search_chart_segments(counts[:])
 		parts := make([dynamic]string, context.temp_allocator)

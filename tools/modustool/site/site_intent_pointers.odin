@@ -17,14 +17,14 @@ intent_pointer_problems :: proc(site: ^Site, file: checks.Intent_File) -> []stri
 	problems := make([dynamic]string, context.temp_allocator)
 	from := strings.concatenate({checks.INTENT_PREFIX, file.path}, context.temp_allocator)
 	for link in checks.intent_links(file.content) {
-		labels, _ := checks.site_pointer_labels(link.text, link.after)
+		labels, _ := checks.pointer_labels(link.text, link.after)
 		if len(labels) == 0 {
 			continue
 		}
 		path, inside_repository := checks.intent_link_path(from, link.target)
 		is_document := false
 		if inside_repository {
-			document_end, has_document_form := checks.site_document_path_end(path, 0)
+			document_end, has_document_form := checks.document_path_end(path, 0)
 			is_document = has_document_form && document_end == len(path)
 		}
 		if !is_document {

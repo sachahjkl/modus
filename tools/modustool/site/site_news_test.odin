@@ -109,7 +109,7 @@ news_feed_escapes_and_links :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(feed, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">"))
 	testing.expect(t, strings.contains(feed, "<title>A thing a reader can see</title>"))
 	testing.expect(t, strings.contains(feed, "<updated>2026-11-11T00:00:00Z</updated>"))
-	testing.expect(t, strings.contains(feed, "<id>" + checks.SITE_REPOSITORY_ADDRESS + "/blob/master/news/" + checks.NEWS_EXAMPLE_NAME + "</id>"))
+	testing.expect(t, strings.contains(feed, "<id>" + checks.REPOSITORY_ADDRESS + "/blob/master/news/" + checks.NEWS_EXAMPLE_NAME + "</id>"))
 	// With no address: relative links and no link "self".
 	testing.expect(t, strings.contains(feed, "href=\"news/index.html#news-2026-11-11-a-thing\""))
 	testing.expect(t, !strings.contains(feed, "rel=\"self\""))

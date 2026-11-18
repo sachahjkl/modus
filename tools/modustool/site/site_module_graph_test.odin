@@ -243,7 +243,7 @@ site_graph_kind_colors_keep_their_contrast :: proc(t: ^testing.T) {
 		for kind in Site_Graph_Kind {
 			color := site_graph_kind_color(kind, light)
 			for surface in ([]graphics.Color{colors.background, colors.card_bottom, colors.card_top}) {
-				ratio := resources.site_contrast_ratio(color, surface)
+				ratio := resources.contrast_ratio(color, surface)
 				testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "%v (light form: %v) on %06x: %.2f", kind, light, surface, ratio)
 			}
 		}

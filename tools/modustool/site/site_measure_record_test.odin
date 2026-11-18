@@ -25,7 +25,7 @@ measure_record_or_build_by_time :: proc(t: ^testing.T) {
 	// line, its log and the time of the record, and no "no file".
 	present := Site_Measure_Record{present = true, record = checks.measure_record_example(), written = newer}
 	from_build := Site_Measured {
-		measure = checks.Site_Measure{sentence = "Reads of the time"},
+		measure = checks.Measure_Entry{sentence = "Reads of the time"},
 		missing = "build/test_output.txt: no file",
 	}
 	resolved := site_measure_resolve(from_build, present)
@@ -37,12 +37,12 @@ measure_record_or_build_by_time :: proc(t: ^testing.T) {
 	testing.expect_value(t, resolved.written, "2026-11-12 02:09 UTC")
 	testing.expect_value(t, resolved.missing, "")
 	// A number that the run did not give: absent, with the reason of the run.
-	absent := site_measure_resolve(Site_Measured{measure = checks.Site_Measure{sentence = "A full frame of the compositor"}, missing = "build/test_output.txt: no file"}, present)
+	absent := site_measure_resolve(Site_Measured{measure = checks.Measure_Entry{sentence = "A full frame of the compositor"}, missing = "build/test_output.txt: no file"}, present)
 	testing.expect(t, !absent.found)
 	testing.expect(t, strings.contains(absent.missing, "the full check of 2026-11-12 02:09 UTC did not print it"))
 	// A log of build/ that is newer wins.
 	newest := Site_Measured {
-		measure  = checks.Site_Measure{sentence = "Reads of the time"},
+		measure  = checks.Measure_Entry{sentence = "Reads of the time"},
 		found    = true,
 		source   = .Build,
 		path     = checks.TEST_OUTPUT,
@@ -60,9 +60,9 @@ measure_record_page_text :: proc(t: ^testing.T) {
 	site.release = "0.91.0"
 	site.measure_record = Site_Measure_Record{present = true, record = checks.measure_record_example(), written = time.unix(2_000, 0)}
 	measured := make([]Site_Measured, 3, context.temp_allocator)
-	measured[0] = site_measure_resolve(Site_Measured{measure = checks.Site_Measure{sentence = "Reads of the time"}, missing = "build/test_output.txt: no file"}, site.measure_record)
+	measured[0] = site_measure_resolve(Site_Measured{measure = checks.Measure_Entry{sentence = "Reads of the time"}, missing = "build/test_output.txt: no file"}, site.measure_record)
 	measured[1] = Site_Measured {
-		measure     = checks.Site_Measure{sentence = "Blocks read"},
+		measure     = checks.Measure_Entry{sentence = "Blocks read"},
 		found       = true,
 		source      = .Build,
 		path        = checks.TEST_OUTPUT,
@@ -71,7 +71,7 @@ measure_record_page_text :: proc(t: ^testing.T) {
 		written     = "2026-11-13 08:00 UTC",
 		log_time    = time.unix(3_000, 0),
 	}
-	measured[2] = site_measure_resolve(Site_Measured{measure = checks.Site_Measure{sentence = "A full frame of the compositor"}, missing = "build/test_output.txt: no file"}, site.measure_record)
+	measured[2] = site_measure_resolve(Site_Measured{measure = checks.Measure_Entry{sentence = "A full frame of the compositor"}, missing = "build/test_output.txt: no file"}, site.measure_record)
 	site.measured = measured
 	body := site_numbers_body(&site)
 	first_paragraph := body[strings.index(body, "<p>"):]

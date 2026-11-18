@@ -23,7 +23,7 @@ Manual_Document_Reader :: #type proc(path: string) -> (text: string, ok: bool)
 
 // A reader of the declarations of the sources that have one of these names:
 // the build parses the sources, a host test gives an index.
-Manual_Declaration_Reader :: #type proc(names: []string) -> (index: Site_Declaration_Index, ok: bool)
+Manual_Declaration_Reader :: #type proc(names: []string) -> (index: Declaration_Index, ok: bool)
 
 // The readers of the texts that the link pages come from.
 Manual_Page_Readers :: struct {
@@ -33,14 +33,14 @@ Manual_Page_Readers :: struct {
 
 // The readers of the build: the files of the repository.
 manual_page_readers_of_the_build :: proc() -> Manual_Page_Readers {
-	return {documents = foundation.site_read_quiet, declarations = manual_declarations_read}
+	return {documents = foundation.read_text_file_quiet, declarations = manual_declarations_read}
 }
 
 // manual_declarations_read gives the declarations of the sources of the
 // system that have one of these names, by the reader of the site.
-manual_declarations_read :: proc(names: []string) -> (index: Site_Declaration_Index, ok: bool) {
-	index = site_declaration_index_make()
-	ok = site_declaration_index_fill(&index, names)
+manual_declarations_read :: proc(names: []string) -> (index: Declaration_Index, ok: bool) {
+	index = declaration_index_make()
+	ok = declaration_index_fill(&index, names)
 	return
 }
 
@@ -107,7 +107,7 @@ manual_documentation_texts :: proc(modules: []Manual_Module_File) -> []string {
 manual_link_pages_make :: proc(modules: []Manual_Module_File, readers: Manual_Page_Readers) -> (pages: []manual_pages.Page_Source, missing: []string) {
 	targets := make([dynamic]string, context.temp_allocator)
 	for text in manual_documentation_texts(modules) {
-		found, _ := site_comment_links(text)
+		found, _ := comment_links(text)
 		for target in found {
 			if manual_pages.link_target_kind(target) == .Name && manual_name_described(modules, target) {
 				continue
@@ -179,13 +179,13 @@ manual_link_pages_of_targets :: proc(targets: []string, readers: Manual_Page_Rea
 			append(&waiting, target)
 		case .Name:
 			append(&waiting, target)
-			if span, is_name := site_declaration_span_read(target); is_name {
+			if span, is_name := declaration_span_read(target); is_name {
 				append(&wanted_names, span.name)
 			}
 		case .Address:
 		}
 	}
-	declarations := site_declaration_index_make()
+	declarations := declaration_index_make()
 	if len(wanted_names) > 0 && readers.declarations != nil {
 		if index, read_ok := readers.declarations(wanted_names[:]); read_ok {
 			declarations = index
@@ -238,15 +238,15 @@ manual_link_pages_of_targets :: proc(targets: []string, readers: Manual_Page_Rea
 // the term, then its short definition and its explanation. The name
 // matches with no regard to case, as on the site.
 manual_term_page :: proc(glossary: Glossary, target: string) -> (page: manual_pages.Page_Source, found: bool) {
-	wanted := foundation.site_slug(target[len(manual_pages.TERM_PREFIX):])
+	wanted := foundation.text_slug(target[len(manual_pages.TERM_PREFIX):])
 	for group in glossary.groups {
 		for term in group.terms {
-			if foundation.site_slug(term.name) != wanted {
+			if foundation.text_slug(term.name) != wanted {
 				continue
 			}
 			text := term.definition
 			if term.explanation != "" {
-				explanation := manual_markdown_of_guide(foundation.site_lines(term.explanation), term.file)
+				explanation := manual_markdown_of_guide(foundation.lines_of_text(term.explanation), term.file)
 				text = strings.concatenate({text, "\n\n", explanation}, context.temp_allocator)
 			}
 			return {target = target, title = manual_title_of(term.name), text = text}, true
@@ -260,19 +260,19 @@ manual_term_page :: proc(glossary: Glossary, target: string) -> (page: manual_pa
 // comment: the package and the name as the title, then the kind, the file
 // and the line, the one line of Odin in a block, and the comment. The
 // target of the page is the target of the link, so the manual finds it.
-manual_declaration_page :: proc(declarations: ^Site_Declaration_Index, target: string) -> (page: manual_pages.Page_Source, found: bool) {
-	span, is_name := site_declaration_span_read(target)
+manual_declaration_page :: proc(declarations: ^Declaration_Index, target: string) -> (page: manual_pages.Page_Source, found: bool) {
+	span, is_name := declaration_span_read(target)
 	if !is_name {
 		return {}, false
 	}
-	place, resolution := site_declaration_resolve(declarations, span, nil)
+	place, resolution := declaration_resolve(declarations, span, nil)
 	if resolution != .Linked {
 		return {}, false
 	}
 	declaration := declarations.declarations[place]
 	builder := strings.builder_make(context.temp_allocator)
 	// The page has no line "from": its first sentence names the file.
-	fmt.sbprintf(&builder, "A %s of `%s`, line %d.\n\n", site_declaration_kind_names[declaration.kind], declaration.file, declaration.line)
+	fmt.sbprintf(&builder, "A %s of `%s`, line %d.\n\n", declaration_kind_names[declaration.kind], declaration.file, declaration.line)
 	signature, _ := strings.replace_all(declaration.signature, "\t", "    ", context.temp_allocator)
 	strings.write_string(&builder, "```odin\n")
 	strings.write_string(&builder, signature)
@@ -310,11 +310,11 @@ manual_guide_headings :: proc(lines: []string) -> []Manual_Guide_Heading {
 		if fenced {
 			continue
 		}
-		level, text := site_heading_level(line)
+		level, text := heading_level(line)
 		if level == 0 {
 			continue
 		}
-		slug := foundation.site_slug(text)
+		slug := foundation.text_slug(text)
 		seen[slug] += 1
 		id := seen[slug] == 1 ? slug : fmt.tprintf("%s-%d", slug, seen[slug])
 		append(&headings, Manual_Guide_Heading{level = level, text = text, id = id, line = index})
@@ -336,7 +336,7 @@ manual_guide_page :: proc(target: string, read: Manual_Document_Reader) -> (page
 	if !read_ok || !strings.has_suffix(path, ".md") {
 		return {}, nil, false
 	}
-	lines := foundation.site_lines(content)
+	lines := foundation.lines_of_text(content)
 	headings := manual_guide_headings(lines)
 	place := -1
 	if anchor == "" {
@@ -357,7 +357,7 @@ manual_guide_page :: proc(target: string, read: Manual_Document_Reader) -> (page
 	if place < 0 && anchor != "" {
 		return {}, nil, false
 	}
-	title := site_file_name(path)
+	title := file_name_of_path(path)
 	level, body_start := 1, 0
 	if place >= 0 {
 		title, level, body_start = headings[place].text, headings[place].level, headings[place].line + 1
@@ -450,7 +450,7 @@ manual_markdown_of_guide :: proc(lines: []string, guide: string) -> string {
 			append(&out, line)
 			continue
 		}
-		if level, text := site_heading_level(line); level > 0 {
+		if level, text := heading_level(line); level > 0 {
 			manual_markdown_blank_line(&out)
 			append(&out, strings.concatenate({"**", manual_links_from_root(text, guide), "**"}, context.temp_allocator))
 			append(&out, "")
@@ -465,7 +465,7 @@ manual_markdown_of_guide :: proc(lines: []string, guide: string) -> string {
 			if manual_table_separator(trimmed) {
 				continue
 			}
-			cells := site_table_row_cells(trimmed)
+			cells := table_row_cells(trimmed)
 			for &cell in cells {
 				cell = strings.trim_space(cell)
 			}
@@ -558,7 +558,7 @@ manual_target_from_root :: proc(target, guide: string) -> string {
 	return target
 }
 
-// site_file_name gives the name of a file after the last "/" of its path.
-site_file_name :: proc(path: string) -> string {
+// file_name_of_path gives the name of a file after the last "/" of its path.
+file_name_of_path :: proc(path: string) -> string {
 	return path[strings.last_index_byte(path, '/') + 1:]
 }

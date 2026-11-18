@@ -73,7 +73,7 @@ site_is_working_record :: proc(path: string) -> bool {
 		return true
 	}
 	records := checks.SITE_WORKING_RECORDS
-	name := build.site_file_name(path)
+	name := build.file_name_of_path(path)
 	for record in records {
 		if name == record {
 			return true
@@ -126,7 +126,7 @@ site_markdown_outline :: proc(content: string) -> Site_Document_Outline {
 	item_list := make([dynamic]Site_Document_Item, context.temp_allocator)
 	bold_list := make([dynamic]Site_Document_Item, context.temp_allocator)
 	fenced := false
-	for line, index in foundation.site_lines(content) {
+	for line, index in foundation.lines_of_text(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -134,7 +134,7 @@ site_markdown_outline :: proc(content: string) -> Site_Document_Outline {
 		if fenced {
 			continue
 		}
-		if level, heading_text := build.site_heading_level(line); level > 0 {
+		if level, heading_text := build.heading_level(line); level > 0 {
 			if level == 1 && outline.title == "" {
 				outline.title = heading_text
 			}
@@ -142,7 +142,7 @@ site_markdown_outline :: proc(content: string) -> Site_Document_Outline {
 			continue
 		}
 		start := strings.trim_space(line)
-		if marker, is_marker := build.site_list_marker(line); is_marker {
+		if marker, is_marker := build.list_marker_read(line); is_marker {
 			start = marker.text
 			if marker.ordered && marker.indent == 0 {
 				append(&item_list, Site_Document_Item{label = marker.label, title = site_item_words(marker.text), heading = len(heading_list) - 1, line = index + 1})
@@ -169,11 +169,11 @@ site_document_file_outline :: proc(site: ^Site, path: string) -> Site_Document_O
 		return known
 	}
 	read: Site_Document_Outline
-	if content, read_ok := foundation.site_read_quiet(path); read_ok {
+	if content, read_ok := foundation.read_text_file_quiet(path); read_ok {
 		read = site_markdown_outline(content)
 		read.found = true
 		if read.title == "" {
-			read.title = build.site_file_name(path)
+			read.title = build.file_name_of_path(path)
 		}
 	}
 	site.document_outlines[path] = read
@@ -210,7 +210,7 @@ site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outlin
 		outline := Site_Document_Outline{page = page, found = true}
 		headings := make([dynamic]Site_Document_Heading, context.temp_allocator)
 		if path == build.GLOSSARY_INDEX_FILE {
-			append(&headings, Site_Document_Heading{level = 1, text = site.glossary.title, id = foundation.site_slug(site.glossary.title), line = 1})
+			append(&headings, Site_Document_Heading{level = 1, text = site.glossary.title, id = foundation.text_slug(site.glossary.title), line = 1})
 		}
 		for group in site.glossary.groups {
 			if group.file != path {
@@ -294,7 +294,7 @@ site_heading_plain :: proc(text: string) -> string {
 // of its section: "K1. Handle table" gives "Handle table", "12.4 The glyph
 // cache" gives "The glyph cache". A label means nothing on another page.
 site_heading_without_label :: proc(text: string) -> string {
-	end, found := checks.site_label_token_end(text, 0, false)
+	end, found := checks.label_token_end(text, 0, false)
 	if !found {
 		return text
 	}
@@ -321,7 +321,7 @@ site_heading_has_label :: proc(text, key: string) -> bool {
 
 // site_heading_find gives the first heading between low and high that a
 // label names, or -1. A quoted label matches the text of a heading by the
-// rule that gives the ids (site_slug), with or without the label of its
+// rule that gives the ids (text_slug), with or without the label of its
 // section; else, when one heading only starts with those words, that one.
 site_heading_find :: proc(headings: []Site_Document_Heading, low, high: int, label: string) -> int {
 	key, quoted := site_label_key(label)
@@ -333,17 +333,17 @@ site_heading_find :: proc(headings: []Site_Document_Heading, low, high: int, lab
 		}
 		return -1
 	}
-	wanted := foundation.site_slug(key)
+	wanted := foundation.text_slug(key)
 	for index in low ..< high {
 		plain := site_heading_plain(headings[index].text)
-		if foundation.site_slug(plain) == wanted || foundation.site_slug(site_heading_without_label(plain)) == wanted {
+		if foundation.text_slug(plain) == wanted || foundation.text_slug(site_heading_without_label(plain)) == wanted {
 			return index
 		}
 	}
 	start := strings.concatenate({wanted, "-"}, context.temp_allocator)
 	found := -1
 	for index in low ..< high {
-		if strings.has_prefix(foundation.site_slug(site_heading_without_label(site_heading_plain(headings[index].text))), start) {
+		if strings.has_prefix(foundation.text_slug(site_heading_without_label(site_heading_plain(headings[index].text))), start) {
 			if found >= 0 {
 				return -1
 			}
@@ -396,7 +396,7 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 				continue
 			}
 			for term in group.terms {
-				if quoted && foundation.site_slug(term.name) == foundation.site_slug(key) {
+				if quoted && foundation.text_slug(term.name) == foundation.text_slug(key) {
 					term_target := whole
 					term_target.heading = term.name
 					term_target.link = strings.concatenate({site_glossary_group_page(group.id), "#", term.id}, context.temp_allocator)
@@ -492,14 +492,14 @@ site_bold_title_find :: proc(outline: Site_Document_Outline, low, high: int, lab
 	if !quoted {
 		return -1
 	}
-	wanted := foundation.site_slug(key)
+	wanted := foundation.text_slug(key)
 	start := strings.concatenate({wanted, "-"}, context.temp_allocator)
 	found := -1
 	for bold, index in outline.bold_titles {
 		if bold.heading < low - 1 || bold.heading >= high {
 			continue
 		}
-		slug := foundation.site_slug(bold.title)
+		slug := foundation.text_slug(bold.title)
 		if slug == wanted {
 			return index
 		}
@@ -587,12 +587,12 @@ site_document_target_text :: proc(target: Site_Document_Target) -> string {
 site_document_reference_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string, target: Site_Document_Target) {
 	strings.write_string(b, SITE_DOCUMENT_REFERENCE_OPEN)
 	if target.outside {
-		foundation.site_escape(b, target.link)
+		foundation.html_escape(b, target.link)
 	} else {
-		foundation.site_escape(b, site_page_link(site, from_page, target.link))
+		foundation.html_escape(b, site_page_link(site, from_page, target.link))
 	}
 	strings.write_string(b, "\">")
-	foundation.site_escape(b, site_document_target_text(target))
+	foundation.html_escape(b, site_document_target_text(target))
 	if target.outside {
 		strings.write_string(b, "<span class=\"document-outside\"> in the repository</span>")
 	}
@@ -631,7 +631,7 @@ site_comment_parts :: proc(site: ^Site, text: string, count: bool, after: ^[dyna
 	builder := strings.builder_make(context.temp_allocator)
 	places := make([dynamic][]Site_Document_Target, context.temp_allocator)
 	cursor := 0
-	for pointer in checks.site_document_pointers(text) {
+	for pointer in checks.document_pointers(text) {
 		targets := site_document_targets(site, pointer.path, pointer.labels)
 		if len(targets) == 0 {
 			continue // Not a document of the repository: its text stays.
@@ -687,7 +687,7 @@ site_comment_marks_plain :: proc(marked: string, in_place: [][]Site_Document_Tar
 			break
 		}
 		strings.write_string(&b, rest[:mark])
-		number := foundation.site_digits_value(rest[mark + 1:mark + 1 + closing])
+		number := foundation.decimal_digits_value(rest[mark + 1:mark + 1 + closing])
 		if number >= 0 && number < len(in_place) {
 			for target, index in in_place[number] {
 				if index > 0 {
@@ -706,11 +706,11 @@ site_comment_marks_plain :: proc(marked: string, in_place: [][]Site_Document_Tar
 // one paragraph: no empty line, no list item, no line of an example and no
 // fence. A cell of a table writes such a comment as a line, with no <p>.
 site_comment_is_one_paragraph :: proc(markdown: string) -> bool {
-	for line in foundation.site_lines(markdown) {
+	for line in foundation.lines_of_text(markdown) {
 		if strings.trim_space(line) == "" || line[0] == ' ' || strings.has_prefix(line, "```") {
 			return false
 		}
-		if _, is_marker := build.site_list_marker(line); is_marker {
+		if _, is_marker := build.list_marker_read(line); is_marker {
 			return false
 		}
 	}
@@ -801,7 +801,7 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 	// An intent file is named by its whole path: its file name alone
 	// ("README.md") is the name of other files too.
 	if strings.has_prefix(code, checks.INTENT_PREFIX) {
-		if end, is_intent_file := checks.site_intent_path_end(code, 0); is_intent_file && end == len(code) {
+		if end, is_intent_file := checks.intent_path_end(code, 0); is_intent_file && end == len(code) {
 			return code, true
 		}
 	}
@@ -843,7 +843,7 @@ site_comment_pointer_problems :: proc(site: ^Site, file, content: string) -> []s
 		return problems[:]
 	}
 	for block in foundation.comment_blocks(content, syntax) {
-		for pointer in checks.site_document_pointers(block.text) {
+		for pointer in checks.document_pointers(block.text) {
 			if problem := site_pointer_problem(site, file, foundation.comment_block_line(block, pointer.start), pointer.path, pointer.labels); problem != "" {
 				append(&problems, problem)
 			}
@@ -858,7 +858,7 @@ site_comment_pointer_problems :: proc(site: ^Site, file, content: string) -> []s
 site_guide_pointer_problems :: proc(site: ^Site, file, content: string) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	fenced := false
-	for line, line_index in foundation.site_lines(content) {
+	for line, line_index in foundation.lines_of_text(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -866,7 +866,7 @@ site_guide_pointer_problems :: proc(site: ^Site, file, content: string) -> []str
 		if fenced {
 			continue
 		}
-		if level, _ := build.site_heading_level(line); level > 0 {
+		if level, _ := build.heading_level(line); level > 0 {
 			continue // A code span of a heading stays code.
 		}
 		position := 0
@@ -886,7 +886,7 @@ site_guide_pointer_problems :: proc(site: ^Site, file, content: string) -> []str
 			if !names_document {
 				continue
 			}
-			labels, _ := checks.site_pointer_labels(line, position)
+			labels, _ := checks.pointer_labels(line, position)
 			if problem := site_pointer_problem(site, file, line_index + 1, path, labels); problem != "" {
 				append(&problems, problem)
 			}
@@ -907,10 +907,10 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	files := make([dynamic]string, context.temp_allocator)
 	folders := SITE_POINTER_SOURCE_FOLDERS
 	for folder in folders {
-		build.site_odin_files_under(folder, &files)
+		build.odin_files_under(folder, &files)
 	}
 	for file in files {
-		content, read_ok := foundation.site_read_quiet(file)
+		content, read_ok := foundation.read_text_file_quiet(file)
 		if !read_ok {
 			continue
 		}
@@ -929,7 +929,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 		append(&documents, ..news_files)
 	}
 	for document in documents {
-		content, read_ok := foundation.site_read_quiet(document)
+		content, read_ok := foundation.read_text_file_quiet(document)
 		if !read_ok {
 			continue
 		}
@@ -954,7 +954,7 @@ SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "ROADMAP.md", "AGE
 site_document_names :: proc(site: ^Site) -> map[string]bool {
 	names := make(map[string]bool, context.temp_allocator)
 	for path in site.documents {
-		names[build.site_file_name(path)] = true
+		names[build.file_name_of_path(path)] = true
 	}
 	records := checks.SITE_WORKING_RECORDS
 	for record in records {
@@ -985,7 +985,7 @@ site_document_name_in_text :: proc(text: string, names: map[string]bool) -> (nam
 		dot := search + found
 		after := dot + len(".md")
 		search = after
-		if after < len(text) && foundation.site_is_word_byte(text[after]) {
+		if after < len(text) && foundation.is_word_byte(text[after]) {
 			continue
 		}
 		first := dot
@@ -995,7 +995,7 @@ site_document_name_in_text :: proc(text: string, names: map[string]bool) -> (nam
 		if first == dot || text[first] < 'A' || text[first] > 'Z' {
 			continue
 		}
-		if first > 0 && (foundation.site_is_word_byte(text[first - 1]) || text[first - 1] == '.') {
+		if first > 0 && (foundation.is_word_byte(text[first - 1]) || text[first - 1] == '.') {
 			continue
 		}
 		candidate := text[first:after]

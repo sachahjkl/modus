@@ -127,8 +127,8 @@ fuzz_constants_of_file :: proc(path, source: string, values: ^[dynamic]i64, text
 		file.src = source
 		file.fullpath = path
 		reader := parser.default_parser()
-		reader.err = foundation.site_code_quiet_error
-		reader.warn = foundation.site_code_quiet_error
+		reader.err = foundation.tokenizer_quiet_error
+		reader.warn = foundation.tokenizer_quiet_error
 		if !parser.parse_file(&reader, file) || file.syntax_error_count > 0 {
 			return
 		}

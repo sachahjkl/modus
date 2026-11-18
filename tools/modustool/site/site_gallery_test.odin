@@ -191,7 +191,7 @@ site_gallery_guides_are_pages :: proc(t: ^testing.T) {
 	for row in site_gallery_rows {
 		testing.expectf(t, os.exists(row.guide), "%s: the guide %s is not a file", row.file, row.guide)
 		for record in working_records {
-			testing.expectf(t, build.site_file_name(row.guide) != record, "%s: the guide %s is a working record, not a page of the site", row.file, row.guide)
+			testing.expectf(t, build.file_name_of_path(row.guide) != record, "%s: the guide %s is a working record, not a page of the site", row.file, row.guide)
 		}
 		if row.film != "" {
 			testing.expectf(t, os.exists(row.film), "%s: the film %s is not a file", row.file, row.film)

@@ -175,7 +175,7 @@ byte_layout_comment :: proc(before, line: ^ast.Comment_Group) -> string {
 // their type as the source writes it and their comment, and the comment of
 // each other constant.
 byte_layout_declarations_read :: proc(path: string) -> (declarations: map[string]Byte_Layout_Declaration, problem: string) {
-	source, read_ok := foundation.site_read(path)
+	source, read_ok := foundation.read_text_file(path)
 	if !read_ok {
 		return nil, fmt.tprintf("cannot read %s", path)
 	}
@@ -425,7 +425,7 @@ byte_layout_key_list :: proc() -> string {
 // A fence of layouts starts at the start of its line, so that its body is
 // the text with no indentation.
 byte_layout_document_rewrite :: proc(content, path: string, layouts: map[string]Byte_Layout) -> (rewritten: string, fences: int, problems: []string) {
-	lines := foundation.site_lines(content)
+	lines := foundation.lines_of_text(content)
 	list := make([dynamic]string, context.temp_allocator)
 	found_problems := make([dynamic]string, context.temp_allocator)
 	index := 0
@@ -484,7 +484,7 @@ byte_layout_documents_rewrite :: proc(write: bool) -> bool {
 	problems := make([dynamic]string, context.temp_allocator)
 	fences, written := 0, 0
 	for path in paths {
-		content, read_ok := foundation.site_read(path)
+		content, read_ok := foundation.read_text_file(path)
 		if !read_ok {
 			append(&problems, fmt.tprintf("cannot read %s", path))
 			continue
@@ -548,7 +548,7 @@ byte_layout_name_html :: proc(b: ^strings.Builder, name: string) {
 		if index > 0 {
 			strings.write_string(b, "_<wbr>")
 		}
-		foundation.site_escape(b, part)
+		foundation.html_escape(b, part)
 	}
 }
 
@@ -579,15 +579,15 @@ byte_layout_html :: proc(site: ^Site, b: ^strings.Builder, id: string, layout: B
 		site_type_reference(site, b, layout.key, layout.key, false)
 	} else {
 		strings.write_string(b, "<code>")
-		foundation.site_escape(b, layout.key)
+		foundation.html_escape(b, layout.key)
 		strings.write_string(b, "</code>")
 	}
 	strings.write_string(b, ", ")
-	foundation.site_escape(b, site_type_size_text(layout.size))
+	foundation.html_escape(b, site_type_size_text(layout.size))
 	strings.write_string(b, ": ")
-	foundation.site_escape(b, layout.what)
+	foundation.html_escape(b, layout.what)
 	strings.write_string(b, "</figcaption>\n<div class=\"byte-layout-box\" role=\"region\" tabindex=\"0\" aria-label=\"The bytes of ")
-	foundation.site_escape(b, layout.key)
+	foundation.html_escape(b, layout.key)
 	strings.write_string(b, "\"><div class=\"byte-layout-grid\">\n")
 	// The rulers: the byte of the row, then its bits.
 	strings.write_string(b, "<span class=\"byte-ruler byte-ruler-corner\">byte</span>")
@@ -611,12 +611,12 @@ byte_layout_html :: proc(site: ^Site, b: ^strings.Builder, id: string, layout: B
 			class = "byte-cell byte-cell-continued"
 		}
 		fmt.sbprintf(b, "<div class=\"%s byte-column-%d byte-span-%d byte-row-%d byte-rows-%d\" title=\"", class, piece.column + 1, piece.span, piece.row + 1, piece.rows)
-		foundation.site_escape(b, byte_layout_title(site, field))
+		foundation.html_escape(b, byte_layout_title(site, field))
 		strings.write_string(b, "\"><code>")
 		byte_layout_name_html(b, field.name)
 		strings.write_string(b, "</code><span class=\"byte-cell-size\">")
 		if piece.first {
-			foundation.site_escape(b, site_type_size_text(field.size))
+			foundation.html_escape(b, site_type_size_text(field.size))
 		} else {
 			strings.write_string(b, "continued")
 		}
@@ -641,7 +641,7 @@ byte_layout_fence_write :: proc(renderer: ^Site_Renderer, keys: []string, body: 
 		append(&site.byte_layout_problems, fmt.tprintf("%s: %s", place, problem))
 	}
 	for layout in found {
-		id := site_unique_id(renderer, strings.concatenate({"byte-layout-", foundation.site_slug(layout.key)}, context.temp_allocator))
+		id := site_unique_id(renderer, strings.concatenate({"byte-layout-", foundation.text_slug(layout.key)}, context.temp_allocator))
 		byte_layout_html(site, &renderer.builder, id, layout)
 	}
 }

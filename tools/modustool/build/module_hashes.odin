@@ -66,7 +66,7 @@ module_hashes_record_text :: proc(hashes: []Module_Hash) -> string {
 module_hashes_record_parse :: proc(text: string) -> (hashes: []Module_Hash, problem: string) {
 	list := make([dynamic]Module_Hash, context.temp_allocator)
 	first_line_read := false
-	for line, line_index in foundation.site_lines(text) {
+	for line, line_index in foundation.lines_of_text(text) {
 		if !first_line_read {
 			if line != MODULE_HASHES_FIRST_LINE {
 				return nil, fmt.tprintf("line 1 is not \"%s\"", MODULE_HASHES_FIRST_LINE)

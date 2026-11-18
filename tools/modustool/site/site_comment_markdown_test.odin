@@ -60,18 +60,18 @@ link_test_site :: proc() -> Site {
 	modules := make([]Site_Module, 1, context.temp_allocator)
 	modules[0] = {build = {name = "manual", source = "processes/manual"}, kind = "entry", page = site_module_page("manual"), description = {exports = exports}}
 	site.reference.modules = modules
-	site.declarations = build.site_declaration_index_make()
+	site.declarations = build.declaration_index_make()
 	sources := [2][2]string {
 		{"support/system/link_test_source.odin", "package system\n\n// Waits on a word.\nword_wait :: proc() {}\n\ncount :: proc() {}\n"},
 		{"kernel/link_test_source.odin", "package kernel\n\nfault_deliver :: proc() {}\n\ncount :: proc() {}\n"},
 	}
 	for source in sources {
-		found, parsed := build.site_declarations_of_file(source[0], source[1])
+		found, parsed := build.declarations_of_file(source[0], source[1])
 		if !parsed {
 			continue
 		}
 		for declaration in found {
-			build.site_declaration_add(&site.declarations, declaration)
+			build.declaration_index_add(&site.declarations, declaration)
 		}
 	}
 	return site
@@ -108,7 +108,7 @@ comment_markdown_link_targets :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "data-declaration-card=\"declaration-") && strings.contains(html, "<strong>wait</strong></a>"), html)
 	testing.expect(t, strings.contains(html, "<a href=\"https://example.org\">the site</a>"), html)
 	// The target of a link is not a pointer to a document.
-	testing.expect_value(t, len(checks.site_document_pointers("[the ring](docs/ARCHITECTURE.md#kernel-systems)")), 0)
+	testing.expect_value(t, len(checks.document_pointers("[the ring](docs/ARCHITECTURE.md#kernel-systems)")), 0)
 }
 
 // The check of the links names the file and the line of a link that names

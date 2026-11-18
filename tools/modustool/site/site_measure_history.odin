@@ -36,9 +36,9 @@ site_measure_history_write :: proc(site: ^Site, b: ^strings.Builder) {
 	}
 	drawn := 0
 	for series in checks.measure_history_series {
-		measure: checks.Site_Measure
+		measure: checks.Measure_Entry
 		in_table := false
-		for candidate in checks.site_measures {
+		for candidate in checks.measure_entries {
 			if candidate.sentence == series.sentence {
 				measure, in_table = candidate, true
 			}
@@ -54,7 +54,7 @@ site_measure_history_write :: proc(site: ^Site, b: ^strings.Builder) {
 			strings.write_string(b, "<div class=\"measure-charts\">\n")
 		}
 		drawn += 1
-		slug := foundation.site_slug(series.sentence)
+		slug := foundation.text_slug(series.sentence)
 		most_text := ""
 		most := 0.0
 		for point in points {
@@ -63,43 +63,43 @@ site_measure_history_write :: proc(site: ^Site, b: ^strings.Builder) {
 			}
 		}
 		fmt.sbprintf(b, "<article class=\"card measure-chart %s\" id=\"history-%s\">\n<h3>", site_accent_class(measure.accent), slug)
-		foundation.site_escape(b, series.title)
+		foundation.html_escape(b, series.title)
 		fmt.sbprintf(b, "</h3>\n<p class=\"measure-unit\">From 0 to <code class=\"value value-%s\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Number])
-		foundation.site_escape(b, most_text)
+		foundation.html_escape(b, most_text)
 		strings.write_string(b, "</code> ")
-		foundation.site_escape(b, series.unit)
+		foundation.html_escape(b, series.unit)
 		faster: string = series.faster == .Higher ? "A higher number is faster." : "A lower number is faster."
 		fmt.sbprintf(b, ". %s</p>\n", faster)
 		strings.write_string(b, checks.measure_history_chart_svg(points, fmt.tprintf("%s, over %d releases", series.title, len(points))))
 		strings.write_string(b, "<p class=\"measure-history-releases\"><span>")
-		foundation.site_escape(b, points[0].release)
+		foundation.html_escape(b, points[0].release)
 		strings.write_string(b, "</span><span>")
-		foundation.site_escape(b, points[len(points) - 1].release)
+		foundation.html_escape(b, points[len(points) - 1].release)
 		strings.write_string(b, "</span></p>\n<details class=\"measure-history-numbers\"><summary>The number of each release</summary>\n<ul>\n")
 		for point in points {
 			strings.write_string(b, "<li>")
-			foundation.site_escape(b, point.release)
+			foundation.html_escape(b, point.release)
 			if !point.present {
 				strings.write_string(b, ": no number: ")
-				foundation.site_escape(b, point.missing)
+				foundation.html_escape(b, point.missing)
 				strings.write_string(b, "</li>\n")
 				continue
 			}
 			fmt.sbprintf(b, ": <code class=\"value value-%s\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Number])
-			foundation.site_escape(b, point.value_text)
+			foundation.html_escape(b, point.value_text)
 			strings.write_string(b, "</code>, the run of ")
 			if point.commit != "" {
 				strings.write_string(b, "<code>")
-				foundation.site_escape(b, point.commit[:min(checks.MEASURE_COMMIT_SHORT_LENGTH, len(point.commit))])
+				foundation.html_escape(b, point.commit[:min(checks.MEASURE_COMMIT_SHORT_LENGTH, len(point.commit))])
 				strings.write_string(b, "</code>")
 			} else {
 				strings.write_string(b, "an unknown commit")
 			}
 			strings.write_string(b, " at ")
-			foundation.site_escape(b, point.time)
+			foundation.html_escape(b, point.time)
 			if len(hosts) > 1 {
 				strings.write_string(b, ", on ")
-				foundation.site_escape(b, point.host)
+				foundation.html_escape(b, point.host)
 			}
 			strings.write_string(b, "</li>\n")
 		}

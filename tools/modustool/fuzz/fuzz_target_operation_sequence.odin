@@ -88,7 +88,7 @@ fuzz_operation_results: [operation.Operation]Fuzz_Operation_Result
 // reference comments. A member of `Operation` that the comments do not
 // name stops the start.
 fuzz_operation_results_read :: proc(reference: string) -> (results: [operation.Operation]Fuzz_Operation_Result, ok: bool) {
-	members, problem := foundation.site_enumeration_read(reference, foundation.OPERATION_SOURCE, "Operation")
+	members, problem := foundation.enumeration_read(reference, foundation.OPERATION_SOURCE, "Operation")
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
 		return {}, false
@@ -102,7 +102,7 @@ fuzz_operation_results_read :: proc(reference: string) -> (results: [operation.O
 			}
 			named = true
 			found[candidate] = true
-			results[candidate] = fuzz_operation_result_of(foundation.site_operation_parts(member).result)
+			results[candidate] = fuzz_operation_result_of(foundation.operation_comment_split(member).result)
 		}
 		if !named {
 			fmt.eprintfln("modustool: %s: the member %s of Operation has no row in OPERATIONS", foundation.OPERATION_SOURCE, member.name)

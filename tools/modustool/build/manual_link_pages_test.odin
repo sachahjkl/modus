@@ -192,14 +192,14 @@ WAIT_FOREVER :: ~u64(0)
 `
 
 @(private = "file")
-manual_test_declarations :: proc(names: []string) -> (index: Site_Declaration_Index, ok: bool) {
-	index = site_declaration_index_make()
-	found, parsed := site_declarations_of_file(MANUAL_TEST_SOURCE_PATH, MANUAL_TEST_SOURCE)
+manual_test_declarations :: proc(names: []string) -> (index: Declaration_Index, ok: bool) {
+	index = declaration_index_make()
+	found, parsed := declarations_of_file(MANUAL_TEST_SOURCE_PATH, MANUAL_TEST_SOURCE)
 	if !parsed {
 		return index, false
 	}
 	for declaration in found {
-		site_declaration_add(&index, declaration)
+		declaration_index_add(&index, declaration)
 	}
 	return index, true
 }

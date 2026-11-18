@@ -14,7 +14,7 @@ import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
 
-REUSE_LIST_DOCUMENT :: SITE_PROPERTIES_FILE
+REUSE_LIST_DOCUMENT :: PROPERTIES_FILE
 REUSE_LIST_HEADING :: "## Reuse list"
 REUSE_LIST_HEADER_ROW :: "| Work | Place | License | License file |"
 REUSE_LIST_COLUMN_COUNT :: 4
@@ -91,7 +91,7 @@ reuse_list_rows_parse :: proc(document: string, problems: ^[dynamic]string) -> [
 	in_section := false
 	found_section := false
 	table_line := 0
-	for line, index in foundation.site_lines(document) {
+	for line, index in foundation.lines_of_text(document) {
 		number := index + 1
 		if strings.has_prefix(line, "## ") {
 			in_section = line == REUSE_LIST_HEADING
@@ -202,12 +202,12 @@ reuse_source_is_host_only :: proc(source: string) -> bool {
 // reuse_core_imports_of_source appends each package of the core library
 // that one source imports, once.
 reuse_core_imports_of_source :: proc(source: string, imports: ^[dynamic]string) {
-	for line in foundation.site_lines(source) {
+	for line in foundation.lines_of_text(source) {
 		trimmed := strings.trim_space(line)
 		if !strings.has_prefix(trimmed, "import ") {
 			continue
 		}
-		path, _, found := foundation.site_quoted(trimmed)
+		path, _, found := foundation.quoted_text_after(trimmed)
 		if !found || !strings.has_prefix(path, REUSE_CORE_LIBRARY_START) {
 			continue
 		}
@@ -232,57 +232,57 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	// The license of the repository: a pointer theme under it is a work of
 	// the system, not of others.
 	repository_license := ""
-	if text, ok := foundation.site_read_quiet(resources.SITE_LICENSE_FILE); ok {
-		repository_license = build.reuse_spdx_of_record_words(strings.trim_space(foundation.site_lines(text)[0]))
+	if text, ok := foundation.read_text_file_quiet(resources.REPOSITORY_LICENSE_FILE); ok {
+		repository_license = build.reuse_spdx_of_record_words(strings.trim_space(foundation.lines_of_text(text)[0]))
 	} else {
-		missing(problems, resources.SITE_LICENSE_FILE, "the license of the repository")
+		missing(problems, resources.REPOSITORY_LICENSE_FILE, "the license of the repository")
 	}
 
 	// The fonts that the repository holds as subsets.
 	font_lists := [?][]resources.Vector_Font_Candidate{resources.vector_font_candidates[:], resources.vector_font_emphasis[:], resources.vector_font_interface[:]}
 	for list in font_lists {
 		for candidate in list {
-			record := foundation.join(SITE_FONT_FOLDER, "/", candidate.name, ".license")
-			text, ok := foundation.site_read_quiet(record)
+			record := foundation.join(FONT_FOLDER, "/", candidate.name, ".license")
+			text, ok := foundation.read_text_file_quiet(record)
 			if !ok {
 				missing(problems, record, candidate.family)
 				continue
 			}
-			font, font_problem := site_font_license_parse(record, text)
+			font, font_problem := font_license_parse(record, text)
 			if font_problem != "" {
 				append(problems, font_problem)
 				continue
 			}
 			append(&works, Reused_Work {
 				what         = font.family,
-				place        = foundation.join(SITE_FONT_FOLDER, "/", candidate.name, ".ttf"),
+				place        = foundation.join(FONT_FOLDER, "/", candidate.name, ".ttf"),
 				license      = build.reuse_spdx_of_record_words(font.license),
-				license_file = foundation.join(SITE_FONT_FOLDER, "/", candidate.license_file),
+				license_file = foundation.join(FONT_FOLDER, "/", candidate.license_file),
 			})
 		}
 	}
 
 	// Spleen, the fallback font.
-	if text, ok := foundation.site_read_quiet(resources.SITE_SPLEEN_LICENSE_FILE); ok {
+	if text, ok := foundation.read_text_file_quiet(resources.SPLEEN_LICENSE_FILE); ok {
 		append(&works, Reused_Work {
 			what         = "Spleen 8x16",
 			place        = REUSE_SPLEEN_FONT_DATA,
-			license      = site_line_after(text, SPDX_IDENTIFIER_LINE_START),
-			license_file = resources.SITE_SPLEEN_LICENSE_FILE,
+			license      = line_after(text, SPDX_IDENTIFIER_LINE_START),
+			license_file = resources.SPLEEN_LICENSE_FILE,
 		})
 	} else {
-		missing(problems, resources.SITE_SPLEEN_LICENSE_FILE, "Spleen 8x16")
+		missing(problems, resources.SPLEEN_LICENSE_FILE, "Spleen 8x16")
 	}
 
 	// Each pointer theme that the build makes and that is not under the
 	// license of the repository. Its manifest is its notice.
 	for theme in resources.pointer_theme_builds {
-		text, ok := foundation.site_read_quiet(theme.manifest)
+		text, ok := foundation.read_text_file_quiet(theme.manifest)
 		if !ok {
 			missing(problems, theme.manifest, "a pointer theme")
 			continue
 		}
-		manifest, manifest_problem := site_pointer_manifest_parse(theme.manifest, text)
+		manifest, manifest_problem := pointer_manifest_head_parse(theme.manifest, text)
 		if manifest_problem != "" {
 			append(problems, manifest_problem)
 			continue
@@ -302,15 +302,15 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	// fiat-crypto, and the libraries of the compiler: one license file of
 	// Odin covers all of them.
 	odin_license := ""
-	if text, ok := foundation.site_read_quiet(SITE_ODIN_LICENSE_FILE); ok {
+	if text, ok := foundation.read_text_file_quiet(ODIN_LICENSE_FILE); ok {
 		odin_license = strings.contains(text, "(zlib)") ? "Zlib" : ""
 	} else {
-		missing(problems, SITE_ODIN_LICENSE_FILE, "the code of Odin")
+		missing(problems, ODIN_LICENSE_FILE, "the code of Odin")
 	}
-	if text, ok := foundation.site_read_quiet(foundation.CRYPTOGRAPHY_MANIFEST); ok {
+	if text, ok := foundation.read_text_file_quiet(foundation.CRYPTOGRAPHY_MANIFEST); ok {
 		taken := 0
 		fiat_taken := false
-		for line in foundation.site_lines(text) {
+		for line in foundation.lines_of_text(text) {
 			if strings.trim_space(line) == "" || strings.has_prefix(line, "#") {
 				continue
 			}
@@ -318,19 +318,19 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 			fiat_taken ||= strings.has_prefix(line, REUSE_FIAT_FOLDER + "/")
 		}
 		if taken > 0 {
-			append(&works, Reused_Work{what = "the cryptography of Odin's core:crypto", place = foundation.CRYPTOGRAPHY_FOLDER, license = odin_license, license_file = SITE_ODIN_LICENSE_FILE})
+			append(&works, Reused_Work{what = "the cryptography of Odin's core:crypto", place = foundation.CRYPTOGRAPHY_FOLDER, license = odin_license, license_file = ODIN_LICENSE_FILE})
 		}
 		if fiat_taken {
 			fiat_license := ""
-			if fiat_text, fiat_ok := foundation.site_read_quiet(SITE_FIAT_LICENSE_FILE); fiat_ok {
+			if fiat_text, fiat_ok := foundation.read_text_file_quiet(FIAT_LICENSE_FILE); fiat_ok {
 				fiat_license = strings.contains(fiat_text, "(BSD-1-Clause)") ? "BSD-1-Clause" : ""
 			}
-			append(&works, Reused_Work{what = "the field arithmetic of fiat-crypto", place = REUSE_FIAT_FOLDER, license = fiat_license, license_file = SITE_FIAT_LICENSE_FILE})
+			append(&works, Reused_Work{what = "the field arithmetic of fiat-crypto", place = REUSE_FIAT_FOLDER, license = fiat_license, license_file = FIAT_LICENSE_FILE})
 		}
 	} else {
 		missing(problems, foundation.CRYPTOGRAPHY_MANIFEST, "the cryptography of Odin")
 	}
-	append(&works, Reused_Work{what = "the runtime of the Odin compiler", place = REUSE_COMPILER_RUNTIME, license = odin_license, license_file = SITE_ODIN_LICENSE_FILE})
+	append(&works, Reused_Work{what = "the runtime of the Odin compiler", place = REUSE_COMPILER_RUNTIME, license = odin_license, license_file = ODIN_LICENSE_FILE})
 	files := make([dynamic]string, context.temp_allocator)
 	folders := ALLOCATOR_CHECKED_FOLDERS
 	for folder in folders {
@@ -343,7 +343,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 		if source_is_a_test(file) {
 			continue
 		}
-		source, ok := foundation.site_read_quiet(file)
+		source, ok := foundation.read_text_file_quiet(file)
 		if !ok {
 			append(problems, fmt.tprintf("%s: cannot read", file))
 			continue
@@ -353,7 +353,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 		}
 	}
 	for path in core_imports {
-		append(&works, Reused_Work{what = foundation.join("the package ", path, " of the Odin compiler"), place = path, license = odin_license, license_file = SITE_ODIN_LICENSE_FILE})
+		append(&works, Reused_Work{what = foundation.join("the package ", path, " of the Odin compiler"), place = path, license = odin_license, license_file = ODIN_LICENSE_FILE})
 	}
 
 	// The portraits of the module hall_of_fame.
@@ -377,7 +377,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 reuse_list_check :: proc() -> bool {
 	problems := make([dynamic]string, context.temp_allocator)
 	works := reuse_works_read(&problems)
-	if document, ok := foundation.site_read_quiet(REUSE_LIST_DOCUMENT); ok {
+	if document, ok := foundation.read_text_file_quiet(REUSE_LIST_DOCUMENT); ok {
 		append(&problems, ..reuse_list_problems(document, works, reuse_file_exists))
 	} else {
 		append(&problems, fmt.tprintf("%s: cannot read", REUSE_LIST_DOCUMENT))
@@ -391,11 +391,11 @@ reuse_list_check :: proc() -> bool {
 	return true
 }
 
-SITE_FONT_FOLDER :: "resources/fonts"
+FONT_FOLDER :: "resources/fonts"
 
-SITE_ODIN_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
+ODIN_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
 
-SITE_FIAT_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.fiat-crypto.txt"
+FIAT_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.fiat-crypto.txt"
 
 // The start of the line of a license file that names its license, in the
 // form of SPDX: "SPDX-License-Identifier: BSD-2-Clause".
@@ -405,15 +405,15 @@ SPDX_IDENTIFIER_LINE_START :: "SPDX-License-Identifier: "
 // the copyright, with the address of the source in parentheses at its end
 // when the source gives one; a line "... carries the name "<family>"."; a
 // line "License of the source: <words>.".
-Site_Font_License :: struct {
+Font_License :: struct {
 	copyright: string,
 	address:   string,
 	family:    string,
 	license:   string,
 }
 
-site_font_license_parse :: proc(file_name, content: string) -> (font: Site_Font_License, problem: string) {
-	lines := foundation.site_lines(content)
+font_license_parse :: proc(file_name, content: string) -> (font: Font_License, problem: string) {
+	lines := foundation.lines_of_text(content)
 	if len(lines) == 0 || strings.trim_space(lines[0]) == "" {
 		return {}, fmt.tprintf("%s: line 1 must be the copyright", file_name)
 	}
@@ -446,15 +446,15 @@ site_font_license_parse :: proc(file_name, content: string) -> (font: Site_Font_
 
 // What a pointer manifest records in its head: "theme <name>",
 // "license <SPDX identifier>", and lines "attribution <text>".
-Site_Pointer_Manifest :: struct {
+Pointer_Manifest_Head :: struct {
 	theme:       string,
 	license:     string,
 	attribution: []string,
 }
 
-site_pointer_manifest_parse :: proc(file_name, content: string) -> (manifest: Site_Pointer_Manifest, problem: string) {
+pointer_manifest_head_parse :: proc(file_name, content: string) -> (manifest: Pointer_Manifest_Head, problem: string) {
 	attribution := make([dynamic]string, context.temp_allocator)
-	for line in foundation.site_lines(content) {
+	for line in foundation.lines_of_text(content) {
 		switch {
 		case strings.has_prefix(line, "theme "):
 			manifest.theme = strings.trim_space(line[len("theme "):])
@@ -471,9 +471,9 @@ site_pointer_manifest_parse :: proc(file_name, content: string) -> (manifest: Si
 	return manifest, ""
 }
 
-// site_line_after gives the rest of the first line that starts with start.
-site_line_after :: proc(content, start: string) -> string {
-	for line in foundation.site_lines(content) {
+// line_after gives the rest of the first line that starts with start.
+line_after :: proc(content, start: string) -> string {
+	for line in foundation.lines_of_text(content) {
 		if strings.has_prefix(line, start) {
 			return strings.trim_space(line[len(start):])
 		}
@@ -481,4 +481,4 @@ site_line_after :: proc(content, start: string) -> string {
 	return ""
 }
 
-SITE_PROPERTIES_FILE :: "docs/PROPERTIES.md"
+PROPERTIES_FILE :: "docs/PROPERTIES.md"

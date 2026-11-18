@@ -270,12 +270,12 @@ Site_Gallery_Picture :: struct {
 // site_gallery_picture_id gives the id of a picture on a page: the gallery
 // and the carousel of the home name a picture by it.
 site_gallery_picture_id :: proc(file: string) -> string {
-	return strings.concatenate({"picture-", foundation.site_slug(strings.trim_suffix(file, ".png"))}, context.temp_allocator)
+	return strings.concatenate({"picture-", foundation.text_slug(strings.trim_suffix(file, ".png"))}, context.temp_allocator)
 }
 
 // site_gallery_group_id gives the id of the heading of a group.
 site_gallery_group_id :: proc(group: Site_Gallery_Group) -> string {
-	return strings.concatenate({"group-", foundation.site_slug(site_gallery_groups[group].title)}, context.temp_allocator)
+	return strings.concatenate({"group-", foundation.text_slug(site_gallery_groups[group].title)}, context.temp_allocator)
 }
 
 // site_gallery_caption_problem gives the fault of a caption, or "": a
@@ -366,7 +366,7 @@ site_gallery_folder_files :: proc() -> (names: []string, ok: bool) {
 	paths := foundation.files_with_suffix(SITE_SCREEN_PICTURE_FOLDER, ".png") or_return
 	list := make([]string, len(paths), context.temp_allocator)
 	for path, index in paths {
-		list[index] = build.site_file_name(path)
+		list[index] = build.file_name_of_path(path)
 	}
 	return list, true
 }
@@ -393,7 +393,7 @@ site_gallery_read :: proc(site: ^Site) -> bool {
 			return false
 		}
 		data := foundation.read_file(source) or_return
-		width, height, is_png := foundation.site_png_size(data)
+		width, height, is_png := foundation.png_size(data)
 		if !is_png || width != SITE_SCREEN_PICTURE_WIDTH || height != SITE_SCREEN_PICTURE_HEIGHT {
 			fmt.eprintfln("modustool: site: %s is not a PNG file of %d by %d pixels, the screen of the system: the gallery shows pictures of the screen only", source, SITE_SCREEN_PICTURE_WIDTH, SITE_SCREEN_PICTURE_HEIGHT)
 			return false
@@ -412,7 +412,7 @@ site_gallery_read :: proc(site: ^Site) -> bool {
 				return false
 			}
 			picture.film = Site_News{picture = picture.site_path, picture_width = width, picture_height = height, picture_alt = row.caption}
-			picture.film.film = strings.concatenate({SITE_FILM_FOLDER, "/", build.site_file_name(row.film)}, context.temp_allocator)
+			picture.film.film = strings.concatenate({SITE_FILM_FOLDER, "/", build.file_name_of_path(row.film)}, context.temp_allocator)
 			picture.film.film_width, picture.film.film_height, picture.film.film_bytes = film_width, film_height, len(film_data)
 			site.copies[picture.film.film] = row.film
 		}
@@ -506,14 +506,14 @@ site_gallery_guide_link :: proc(site: ^Site, b: ^strings.Builder, from_page, gui
 	if !is_page {
 		return
 	}
-	title := strings.trim_suffix(build.site_file_name(guide), ".md")
+	title := strings.trim_suffix(build.file_name_of_path(guide), ".md")
 	for candidate in site.guides {
 		if candidate.source == guide {
 			title = candidate.title
 		}
 	}
 	fmt.sbprintf(b, " <a class=\"gallery-guide\" href=\"%s\">Guide: ", site_page_link(site, from_page, page))
-	foundation.site_escape(b, title)
+	foundation.html_escape(b, title)
 	strings.write_string(b, "</a>")
 }
 
@@ -525,11 +525,11 @@ site_gallery_caption :: proc(site: ^Site, b: ^strings.Builder, from_page: string
 	strings.write_string(b, "<figcaption>")
 	if place != "" {
 		strings.write_string(b, "<span class=\"carousel-place\">")
-		foundation.site_escape(b, place)
+		foundation.html_escape(b, place)
 		strings.write_string(b, "</span> ")
 	}
 	strings.write_string(b, "<span aria-hidden=\"true\">")
-	foundation.site_escape(b, picture.row.caption)
+	foundation.html_escape(b, picture.row.caption)
 	strings.write_string(b, "</span>")
 	site_gallery_guide_link(site, b, from_page, picture.row.guide)
 	strings.write_string(b, "</figcaption>")
@@ -546,13 +546,13 @@ site_gallery_figure :: proc(site: ^Site, b: ^strings.Builder, from_page: string,
 		site_news_film(b, from_page, picture.film)
 		// The film has no alt text: its caption is read as it is.
 		strings.write_string(b, "<p class=\"gallery-caption\">")
-		foundation.site_escape(b, picture.row.caption)
+		foundation.html_escape(b, picture.row.caption)
 		site_gallery_guide_link(site, b, from_page, picture.row.guide)
 		strings.write_string(b, "</p>\n</div>\n")
 		return
 	}
 	fmt.sbprintf(b, "<figure id=\"%s\"><a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", id, site_relative(from_page, picture.site_path), site_relative(from_page, picture.thumbnail_path), picture.width / SITE_THUMBNAIL_DIVISOR, picture.height / SITE_THUMBNAIL_DIVISOR)
-	foundation.site_escape(b, picture.row.caption)
+	foundation.html_escape(b, picture.row.caption)
 	strings.write_string(b, "\"></a>")
 	site_gallery_caption(site, b, from_page, picture, "")
 	strings.write_string(b, "</figure>\n")
@@ -578,9 +578,9 @@ site_gallery_group_html :: proc(site: ^Site, b: ^strings.Builder, from_page: str
 	id := site_gallery_group_id(group)
 	text := site_gallery_groups[group]
 	fmt.sbprintf(b, "<section aria-labelledby=\"%s\">\n<h2 id=\"%s\">", id, id)
-	foundation.site_escape(b, text.title)
+	foundation.html_escape(b, text.title)
 	strings.write_string(b, "</h2>\n<p>")
-	foundation.site_escape(b, text.about)
+	foundation.html_escape(b, text.about)
 	word: string = count == 1 ? "picture" : "pictures"
 	fmt.sbprintf(b, " %d %s.</p>\n<div class=\"pictures gallery-pictures\">\n", count, word)
 	for picture in site.gallery {
@@ -610,7 +610,7 @@ site_gallery_add :: proc(site: ^Site) {
 			continue
 		}
 		fmt.sbprintf(&b, "<li><a href=\"#%s\">", site_gallery_group_id(group))
-		foundation.site_escape(&b, site_gallery_groups[group].title)
+		foundation.html_escape(&b, site_gallery_groups[group].title)
 		strings.write_string(&b, "</a></li>\n")
 	}
 	strings.write_string(&b, "</ul>\n</nav>\n")
@@ -649,14 +649,14 @@ site_carousel_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string)
 	strings.write_string(b, "<nav class=\"carousel-controls\" aria-label=\"Pictures of the machine\">\n<ol>\n")
 	for picture, index in shown {
 		fmt.sbprintf(b, "<li><a href=\"#%s\" data-slide=\"%d\" aria-label=\"Picture %d of %d: ", site_gallery_picture_id(picture.row.file), index, index + 1, len(shown))
-		foundation.site_escape(b, picture.row.caption)
+		foundation.html_escape(b, picture.row.caption)
 		fmt.sbprintf(b, "\">%d</a></li>\n", index + 1)
 	}
 	strings.write_string(b, "</ol>\n</nav>\n<div class=\"carousel-track\" role=\"region\" aria-label=\"Pictures of the machine, one in view\" tabindex=\"0\">\n")
 	for picture, index in shown {
 		link := site_relative(from_page, picture.site_path)
 		fmt.sbprintf(b, "<figure class=\"carousel-slide\" id=\"%s\"><a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", site_gallery_picture_id(picture.row.file), link, link, picture.width, picture.height)
-		foundation.site_escape(b, picture.row.caption)
+		foundation.html_escape(b, picture.row.caption)
 		strings.write_string(b, "\"></a>")
 		site_gallery_caption(site, b, from_page, picture, fmt.tprintf("%d of %d", index + 1, len(shown)))
 		strings.write_string(b, "</figure>\n")

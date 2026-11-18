@@ -124,7 +124,7 @@ source_path_problems :: proc(file, content: string, folders: []string, exists: p
 	list := make([dynamic]string, context.temp_allocator)
 	starts := source_path_starts(folders)
 	fenced := false
-	for line, line_index in foundation.site_lines(content) {
+	for line, line_index in foundation.lines_of_text(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -178,7 +178,7 @@ source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: 
 		append(&paths, root)
 	}
 	for path in paths {
-		content, read_ok := foundation.site_read_quiet(path)
+		content, read_ok := foundation.read_text_file_quiet(path)
 		if !read_ok {
 			fmt.eprintfln("modustool: test failed: cannot read %s", path)
 			return nil, false

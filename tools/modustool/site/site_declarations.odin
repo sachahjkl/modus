@@ -27,7 +27,7 @@ SITE_DECLARATION_FIRST_LISTED :: 5
 SITE_DECLARATION_SHORTEST_NAME_IN_CODE :: 3
 
 // The value kind of each kind of declaration: its icon and its color.
-site_declaration_value_kinds := [build.Site_Declaration_Kind]value_kinds.Value_Kind {
+site_declaration_value_kinds := [build.Declaration_Kind]value_kinds.Value_Kind {
 	.Procedure = .Procedure,
 	.Type      = .Type,
 	.Constant  = .Constant,
@@ -48,15 +48,15 @@ Site_Declaration_Span_Counts :: struct {
 // system. A file that the parser refuses is counted, not fatal: the build
 // of the system checks its sources.
 site_declarations_read :: proc(site: ^Site) -> bool {
-	site.declarations = build.site_declaration_index_make()
-	return build.site_declaration_index_fill(&site.declarations, nil)
+	site.declarations = build.declaration_index_make()
+	return build.declaration_index_fill(&site.declarations, nil)
 }
 
 // site_context_folders gives the folders of the index that a text names:
 // "src/library/support/graphics" and "src/library/support/graphics/blend.odin" both give
 // "src/library/support/graphics". The heading and the paragraph of a span give the
 // packages that the span most likely means.
-site_context_folders :: proc(index: ^build.Site_Declaration_Index, text: string) -> []string {
+site_context_folders :: proc(index: ^build.Declaration_Index, text: string) -> []string {
 	folders := make([dynamic]string, context.temp_allocator)
 	if index == nil || len(index.folders) == 0 {
 		return folders[:]
@@ -90,7 +90,7 @@ site_context_folders :: proc(index: ^build.Site_Declaration_Index, text: string)
 
 // site_declaration_count records what became of a span that has the form
 // of a name, with its place, so that the command names the first ones.
-site_declaration_count :: proc(site: ^Site, resolution: build.Site_Declaration_Resolution, place, code: string) {
+site_declaration_count :: proc(site: ^Site, resolution: build.Declaration_Resolution, place, code: string) {
 	counts := &site.declaration_spans
 	// A span is listed once, among the first ones.
 	listed :: proc(list: ^[SITE_DECLARATION_FIRST_LISTED]string, entry: string) {
@@ -126,7 +126,7 @@ site_declaration_summary :: proc(site: ^Site) -> []string {
 	lines := make([dynamic]string, context.temp_allocator)
 	index := &site.declarations
 	counts := site.declaration_spans
-	by_kind: [build.Site_Declaration_Kind]int
+	by_kind: [build.Declaration_Kind]int
 	for declaration in index.declarations {
 		by_kind[declaration.kind] += 1
 	}
@@ -161,7 +161,7 @@ site_declaration_card_id :: proc(place: int) -> string {
 
 // site_declaration_export_page gives the place of a declaration on the page
 // of its module when it is an export of a module of the build, or "".
-site_declaration_export_page :: proc(site: ^Site, declaration: build.Site_Declaration) -> string {
+site_declaration_export_page :: proc(site: ^Site, declaration: build.Indexed_Declaration) -> string {
 	if declaration.kind != .Procedure {
 		return ""
 	}
@@ -171,7 +171,7 @@ site_declaration_export_page :: proc(site: ^Site, declaration: build.Site_Declar
 		}
 		for export in item.description.exports {
 			if export.name == declaration.name {
-				return strings.concatenate({item.page, "#export-", foundation.site_slug(export.name)}, context.temp_allocator)
+				return strings.concatenate({item.page, "#export-", foundation.text_slug(export.name)}, context.temp_allocator)
 			}
 		}
 	}
@@ -181,7 +181,7 @@ site_declaration_export_page :: proc(site: ^Site, declaration: build.Site_Declar
 // site_declaration_address gives the link of a declaration from a page: the
 // page of its module for an export, else its line in the repository at the
 // commit of the build.
-site_declaration_address :: proc(site: ^Site, from_page: string, declaration: build.Site_Declaration) -> string {
+site_declaration_address :: proc(site: ^Site, from_page: string, declaration: build.Indexed_Declaration) -> string {
 	if page := site_declaration_export_page(site, declaration); page != "" {
 		return site_page_link(site, from_page, page)
 	}
@@ -190,7 +190,7 @@ site_declaration_address :: proc(site: ^Site, from_page: string, declaration: bu
 
 // site_declaration_type_key gives the key of the type card of a declaration
 // that is a type of the contract, or "".
-site_declaration_type_key :: proc(site: ^Site, declaration: build.Site_Declaration) -> string {
+site_declaration_type_key :: proc(site: ^Site, declaration: build.Indexed_Declaration) -> string {
 	if declaration.kind != .Type || !strings.has_prefix(declaration.folder, foundation.SOURCE_FOLDER_CONTRACT + "/") {
 		return ""
 	}
@@ -214,7 +214,7 @@ site_declaration_reference :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 	}
 	id := site_declaration_card_id(place)
 	strings.write_string(b, "<a class=\"declaration-reference\" href=\"")
-	foundation.site_escape(b, site_declaration_address(site, from_page, declaration))
+	foundation.html_escape(b, site_declaration_address(site, from_page, declaration))
 	fmt.sbprintf(b, "\" data-declaration-card=\"%s\" aria-describedby=\"%s%s\">", id, id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
 	site_value(b, site_declaration_value_kinds[declaration.kind], code, true)
 	strings.write_string(b, "</a>")
@@ -226,14 +226,14 @@ site_declaration_reference :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 site_declaration_link_in_code :: proc(site: ^Site, b: ^strings.Builder, from_page, text: string, class: Site_Code_Class, place: int) {
 	declaration := site.declarations.declarations[place]
 	strings.write_string(b, "<a class=\"declaration-link\" href=\"")
-	foundation.site_escape(b, site_declaration_address(site, from_page, declaration))
+	foundation.html_escape(b, site_declaration_address(site, from_page, declaration))
 	strings.write_string(b, "\">")
 	if class != .None && site_code_classes[class].name != "" {
 		fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
-		foundation.site_escape(b, text)
+		foundation.html_escape(b, text)
 		strings.write_string(b, "</span>")
 	} else {
-		foundation.site_escape(b, text)
+		foundation.html_escape(b, text)
 	}
 	strings.write_string(b, "</a>")
 }
@@ -279,20 +279,20 @@ site_code_span_is_odin :: proc(code: string) -> bool {
 		}
 		// "NAME=value" with no space is a setting of a command or of the
 		// environment, not an assignment of the code.
-		if text[index] == '=' && index > 0 && index + 1 < len(text) && foundation.site_is_word_byte(text[index - 1]) && foundation.site_is_word_byte(text[index + 1]) {
+		if text[index] == '=' && index > 0 && index + 1 < len(text) && foundation.is_word_byte(text[index - 1]) && foundation.is_word_byte(text[index + 1]) {
 			return false
 		}
 	}
 	labels := 0
 	for index in 1 ..< len(text) {
-		if text[index] == ':' && index + 1 < len(text) && text[index + 1] == ' ' && foundation.site_is_word_byte(text[index - 1]) {
+		if text[index] == ':' && index + 1 < len(text) && text[index + 1] == ' ' && foundation.is_word_byte(text[index - 1]) {
 			labels += 1
 		}
 	}
 	if labels >= 2 {
 		return false
 	}
-	tokens, ok := build.site_code_odin_tokens(text)
+	tokens, ok := build.odin_tokens(text)
 	if !ok || len(tokens) < 2 {
 		return false
 	}
@@ -317,7 +317,7 @@ site_code_span_is_odin :: proc(code: string) -> bool {
 		}
 		// An extension after a name and a period is a file: "build.sh".
 		if token.kind == .Ident && index >= 2 && tokens[index - 1].kind == .Period && tokens[index - 1].start == tokens[index - 2].end {
-			extensions := build.SITE_FILE_EXTENSIONS
+			extensions := build.SPAN_FILE_EXTENSIONS
 			for extension in extensions {
 				if text[token.start:token.end] == extension && token.end == len(text) {
 					return false
@@ -336,7 +336,7 @@ site_declaration_code_span :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 	if site == nil {
 		return false
 	}
-	span, is_name := build.site_declaration_span_read(code)
+	span, is_name := build.declaration_span_read(code)
 	// "header.size" is a field of a value, not a name after its package:
 	// it is not counted, and it is colored as a fragment of code. With no
 	// index (a test of the renderer alone) no name is resolved.
@@ -344,7 +344,7 @@ site_declaration_code_span :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 		is_name = false
 	}
 	if is_name {
-		found, resolution := build.site_declaration_resolve(&site.declarations, span, context_folders)
+		found, resolution := build.declaration_resolve(&site.declarations, span, context_folders)
 		site_declaration_count(site, resolution, place, code)
 		if resolution != .Linked {
 			return false
@@ -358,7 +358,7 @@ site_declaration_code_span :: proc(site: ^Site, b: ^strings.Builder, from_page, 
 	links := Site_Code_Links{site = site, from_page = from_page, context_folders = context_folders}
 	strings.write_string(b, "<code class=\"code-inline\">")
 	if !site_code_odin(site, b, code, "", &links) {
-		foundation.site_escape(b, code)
+		foundation.html_escape(b, code)
 	}
 	strings.write_string(b, "</code>")
 	return true
@@ -375,7 +375,7 @@ site_declaration_cards_html :: proc(site: ^Site, from_page, body: string) -> str
 			continue
 		}
 		seen[id] = true
-		place := foundation.site_digits_value(id[len(SITE_DECLARATION_CARD_PREFIX):])
+		place := foundation.decimal_digits_value(id[len(SITE_DECLARATION_CARD_PREFIX):])
 		if place < 0 || place >= len(site.declarations.declarations) {
 			continue // The check of the page names it.
 		}
@@ -398,25 +398,25 @@ site_declaration_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page:
 	id := site_declaration_card_id(place)
 	address := site_declaration_address(site, from_page, declaration)
 	fmt.sbprintf(b, "<div class=\"declaration-card\" id=\"%s\" popover>\n<p class=\"declaration-card-title\"><a href=\"", id)
-	foundation.site_escape(b, address)
+	foundation.html_escape(b, address)
 	strings.write_string(b, "\">")
 	site_value(b, site_declaration_value_kinds[declaration.kind], declaration.name, true)
 	strings.write_string(b, "</a> <span class=\"declaration-card-kind\">")
-	foundation.site_escape(b, fmt.tprintf("%s of the package %s", build.site_declaration_kind_names[declaration.kind], declaration.package_name))
+	foundation.html_escape(b, fmt.tprintf("%s of the package %s", build.declaration_kind_names[declaration.kind], declaration.package_name))
 	strings.write_string(b, "</span></p>\n<pre class=\"declaration-card-signature\"><code>")
 	if !site_code_odin(site, b, declaration.signature, "", nil) {
-		foundation.site_escape(b, declaration.signature)
+		foundation.html_escape(b, declaration.signature)
 	}
 	fmt.sbprintf(b, "</code></pre>\n<p class=\"declaration-card-summary\" id=\"%s%s\">", id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
 	if declaration.first_sentence != "" {
-		foundation.site_escape(b, site_source_comment_plain(site, declaration.first_sentence))
+		foundation.html_escape(b, site_source_comment_plain(site, declaration.first_sentence))
 		strings.write_byte(b, '.')
 	} else {
-		foundation.site_escape(b, fmt.tprintf("A %s with no comment in its source.", build.site_declaration_kind_names[declaration.kind]))
+		foundation.html_escape(b, fmt.tprintf("A %s with no comment in its source.", build.declaration_kind_names[declaration.kind]))
 	}
 	strings.write_string(b, "</p>\n<p class=\"declaration-card-place\"><a href=\"")
-	foundation.site_escape(b, fmt.tprintf("%s#L%d", site_repository_file(site, declaration.file), declaration.line))
+	foundation.html_escape(b, fmt.tprintf("%s#L%d", site_repository_file(site, declaration.file), declaration.line))
 	strings.write_string(b, "\">")
-	foundation.site_escape(b, fmt.tprintf("%s:%d", declaration.file, declaration.line))
+	foundation.html_escape(b, fmt.tprintf("%s:%d", declaration.file, declaration.line))
 	strings.write_string(b, "</a></p>\n</div>\n")
 }

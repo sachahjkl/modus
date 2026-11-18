@@ -94,7 +94,7 @@ site_subscribe_menu_on_the_pages_of_the_changes :: proc(t: ^testing.T) {
 		testing.expect(t, strings.contains(test_case.text, "<entry>"))
 
 		// The releases of the repository.
-		testing.expect(t, strings.contains(menu, "<a href=\"" + checks.SITE_REPOSITORY_ADDRESS + "/releases\">" + SITE_SUBSCRIBE_WATCH_LABEL + SITE_SUBSCRIBE_ARROW + "</a>"))
+		testing.expect(t, strings.contains(menu, "<a href=\"" + checks.REPOSITORY_ADDRESS + "/releases\">" + SITE_SUBSCRIBE_WATCH_LABEL + SITE_SUBSCRIBE_ARROW + "</a>"))
 
 		lower := strings.to_lower(menu, context.temp_allocator)
 		for refused in ([]string{"rss", "x.com", "twitter"}) {

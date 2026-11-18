@@ -155,7 +155,7 @@ site_home_timeline_markup :: proc(t: ^testing.T) {
 		data, read_error := os.read_entire_file(text.guide, context.temp_allocator)
 		testing.expectf(t, read_error == nil, "cannot read %s", text.guide)
 		has_heading := false
-		for line in foundation.site_lines(string(data)) {
+		for line in foundation.lines_of_text(string(data)) {
 			if strings.has_prefix(line, "#") && strings.trim_left(line, "# ") == text.heading {
 				has_heading = true
 			}
@@ -178,7 +178,7 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 		// One unit for a chart, and its measure is in the table.
 		testing.expect(t, chart.unit != "" && chart.title != "" && chart.kind != .None)
 		in_table := false
-		for measure in checks.site_measures {
+		for measure in checks.measure_entries {
 			in_table ||= measure.pattern == chart.pattern
 		}
 		testing.expectf(t, in_table, "the chart %q names no measure of the table", chart.title)
@@ -217,8 +217,8 @@ site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 	// The markup.
 	site := home_test_site()
 	measured := make([]Site_Measured, 2, context.temp_allocator)
-	measured[0] = {measure = checks.site_measures[0], found = true, text = locks_line}
-	measured[1] = {measure = checks.site_measures[4], found = true, text = "compositor: a full frame of 1024x768 with 17 windows in 1747 us"}
+	measured[0] = {measure = checks.measure_entries[0], found = true, text = locks_line}
+	measured[1] = {measure = checks.measure_entries[4], found = true, text = "compositor: a full frame of 1024x768 with 17 windows in 1747 us"}
 	site.measured = measured
 	b := strings.builder_make(context.temp_allocator)
 	site_measure_charts_write(&site, &b, site_section_page(.Home))
@@ -354,7 +354,7 @@ site_controls_have_their_states :: proc(t: ^testing.T) {
 			{"a button of a current section", form.text, form.track},
 		}
 		for pair in pairs {
-			ratio := resources.site_contrast_ratio(pair.text, pair.under)
+			ratio := resources.contrast_ratio(pair.text, pair.under)
 			testing.expectf(t, ratio >= 4.5, "%s (light form: %v): a contrast of %.2f", pair.what, light, ratio)
 		}
 	}
@@ -392,7 +392,7 @@ site_home_card_rules_and_graphic_colors :: proc(t: ^testing.T) {
 		for accent in site_accents {
 			color := site_accent_graphic_color(accent, light)
 			for under in ([]graphics.Color{form.card_top, form.card_bottom, form.track}) {
-				ratio := resources.site_contrast_ratio(color, under)
+				ratio := resources.contrast_ratio(color, under)
 				testing.expectf(t, ratio >= 3, "%s on %06x (light form: %v): a contrast of %.2f; a graphic needs 3", accent.class_name, u32(under) & 0xFFFFFF, light, ratio)
 			}
 		}

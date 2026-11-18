@@ -715,7 +715,7 @@ The section "Reuse list" of `PROPERTIES.md` names each work of others that the s
 | The libraries of the compiler | `base:runtime`, always: the compiler puts it in each module. Each package of `core:` that a source of the system imports, in a file that is not a test and whose first line is not a build tag with `!freestanding`. Their license file is `LICENSE.odin.txt` |
 | The portraits | Each row of `resources/hall_of_fame/CREDITS.md` |
 
-The words of a record become an identifier through the table `site_spdx_names` of the page of the licenses (`SITE.md`, "The licenses"). The words "All rights reserved" give `NONE`. Words with no translation give no identifier, and the check then does not compare the license of that row.
+The words of a record become an identifier through the table `spdx_names` of the page of the licenses (`SITE.md`, "The licenses"). The words "All rights reserved" give `NONE`. Words with no translation give no identifier, and the check then does not compare the license of that row.
 
 **The faults.** Each one gives the line of the document and the place:
 

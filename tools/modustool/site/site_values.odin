@@ -125,7 +125,7 @@ site_value_color :: proc(kind: value_kinds.Value_Kind, light: bool) -> graphics.
 site_value :: proc(b: ^strings.Builder, kind: value_kinds.Value_Kind, text: string, with_icon: bool) {
 	icon_class: string = with_icon ? " value-icon" : ""
 	fmt.sbprintf(b, "<code class=\"value value-%s%s\">", value_kinds.VALUE_KIND_NAMES[kind], icon_class)
-	foundation.site_escape(b, text)
+	foundation.html_escape(b, text)
 	strings.write_string(b, "</code>")
 }
 
@@ -148,7 +148,7 @@ site_value_html_with_icon :: proc(kind: value_kinds.Value_Kind, text: string) ->
 // site_value_link writes a value that is a link: the link holds the value.
 site_value_link :: proc(b: ^strings.Builder, kind: value_kinds.Value_Kind, address, text: string, with_icon: bool) {
 	strings.write_string(b, "<a href=\"")
-	foundation.site_escape(b, address)
+	foundation.html_escape(b, address)
 	strings.write_string(b, "\">")
 	site_value(b, kind, text, with_icon)
 	strings.write_string(b, "</a>")

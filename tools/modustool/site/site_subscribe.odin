@@ -21,7 +21,7 @@ SITE_SUBSCRIBE_FEED_LABEL :: "Atom feed"
 // choice of the releases sends a notification at each release; the choice
 // itself has no address of its own.
 SITE_SUBSCRIBE_WATCH_LABEL :: "Watch releases on GitHub"
-SITE_SUBSCRIBE_WATCH_ADDRESS :: checks.SITE_REPOSITORY_ADDRESS + "/releases"
+SITE_SUBSCRIBE_WATCH_ADDRESS :: checks.REPOSITORY_ADDRESS + "/releases"
 
 // The sign after each link of the panel: the link leaves the page for a
 // file or for another site. A screen reader does not read it: the label

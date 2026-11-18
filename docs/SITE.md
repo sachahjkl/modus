@@ -43,7 +43,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/glossary/` | `docs/glossary/README.md` and every term of the folder from A to Z, each row with the anchor `term-<name>` (see "The glossary") |
 | `docs/reference/glossary/<group>/` | One file of `docs/glossary/`, by the slug of the heading of its group: each term of the group is an entry with the anchor `term-<name>` |
 | `docs/reference/commands/` | `COMMANDS` in `tools/modustool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `modustool help` prints |
-| `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it, and the measure history `docs/measures/releases/` (see "The measure history") |
+| `docs/reference/numbers/` | The list `measure_entries`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it, and the measure history `docs/measures/releases/` (see "The measure history") |
 | `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release shows its release time, `2026-11-15 18:48 UTC`, or its day alone for an old release whose time no record holds; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it; the subscribe menu under the heading (see "The subscribe menu") |
 | `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later, then the section Maybe; see "The roadmap" |
@@ -439,7 +439,7 @@ Refused: a logarithmic scale. Its axis has no zero, and the length of a segment 
 
 The rule: **a chart or nothing**. The home shows a measure only as a chart whose bars have one unit and one scale from zero. A measure that is not such a chart is not on the home: it is a row of the page of the measured numbers, where a number is a record.
 
-A measure chart (`glossary/project.md`) is an entry of `site_measure_charts`: the pattern of its measure in `site_measures`, a title, its one unit, the value kind of its numbers, one or two sentences, and at most 5 bars, each with its label and the words of the line of the log that come just before its number.
+A measure chart (`glossary/project.md`) is an entry of `site_measure_charts`: the pattern of its measure in `measure_entries`, a title, its one unit, the value kind of its numbers, one or two sentences, and at most 5 bars, each with its label and the words of the line of the log that come just before its number.
 
 | Chart | Bars | Unit |
 |---|---|---|
@@ -636,7 +636,7 @@ A canonical address, an address of Open Graph and an `@id` of JSON-LD must be ab
 
 ### The page graph
 
-One `@graph` for each page, built from the data that the page shows; no value is typed for the graph. Each node has an `@id`; a field names another node as `{"@id": ...}`. The text goes through the JSON writer of the search index (`site_json_string`), which escapes `<`, `>`, `&`, U+2028 and U+2029: a title as `</script><!--` stays a text of the JSON, and the script element has no `<` inside.
+One `@graph` for each page, built from the data that the page shows; no value is typed for the graph. Each node has an `@id`; a field names another node as `{"@id": ...}`. The text goes through the JSON writer of the search index (`json_string_write`), which escapes `<`, `>`, `&`, U+2028 and U+2029: a title as `</script><!--` stays a text of the JSON, and the script element has no `<` inside.
 
 | Node | Id | On | Fields |
 |---|---|---|---|
@@ -654,7 +654,7 @@ One `@graph` for each page, built from the data that the page shows; no value is
 
 `BlogPosting`, not `NewsArticle`: a news entry is a dated report of the project, as a post of a blog. `NewsArticle` is for the articles of a publisher of news, and a search engine reads it as journalism.
 
-Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. The author: a `Person` node, `<site address>/#author`, on each page. Its `name` is the holder of the line `Copyright` of `LICENSE` (the words after `(c)` and the years), the one fact of an author that the repository holds; its `url` is the account that owns the repository (`SITE_REPOSITORY_ADDRESS` without its last part). It is the `author` of the `SoftwareApplication`, the `SoftwareSourceCode`, each `TechArticle` and each `BlogPosting`, and the `publisher` of the `WebSite`. Each page has `<meta name="author">`, also with no site address, and the two feeds name it in `<author>`. When `LICENSE` names no holder, there is no `Person`, no field names one, and the feeds name the system.
+Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. The author: a `Person` node, `<site address>/#author`, on each page. Its `name` is the holder of the line `Copyright` of `LICENSE` (the words after `(c)` and the years), the one fact of an author that the repository holds; its `url` is the account that owns the repository (`REPOSITORY_ADDRESS` without its last part). It is the `author` of the `SoftwareApplication`, the `SoftwareSourceCode`, each `TechArticle` and each `BlogPosting`, and the `publisher` of the `WebSite`. Each page has `<meta name="author">`, also with no site address, and the two feeds name it in `<author>`. When `LICENSE` names no holder, there is no `Person`, no field names one, and the feeds name the system.
 
 ### The sitemap, robots.txt and the feeds
 
@@ -717,7 +717,7 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 
 `modustool check` writes `build/reproducible_build.txt` after its comparison of two builds; `modustool screenshots` copies the file from the output of the check of the flake.
 
-Under the table, the section "How to read each number" says that a number is one run on the host of the record, that no test asserts it, and then, for each number, the text `reading` of its entry in `site_measures`: what the process does to measure it, and what the number does not say.
+Under the table, the section "How to read each number" says that a number is one run on the host of the record, that no test asserts it, and then, for each number, the text `reading` of its entry in `measure_entries`: what the process does to measure it, and what the number does not say.
 
 A required number is a line that a scenario of `modustool test` waits for (a step `Wait`), or the line of the second build: a run that passed holds it. A host test checks that each required number is such a line. A full frame of the compositor is not required: the compositor prints it when a frame redraws the whole screen, and no step waits for it. The lock measure of `modustool measure` (`test_output_measure.txt`) comes first when it is newer, but the full check does not run it: the full check takes the same line from `test_output.txt`.
 
@@ -735,7 +735,7 @@ commit <40 hexadecimal digits, or unknown>
 tree clean | changed | unknown
 host <processor model>, <n> logical processors; QEMU with KVM
 checks <count of checks that passed>
-number <the sentence of site_measures>
+number <the sentence of measure_entries>
 log build/test_output.txt
 line <line number in the log>
 matching <count of lines with the text>
@@ -747,7 +747,7 @@ boot kernel: boot: firmware: 1031293 us
 end
 ```
 
-- The numbers are in the order of `site_measures`, the lines `boot` in the order of the log of the main machine. The same run gives the same bytes but for the measured values, the time and the count.
+- The numbers are in the order of `measure_entries`, the lines `boot` in the order of the log of the main machine. The same run gives the same bytes but for the measured values, the time and the count.
 - The commit and the tree are read when the pass starts, before it writes into the tree. The commit is the commit of the tree that ran: the commit that holds the record comes after it.
 - `time` is the time when the record was written, in UTC. `checks` counts each line `modustool: test passed: ...` of the process.
 - A log written before the start of the run is of another run: the pass does not read it.
@@ -779,7 +779,7 @@ The measure history (`glossary/project.md`) is the folder `docs/measures/release
 
 The page of the measured numbers has a section "Each measure over the releases", after the table. It says how many releases the history holds, and the noise: each point is one run of the full check on a host that runs other work, two runs of one build differ, and a step that is not larger than that spread says nothing. When the copies name more than one host, a paragraph says that a change of the host is not a change of the system, and each list names the host of each release.
 
-**The number that a chart follows.** A measure is the same across releases when its sentence of `site_measures` is the same; a measure that changes its meaning gets a new sentence. The table `measure_history_series` (`tools/modustool/checks/measure_history.odin`) gives, for each sentence, the one number that its chart follows: the words of the line just before it and just after it, the unit in words, and whether a higher or a lower number is faster. A line whose words changed gives no number for its release. The second build gives a fact, not a number: it has no chart. A host test checks that each sentence of the table is a sentence of `site_measures`, and that each series reads its number from the line of today.
+**The number that a chart follows.** A measure is the same across releases when its sentence of `measure_entries` is the same; a measure that changes its meaning gets a new sentence. The table `measure_history_series` (`tools/modustool/checks/measure_history.odin`) gives, for each sentence, the one number that its chart follows: the words of the line just before it and just after it, the unit in words, and whether a higher or a lower number is faster. A line whose words changed gives no number for its release. The second build gives a fact, not a number: it has no chart. A host test checks that each sentence of the table is a sentence of `measure_entries`, and that each series reads its number from the line of today.
 
 **A chart** is drawn for each measure with a number in two releases or more, in the card and the grid of the charts of the home, in the accent of the measure:
 
@@ -806,7 +806,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 | Versions and pins | `flake.nix`: `odinRelease = "<release>";` then `owner`, `repo`, `hash`; `buildTools = [...];`; `config.allowUnfreePredicate = ... == "<name>";`; a fetcher `<name> = name: hash:` and its line `url = "https://raw.githubusercontent.com/<owner>/<repository>/<commit>/..."`; the font sources `"<font>=${<fetcher> "<file>" "<hash>"}"` or `"<font>=${pkgs.<package>}/..."`; `OVMF_CODE = "${pkgs.<package>.fd}/..."`; `FONT_SOURCE = "${pkgs.<package>}/..."`. `flake.lock`: the first `"rev": "<commit>"` after the line `"nixpkgs": {` |
 | In the boot image | The table of `build/boot.image` of the last build; "not recorded" when the image is not built |
 
-The license column gives the SPDX identifier when the words of the file name one of the table `site_spdx_names` (a translation of recorded words: `SIL OFL 1.1` is `OFL-1.1`); else the words of the file.
+The license column gives the SPDX identifier when the words of the file name one of the table `spdx_names` (a translation of recorded words: `SIL OFL 1.1` is `OFL-1.1`); else the words of the file.
 
 The cells that no file records are listed by the command. They are the licenses of the tools of the build and of the firmware. The README section "Licences" is prose; the site does not read facts from it. The list of the works of others that the system ships or copies, each with its SPDX identifier and its license file, is the reuse list of `PROPERTIES.md`, which `modustool check` compares with the same records (`TOOLS.md`, "The reuse list"). This page adds the authors, the versions and the tools of the host.
 
@@ -1308,11 +1308,11 @@ Each table is read from the text of the file that defines the thing (`tools/modu
 | Kernel operations | `Operation` and `Status` in `src/library/contract/operation/operation.odin` | An enumeration: a line `<Name> :: enum <type> {`, one member a line (`<Name> = <decimal>,` or `<Name>,`, with a comment `// ...` or not), a line `}`. A line that is only a comment continues the comment of the member above it. The comment of an operation is `(<parameters>) -> <result>. <text>` or `(<parameters>): <text>`: the parameters and the result exist only as these words, and the table shows them |
 | The context of a process | The constants `CONTEXT_...` and `ROOT_...` of `src/library/contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `src/library/support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle. Three tables: the roles that the system fixes for each process, the roles of the first process (`ROOT_...`), and the roles of a process that the root service starts. The page starts with the comment above `CONTEXT_HANDLES` (what the context is, and why a process finds each thing at a fixed place); the comment above `CONTEXT_VALUES` (how the values are numbered) heads the first table |
 | Error kinds and units | `Kind`, `Unit` and `UNIT_NAMES` in `src/library/contract/errors/errors.odin` | Enumerations; a table `UNIT_NAMES := [Unit]string {` of lines `.<Name> = "<text>",` |
-| Grants of the root service | `Grant` in `src/library/contract/start_grant/start_grant.odin` (each member has its number: `<Name> = <number>,`); the table `process_roles` in `src/modules/system/root/roles.odin`; `Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin` | Enumerations and a table of names. `process_roles` is read by the parser of Odin (`site_role_table_read`): each row is a record literal with no type, with the fields `name` (a string), `grants` (a set of members with no type: `{.Inspect, .Image}`) and `terms` (a record with no type and no comment inside it), each at most once. The comment of a row is the comment lines above it and the comment of its own lines. The table of the page has one row for each module: its grants, its other terms as the source writes them, and the comment. Any other form (a constant, a typed literal, an expression, another field, a field twice, a row with no name) stops the command with its line, and so does each fault that stops the build (`docs/TOOLS.md`, "The table of the roles of the root service"): a module of the boot image with no row, a row of no module, a module with two rows, a grant that `Grant` does not have |
+| Grants of the root service | `Grant` in `src/library/contract/start_grant/start_grant.odin` (each member has its number: `<Name> = <number>,`); the table `process_roles` in `src/modules/system/root/roles.odin`; `Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin` | Enumerations and a table of names. `process_roles` is read by the parser of Odin (`role_table_read`): each row is a record literal with no type, with the fields `name` (a string), `grants` (a set of members with no type: `{.Inspect, .Image}`) and `terms` (a record with no type and no comment inside it), each at most once. The comment of a row is the comment lines above it and the comment of its own lines. The table of the page has one row for each module: its grants, its other terms as the source writes them, and the comment. Any other form (a constant, a typed literal, an expression, another field, a field twice, a row with no name) stops the command with its line, and so does each fault that stops the build (`docs/TOOLS.md`, "The table of the roles of the root service"): a module of the boot image with no row, a row of no module, a module with two rows, a grant that `Grant` does not have |
 | Fixed ranges | `Fixed_Range` in `src/library/contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract. The page starts with the comment of the package (why an address is fixed, and the band), then the start of the band and the size of a slot from the compiled contract |
 | Commands of the console | `src/modules/system/console/commands.odin`, `src/modules/system/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter. The comment lines just above a line `command(` are the documentation of the command: the text of its symbol, and the first sentence of it is the cell "What it does"; the help is a fact of the symbol, "What help() prints". The page starts with the comment above `Command :: struct` (what a command is, and how commands compose), and the section "The commands of tables" with the comment above `tables_start` |
 
-Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file, with its document references (see "The references to documents"). Then the table. A cell that holds a comment of the source (a member of an enumeration, a role, a grant, a range, the comment of a case of the root service) has its document references too.
+Each page starts with what the thing is: the comment above its declaration in the source (`comment_above_declaration`), when the source has one, as a quote that names its file, with its document references (see "The references to documents"). Then the table. A cell that holds a comment of the source (a member of an enumeration, a role, a grant, a range, the comment of a case of the root service) has its document references too.
 
 The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`glossary/project.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
 
@@ -1403,7 +1403,7 @@ A comment of the source names a document for a person who reads the code: a docu
 
 ### The forms of a pointer
 
-`site_document_pointers` reads each `docs/<NAME>.md` of a text (capital letters, digits and `_`; not a part of a longer path or word), then the labels after it:
+`document_pointers` reads each `docs/<NAME>.md` of a text (capital letters, digits and `_`; not a part of a longer path or word), then the labels after it:
 
 | Form | Example | What the pointer takes |
 |---|---|---|
@@ -1421,7 +1421,7 @@ A comment of the source names a document for a person who reads the code: a docu
 
 `site_document_targets` finds the place of each label, in the order of the labels; each label after the first looks inside the part of the heading of the label before it (`"Kernel events", section 5a`).
 
-- A heading in quotes: the heading whose text gives the same id by the rule of the ids (`site_slug`), with or without the label of its section ("11. The mark" for `"The mark"`); else the one heading whose text starts with those words.
+- A heading in quotes: the heading whose text gives the same id by the rule of the ids (`text_slug`), with or without the label of its section ("11. The mark" for `"The mark"`); else the one heading whose text starts with those words.
 - `section <n>`, `property <n>` and a label as `U3`: the first heading whose text starts with the label and then ". " or a space ("12. The interface font" for 12; "12.4 The glyph cache" for 12.4, not for 12).
 - `item <n>`: the one top-level item of an ordered list with that number. The reference shows its words in bold, else its first sentence.
 - A quoted label that no heading has, as the last label: the words in bold at the start of a line (`- **The frame caches** ...`) of the part. The reference shows them and links to the heading above them.
@@ -1452,7 +1452,7 @@ A name of a document on a page is a reference to a real place, or a link, or it 
 
 ## The Markdown of a source comment
 
-A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/build/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the modules of the system is `src/library/private/manual/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/build/comment_markdown.odin`, `comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the modules of the system is `src/library/private/manual/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -1747,21 +1747,21 @@ A code span in a guide that names a procedure links to its declaration, and a co
 
 ### The declaration index
 
-`modustool site` reads the declaration index (`glossary/project.md`) before it renders any guide (`site_declarations_read`): each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/library/private` and `src/modules` (`SITE_DECLARATION_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
+`modustool site` reads the declaration index (`glossary/project.md`) before it renders any guide (`site_declarations_read`): each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/library/private` and `src/modules` (`DECLARATION_INDEX_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
 
 - its name, its package (the name after `package`), its folder, its file and its line;
 - its kind, from its value: a mutable declaration is a global variable; a procedure literal or a group of procedures is a procedure; a type expression (`struct`, `enum`, `union`, `bit_set`, `distinct`, an array, a pointer...) is a type; a name with a capital and lowercase letters given another name is an alias of a type; any other value is a constant;
 - its one line of Odin: the text of the declaration up to the body of a procedure, or up to the first `{` of another value, which becomes `{...}`; its tokens with no comment and single spaces; the line is whole, and it wraps in the card;
 - the first sentence of its comment (the comment above it, or the comment of its line), and the whole comment in its Markdown.
 
-The tree of the parser of each file lives in an arena of its own, freed before the next file. `modustool build` reads the same index for the names that the modules of the boot image link, and parses only the files whose text holds one of them (`site_declaration_index_fill`): the process `manual` shows the page of such a declaration (`MODULE_CONTRACT.md`, "The links of a page of the manual"). A file that the parser refuses is counted, and the command names the first one; it does not stop: the build of the system checks its sources.
+The tree of the parser of each file lives in an arena of its own, freed before the next file. `modustool build` reads the same index for the names that the modules of the boot image link, and parses only the files whose text holds one of them (`declaration_index_fill`): the process `manual` shows the page of such a declaration (`MODULE_CONTRACT.md`, "The links of a page of the manual"). A file that the parser refuses is counted, and the command names the first one; it does not stop: the build of the system checks its sources.
 
 ### What a code span names
 
 The code spans of the guides, the glossary, the news entries and the source comments (the descriptions of the modules, the text of each symbol, each cell of a reference table that holds a comment) take one path, after the document references, the rows of the reference tables and the files of the repository. A code span of a heading stays code.
 
 1. A span whose whole text is a name (`blend_coverage_row_in_order`), `name()`, `package.name` or `package.name()` is looked for in the index. A file name with a known extension (`boot.image`, `flake.nix`), a keyword and a built-in type are not names. A span `value.field` whose first part is no package of the index is a field, not a name: it goes to the next step.
-2. The resolution (`site_declaration_resolve`): the declarations with that name; with `package.`, those of that package (its name or the last part of its folder); with `()`, the procedures. If one of them is in a folder that the text around the span names (the heading of level 2, the heading of level 3, the paragraph: `src/library/support/graphics`, or a file under it as `src/library/support/graphics/blend.odin`), that one. Else, when one declaration is left, that one; but a common word (lowercase letters only: `count`, `build`) needs `package.`, `()` or a folder of the text. Else the span stays code, and is counted as ambiguous. A source comment names no folder around its spans.
+2. The resolution (`declaration_resolve`): the declarations with that name; with `package.`, those of that package (its name or the last part of its folder); with `()`, the procedures. If one of them is in a folder that the text around the span names (the heading of level 2, the heading of level 3, the paragraph: `src/library/support/graphics`, or a file under it as `src/library/support/graphics/blend.odin`), that one. Else, when one declaration is left, that one; but a common word (lowercase letters only: `count`, `build`) needs `package.`, `()` or a folder of the text. Else the span stays code, and is counted as ambiguous. A source comment names no folder around its spans.
 3. A span that is not a name and that is a fragment of Odin is colored by the tokenizer and the classes of the blocks of code (`site_code_odin`), in a `<code class="code-inline">`. Each name in it that the index resolves by the same rule is a link, with no card: the link is enough inside an expression. A name of fewer than 3 letters is a local of the example (`a`, `d`) and does not link.
 4. Any other span stays code.
 

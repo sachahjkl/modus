@@ -54,7 +54,7 @@ intent_files_under :: proc(folder, inside: string, files: ^[dynamic]Intent_File)
 				return false
 			}
 		} else if strings.has_suffix(entry.name, ".md") {
-			content, read_ok := foundation.site_read_quiet(path)
+			content, read_ok := foundation.read_text_file_quiet(path)
 			if !read_ok {
 				return false
 			}
@@ -81,7 +81,7 @@ intent_files_read :: proc() -> (files: []Intent_File, ok: bool) {
 // fences of code, is a heading of level 1.
 intent_has_title :: proc(content: string) -> bool {
 	fenced := false
-	for line in foundation.site_lines(content) {
+	for line in foundation.lines_of_text(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -89,7 +89,7 @@ intent_has_title :: proc(content: string) -> bool {
 		if fenced {
 			continue
 		}
-		if level, _ := build.site_heading_level(line); level > 0 {
+		if level, _ := build.heading_level(line); level > 0 {
 			return level == 1
 		}
 	}
@@ -104,7 +104,7 @@ intent_has_title :: proc(content: string) -> bool {
 intent_links :: proc(content: string) -> []Intent_Link {
 	links := make([dynamic]Intent_Link, context.temp_allocator)
 	fenced := false
-	for line, line_index in foundation.site_lines(content) {
+	for line, line_index in foundation.lines_of_text(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -246,7 +246,7 @@ intent_index_problems :: proc(files: []Intent_File, outside_exists: proc(path: s
 	index_headings := 0
 	in_index := false
 	fenced := false
-	for line, line_index in foundation.site_lines(files[readme].content) {
+	for line, line_index in foundation.lines_of_text(files[readme].content) {
 		trimmed := strings.trim_space(line)
 		if strings.has_prefix(trimmed, "```") {
 			fenced = !fenced
@@ -255,7 +255,7 @@ intent_index_problems :: proc(files: []Intent_File, outside_exists: proc(path: s
 		if fenced {
 			continue
 		}
-		if level, _ := build.site_heading_level(line); level > 0 {
+		if level, _ := build.heading_level(line); level > 0 {
 			in_index = line == INTENT_INDEX_HEADING
 			if in_index {
 				index_headings += 1

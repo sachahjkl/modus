@@ -75,7 +75,7 @@ site_headline :: proc(title: string) -> string {
 	return strings.concatenate({title[:cut], " ..."}, context.temp_allocator)
 }
 
-// site_html_unescape gives the text of an attribute that site_escape wrote.
+// site_html_unescape gives the text of an attribute that html_escape wrote.
 site_html_unescape :: proc(text: string) -> string {
 	result := text
 	for pair in ([][2]string{{"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&#39;", "'"}, {"&amp;", "&"}}) {
@@ -119,7 +119,7 @@ site_copyright_holder :: proc(line: string) -> string {
 // repository: the repository address without its last part.
 site_account_address :: proc() -> string {
 	// A constant string cannot be sliced by a variable: a copy can.
-	repository: string = checks.SITE_REPOSITORY_ADDRESS
+	repository: string = checks.REPOSITORY_ADDRESS
 	slash := strings.last_index_byte(repository, '/')
 	return repository[:slash]
 }
@@ -129,7 +129,7 @@ site_account_address :: proc() -> string {
 // system and its repository when LICENSE names no holder.
 site_feed_author :: proc(site: ^Site, b: ^strings.Builder) {
 	name := site.author != "" ? site.author : SITE_SYSTEM_NAME
-	address := site.author != "" ? site_account_address() : checks.SITE_REPOSITORY_ADDRESS
+	address := site.author != "" ? site_account_address() : checks.REPOSITORY_ADDRESS
 	strings.write_string(b, "<author><name>")
 	site_xml_escape(b, name)
 	strings.write_string(b, "</name><uri>")
@@ -172,7 +172,7 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 	}
 	if site.author != "" {
 		strings.write_string(b, "<meta name=\"author\" content=\"")
-		foundation.site_escape(b, site.author)
+		foundation.html_escape(b, site.author)
 		strings.write_string(b, "\">\n")
 	}
 	if site.address == "" {
@@ -182,11 +182,11 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 	card_address := site_file_address(site.address, resources.SITE_PICTURE_FOLDER + "/" + resources.SITE_MARK_CARD)
 	meta :: proc(b: ^strings.Builder, property, value: string) {
 		fmt.sbprintf(b, "<meta property=\"%s\" content=\"", property)
-		foundation.site_escape(b, value)
+		foundation.html_escape(b, value)
 		strings.write_string(b, "\">\n")
 	}
 	strings.write_string(b, "<link rel=\"canonical\" href=\"")
-	foundation.site_escape(b, page_address)
+	foundation.html_escape(b, page_address)
 	strings.write_string(b, "\">\n")
 	meta(b, "og:type", site_guide_index(site, page.path) >= 0 ? "article" : "website")
 	meta(b, "og:site_name", SITE_SYSTEM_NAME)
@@ -207,7 +207,7 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 }
 
 // The writer of JSON objects: each field is written after a comma, but the
-// first. The text goes through site_json_string, which escapes each
+// first. The text goes through json_string_write, which escapes each
 // character that can end a script element or a line of a script.
 Site_Json_Object :: struct {
 	builder: ^strings.Builder,
@@ -235,7 +235,7 @@ site_json_key :: proc(object: ^Site_Json_Object, key: string) {
 		strings.write_byte(object.builder, ',')
 	}
 	object.first = false
-	foundation.site_json_string(object.builder, key)
+	foundation.json_string_write(object.builder, key)
 	strings.write_byte(object.builder, ':')
 }
 
@@ -245,7 +245,7 @@ site_json_text :: proc(object: ^Site_Json_Object, key, value: string) {
 		return
 	}
 	site_json_key(object, key)
-	foundation.site_json_string(object.builder, value)
+	foundation.json_string_write(object.builder, value)
 }
 
 site_json_number :: proc(object: ^Site_Json_Object, key: string, value: int) {
@@ -257,7 +257,7 @@ site_json_number :: proc(object: ^Site_Json_Object, key: string, value: int) {
 site_json_reference :: proc(object: ^Site_Json_Object, key, id: string) {
 	site_json_key(object, key)
 	strings.write_string(object.builder, "{\"@id\":")
-	foundation.site_json_string(object.builder, id)
+	foundation.json_string_write(object.builder, id)
 	strings.write_byte(object.builder, '}')
 }
 
@@ -406,7 +406,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "SoftwareSourceCode", source_id)
 		site_json_text(&node, "name", SITE_SYSTEM_NAME)
-		site_json_text(&node, "codeRepository", checks.SITE_REPOSITORY_ADDRESS)
+		site_json_text(&node, "codeRepository", checks.REPOSITORY_ADDRESS)
 		site_json_key(&node, "programmingLanguage")
 		language := site_json_open(&b, "ComputerLanguage")
 		site_json_text(&language, "name", "Odin")
@@ -680,7 +680,7 @@ site_robots :: proc(site: ^Site) -> string {
 site_releases_feed :: proc(site: ^Site) -> string {
 	types := checks.CHANGE_TYPES
 	releases := site.changelog.releases
-	changelog_address := strings.concatenate({checks.SITE_REPOSITORY_ADDRESS, "/blob/master/", checks.CHANGELOG_FILE}, context.temp_allocator)
+	changelog_address := strings.concatenate({checks.REPOSITORY_ADDRESS, "/blob/master/", checks.CHANGELOG_FILE}, context.temp_allocator)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n")
 	fmt.sbprintf(&b, "<title>Releases of %s</title>\n<subtitle>Every release of %s, newest first, with the changes of each one.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
@@ -785,7 +785,7 @@ site_manifest :: proc(site: ^Site) -> string {
 site_language_model_index :: proc(site: ^Site) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "# %s\n\n> %s\n\n", SITE_SYSTEM_NAME, site_plain_text(site.readme.lead))
-	fmt.sbprintf(&b, "The documentation of %s, generated from the repository %s at the release %s.\n", SITE_SYSTEM_NAME, checks.SITE_REPOSITORY_ADDRESS, site.release)
+	fmt.sbprintf(&b, "The documentation of %s, generated from the repository %s at the release %s.\n", SITE_SYSTEM_NAME, checks.REPOSITORY_ADDRESS, site.release)
 	line :: proc(site: ^Site, b: ^strings.Builder, page: Site_Page) {
 		address := site_feed_page_address(site, page.path)
 		fmt.sbprintf(b, "- [%s](%s): %s\n", page.title, address, page.description)
@@ -822,7 +822,7 @@ site_language_model_index :: proc(site: ^Site) -> string {
 // type with no alpha channel (gray or RGB) and no tRNS chunk. Other sites
 // show the card on any background, so it must cover its rectangle.
 site_png_is_opaque :: proc(data: []u8) -> bool {
-	if _, _, is_png := foundation.site_png_size(data); !is_png || len(data) < 26 {
+	if _, _, is_png := foundation.png_size(data); !is_png || len(data) < 26 {
 		return false
 	}
 	color_type := data[25]

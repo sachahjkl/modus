@@ -112,7 +112,7 @@ site_roadmap_section_write :: proc(site: ^Site, b: ^strings.Builder, renderer: ^
 		strings.write_string(b, strings.to_string(renderer.builder))
 		if entry.design != "" {
 			strings.write_string(b, "<p class=\"source\"><a href=\"")
-			foundation.site_escape(b, site_repository_file(site, entry.design))
+			foundation.html_escape(b, site_repository_file(site, entry.design))
 			strings.write_string(b, "\">Design</a></p>\n")
 		}
 		strings.write_string(b, "</article>\n")

@@ -344,17 +344,17 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		kind: Site_Search_Kind = item.kind == "entry" ? .Entry_Module : .Module
 		site_search_add(&entries, item.build.name, item.page, "", kind, site_source_comment_plain(site, item.description.about))
 		for export in item.description.exports {
-			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", foundation.site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))
+			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", foundation.text_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))
 		}
 	}
 	for operation in site.reference.operations {
 		if operation.member.number != 0 {
-			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", foundation.site_slug(operation.member.name)}, context.temp_allocator), .Operation, site_source_comment_plain(site, operation.text))
+			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", foundation.text_slug(operation.member.name)}, context.temp_allocator), .Operation, site_source_comment_plain(site, operation.text))
 		}
 	}
 	for kind in site.reference.error_kinds {
 		if kind.number != 0 {
-			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", foundation.site_slug(kind.name)}, context.temp_allocator), .Error_Kind, site_source_comment_plain(site, kind.comment))
+			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", foundation.text_slug(kind.name)}, context.temp_allocator), .Error_Kind, site_source_comment_plain(site, kind.comment))
 		}
 	}
 	// Each type of the contract, by its name and by its name with its
@@ -372,7 +372,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, title, types_page, type.id, .Type, text)
 	}
 	for command in site.reference.console_commands {
-		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", foundation.site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({foundation.site_console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
+		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", foundation.text_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({foundation.console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
 	}
 	for term in site.terms {
 		// The entry of the term, on the page of its group: a result never
@@ -464,9 +464,9 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 			strings.write_byte(&b, ',')
 		}
 		strings.write_byte(&b, '[')
-		foundation.site_json_string(&b, site_search_kinds[kind].name)
+		foundation.json_string_write(&b, site_search_kinds[kind].name)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, value_kinds.VALUE_KIND_NAMES[site_search_kinds[kind].value_kind])
+		foundation.json_string_write(&b, value_kinds.VALUE_KIND_NAMES[site_search_kinds[kind].value_kind])
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"pages\":[")
@@ -474,19 +474,19 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 	for page, index in pages {
 		page_numbers[page.path] = index
 		strings.write_string(&b, index > 0 ? ",\n[" : "\n[")
-		foundation.site_json_string(&b, site_page_link(site, SITE_PAGE, page.path))
+		foundation.json_string_write(&b, site_page_link(site, SITE_PAGE, page.path))
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, page.title)
+		foundation.json_string_write(&b, page.title)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"entries\":[")
 	for entry, index in entries {
 		strings.write_string(&b, index > 0 ? ",\n[" : "\n[")
-		foundation.site_json_string(&b, entry.title)
+		foundation.json_string_write(&b, entry.title)
 		fmt.sbprintf(&b, ",%d,", page_numbers[entry.page])
-		foundation.site_json_string(&b, entry.anchor)
+		foundation.json_string_write(&b, entry.anchor)
 		fmt.sbprintf(&b, ",%d,", int(entry.kind))
-		foundation.site_json_string(&b, entry.text)
+		foundation.json_string_write(&b, entry.text)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "]}\n")
@@ -524,47 +524,47 @@ site_search_cases_json :: proc() -> string {
 	strings.write_string(&b, "{\"names\":[")
 	for name, index in site_search_match_names {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		foundation.site_json_string(&b, name.group)
+		foundation.json_string_write(&b, name.group)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, name.name)
+		foundation.json_string_write(&b, name.name)
 		fmt.sbprintf(&b, ",%d]", name.tie_order)
 	}
 	strings.write_string(&b, "],\"orders\":[")
 	for order, index in site_search_match_orders {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		foundation.site_json_string(&b, order.group)
+		foundation.json_string_write(&b, order.group)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, order.query)
+		foundation.json_string_write(&b, order.query)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, order.name)
+		foundation.json_string_write(&b, order.name)
 		fmt.sbprintf(&b, ",%d]", order.score)
 	}
 	strings.write_string(&b, "],\"kinds\":[")
 	for kind_case, index in site_search_kind_cases {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		foundation.site_json_string(&b, kind_case.group)
+		foundation.json_string_write(&b, kind_case.group)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, kind_case.query)
+		foundation.json_string_write(&b, kind_case.query)
 		fmt.sbprintf(&b, ",%d,", kind_case.only)
-		foundation.site_json_string(&b, kind_case.counts)
+		foundation.json_string_write(&b, kind_case.counts)
 		fmt.sbprintf(&b, ",%d,", kind_case.listed)
-		foundation.site_json_string(&b, kind_case.first)
+		foundation.json_string_write(&b, kind_case.first)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\"segments\":[")
 	for segment_case, index in site_search_segment_cases {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		foundation.site_json_string(&b, segment_case.counts)
+		foundation.json_string_write(&b, segment_case.counts)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, segment_case.segments)
+		foundation.json_string_write(&b, segment_case.segments)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\"builds\":[")
 	for build_case, index in site_build_notice_cases {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		foundation.site_json_string(&b, build_case.page_commit)
+		foundation.json_string_write(&b, build_case.page_commit)
 		strings.write_byte(&b, ',')
-		foundation.site_json_string(&b, build_case.served)
+		foundation.json_string_write(&b, build_case.served)
 		strings.write_string(&b, build_case.older ? ",true]" : ",false]")
 	}
 	strings.write_string(&b, "]}")
@@ -581,9 +581,9 @@ SITE_VERSION_FILE :: "version.json"
 site_version_json :: proc(commit, build_time: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"commit\": ")
-	foundation.site_json_string(&b, commit)
+	foundation.json_string_write(&b, commit)
 	strings.write_string(&b, ", \"built\": ")
-	foundation.site_json_string(&b, build_time)
+	foundation.json_string_write(&b, build_time)
 	strings.write_string(&b, "}\n")
 	return strings.to_string(b)
 }

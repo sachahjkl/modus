@@ -50,7 +50,7 @@ Hall_Of_Fame_Credit :: struct {
 // problem.
 hall_of_fame_credits_parse :: proc(content: string) -> (credits: []Hall_Of_Fame_Credit, problem: string) {
 	rows := make([dynamic]Hall_Of_Fame_Credit, context.temp_allocator)
-	for line, index in foundation.site_lines(content) {
+	for line, index in foundation.lines_of_text(content) {
 		if !strings.has_prefix(line, "| `") {
 			continue
 		}

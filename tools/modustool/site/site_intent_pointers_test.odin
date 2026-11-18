@@ -67,14 +67,14 @@ intent_files_are_working_records :: proc(t: ^testing.T) {
 	testing.expect(t, site_is_working_record("src/md/README.md"))
 	testing.expect(t, site_is_working_record("src/md/features/palette.md"))
 	testing.expect(t, !site_is_working_record("src/processes/console/README.md"))
-	end, found := checks.site_document_path_end("see src/md/features/palette.md, \"The form\"", 4)
+	end, found := checks.document_path_end("see src/md/features/palette.md, \"The form\"", 4)
 	testing.expect(t, found)
 	testing.expect_value(t, end, len("see src/md/features/palette.md"))
-	_, in_a_longer_path := checks.site_document_path_end("other/src/md/README.md", len("other/"))
+	_, in_a_longer_path := checks.document_path_end("other/src/md/README.md", len("other/"))
 	testing.expect(t, !in_a_longer_path)
-	_, not_markdown := checks.site_document_path_end("src/md/features/palette.odin", 0)
+	_, not_markdown := checks.document_path_end("src/md/features/palette.odin", 0)
 	testing.expect(t, !not_markdown)
-	pointers := checks.site_document_pointers("The form (src/md/README.md, \"File Index\") and docs/ARCHITECTURE.md.")
+	pointers := checks.document_pointers("The form (src/md/README.md, \"File Index\") and docs/ARCHITECTURE.md.")
 	testing.expect_value(t, len(pointers), 2)
 	if len(pointers) == 2 {
 		testing.expect_value(t, pointers[0].path, "src/md/README.md")
@@ -89,7 +89,7 @@ intent_files_are_working_records :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(targets), 1)
 	if len(targets) == 1 {
 		testing.expect(t, targets[0].outside && targets[0].resolved, "the file index of the intent folder is not found")
-		testing.expect(t, strings.has_prefix(targets[0].link, checks.SITE_REPOSITORY_ADDRESS + "/blob/master/src/md/README.md#L"), targets[0].link)
+		testing.expect(t, strings.has_prefix(targets[0].link, checks.REPOSITORY_ADDRESS + "/blob/master/src/md/README.md#L"), targets[0].link)
 	}
 	absent := site_pointer_problem(&site, "a.odin", 3, "src/md/features/no_such_file.md", nil)
 	testing.expect(t, strings.contains(absent, "no such file"), absent)
