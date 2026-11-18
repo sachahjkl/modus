@@ -113,6 +113,8 @@ MACHINE_MEMORY_MIB :: 1024
 
 // The video memory of the standard VGA of a test machine, in MiB: the
 // amount of QEMU with no option, stated so that the check below reads it.
+// The machine passes no option for it: with `-global VGA.vgamem_mb`, the
+// firmware gives no graphics output, and the boot program finds no screen.
 // The compositor flips between two screen pages of the reference screen in
 // it (src/md/infrastructure/whole_frame.md); a screen whose two pages do
 // not fit stops the build of the tool, not a machine test.
@@ -203,10 +205,6 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.tprintf("%d", memory_file != "" ? 1 : MACHINE_PROCESSOR_COUNT),
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
-		// The standard VGA that QEMU gives the machine, with the video
-		// memory of the two screen pages.
-		"-global",
-		fmt.tprintf("VGA.vgamem_mb=%d", MACHINE_VIDEO_MEMORY_MIB),
 		"-no-reboot",
 		// The real-time clock of the machine: the clock of the host in UTC
 		// for a machine that a principal runs; a fixed hour of the night for
