@@ -19,7 +19,7 @@ This document names the key systems of `modus` and shows how they connect: the k
 | "User-space systems" | The boot program, the root service, the resources of the boot image, the loader, the device services, storage and its versions, the date, the network, graphics |
 | "A text is never cut in silence" | The three ways in which the system handles a text that does not fit |
 | "Locks of the kernel" | Each datum of the kernel, who reads and writes it, its lock, and the order of the locks |
-| "The virtual memory of a program" | Commit, decommit, protection, large pages, page tables, and the fault ring |
+| "The virtual memory of a program" | Commit, decommit, arenas, protection, large pages, page tables, and the fault ring |
 | "The control of a thread" | How a program holds one of its threads and reads or writes its registers |
 | "The extended state of the processor" | The vector registers: what the kernel enables, saves and restores, and when |
 | "The return to a program" | How the kernel makes the frame of a thread safe before it returns to it |
@@ -371,7 +371,7 @@ Each program draws its own pixels into memory that it shares with the compositor
 A set of modules that most programs use. It is not a C library and no program is forced to use it.
 
 - Ring access, with blocking functions built above the rings.
-- Arena allocators above reserve and commit.
+- Arenas above reserve and commit (built: `system.arena_create`, `arena_push`, `arena_reset`, `arena_end`; "The virtual memory of a program", "Arenas").
 - Functions that give the information of the modules from their flat tables (P12).
 - The TCP library.
 
@@ -658,6 +658,17 @@ A commit pays for pages of a reserved range; a decommit gives them back and forg
 - One call changes at most `RANGE_TABLE_PAGE_LIMIT` (65 536) pages: each page is walked with interrupts off. A whole protection change of a mapping of 4 KiB pages counts its present pages (it changes only those, and its walk stops after the last of them); a large page counts one. The longest decommit call measured in `address_space` is logged.
 - A revocation and a decommit wake the threads with a word in a frame that leaves with one sorted search: the words (at most 256) are sorted, then the slots are read in order with a binary search for each frame, and the walk stops at the last frame of the object. `unmap` walks one table of the last level at a time: it reads the entries until the last present entry, and subtracts the pages of the mapping from the count of each table ("The page tables of a program"); the release of an object stops after its last frame. What stays: an object whose last page has a frame is one pass over its slots (2 MiB for 1 GiB, read in order), with interrupts off.
 - The sums of the frames (`TEST_BUILD_CHECKS_FRAME_SUMS`) hold at each step: a commit moves pages from a budget to `reserved_pages`, a decommit moves them back, or moves a frame to a stack and a page to the budget.
+
+### Arenas
+
+An arena is an uncommitted object of a program that grows by an explicit commit and ends whole (`glossary/access.md`, "Arena"). A program holds in it data with no known bound, such as the tree of a document. The support package `system` gives it, with no allocator of the language and no new kernel operation:
+
+- `arena_create(reserve_pages)`: `Memory_Create` with `Uncommitted`, then one `Memory_Map` with Write. The budget pays the frame list and the page tables of the mapping now. `arena_reservation_pages` gives the pages that a budget holds, rounded up to 512, so the frame list costs at most one page in 512.
+- `arena_push(arena, size, alignment)`: the bytes after the push before, at a multiple of the alignment (a power of two, at most a page). A push past the committed end commits the next pages: 16 pages first, then the double of the step before, up to 512. When the budget refuses a step, the push commits the missing pages alone. When the budget cannot pay those, the push gives `No_Budget` with the error record of `Memory_Commit`, and the arena stays as it was. A size of 0, a bad alignment and a size above the reservation give `Bad_Operation`; bytes past the rest of the reservation give `No_Slot`.
+- `arena_reset(arena)`: the end goes back to the start, and the committed pages stay. A scratch arena of a frame is reset at the start of each frame, so a frame commits nothing in the usual case.
+- `arena_end(arena)`: the unmap and the close. Each committed page, the frame list and the page tables return to the budget at once.
+
+An arena never moves, so an address that a push gave stays valid until the reset or the end. The test is the program `tests/arena`: it grows an arena one page at a time until its budget refuses, checks the refusal and that the arena did not change, takes the same pages again after a reset with no commit, and checks with `Budget_Read` after the end that the budget holds each page that it held before. The design: `src/md/features/memory_without_a_bound.md`.
 
 ### Protection and the shoot-down
 

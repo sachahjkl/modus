@@ -157,6 +157,7 @@ module_builds := [?]Module_Build {
 	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "flood", source = TEST_MODULE_SOURCES + "flood", program = true, image = true},
 	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", program = true, image = true},
+	{name = "arena", source = TEST_MODULE_SOURCES + "arena", program = true, image = true},
 	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", program = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", program = true, image = true},
 	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", program = true, image = true},
