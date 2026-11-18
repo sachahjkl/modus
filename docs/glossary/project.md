@@ -1132,6 +1132,16 @@ The design: `src/md/infrastructure/kernel_fuzzing.md`.
 
 Do not use: shared buffer, queue (for this).
 
+### Machine life
+
+A machine life is the operation sequences that one test machine runs, in their order, from its boot to its end.
+
+`modustool fuzz operations` ends a machine life after 1024 sequences or at a fault of the kernel, then boots a new machine. A fault that needs the state of earlier sequences shows only with them, so the tool keeps the life with the fuzz finding, and its minimization removes sequences of the life before it removes steps. It is not a test part, which can hold several machines, and not the lifetime of a program.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: session (for this), epoch, generation (for this).
+
 ### Sequence step
 
 A sequence step is one command of an operation sequence: an operation word, its flags, and seven arguments, each with its argument source.
