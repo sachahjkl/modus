@@ -230,7 +230,11 @@ fuzz_breakpoint_image_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Fo
 	case .Kind:
 		edges := [?]u64{0, 1, u64(max(operation.Thread_Breakpoint_Kind)), u64(max(operation.Thread_Breakpoint_Kind)) + 1}
 		word := u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
-		breakpoint.kind = transmute(operation.Thread_Breakpoint_Kind)word
+		// The word goes into the bytes of the image as a number: it can
+		// name no member, so no value of the enum holds it. The kernel
+		// reads it through its own border.
+		kind_bytes := ([^]u8)(breakpoint)[int(offset_of(operation.Thread_Breakpoint, kind)):][:size_of(u32)]
+		fuzz_little_endian_put(kind_bytes, 0, size_of(u32), u64(word))
 	case .Length:
 		edges := [?]u64{0, 1, 8, 9}
 		breakpoint.length = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
@@ -453,7 +457,7 @@ fuzz_memory_pages_of :: proc(sequence: ^operation_sequence.Sequence, chosen: ope
 // zero bytes, and the content of each later area moves after it. The
 // bytes stop at the end of the area and where the content of all the
 // areas reaches CONTENT_BYTES_MOST, so they can be fewer than `length`, or
-// none.
+// none: then the content does not change.
 fuzz_area_content_reserve :: proc(sequence: ^operation_sequence.Sequence, area, offset, length: int) -> []u8 {
 	if area < 0 || area >= sequence.area_count {
 		return nil
@@ -472,6 +476,11 @@ fuzz_area_content_reserve :: proc(sequence: ^operation_sequence.Sequence, area, 
 	held := sequence.areas[area].content_bytes
 	wanted := min(offset + length, area_bytes)
 	growth := clamp(wanted - held, 0, operation_sequence.CONTENT_BYTES_MOST - total)
+	end := min(wanted, held + growth)
+	// A record that gets no byte changes nothing: no zeros with no record.
+	if offset >= end {
+		return nil
+	}
 	if growth > 0 {
 		after := start + held
 		// copy moves bytes that overlap correctly.
@@ -480,10 +489,6 @@ fuzz_area_content_reserve :: proc(sequence: ^operation_sequence.Sequence, area, 
 			byte_value = 0
 		}
 		sequence.areas[area].content_bytes = held + growth
-	}
-	end := min(wanted, held + growth)
-	if offset >= end {
-		return nil
 	}
 	return sequence.content[start + offset:start + end]
 }

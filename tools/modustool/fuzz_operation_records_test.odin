@@ -292,13 +292,29 @@ the_room_of_a_record_stops_at_its_area_and_at_the_content :: proc(t: ^testing.T)
 	}
 	testing.expect_value(t, string(operation_sequence.area_content(sequence, 1)), "xyz")
 
-	// Cut at the end of the area: the last byte only.
-	last := fuzz_area_content_reserve(sequence, 1, area_bytes - 1, 16)
-	testing.expect_value(t, len(last), 1)
-	testing.expect_value(t, sequence.areas[1].content_bytes, area_bytes)
+	// The last byte of area 1 is past the room: the 12 and 3 bytes of the
+	// two areas leave CONTENT_BYTES_MOST - 15, so the content of area 1
+	// cannot reach it. No byte, and nothing changes.
+	past_room := fuzz_area_content_reserve(sequence, 1, area_bytes - 1, 16)
+	testing.expect_value(t, len(past_room), 0)
+	testing.expect_value(t, sequence.areas[0].content_bytes, 12)
+	testing.expect_value(t, string(operation_sequence.area_content(sequence, 1)), "xyz")
 	bytes, accepted := operation_sequence_encode(sequence)
 	testing.expect(t, accepted, "check refuses a sequence whose content grew")
 	delete(bytes)
+
+	// Cut at the end of the area, where the room allows it: the last byte
+	// only.
+	alone := new(operation_sequence.Sequence)
+	defer free(alone)
+	alone.area_count = 1
+	alone.areas[0] = {pages = 1}
+	last := fuzz_area_content_reserve(alone, 0, area_bytes - 1, 16)
+	testing.expect_value(t, len(last), 1)
+	testing.expect_value(t, alone.areas[0].content_bytes, area_bytes)
+	alone_bytes, alone_accepted := operation_sequence_encode(alone)
+	testing.expect(t, alone_accepted, "check refuses an area whose content fills it")
+	delete(alone_bytes)
 
 	// Cut at the end of the room of the content.
 	full := new(operation_sequence.Sequence)
