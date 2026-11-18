@@ -188,9 +188,13 @@ grid_size :: proc "contextless" (grid: Text_Grid) -> int {
 }
 
 // record_append appends one record and gives its address, or nil when the
-// table is full. The room of the pops of the clips open is not taken: a
-// table always ends with each push popped.
+// table is full or a push that the table did not write is open. The room
+// of the pops of the clips open is not taken: a table always ends with
+// each push popped.
 record_append :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> ^Draw_Record {
+	if records_hidden(table) {
+		return nil
+	}
 	if table.record_count >= len(table.records) - table.clip_depth {
 		table.full = true
 		return nil
@@ -198,6 +202,21 @@ record_append :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) ->
 	table.records[table.record_count] = record
 	table.record_count += 1
 	return &table.records[table.record_count - 1]
+}
+
+// records_hidden says if a push that the table did not write is open, and
+// then sets refused: the records under it are not written, so they draw
+// nothing, as the execution draws nothing under a push past the bound. A
+// record written there would draw outside the clip that its writer asked
+// for. A writer that copies text, cells or points asks first, so that it
+// copies nothing for a record that is not written.
+@(private)
+records_hidden :: proc "contextless" (table: ^Draw_Table) -> bool {
+	if table.clip_pushes_not_written == 0 {
+		return false
+	}
+	table.refused = true
+	return true
 }
 
 // draw_rectangle appends a rectangle of one opaque color.
@@ -503,6 +522,9 @@ draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, grid: Text_
 		table.refused = true
 		return
 	}
+	if records_hidden(table) {
+		return
+	}
 	cell_count := grid.columns * grid.rows
 	start := (table.text_count + align_of(Text_Grid_Cell) - 1) / align_of(Text_Grid_Cell) * align_of(Text_Grid_Cell)
 	size := cell_count * size_of(Text_Grid_Cell)
@@ -698,6 +720,9 @@ path_append :: proc "contextless" (table: ^Draw_Table, points: []Path_Point, fil
 		table.refused = true
 		return
 	}
+	if records_hidden(table) {
+		return
+	}
 	start := (table.text_count + align_of(draw_record.Path_Point_Record) - 1) / align_of(draw_record.Path_Point_Record) * align_of(draw_record.Path_Point_Record)
 	size := len(points) * draw_record.PATH_POINT_SIZE
 	if start + size > len(table.text) || table.record_count >= len(table.records) {
@@ -775,8 +800,9 @@ line_ends_in_order :: proc "contextless" (from_x, from_y, to_x, to_y: int) -> (s
 // refuses (src/md/api/draw_table.md, "The kinds"): a push past
 // CLIP_DEPTH_LIMIT is not written and sets refused, a push with no room for
 // itself and its pop sets full, and the pop of a push that is not written
-// is not written. The records under a push that is not written are cut by
-// the clips that the table holds.
+// is not written. The records under a push that is not written are not
+// written either, and set refused (records_hidden): they draw nothing, as
+// the execution draws nothing under a push past the bound.
 draw_clip_push :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
 	if table.clip_depth >= draw_record.CLIP_DEPTH_LIMIT {
 		table.refused = true
@@ -808,8 +834,10 @@ draw_clip_pop :: proc "contextless" (table: ^Draw_Table) {
 		table.refused = true
 		return
 	}
-	// The room is kept, unless a caller gave the table other records
-	// while a clip was open.
+	// This cannot happen today: a push is written only with room for its
+	// pop, and record_append keeps that room. It stays a check because a
+	// caller can give the table other memory while a clip is open; full
+	// then draws the next frame whole.
 	if table.record_count >= len(table.records) {
 		table.full = true
 		table.clip_depth -= 1
@@ -858,7 +886,7 @@ draw_text_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, text:
 	if len(text) == 0 {
 		return x
 	}
-	if x < -COORDINATE_LIMIT || x > COORDINATE_LIMIT - 1 {
+	if x < -COORDINATE_LIMIT || x > COORDINATE_LIMIT - 1 || records_hidden(table) {
 		return x + width
 	}
 	if table.text_count + len(text) > len(table.text) {
@@ -910,7 +938,7 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	scale := font_scale(font)
 	margin := graphics.PROPORTIONAL_INK_MARGIN * scale
 	left := int(pixel) - margin
-	if left < -COORDINATE_LIMIT || left > COORDINATE_LIMIT - 1 {
+	if left < -COORDINATE_LIMIT || left > COORDINATE_LIMIT - 1 || records_hidden(table) {
 		return end
 	}
 	if table.text_count + len(text) > len(table.text) {

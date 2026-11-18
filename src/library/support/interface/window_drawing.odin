@@ -311,8 +311,11 @@ when DRAWING_THROUGH_MODULE {
 		case .Bad_Value:
 			cause = "the shape of the canvas has a width, a height or a stride that the module refuses"
 			// The one other Bad_Value of the module: the order of the clips.
+			// Its words end with the bound of the clips open, written from
+			// the contract below.
 			if unit, unit_ok := errors.unit_of_word(record.unit); unit_ok && unit == .Records {
-				cause = "the clips of the table are out of order: a pop with no push open, a push past 16 open, or a push with no pop"
+				system.log_in("processes", .Warning, "interface: the drawing module refused ", export_name, ": the clips of the table are out of order: a pop with no push open, a push with no pop, or a push past ", u64(draw_record.CLIP_DEPTH_LIMIT), " open (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), ", the record ", u64(max(record.found, 0)), "). A refused draw leaves the window as it was. A window writes this line one time")
+				return
 			}
 		case .Too_Small:
 			cause = "the pixels do not hold the shape of the canvas"

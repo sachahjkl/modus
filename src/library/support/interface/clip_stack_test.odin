@@ -120,11 +120,14 @@ draw_clip_pop_with_no_push_is_refused :: proc(t: ^testing.T) {
 }
 
 // The bound: CLIP_DEPTH_LIMIT pushes are written; one more is not written,
-// sets refused, and its pop is not written either; the table ends in an
-// order that the border takes. The pushes are each one pixel smaller, so
-// the rectangle under the deepest one is cut to it.
+// sets refused, and its pop is not written either. The records under it
+// are not written, and their text is not copied: they draw no pixel. The
+// table ends in an order that the border takes. The pushes are each one
+// pixel smaller, so a rectangle after the pop of the 17th push, under the
+// 16 written, is cut to the deepest one.
 @(test)
 draw_clip_push_past_the_bound_is_refused :: proc(t: ^testing.T) {
+	AFTER_FILL :: graphics.Color(0x0020E040)
 	memory: Clip_Tables
 	table := clip_table_of(&memory)
 	for depth in 0 ..< draw_record.CLIP_DEPTH_LIMIT {
@@ -136,8 +139,16 @@ draw_clip_push_past_the_bound_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, table.refused, "a push past the bound is not refused")
 	testing.expect_value(t, table.record_count, draw_record.CLIP_DEPTH_LIMIT)
 	testing.expect_value(t, table.clip_pushes_not_written, 1)
+	// Under the push that is not written: no record and no byte of text.
 	draw_rectangle(&table, 0, 0, CLIP_CANVAS_WIDTH, CLIP_CANVAS_HEIGHT, CLIP_FILL)
+	draw_text(&table, 20, 20, "hidden", CLIP_FILL)
+	testing.expect_value(t, table.record_count, draw_record.CLIP_DEPTH_LIMIT)
+	testing.expect_value(t, table.text_count, 0)
 	draw_clip_pop(&table)
+	testing.expect_value(t, table.record_count, draw_record.CLIP_DEPTH_LIMIT)
+	testing.expect_value(t, table.clip_pushes_not_written, 0)
+	// After its pop, a record is written again, under the 16 clips.
+	draw_rectangle(&table, 0, 0, CLIP_CANVAS_WIDTH, CLIP_CANVAS_HEIGHT, AFTER_FILL)
 	testing.expect_value(t, table.record_count, draw_record.CLIP_DEPTH_LIMIT + 1)
 	for _ in 0 ..< draw_record.CLIP_DEPTH_LIMIT {
 		draw_clip_pop(&table)
@@ -145,16 +156,45 @@ draw_clip_push_past_the_bound_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, table.record_count, 2 * draw_record.CLIP_DEPTH_LIMIT + 1)
 	problem, _ := draw_record.clip_order_check(table.records[:table.record_count])
 	testing.expect_value(t, problem, draw_record.Clip_Order_Problem.None)
-	// The rectangle is cut by the 16 clips that the table holds.
+	// No pixel of the hidden rectangle; the rectangle after the pop is cut
+	// by the 16 clips that the table holds.
 	pixels: [CLIP_CANVAS_WIDTH * CLIP_CANVAS_HEIGHT]graphics.Color
 	clip_draw(&table, pixels[:])
 	last := draw_record.CLIP_DEPTH_LIMIT - 1
 	for y in 0 ..< CLIP_CANVAS_HEIGHT {
 		for x in 0 ..< CLIP_CANVAS_WIDTH {
+			pixel := pixels[y * CLIP_CANVAS_WIDTH + x]
 			inside := x >= last && x < CLIP_CANVAS_WIDTH - last && y >= last && y < CLIP_CANVAS_HEIGHT - last
-			testing.expectf(t, (pixels[y * CLIP_CANVAS_WIDTH + x] == CLIP_FILL) == inside, "the pixel (%d, %d) under 17 pushes", x, y)
+			testing.expectf(t, pixel != CLIP_FILL, "the pixel (%d, %d) of a rectangle under a push that is not written", x, y)
+			testing.expectf(t, (pixel == AFTER_FILL) == inside, "the pixel (%d, %d) after the pop of the 17th push", x, y)
 		}
 	}
+}
+
+// A push with no room is not written; the records under it are not
+// written, until its pop. A table of 3 places with 2 records: the push
+// does not fit with its pop, and the rectangle after it is not written.
+@(test)
+draw_clip_push_with_no_room_hides_its_records :: proc(t: ^testing.T) {
+	records: [3]Draw_Record
+	table := Draw_Table{records = records[:]}
+	draw_rectangle(&table, 0, 0, 4, 4, CLIP_FILL)
+	draw_rectangle(&table, 4, 0, 4, 4, CLIP_FILL)
+	testing.expect_value(t, table.record_count, 2)
+	testing.expect(t, !table.full && !table.refused)
+	kept := records
+	draw_clip_push(&table, 0, 0, 8, 8)
+	testing.expect(t, table.full, "a push with no room for its pop does not set full")
+	testing.expect_value(t, table.clip_pushes_not_written, 1)
+	draw_rectangle(&table, 0, 0, 30, 30, CLIP_FILL)
+	testing.expect(t, table.refused, "a record under a push that is not written does not set refused")
+	testing.expect_value(t, table.record_count, 2)
+	testing.expect(t, records == kept, "a record under a push that is not written changed the table")
+	draw_clip_pop(&table)
+	testing.expect_value(t, table.record_count, 2)
+	testing.expect_value(t, table.clip_pushes_not_written, 0)
+	problem, _ := draw_record.clip_order_check(table.records[:table.record_count])
+	testing.expect_value(t, problem, draw_record.Clip_Order_Problem.None)
 }
 
 // A table with no room: a push that does not fit with its pop sets full
