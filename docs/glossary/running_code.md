@@ -162,6 +162,48 @@ The steps are Firmware, Kernel_Module, Boot_Image, Memory_Map, Kernel, Processor
 
 Do not use: phase, progress.
 
+### Start policy
+
+The start policy is the one process that the root service starts to start the machine: it decides which processes start, in which order, and when the machine is usable.
+
+The root service keeps the mechanism: the checks of trust, the seed, the parts of the system that only it holds, and the start of one start policy with the start grant `Start_Policy`. That grant gives a root ring for `Start`, `Stop` and `Machine_Usable`, and the machine parts page, and nothing else. The default start policy is the module `start_policy`, which reads a start list in its order. A start policy that fails gives way to the rescue start policy.
+
+The design: `src/md/features/start_policy.md`.
+
+Do not use: init, init system, service manager, boot script, startup sequence.
+
+### Start list
+
+A start list is a resource of the boot image that the default start policy reads: a header, then start rows of a fixed size, in the order of the start.
+
+The list is data, signed and measured with the system as each module is. The tool writes it from its table, reads it back through the border of the contract `start_list`, and refuses at each build a list that the border refuses or that names no module of the image. It has no graph and no dependency: its order is the order of the start. Each boot image holds two lists: `start_list` and `rescue_list`.
+
+Do not use: unit file, target, runlevel, boot order (for this).
+
+### Start row
+
+A start row is one row of a start list: the name of a module, the parts of the machine that it needs, what an absent part does, the mark `Needed`, and the count of its restarts.
+
+An absent part gives no start with one line, or a start anyway. A row with the mark `Needed` must run, or be left out for an absent part, before the start policy sends `Machine_Usable`. The restarts count for the whole run of the machine, not for a period of time. The border of the contract refuses a word of a row that names no member.
+
+Do not use: unit, service entry, job.
+
+### Rescue start policy
+
+The rescue start policy is the module `start_policy` with the list `rescue_list` of the boot image: the start policy that the root service starts when the chosen one fails.
+
+The root service starts it when the chosen start policy is absent or does not start, stops before `Machine_Usable`, or sends none within the hang bound; it first stops each process that the failed policy asked for, and writes one line with the cause. The key R and the boot entry "modus (rescue)" ask for it at one start. One module serves both policies, so the code of the rescue runs at each start.
+
+Do not use: safe mode, recovery mode, single user mode.
+
+### Machine parts page
+
+The machine parts page is one page that the root service writes once, before the start policy starts, and maps read-only in it: which parts of the machine are present.
+
+Each part is a member of the closed enum `Machine_Part`: a screen with its size, the data disk, the disk of the measures, the network device, the sound device, the entropy device, the TPM and the PS/2 controller. A part that the root service did not check is absent, never present by default. A start row names the parts that it needs from the same enum.
+
+Do not use: hardware list, device tree, inventory.
+
 ### Card
 
 A card is the frame of one subject in a display: a title in its accent, a caption that names its record, and its content.

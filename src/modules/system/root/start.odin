@@ -104,6 +104,12 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	work.role = role_of(name)
 	grants := work.role.grants
+	// The start policy starts from start_policy_launch only: a second
+	// holder of its root ring would start and stop the processes of the
+	// machine.
+	if .Start_Policy in grants && !start_policy_starting {
+		return .Bad_Operation
+	}
 	// A role whose handles meet in one context slot does not start, before
 	// any service starts for it.
 	if slot, twice := system.role_slot_taken_twice(grants); twice {
@@ -319,6 +325,10 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 		start_grant_put(work, .Terminal_Text, {work.shared[1], {.Read, .Write}})
 		return .Ok
 	}
+	// The start policy has no window (root_ring.role_handles).
+	if .Start_Policy in work.role.grants {
+		return .Ok
+	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
 	work.slot.client = system.give(compositor, work.shared[0], {.Read, .Write}) or_return
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client)}})
@@ -420,7 +430,11 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	if .Inspect in grants {
 		disk_process_page_give(work.mappings[:], &work.mapping_count, &work.values)
 	}
-	if .Terminal not_in grants {
+	// The start policy draws no text: it reads the machine parts page and
+	// its list.
+	if .Start_Policy in grants {
+		start_policy_pages_give(work)
+	} else if .Terminal not_in grants {
 		text_settings_give(work.mappings[:], &work.mapping_count, &work.values)
 	}
 }

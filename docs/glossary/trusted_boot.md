@@ -255,3 +255,29 @@ The key floor is compared with the key number of the boot program; one version f
 The design: `src/md/features/rollback_floors.md`.
 
 Do not use: rollback counter, monotonic counter, anti-rollback index.
+
+### Start request
+
+The start request is the field of the boot record that says which start policy the root service starts at this start: `Chosen`, the zero value, or `Rescue`.
+
+The boot program writes it, with its source: the key R or the boot entry "modus (rescue)". The kernel copies both words into the boot record and reads neither. The root service reads them through one border, `boot_info.start_request_of_words`, which refuses a word that names no member and a pair that disagrees; a refused pair starts the rescue start policy, with its line. The request holds for one start: nothing changes on the disk.
+
+The design: `src/md/features/start_policy.md`, "The rescue key".
+
+Do not use: boot flag, boot mode, kernel command line.
+
+### Rescue key
+
+The rescue key is the key R, held while the machine starts: it asks for the rescue start policy at that start.
+
+The boot program reads the keys that the firmware holds, with no wait, at its start and again before the end of the firmware services; a held key repeats, so it waits in the buffer of the firmware at both reads. The firmware reads the keyboard, so a USB keyboard works before the system has a driver for it. The key gives no new authority: it reaches the rescue list, which is signed with the system.
+
+Do not use: magic key, recovery key (that term is a key of the TPM), hotkey.
+
+### Rescue boot entry
+
+The rescue boot entry is the boot option "modus (rescue)" of the firmware, whose load options ask for the rescue start policy.
+
+The boot program writes it at a start where it is absent, and puts its number at the end of `BootOrder`, with one line. Its load options are one record of 16 bytes: the tag `MODUSOPT`, the version 1, and the word of a start request. Load options with no tag are a normal start; a tagged record that is wrong stops the boot program, with its cause on the boot display. A machine with no keyboard, or a remote console, reaches the rescue through it.
+
+Do not use: recovery entry, rescue partition, boot flag.

@@ -50,15 +50,16 @@ demand_cache_create :: proc "contextless" () {
 // font_service_start starts the font service in a place of the table of
 // the processes, with the demand cache with Write and the font outlines
 // read-only. A failure writes one line; the demand cache then stays empty,
-// and each process draws its glyphs past the glyph caches itself.
-font_service_start :: proc "contextless" () {
+// and each process draws its glyphs past the glyph caches itself. A start
+// policy asks for it, and gets the status.
+font_service_start :: proc "contextless" () -> system.Status {
 	file := system.image_find(image, FONT_SERVICE_NAME)
 	if len(file) == 0 || demand_cache_memory == 0 {
-		return
+		return .Bad_Handle
 	}
 	if font_outlines_mapping.page_count == 0 {
 		system.log_in("processes", .Warning, "root: the boot image has no valid font outlines: the font service does not start")
-		return
+		return .Bad_State
 	}
 	slot: ^Started
 	for &item in started {
@@ -69,7 +70,7 @@ font_service_start :: proc "contextless" () {
 	}
 	if slot == nil {
 		system.log_in("processes", .Warning, "root: no place for the font service: each process draws its glyphs past the glyph caches itself")
-		return
+		return .No_Slot
 	}
 	slot^ = {}
 	role := role_of(FONT_SERVICE_NAME)
@@ -82,14 +83,14 @@ font_service_start :: proc "contextless" () {
 	mappings[0].flags = {}
 	system.range_mapped_put(&values, .Font_Outlines)
 	if context_refused(FONT_SERVICE_NAME, &context_grants, &values) {
-		return
+		return .Bad_State
 	}
 	status: system.Status
 	slot.process, status = system.process_start(file, FONT_SERVICE_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, FONT_SERVICE_NAME), mappings[:], &prepared)
 	if status != .Ok {
 		system.log_in("processes", .Warning, "root: cannot start the font service: status ", status, ": each process draws its glyphs past the glyph caches itself")
 		slot^ = {}
-		return
+		return status
 	}
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == FONT_SERVICE_NAME {
@@ -100,6 +101,7 @@ font_service_start :: proc "contextless" () {
 	copy(slot.name[:len(slot.name) - 1], FONT_SERVICE_NAME)
 	font_service = slot
 	started_log(FONT_SERVICE_NAME, principals.MACHINE, "")
+	return .Ok
 }
 
 // demand_cache_give adds the demand cache, read-only, to the mappings of a

@@ -88,6 +88,11 @@ Step_Kind :: enum {
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
+	// Press the key text, its QEMU name, again and again until the log has
+	// `expected` after the last Wait, with the bound of the first wait: a
+	// key that the firmware holds while the machine starts, which no
+	// process confirms (src/md/features/start_policy.md, "The rescue key").
+	Key_Until,
 	Click, // Press the left button at (x, y).
 	Launch, // Open the start menu, and press the line of the process text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
@@ -286,7 +291,7 @@ number_after :: proc(text: string, after: string) -> (value: i64, found: bool) {
 	return strconv.parse_i64(rest[:end])
 }
 
-// A start that fails: the boot image has no compositor. The boot display
+// A start that fails: the boot image has no start policy. The boot display
 // stays on the screen with the failure, and the machine does not stop.
 // Before it, the trusted boot of a machine with no TPM: the boot program
 // verifies the system description and says that nothing verified it, and
@@ -302,7 +307,10 @@ scenario_fails := [?]Step {
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
 	{kind = .Wait, text = "root: the system description is not measured into the TPM"},
-	{kind = .Wait, text = "root: cannot start the compositor: status "},
+	// The image has no start policy: the rescue is the same module, so the
+	// machine has no start policy at all, and the boot display says it.
+	{kind = .Wait, text = "root: the start policy is absent from the boot image: the rescue start policy starts"},
+	{kind = .Wait, text = "root: no start policy at all: the rescue start policy is absent from the boot image"},
 	{kind = .Wait, text = "root: the boot display shows the failure"},
 	{kind = .Shot, text = "boot_fails"},
 	{kind = .Quit},
@@ -4103,6 +4111,10 @@ Machine_Options :: struct {
 	// machine of the operation sequences (operation_sequences.odin). "": none.
 	memory_file:    string,
 	without_pit:    bool, // No 8254: `-machine q35,pit=off` (src/md/features/missing_hardware.md).
+	// The variable store of the firmware that the machines of a part share,
+	// so a boot entry that one machine writes is there at the next start
+	// (start_policy_scenario.odin). "": a new copy for this machine.
+	firmware_variables: string,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4159,7 +4171,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_pit)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_pit, options.firmware_variables)
 		if !ok {
 			return false
 		}
@@ -4535,6 +4547,25 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			if !keys_send(machine, []string{step.text}, fmt.tprintf("the key %s", step.text)) {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not take the key %s", index + 1, step.text)
+				return false
+			}
+		case .Key_Until:
+			// A held key repeats in the buffer of the firmware: the presses
+			// end when the boot program says that it read the key.
+			pressed := false
+			for start := time.now(); time.since(start) < BOOT_HANG_BOUND; {
+				log := log_read(machine)
+				if len(log) > machine.seen && strings.contains(log[machine.seen:], step.expected) {
+					pressed = true
+					break
+				}
+				if !machine_command_send(machine, qmp_key_events_command([]string{step.text})) {
+					break
+				}
+				time.sleep(CONDITION_POLL_PERIOD)
+			}
+			if !pressed {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v of presses of the key %s", index + 1, step.expected, BOOT_HANG_BOUND, step.text)
 				return false
 			}
 		case .Point:

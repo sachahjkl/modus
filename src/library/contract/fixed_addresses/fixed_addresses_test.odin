@@ -38,6 +38,7 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		.Demand_Cache                 = DEMAND_CACHE_ADDRESS,
 		.Font_Outlines                = FONT_OUTLINES_ADDRESS,
 		.Fresh_Bytes_Page             = FRESH_BYTES_PAGE_ADDRESS,
+		.Start_Policy_Pages           = START_POLICY_PAGES_ADDRESS,
 	}
 	for address, name in named {
 		if name == .Interface_Glyph_Cache || name == .Interface_Glyph_Cache_Bold {

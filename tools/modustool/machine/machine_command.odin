@@ -131,7 +131,7 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // each run (src/md/infrastructure/kernel_fuzzing.md, "The machine").
 // without_pit leaves the 8254 out of the machine (`pit=off`): the start of
 // the kernel with no time base (src/md/features/missing_hardware.md).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_pit := false) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_pit := false, shared_variables := "") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -166,13 +166,20 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.eprintfln("modustool: %s and %s are not set. Use the development shell: nix develop", code_variable, variables_variable)
 		return nil, false
 	}
-	// The firmware writes its variables, so it gets a private copy.
-	if err := os.copy_file(variables_copy, firmware_variables); err != nil {
-		fmt.eprintfln("modustool: cannot copy %s: %v", firmware_variables, err)
-		return nil, false
+	// The firmware writes its variables, so it gets a private copy. The
+	// machines of a part that share a store copy it once: the first one
+	// writes there what the next one reads.
+	if shared_variables != "" {
+		variables_copy = shared_variables
 	}
-	if !foundation.run({"chmod", "u+w", variables_copy}) {
-		return nil, false
+	if shared_variables == "" || !os.exists(shared_variables) {
+		if err := os.copy_file(variables_copy, firmware_variables); err != nil {
+			fmt.eprintfln("modustool: cannot copy %s: %v", firmware_variables, err)
+			return nil, false
+		}
+		if !foundation.run({"chmod", "u+w", variables_copy}) {
+			return nil, false
+		}
 	}
 	listener_port := forward.listener != nil ? forward.listener.port : 0
 	// With the peer, QEMU uses a copy of the socket of the peer for the

@@ -58,6 +58,12 @@ process_roles_problems :: proc(rows: []foundation.Role_Row, system_parts: []stri
 				append(&problems, fmt.tprintf("%s, line %d: the row %s names the grant %s, which is no start grant", file, row.line, row.name, grant))
 			}
 		}
+		// The start grant of the start policy is a root ring that starts and
+		// stops each process of the boot image: one row holds it, and alone.
+		has_start_policy := slice.contains(row.grants, start_grant.GRANT_NAMES[.Start_Policy])
+		if has_start_policy != (row.name == foundation.START_POLICY_MODULE) || has_start_policy && len(row.grants) != 1 {
+			append(&problems, fmt.tprintf("%s, line %d: the row %s has the grants %v: the grant Start_Policy is for the row %s, alone", file, row.line, row.name, row.grants, foundation.START_POLICY_MODULE))
+		}
 		system_part := slice.contains(system_parts, row.name)
 		has_system_part := slice.contains(row.grants, start_grant.GRANT_NAMES[.System_Part])
 		switch {

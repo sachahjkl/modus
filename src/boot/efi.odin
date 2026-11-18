@@ -41,7 +41,7 @@ Efi_Runtime_Services :: struct {
 	convert_pointer:               rawptr,
 	get_variable:                  proc "win64" (name: [^]u16, vendor: ^Efi_Guid, attributes: ^u32, data_size: ^uint, data: rawptr) -> Efi_Status,
 	get_next_variable_name:        rawptr,
-	set_variable:                  rawptr,
+	set_variable:                  proc "win64" (name: [^]u16, vendor: ^Efi_Guid, attributes: u32, data_size: uint, data: rawptr) -> Efi_Status,
 	get_next_high_monotonic_count: rawptr,
 	reset_system:                  proc "win64" (type: Efi_Reset_Type, status: Efi_Status, data_size: uint, data: rawptr),
 }
@@ -215,11 +215,47 @@ EFI_SIMPLE_FILE_SYSTEM_GUID :: Efi_Guid{0x964E5B22, 0x6459, 0x11D2, {0x8E, 0x39,
 EFI_FILE_MODE_READ :: 1
 
 Efi_Loaded_Image :: struct {
-	revision:      u32,
-	parent_handle: rawptr,
-	system_table:  rawptr,
-	device_handle: rawptr,
+	revision:          u32,
+	parent_handle:     rawptr,
+	system_table:      rawptr,
+	device_handle:     rawptr,
+	file_path:         ^Efi_Device_Path_Node, // The path of the file of this program on its device.
+	reserved:          rawptr,
+	load_options_size: u32,
+	load_options:      rawptr, // The optional data of the boot option that started this program.
 }
+
+// One node of a device path: a type, a subtype and the bytes of the node,
+// the 4 of the header included. The last node has the type End.
+Efi_Device_Path_Node :: struct {
+	type:    u8,
+	subtype: u8,
+	length:  [2]u8, // Little-endian.
+}
+EFI_DEVICE_PATH_GUID :: Efi_Guid{0x09576E91, 0x6D3F, 0x11D2, {0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B}}
+DEVICE_PATH_END_TYPE :: 0x7F
+DEVICE_PATH_END_ENTIRE_SUBTYPE :: 0xFF
+
+// The keys of the console of the firmware (EFI_SIMPLE_TEXT_INPUT_PROTOCOL).
+Efi_Input_Key :: struct {
+	scan_code:    u16,
+	unicode_char: u16,
+}
+Efi_Simple_Text_Input :: struct {
+	reset:           rawptr,
+	read_key_stroke: proc "win64" (this: ^Efi_Simple_Text_Input, key: ^Efi_Input_Key) -> Efi_Status,
+	wait_for_key:    rawptr,
+}
+
+// The attributes of a boot variable: kept across a power off, and read by
+// the firmware before and after the end of its services.
+EFI_VARIABLE_NON_VOLATILE :: 0x1
+EFI_VARIABLE_BOOTSERVICE_ACCESS :: 0x2
+EFI_VARIABLE_RUNTIME_ACCESS :: 0x4
+// A boot option that the boot menu lists and starts.
+LOAD_OPTION_ACTIVE :: 0x1
+// The statuses of GetVariable that are not a fault: no such variable.
+EFI_NOT_FOUND :: Efi_Status(1 << 63 | 14)
 
 Efi_Simple_File_System :: struct {
 	revision:    u64,

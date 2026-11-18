@@ -160,6 +160,9 @@ module_builds := [?]Module_Build {
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
 	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", entry = true, image = true},
 	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", entry = true, image = true},
+	// The default start policy and the rescue start policy: one module that
+	// reads the list that the root service maps (src/md/features/start_policy.md).
+	{name = START_POLICY_MODULE, source = SYSTEM_MODULE_SOURCES + START_POLICY_MODULE, entry = true, image = true},
 	// The module of the operation sequences and its runner: only the boot
 	// image of the operation sequences holds them, and the root service
 	// starts nothing else there.
@@ -219,6 +222,10 @@ SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/system"
 BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.image"
 
 OPERATION_FUZZING_MODULE :: "operation_fuzzing"
+
+// The module of the start policy, which the boot image of a start that
+// fails leaves out, and whose source the tool checks (start_lists.odin).
+START_POLICY_MODULE :: "start_policy"
 
 OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 

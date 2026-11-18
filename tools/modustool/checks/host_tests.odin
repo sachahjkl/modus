@@ -209,6 +209,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
 	foundation.SOURCE_FOLDER_CONTRACT + "/remote",
 	foundation.SOURCE_FOLDER_CONTRACT + "/root_ring",
+	foundation.SOURCE_FOLDER_CONTRACT + "/start_list",
+	foundation.SOURCE_FOLDER_CONTRACT + "/boot_info",
 	foundation.SOURCE_FOLDER_CONTRACT + "/enum_word",
 	foundation.SOURCE_FOLDER_SUPPORT + "/sentence",
 	foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",

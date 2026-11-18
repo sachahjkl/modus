@@ -63,6 +63,7 @@ Grant :: enum i64 {
 	Counters           = 28, // The machine, with the right Counters: count the events of the processor for the code of its own threads (docs/ARCHITECTURE.md, "The counters of a thread").
 	Remote_Clients     = 29, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the process that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
 	Sound_Device       = 30, // The sound service of the sound device and its stream ring (modus:contract/timed_stream): the one process that plays sound (docs/SOUND.md).
+	Start_Policy       = 31, // A root ring for Start, Stop and Machine_Usable, and the machine parts page, read-only: the one process that starts the machine (src/md/features/start_policy.md). It has no window and nothing else.
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -100,6 +101,7 @@ GRANT_NAMES := [Grant]string {
 	.Counters           = "Counters",
 	.Remote_Clients     = "Remote_Clients",
 	.Sound_Device       = "Sound_Device",
+	.Start_Policy       = "Start_Policy",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

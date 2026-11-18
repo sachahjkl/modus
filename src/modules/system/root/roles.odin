@@ -186,6 +186,12 @@ process_roles := [?]Process_Role_Row {
 	{name = "settings", grants = {.Settings, .Serve, .Store}},
 	// It reads the real-time clock, writes the date page, and serves now().
 	{name = "date", grants = {.Clock, .Serve}},
+	// The start policy: its root ring starts and stops the processes of
+	// its list and says when the machine is usable, and it reads the
+	// machine parts page. It holds nothing else, so a fault in it reaches
+	// only the processes that it asked for (src/md/features/start_policy.md).
+	// This service starts it, and refuses a Start of its name.
+	{name = "start_policy", grants = {.Start_Policy}},
 	// It reads the documentation of each module of the boot image, and the
 	// module records of each process.
 	{name = "manual", grants = {.Serve, .Image, .Replacements, .Inspect}},
@@ -298,16 +304,17 @@ process_roles := [?]Process_Role_Row {
 	// The demand cache with Write and the font outlines
 	// (font_service_start).
 	{name = "glyphs", grants = {.System_Part}},
-	// On the machine of the test of a shortage of frames, shortage_start
-	// gives it the machine with Inspect and Stop; a command Start gives it
-	// no grant.
+	// On the machine of the test of a shortage of frames, its start list
+	// asks for it, and shortage_start gives it the machine with Inspect and
+	// Stop; a command Start of another sender gives it no grant.
 	{name = "shortage"},
-	// On the machine of the operation sequences, operation_fuzzing_start
-	// gives it the machine with the right Physical only, for the physical
-	// address of its mailbox, the boot image for the module of its runner,
-	// and the log, which it gives to each runner; a command Start gives it
-	// no grant. Only the boot image of the operation sequences holds it,
-	// and a release refuses an image that holds it.
+	// On the machine of the operation sequences, its start list asks for
+	// it, and operation_fuzzing_start gives it the machine with the right
+	// Physical only, for the physical address of its mailbox, the boot
+	// image for the module of its runner, and the log, which it gives to
+	// each runner; a command Start of another sender gives it no grant.
+	// Only the boot image of the operation sequences holds it, and a
+	// release refuses an image that holds it.
 	{name = "operation_fuzzing", terms = {log_gives = true}},
 	// A runner of operation_fuzzing: its starter gives it its handles.
 	{name = "operation_sequence_runner"},

@@ -26,6 +26,8 @@ The root service does these steps, in this order, at each start. Each step eithe
 5. The start of one start policy: the start policy of the choice of principal 0, or the default start policy.
 6. The loop of the root ring, for ever.
 
+The first layer builds steps 1 to 3, 5 and 6. Step 3 starts the entropy service and the TPM service too, and writes the machine parts page. Step 4 comes with the choice of a start policy from the disk, which is the one reader of that choice: until then `unlock` stays a row of the start list, as today.
+
 The root service imposes no order, no dependency graph, no unit format and no configuration language. It still keeps three rules, because they are part of the grant mechanism and not a policy:
 
 - **A dependency that a context needs.** A process whose role holds `Store` needs a running storage service, because its context holds a connection to that service. The root service starts the storage service first, as it does today (`start_prepare`). The same holds for the network service, for the device service of a disk, of the network device or of the sound device, and for the input service, whose ring is in the context of the compositor. These dependencies come from the role table (`process_roles`), which is data. An order that no context needs is a policy.
@@ -37,7 +39,7 @@ The root service imposes no order, no dependency graph, no unit format and no co
 The start policy is an ordinary module. The root service starts it with the start grant `Start_Policy`, and with nothing else. That grant gives two faces:
 
 - **The root ring, with the commands `Start`, `Stop` and `Machine_Usable`.** A `Start` from a start policy can name a part of the system, which the root ring refuses with `Reserved` for each other sender. The root service starts the process with the grants of its role, never more. The completion carries a handle of the process with the right Read only, so that the stop of that process ends a wait of the start policy. The start policy sees the processes that it asked for, and no other (property 20, line 1).
-- **The machine parts page,** one page that the root service writes and the start policy maps with the right Read. It says which parts of the machine are present: a screen with its size, the data disk, the scratch disk, the network device, the sound device, the entropy device, the TPM, the PS/2 controller. Each part is a member of one closed enum, `Machine_Part`. The page is written once, before the start policy starts. A part that the root service has not checked is absent, never present by default.
+- **The machine parts page,** one page that the root service writes and the start policy maps with the right Read. It says which parts of the machine are present: a screen with its size, the data disk, the scratch disk, the network device, the sound device, the entropy device, the TPM, the PS/2 controller. Each part is a member of one closed enum, `Machine_Part`. The page is written once, before the start policy starts. A part that the root service has not checked is absent, never present by default. The checks: the framebuffer of the context for the screen; the identity of the virtio device at its place of the bus for each disk and device; the measure of the boot program for the TPM, as the TPM service starts only then; and for the PS/2 controller its status port, which reads with each bit set when no device answers. The page and the list share one fixed range, `Start_Policy_Pages`: the page first, the list after it, so a start policy gets one range and one value, the size of the list.
 
 The start policy holds no store, no network, no surface and no right of the machine. A fault in it can stop and start the processes that its root ring names, and nothing more.
 
@@ -52,7 +54,9 @@ A start row holds:
 - what happens when a needed part is absent: no start, with one line, or a start anyway;
 - whether the machine is usable without it (the mark `needed`);
 - the count of the restarts after a stop, 0 by default, for the whole run of the machine;
-- for the compositor, the size of a screen of memory when the machine has no screen ([remote_display.md](remote_display.md), "The screen of memory").
+- for the compositor, the size of a screen of memory when the machine has no screen ([remote_display.md](remote_display.md), "The screen of memory"). This field comes with the screen of memory, in a new version of the format: the version 1 has no such field, because no code would read it, and the border of version 1 refuses a list of another version.
+
+Each field is a word, and the border of the contract `start_list` reads each one: a name of 1 to 31 bytes of `a`-`z`, `0`-`9` and `_`, the needs as a word of `Machine_Part` bits, the rule of an absent part (`Not_Started`, `Started_Anyway`), the mark (`Not_Needed`, `Needed`), a reserved word of 0, and at most 16 restarts. Two rows of one module are refused: one start of each name.
 
 The default start policy starts each row in its order, and waits for the completion of each `Start` before the next one. It writes one line for each row that it does not start, with its cause. When each row with the mark `needed` runs, or is not started because its part is absent, it sends `Machine_Usable`. Then it stays, and starts a row again at its stop, within the count of its restarts.
 
@@ -66,7 +70,7 @@ The default list keeps the behaviour of today, with one change: the console.
 |---|---|---|---|---|
 | `input` | the PS/2 controller | no start, one line | no | started by the root service |
 | `compositor` | a screen | a screen of memory, when the row gives a size; else no start, one line | no | started by the root service |
-| `font_service` | | | no | started by the root service; it ends after it draws the demand cache |
+| `glyphs` | | | no | the font service, started by the root service; it ends after it draws the demand cache |
 | `date` | | | no | a failure writes "root: cannot start date: the system has no date" |
 | `console` | a screen | no start, one line | yes | a failure stops the machine (`fail`) |
 | `settings` | | | no | the pass of the kept settings |
@@ -76,7 +80,7 @@ The entropy service and the TPM service leave the list: the seed and the choice 
 
 The console. A failure of its start no longer stops the machine. The default start policy writes the line of the failure and stops with its code before `Machine_Usable`. The root service then starts the rescue start policy, below. If the rescue start policy fails too, the machine has no start policy: the root service shows the cause on the boot display, as `fail` does today, and runs its loop.
 
-The test machines. The machine of the shortage of frames and the machine of the operation sequences pick their start today from the files of their boot images (`shortage` with no `input`, and `operation_fuzzing`). Each one gets its own start list in its own boot image: a list of one row. The two checks of the files leave the root service.
+The test machines. The machine of the shortage of frames and the machine of the operation sequences picked their start from the files of their boot images (`shortage` with no `input`, and `operation_fuzzing`). Each one gets its own start list in its own boot image: a list of one row, which its rescue list repeats, as the image of the shortage has no `input` for the default rescue list. The two checks of the files left the root service: `shortage` and `operation_fuzzing` keep their own start procedures in the root service, which a `Start` from the start policy runs, as for a part of the system. The image of a start that fails (`fails`) holds no module `start_policy`, so the rescue is absent too, and the boot display shows the cause.
 
 ### The rescue start policy
 
@@ -88,13 +92,13 @@ The rescue start policy is the same module `start_policy`, with the resource `re
 
 That is the whole condition. The root service does not judge what the start policy started: the start policy says itself when the machine is usable. Before it starts the rescue start policy, the root service stops each process that the failed start policy asked for, so the rescue start policy starts on a known state. It writes one line that names the cause, in the form of [missing_hardware.md](missing_hardware.md): `root: the start policy 3f9a… stopped before the machine was usable, with the code 2: the rescue start policy starts`.
 
-The rescue list is short: `input`, `compositor`, `console` and `remote`. A principal reaches the machine through the console when the machine has a screen, and through `remote` when it has a network device and a client key that principal 0 allowed. The keys come from the disk grant table that step 4 read, so a faulty start policy cannot remove them. The rescue list is data, so a publisher of the system can change it, but it is signed with the system and no principal changes it on the disk.
+The rescue list is short: `input`, `compositor`, `console` and `remote`. A principal reaches the machine through the console when the machine has a screen, and through `remote` when it has a network device and a client key that principal 0 allowed. The console has the mark `Needed`; `remote` has not, so a refused start of `remote` on a machine with a screen does not end the rescue. The keys come from the disk grant table that step 4 read, so a faulty start policy cannot remove them. The rescue list is data, so a publisher of the system can change it, but it is signed with the system and no principal changes it on the disk.
 
 One module serves the two policies. A code path that runs almost never rots, and its faults show only on the day that it is needed. With one module, the code of the rescue runs at every start and in every machine test. The cost is a failure that both share: a fault of the reader of the list stops the default start policy and the rescue. The last net is then the boot display of the root service ("No start policy at all", below). The case that the rescue protects most is a start policy from the disk, which never shares the code of the rescue.
 
 One module holds only under three conditions:
 
-1. **The module reads a list in its order and asks for the starts, and nothing more.** It has no graph and no logic of its own. The tool refuses its source past 400 lines, tests not counted, and refuses an import other than `base:`, `modus:contract/start_list`, `modus:contract/root_ring` and `modus:support/system`.
+1. **The module reads a list in its order and asks for the starts, and nothing more.** It has no graph and no logic of its own. The tool refuses its source past 400 lines, tests not counted, and refuses an import other than `base:`, `modus:contract/start_list`, `modus:contract/root_ring`, `modus:contract/ring` and `modus:support/system`. The contract `ring` is in the set because a command of the root ring is a `ring.Record` on a `ring.Ring`: it holds the records of a ring and no logic.
 2. **Two machine cases prove the rescue.** One asks for the rescue at the start, with the key R or with the rescue boot entry, and checks that the rescue start policy makes the machine usable. One starts a start list whose row of the console names a module that does not exist, and checks that the rescue takes over, with its line.
 3. **The tool refuses a start list or a rescue list that is not valid, at each build of the image:** a row that names no module of the image, a need that names no member of `Machine_Part`, and a rescue list with no row that makes the machine usable (no row with the mark `needed`).
 
@@ -128,7 +132,7 @@ A chosen start policy can work and start nothing that a principal at the machine
 
 - **The key.** The key R, held while the machine starts. It is a letter, so it meets none of the keys of the firmware (Escape, F2 and F12 on the test machine).
 - **The read.** The boot program reads the keys that the firmware holds, with `ReadKeyStroke` of the Simple Text Input protocol, at its start and again before `ExitBootServices`. Each read takes the keys that wait and does not wait for one: a held key repeats, so it waits in the buffer of the firmware at both reads. The firmware reads the keyboard, so a USB keyboard works before the system has a USB device service. The start gets no delay.
-- **The field.** The boot program writes a member of the enum `Start_Request` in the boot record: `Chosen`, the zero value, or `Rescue`. The root service reads it with the boot record at its start (`Inspect` of the kind `Boot`), through the border that refuses a word that names no member.
+- **The field.** The boot program writes a member of the enum `Start_Request` in the boot record: `Chosen`, the zero value, or `Rescue`. Beside it, it writes the member of `Start_Request_Source` that asked: `None`, `Key` or `Boot_Entry`, so that the line of the root service names the cause. The request alone cannot carry it, as the key R and the boot entry give the same `Rescue`. The kernel copies both words into its boot report and reads neither. The root service reads them with the boot record at its start (`Inspect` of the kind `Boot`), through one border, `boot_info.start_request_of_words`, that refuses a word that names no member and a pair that disagrees (`Rescue` with no source, `Chosen` with one). A refused pair starts the rescue start policy, with its line: a record that the root service cannot read never chooses a start policy that no principal chose. When both ask, the boot entry is the source: it asked first.
 - **The effect.** With `Rescue`, the root service starts the rescue start policy in place of the chosen one, and measures it. It still reads the disk grant table, so the client keys of `remote` hold. The choice stays on the disk for the next start.
 - **The line.** `root: the key R was held at the start: the rescue start policy starts in place of the start policy 3f9a…`, or the same line with "the boot entry modus (rescue) started the machine".
 - **Why it gives no new authority.** The key reaches the rescue list, which is signed with the system, and starts only modules of the boot image with their roles. A person at the machine already reaches the console of principal 0 through the default start policy, whose list holds more than the rescue list. The choice of a start policy from the disk is only possible where the machine key opens with no passphrase, so on such a machine no passphrase guards principal 0 at the console either. A start policy is never a lock against a person at the machine. The machine passphrase is that lock, and a machine with one cannot choose a start policy from the disk.
@@ -178,9 +182,15 @@ A machine can have no keyboard at its side: a server reached through a serial co
 - **`unlock` with no window.** Today `unlock` always opens a window. Step 4 needs a form with no surface, which unseals the machine key and stops. The window of a passphrase stays a row of the start list.
 - **The role of a disk process.** A disk process has the grant `Store` at most today ([../api/root_ring.md](../api/root_ring.md)). The row of a chosen start policy is the one exception: it has `Start_Policy` and nothing else, and the root service gives it to no other row of the table.
 
+- **A row that stops before the reap.** The start policy sees the stop of its process by its own handle, before the root service reaps it, so a restart can come while the stopped process still holds its place. The root service reads a name that runs as a process of that name whose state is not `Stopped`, and the new start takes another place.
+- **A stop asked by the root service.** The stops of the processes of a failed start policy, and of the start policy itself, are asked by the root service: they write no line of a failure, and the rescue starts when none of them is left in the table of the processes.
+- **The compositor started again.** A rescue that follows a failed policy starts the compositor again. Each compositor gets a new control ring: the ring of an earlier one can hold records that name handles of that compositor only. The input ring stays, for the whole run.
+
 ## State
 
-Designed, not built. Left:
+Built, the first layer: the start grant `Start_Policy` with the commands `Start`, `Stop` and `Machine_Usable`, the machine parts page, the contract `start_list`, the module `start_policy` with the lists `start_list` and `rescue_list` of each boot image and the one-row lists of the two test machines, the rescue key and the rescue boot entry with the fields `Start_Request` and `Start_Request_Source` of the boot record, the checks of the tool (the lists at each build of an image, the source of the start policy before the first image), and the machine cases of the part `start_policy`: the key R, the console that names no module, the boot entry written by the boot program, `BootNext` to it, and the entry with a word that names no request.
 
-- the start grant `Start_Policy`, the commands `Machine_Usable` and `Start` of a part of the system, the machine parts page, the module `start_policy` with `start_list`, `rescue_list` and the lists of the two test machines, the rescue key and the rescue boot entry with the field `Start_Request` of the boot record, the three checks of the tool and the two machine cases of the rescue;
-- the choice of a start policy from the disk by principal 0, with the measure of each start policy into PCR 12 and the command `Measure_Start_Policy` of the TPM service.
+Left:
+
+- step 4 of the root service, the choice of a start policy from the disk by principal 0, with the measure of each start policy into PCR 12 and the command `Measure_Start_Policy` of the TPM service, and the bound of the restarts of a name in the root service for a start policy from the disk;
+- the size of a screen of memory in a start row, with the screen of memory.

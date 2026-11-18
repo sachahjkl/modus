@@ -38,8 +38,22 @@ import "modus:contract/start_grant"
 // ```
 Root_Command :: enum u32 {
 	None       = 0, // Refused with `Unsupported`, as a word that names no command (command_of_word).
-	Start      = 1, // Start the module of the boot image with this name. A module of the system (root, input, compositor, terminal, block, frame) is refused with `Reserved`; a name with no module with `Absent`.
-	Stop       = 2, // Stop the process with this name. The compositor and the terminal are refused with `Reserved`; a name that runs no process with `Absent`.
+	// Start the module of the boot image with this name. A module of the
+	// system (root, input, compositor, terminal, block, frame) is refused
+	// with `Reserved`; a name with no module with `Absent`.
+	//
+	// From the start policy (the start grant Start_Policy): a part of the
+	// system that the root service starts in its own way (input,
+	// compositor, glyphs) is allowed, a name that runs already is refused
+	// with `Exists` (unit `Processes`), and values[0] of the completion is a
+	// handle of the process with the right Read, whose stop ends a wait of
+	// the start policy.
+	Start      = 1,
+	// Stop the process with this name. The compositor and the terminal are
+	// refused with `Reserved`; a name that runs no process with `Absent`.
+	// From the start policy: only a process that it asked for, else
+	// `Absent`.
+	Stop       = 2,
 	// Connect makes a connection to a service that runs. The completion has
 	// three handles of the caller: values[0] the process (right Read: its
 	// state), values[1] the call ring, values[2] the call region. values[3..7]
@@ -329,6 +343,13 @@ Root_Command :: enum u32 {
 	// grant table. The allow of a key that the principal allowed already
 	// changes nothing.
 	Remote_Client = 26,
+	// Machine_Usable comes from the start policy that runs only: the
+	// machine is usable, as its own policy says (src/md/features/start_policy.md).
+	// The root service then no longer starts the rescue start policy for a
+	// stop or for the hang bound. Its name is not read. A second one, or
+	// one from a start policy that the root service no longer waits for,
+	// is refused with `Exists` (unit `Processes`).
+	Machine_Usable = 27,
 }
 
 // The enumerations below are words of the root ring: each value is the
@@ -427,6 +448,11 @@ Root_Command_Sender :: enum u8 {
 	// its own connections, and the root service applies the rule of the
 	// debug access to that caller.
 	Debugger,
+	// A process with the start grant Root_Ring, or the start policy with
+	// Start_Policy: the root service restricts what the start policy names.
+	Root_Ring_Or_Start_Policy,
+	// The process with the start grant Start_Policy only.
+	Start_Policy,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -434,8 +460,8 @@ Root_Command_Sender :: enum u8 {
 @(rodata)
 ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.None                   = .Nobody,
-	.Start                  = .Root_Ring,
-	.Stop                   = .Root_Ring,
+	.Start                  = .Root_Ring_Or_Start_Policy,
+	.Stop                   = .Root_Ring_Or_Start_Policy,
 	.Connect                = .Root_Ring_Or_Connect,
 	.Disconnect             = .Each_Ring,
 	.Grants                 = .Root_Ring,
@@ -460,12 +486,13 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Principal_Change       = .Root_Ring,
 	.Principal_Change_End   = .Principals,
 	.Remote_Client          = .Root_Ring,
+	.Machine_Usable         = .Start_Policy,
 }
 
 // The start grants that give a process a root ring. A process with none of
 // them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
-ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger}
+ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy}
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
@@ -508,9 +535,11 @@ Role_Handle :: enum u8 {
 // role_handles gives the handles that a start gives a role.
 role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handles: bit_set[Role_Handle]) {
 	handles += {.Log}
+	// The start policy has no window: it starts before the compositor, and
+	// it shows nothing.
 	if .Terminal in role {
 		handles += {.Terminal_Ring, .Terminal_Text}
-	} else {
+	} else if .Start_Policy not_in role {
 		handles += {.Display}
 	}
 	if root_ring_given(role) {
@@ -579,6 +608,10 @@ sender_allowed :: proc "contextless" (command: Root_Command, role: bit_set[start
 		return .Principals in role
 	case .Debugger:
 		return .Debugger in role
+	case .Root_Ring_Or_Start_Policy:
+		return .Root_Ring in role || .Start_Policy in role
+	case .Start_Policy:
+		return .Start_Policy in role
 	}
 	return false
 }
@@ -626,6 +659,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Principal_Change       = .Command,
 	.Principal_Change_End   = .Command,
 	.Remote_Client          = .Command,
+	.Machine_Usable         = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -796,6 +830,7 @@ root_command_names := [Root_Command]string {
 	.Principal_Change       = "Principal_Change",
 	.Principal_Change_End   = "Principal_Change_End",
 	.Remote_Client          = "Remote_Client",
+	.Machine_Usable         = "Machine_Usable",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -829,6 +864,7 @@ root_first_argument_names := [Root_Command]string {
 	.Principal_Change       = "name",
 	.Principal_Change_End   = "name",
 	.Remote_Client          = "key",
+	.Machine_Usable         = "name",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -863,6 +899,7 @@ root_second_argument_names := [Root_Command]string {
 	.Principal_Change       = "change",
 	.Principal_Change_End   = "",
 	.Remote_Client          = "action",
+	.Machine_Usable         = "",
 }
 
 // command_of_record reads the command that an error record names: the
