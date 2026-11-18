@@ -251,10 +251,10 @@ The table `Budget` holds one record at index 1, `module.Budget_Request` (24 byte
 
 ```byte-layout module.Budget_Request
 module.Budget_Request, 24 bytes: the record 1 of the table Budget
-offset  size  field     type
-     0     8  pages     u64
+offset  size  field      type
+     0     8  pages      u64
      8     8  processes  u64
-    16     8  threads   u64
+    16     8  threads    u64
 ```
 
 - **No table.** A module with no table `Budget` asks for the least budget of its starter.

@@ -39,7 +39,7 @@
 // processor (`src/kernel/extended_state.odin`) and the
 // [stop report](term:stop-report) (`src/kernel/diagnose.odin`).
 //
-// **How it starts.** The [boot program](term:boot-process) loads the kernel
+// **How it starts.** The [boot program](term:boot-program) loads the kernel
 // and the [boot image](term:boot-image), builds the first page tables and
 // jumps to the export `entry` with the [boot record](term:boot-record). The
 // kernel then builds the [root service](term:root-service), the first

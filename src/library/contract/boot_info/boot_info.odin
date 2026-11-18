@@ -20,7 +20,7 @@
 // - `Image_Header`, `Image_Entry`, `image_tables`, `image_entry_bytes`: the
 //   boot image.
 //
-// See [boot program](term:boot-process), [boot record](term:boot-record)
+// See [boot program](term:boot-program), [boot record](term:boot-record)
 // and [boot image](term:boot-image).
 package boot_info
 

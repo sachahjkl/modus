@@ -254,7 +254,7 @@ object_make :: proc(t: ^testing.T) -> []u8 {
 	procedures[0] = {start = 0x1000, size = 0x40, name_offset = name_put(names, "test::one"), name_count = 9, package_count = 4}
 	procedures[1] = {start = 0x1100, size = 0x20, name_offset = name_put(names, "test::two"), name_count = 9, package_count = 4}
 	files := make([]debug_object.File, 2, context.temp_allocator)
-	files[1] = {path_offset = name_put(names, "processes/test/main.odin"), path_count = 23, content_hash = {0 = 1}}
+	files[1] = {path_offset = name_put(names, "processes/test/main.odin"), path_count = len("processes/test/main.odin"), content_hash = {0 = 1}}
 	lines := make([]debug_object.Line, 5, context.temp_allocator)
 	lines[0] = {offset = 0x1000, place = debug_object.row_place(1, 10)}
 	lines[1] = {offset = 0x1010, place = debug_object.row_place(1, 11)}

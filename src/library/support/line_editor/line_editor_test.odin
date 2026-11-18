@@ -531,9 +531,9 @@ history_search_order :: proc(t: ^testing.T) {
 	expect(t, "mco", candidates[:count], ranked[:], {"monitor.count(\"processors\")", "monitor.count(\"processes\")"})
 	// No query: each line, the newest first; help() one time.
 	expect(t, "", candidates[:count], ranked[:], {"help()", "monitor.count(\"processors\")", "tally.add(5, \"x\")", "monitor.count(\"processes\")", "connect(\"monitor\")"})
-	// "prog": the line with "processes" matches side by side; "processors"
-	// does not hold a g.
-	expect(t, "prog", candidates[:count], ranked[:], {"monitor.count(\"processes\")"})
+	// "esses": the line with "processes" holds these letters in order;
+	// "processors" has no e after its double s.
+	expect(t, "esses", candidates[:count], ranked[:], {"monitor.count(\"processes\")"})
 }
 
 // ---- The line history as a file.
