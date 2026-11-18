@@ -29,8 +29,8 @@ HEIGHT :: 696
 MARGIN :: 8 // Around the header, the cards and the scroll bar.
 COLUMNS :: 3
 CARD_WIDTH :: 312
-GAP :: graphics.CARD_GAP // Between two cards, across and down.
-PADDING :: graphics.CARD_MARGIN // Inside a card, on each side.
+GAP :: graphics.GAP // Between two cards, across and down.
+PADDING :: graphics.MARGIN // Inside a card, on each side.
 LINE :: interface.LINE
 TEXT_GAP :: 8 // Between the name and the line, and between the portrait and its credit.
 HEADER_Y :: 8

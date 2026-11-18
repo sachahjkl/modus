@@ -1430,15 +1430,15 @@ refusals :: proc "contextless" () -> bool {
 	return refused == .No_Right && too_heavy == .Bad_Operation
 }
 
-// The window (docs/DESIGN.md): cards of rectangles on the grid of 8
-// pixels, the colors of the rules. The scheduler is the kernel: its
+// The window (docs/DESIGN.md): cards of rectangles with the spacing
+// tokens, the colors of the rules. The scheduler is the kernel: its
 // accent is the color of the kernel, and the three strategies are three
 // shades of it.
 WIDTH :: 976
 HEIGHT :: 704
 MARGIN :: 8
-CARD_TITLE :: graphics.CARD_TITLE
-CARD_INSIDE :: graphics.CARD_MARGIN
+CARD_TITLE :: graphics.TITLE
+CARD_INSIDE :: graphics.MARGIN
 
 @(rodata)
 strategy_shades := [STRATEGY_COUNT]u32{75, 100, 150}

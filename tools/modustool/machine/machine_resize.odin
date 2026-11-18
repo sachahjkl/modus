@@ -63,9 +63,8 @@ screen_size_of_log :: proc(log: string) -> (width, height: int, ok: bool) {
 
 // window_resize_step runs one step Resize. The corner is the first column
 // and the last line of the frame, on its border: the compositor gives that
-// place the edges at the left and at the bottom. The move is a multiple of
-// the grid of 8 when the sizes are, so the size is the one that the step
-// names.
+// place the edges at the left and at the bottom. An edge follows the
+// pointer to the pixel, so the size is the one that the step names.
 window_resize_step :: proc(machine: ^Machine, step: Step, index: int) -> bool {
 	log := log_read(machine)
 	frame, placed := log_window_rectangle(log, step.text)

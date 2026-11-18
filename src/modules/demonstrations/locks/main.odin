@@ -79,7 +79,7 @@ CHURN_ROUNDS :: 40
 CHURN_COUNT :: 3 // The processes of one round.
 
 // The window follows docs/DESIGN.md where it is cheap: rectangles only,
-// the grid of 8 pixels, the colors of the rules, a name in the dim color
+// the spacing tokens, the colors of the rules, a name in the dim color
 // and a value in the text color.
 WIDTH :: 784
 LINE :: 24 // A line of text (16) and 8 between lines.

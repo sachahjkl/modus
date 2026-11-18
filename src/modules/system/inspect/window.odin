@@ -20,14 +20,14 @@ LINE :: graphics.LINE_HEIGHT
 LIST_X :: 8
 LIST_Y :: 8
 LIST_WIDTH :: 208 // The title of the card and the name of its record, whole, in the interface font.
-LIST_ROWS_Y :: LIST_Y + graphics.CARD_TITLE + 24 // The first row of the list, in the window.
+LIST_ROWS_Y :: LIST_Y + graphics.TITLE + 24 // The first row of the list, in the window.
 // The box of the name of a process in the list: from the left of the card
 // to the mark of its state. A name wider than it goes on more lines
 // (interface.text_wrap_line), and its row has the height of its lines.
-LIST_NAME_ROOM :: LIST_WIDTH - 2 * graphics.CARD_MARGIN - 40
+LIST_NAME_ROOM :: LIST_WIDTH - 2 * graphics.MARGIN - 40
 // The lines of the list: the card without its title, the filter and the
 // four lines of the sample under the rows.
-LIST_LINES :: (HEIGHT - 16 - graphics.CARD_TITLE - 8 - 24 - 80) / LINE
+LIST_LINES :: (HEIGHT - 16 - graphics.TITLE - 8 - 24 - 80) / LINE
 LIST_MORE_LINES :: 2 // The lines that say how many rows the list does not show.
 RIGHT_X :: LIST_X + LIST_WIDTH + 8
 RIGHT_WIDTH :: WIDTH - RIGHT_X - 8
@@ -275,7 +275,7 @@ draw_map :: proc "contextless" (frame: ^interface.Frame) {
 	// right edge of the card: the longest name of a kind ends before the
 	// rights, and "shared" ends at the edge.
 	TABLE_Y :: 96
-	SHARED_X :: RIGHT_WIDTH - 2 * graphics.CARD_MARGIN - 6 * graphics.CELL_WIDTH
+	SHARED_X :: RIGHT_WIDTH - 2 * graphics.MARGIN - 6 * graphics.CELL_WIDTH
 	RIGHTS_X :: SHARED_X - 5 * graphics.CELL_WIDTH
 	#assert(RIGHTS_X >= 512 + 16 * graphics.CELL_WIDTH + graphics.CELL_WIDTH) // "module constants", then a space.
 	write(inside, 0, TABLE_Y, "address", graphics.colors.dim)
@@ -322,7 +322,7 @@ draw_modules :: proc "contextless" (frame: ^interface.Frame) {
 	// The name has the room before the size, a number of at most five
 	// digits and its unit; the base and the start of the hash have the
 	// width of the card. Each goes on more lines when it is wider.
-	NAME_ROOM :: MODULES_WIDTH - 2 * graphics.CARD_MARGIN - 16 - 10 * graphics.CELL_WIDTH
+	NAME_ROOM :: MODULES_WIDTH - 2 * graphics.MARGIN - 16 - 10 * graphics.CELL_WIDTH
 	modules := current.modules.modules[:min(current.modules.count, op.PROCESS_MODULE_CAPACITY)]
 	y := 0
 	for &item, number in modules {

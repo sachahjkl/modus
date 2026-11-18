@@ -68,7 +68,7 @@ Each owner of a view writes one line when the wheel moved it: `terminal: the whe
 The scroll bar is a decoration that the design rules did not have, and it has three exceptions to them. Each is stated in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The scroll bar".
 
 - Its gradients go across, where the sign of depth of a surface goes from the top down.
-- Its thickness is 17 pixels, which is not on the grid of 8. It is odd so that the grip and the point of a triangle are on its middle line. A caller places it so that the bar and the gap before it are a multiple of 8.
+- Its thickness is 17 pixels, which is not a multiple of a spacing token. It is odd so that the grip and the point of a triangle are on its middle line. It is a fixed size of the element: a caller puts a `gap` before it, and nothing rounds the bar and the gap together ([spacing_tokens.md](spacing_tokens.md)).
 - Its colors are its own: gray-blue tones that no concept has.
 
 ## Refused forms

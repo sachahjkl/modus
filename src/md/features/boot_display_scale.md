@@ -69,7 +69,7 @@ All three call `bootscreen.draw_screen` with the whole canvas that they own: the
 - **A scale of any eighth, with Spleen centered in a larger cell.** At 12 eighths a letter of 8x16 in a cell of 12 × 24 has 4 empty pixels beside it, and a word reads as separate letters.
 - **The outlines at any size.** They need a font reader, a rasterizer and their memory in the boot program, and they give a soft look to a display that is drawn in cells.
 - **A bitmap font for each eighth.** Spleen has no 10x20 or 14x28: a scale is one of the sizes that the font has, and a table is made by the tool from the files of the font, never by hand.
-- **9 eighths, or a scale in hundredths.** The grid of 8 logical pixels stays on whole screen pixels only at a count of eighths, and Spleen has no such size.
+- **9 eighths, or a scale in hundredths.** The spacing tokens, multiples of 8 logical pixels, stay on whole screen pixels only at a count of eighths, and Spleen has no such size.
 
 ## The subtle points
 

@@ -14,7 +14,6 @@ import "modus:support/text_shaping"
 @(rodata)
 names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "hall_of_fame", "heron", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "debugger_window", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault", "fault_ring", "kernel_events"}
 
-// The bar is on the grid of docs/DESIGN.md: 8 pixels.
 LABEL :: "start" // The text of the button that opens the start menu.
 CHARACTER_WIDTH :: 8 // The font of the cells.
 START :: 80 // After the mark of the system.
@@ -88,10 +87,10 @@ button :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 }
 
 // column_width gives the width of one column of the start menu:
-// the widest name and a padding on each side, on the grid.
+// the widest name and a padding on each side, and COLUMN_LEAST at least.
 column_width :: proc "contextless" (layout: Layout) -> int {
 	longest := max(layout.longest_name_width, layout.label_width)
-	return max((longest + 2 * PADDING + 7) / 8 * 8, COLUMN_LEAST)
+	return max(longest + 2 * PADDING, COLUMN_LEAST)
 }
 
 // menu gives the place of the start menu, under its button.

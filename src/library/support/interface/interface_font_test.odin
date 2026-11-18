@@ -354,6 +354,8 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	texts_measure(&table, FONT_INTERFACE, texts[:], widths[:])
 	for text, index in texts {
 		testing.expect_value(t, widths[index], text_measured_width(&table, FONT_INTERFACE, text))
+		// A column is as wide as its text, with no round up.
+		testing.expect_value(t, measured_size(&table, FONT_INTERFACE, text), pixels(widths[index]))
 	}
 	fitted := text_fit(&table, FONT_INTERFACE, "settings and more", 40)
 	testing.expect(t, text_measured_width(&table, FONT_INTERFACE, fitted) <= 40 && len(fitted) < len("settings and more"))

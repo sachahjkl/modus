@@ -48,13 +48,14 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 
 // The places of the scroll bar of the window of the console, inside its
 // surface (src/modules/system/terminal/main.odin, layout; src/modules/system/root/main.odin,
-// role_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
-// = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
-// over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
-// pixels at each end. A press on a button of the bar names it
-// (Click_Element); the shape of the pointer over it and a drag of the
-// thumb take a place, which these constants give.
-CONSOLE_SCROLL_BAR_X :: 800 - 9 // The middle column of the bar.
+// role_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 8 + 17
+// = 801 pixels wide: a gap of 8 before the bar; the bar is its last 17
+// pixels, from y = 0 to the line over the status at 8 + 26 * 16 + 8 - 4 =
+// 428, with an arrow button of 17 pixels at each end. A press on a button
+// of the bar names it (Click_Element); the shape of the pointer over it and
+// a drag of the thumb take a place, which these constants give.
+CONSOLE_SURFACE_WIDTH :: 8 + 96 * 8 + 8 + 17
+CONSOLE_SCROLL_BAR_X :: CONSOLE_SURFACE_WIDTH - 9 // The middle column of the bar.
 CONSOLE_SCROLL_BAR_ARROW_DOWN_Y :: 428 - 9 // The middle of the arrow button at the bottom.
 CONSOLE_SCROLL_BAR_THUMB_END_Y :: 428 - 17 - 4 // In the last pixels of the track: the thumb of a view that follows the last lines ends there, and is 8 pixels long at least.
 CONSOLE_SCROLL_BAR_TRACK_START_Y :: 17 + 4 // Near the start of the track: a thumb dragged there is at its first place.
@@ -3771,11 +3772,11 @@ SCREEN_CORNER_Y :: reference_screen.HEIGHT - 6
 // A window at this height shows its title bar only, at the bottom of the
 // screen: a scenario moves a window there to show the console under it.
 WINDOW_TITLE_ONLY_Y :: reference_screen.HEIGHT - WINDOW_TITLE_HEIGHT
-#assert(WINDOW_TITLE_ONLY_Y % bar.GRID == 0 && WINDOW_TITLE_ONLY_Y + WINDOW_GRAB_Y < reference_screen.HEIGHT)
-// The left side of the palette, in the middle of the width of the screen
-// on the grid, as palette.panel_place gives it; a host test compares the
-// two (scenario_places_test.odin).
-PALETTE_LEFT :: (reference_screen.WIDTH - palette.PANEL_WIDTH) / 2 / bar.GRID * bar.GRID
+#assert(WINDOW_TITLE_ONLY_Y + WINDOW_GRAB_Y < reference_screen.HEIGHT)
+// The left side of the palette, in the middle of the width of the screen,
+// as palette.panel_place gives it; a host test compares the two
+// (scenario_places_test.odin).
+PALETTE_LEFT :: (reference_screen.WIDTH - palette.PANEL_WIDTH) / 2
 // A point of the palette 208 pixels from its left side: in its input band,
 // its list and its footer, and on no text that changes the pointer.
 PALETTE_POINT_X :: PALETTE_LEFT + 208

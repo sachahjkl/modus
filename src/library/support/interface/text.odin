@@ -130,10 +130,10 @@ texts_measure :: proc "contextless" (table: ^Draw_Table, font: Font, texts: []st
 }
 
 // measured_size gives the width of a text in the font that the table draws it
-// in, rounded up to the grid of 8 pixels: the size of a column of a row
-// (row_split) that holds the text.
+// in: the size of a column of a row (row_split) that holds the text. A
+// column is as wide as its text, with no round up.
 measured_size :: proc "contextless" (table: ^Draw_Table, font: Font, text: string) -> Size {
-	return pixels((text_measured_width(table, font, text) + 7) / 8 * 8)
+	return pixels(text_measured_width(table, font, text))
 }
 
 // text_fit gives the longest start of a text whose width, in the font that

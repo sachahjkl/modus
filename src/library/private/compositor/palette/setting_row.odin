@@ -134,8 +134,7 @@ value_buttons_layout :: proc "contextless" (table: ^interface.Draw_Table, list: 
 		}
 	}
 	name_width := interface.text_measured_width(table, interface.FONT_INTERFACE, entry_name(entry))
-	x := row.x + interface.LIST_ROW_NAME_X + name_width + 16
-	x = (x + graphics.GRID - 1) / graphics.GRID * graphics.GRID
+	x := row.x + interface.LIST_ROW_NAME_X + name_width + graphics.MARGIN
 	count := min(int(entry.value_count), BUTTON_CAPACITY)
 	for value in 0 ..< count {
 		width := interface.text_measured_width(table, interface.FONT_INTERFACE, value_name(list, entry, value)) + 2 * VALUE_BUTTON_PADDING
