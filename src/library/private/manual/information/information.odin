@@ -699,6 +699,17 @@ name_of_hash :: proc "contextless" (catalog: Catalog, hash: [32]u8) -> string {
 	return known ? found.name : ""
 }
 
+// padded_write writes a text, then the spaces that make it one character
+// wider than `width`, for a column of a table of the page. It stops at the
+// first byte that the writer drops: a full buffer takes no more space, so
+// a loop on the count alone would never end.
+padded_write :: proc "contextless" (writer: ^system.Writer, text: string, width: int) {
+	system.write_part(writer, text)
+	for writer.count < width + 1 && writer.dropped == 0 && !writer.marked {
+		system.write_part(writer, " ")
+	}
+}
+
 // contains says if a text holds another text.
 contains :: proc "contextless" (text, part: string) -> bool {
 	if len(part) > len(text) {
