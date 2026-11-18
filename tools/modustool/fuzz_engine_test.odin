@@ -4,6 +4,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modus:contract/operation_sequence"
 
 // The tests of the engine of the fuzzing on the host: a target with a
 // planted fault that the engine must find in a fixed count of executions
@@ -99,6 +100,33 @@ choices_read_zeros_after_the_end :: proc(t: ^testing.T) {
 	empty := fuzz_choices_of(nil)
 	testing.expect_value(t, fuzz_choice_below(&empty, 1), 0)
 	testing.expect_value(t, empty.place, 0)
+}
+
+// A choice below a count is always below it: for 1, for the count of the
+// areas, at each edge of the bytes that it reads (256, 257, 65 536 and the
+// largest int), from the largest bytes and from random bytes. A count of 0
+// has no place: it gives 0 and reads no byte, and no caller uses it as a
+// place.
+@(test)
+a_choice_below_a_count_is_below_it :: proc(t: ^testing.T) {
+	empty := fuzz_choices_of(nil)
+	testing.expect_value(t, fuzz_choice_below(&empty, 0), 0)
+	testing.expect_value(t, empty.place, 0)
+	largest := [8]u8{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+	random := Fuzz_Random{state = FUZZ_PLANTED_SEED}
+	counts := [?]int{1, 2, operation_sequence.AREAS_MOST, 255, 256, 257, 65_536, 65_537, max(int)}
+	for count in counts {
+		ones := fuzz_choices_of(largest[:])
+		value := fuzz_choice_below(&ones, count)
+		testing.expectf(t, value >= 0 && value < count, "the largest bytes give %d below %d", value, count)
+		for _ in 0 ..< 1_000 {
+			word := fuzz_random_next(&random)
+			bytes := transmute([8]u8)word
+			choices := fuzz_choices_of(bytes[:])
+			drawn := fuzz_choice_below(&choices, count)
+			testing.expectf(t, drawn >= 0 && drawn < count, "the bytes %v give %d below %d", bytes, drawn, count)
+		}
+	}
 }
 
 @(test)

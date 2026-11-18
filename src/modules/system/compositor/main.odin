@@ -99,6 +99,7 @@ import "modus:support/interface"
 import "modus:private/compositor/bar"
 import "modus:support/mark"
 import "modus:private/compositor/palette"
+import "modus:private/compositor/quality"
 import clipboard_rules "modus:private/compositor/clipboard"
 import "modus:contract/ring"
 import "modus:support/key_path"
@@ -209,6 +210,13 @@ Client :: struct {
 	resize_asked_width, resize_asked_height: int,
 	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
 	resizes_refused: u64, // The Surface_Resize and Resize_Declined records that the compositor refused.
+	// The measures of the window (quality_measures.odin): the times of its
+	// start, from Client_Started and from its first flip; its first picture
+	// waits for the flip that shows it; and the newest key serial that it
+	// got, past which a Present names no key of it.
+	start:           quality.Window_Start,
+	start_due:       bool,
+	key_serial_sent: u64,
 	clipboard: clipboard_rules.Window_State, // What waits for an answer of the program to a key of the clipboard (clipboard.odin).
 	clipboard_refused: u64, // The Copy, Copy_Declined and Paste_Taken records that the compositor refused.
 }
@@ -603,6 +611,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	damage_add(0, 0, width, height)
 	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
+	quality_profile_log() // quality_measures.odin
 	service_start(ctx) // exports.odin
 	// The text of the desktop: the settings of the principal and the glyph cache
 	// (modus:contract/settings); a change of the settings wakes this loop.
@@ -654,6 +663,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		palette_wait(&wait) // palette.odin
 		now := system.wait_end(&wait, deadline)
+		quality_turn_start() // quality_measures.odin
 		if display.settings_page != nil {
 			// The root service changes the appearance in force alone, with
 			// no new change count, and wakes this loop.
@@ -669,6 +679,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		for record in system.receive(&control.commands) {
+			quality_record_read()
 			kind, kind_ok := display.control_of_ring_word(record.kind)
 			if !kind_ok {
 				system.log("compositor: the root service sent the control word ", u64(record.kind), ", which names no control command")
@@ -683,6 +694,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				palette_provider_add(system.Handle(record.values[0]), system.Handle(record.values[1])) // palette.odin
 			case .Palette_Provider_Remove:
 				palette_provider_remove()
+			case .Client_Started:
+				quality_window_started(system.Handle(record.values[0]), record.values[1])
 			case .None, .Start, .Stop:
 				// The border refused None above. Start and Stop go from the
 				// compositor to the root service, never to the compositor.
@@ -691,6 +704,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		window_events_pass() // The records that wait go before the new ones.
 		for record in system.receive(&input.commands) {
+			quality_record_read()
 			kind, kind_ok := display.input_of_ring_word(record.kind)
 			if !kind_ok {
 				system.log("compositor: the input service sent the word ", u64(record.kind), ", which names no input")
@@ -708,7 +722,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case clipboard_key(character, u32(record.values[3]), record.values[2] != 0):
 					// A key of the clipboard goes to no program (clipboard.odin).
 				case order_count > 0:
-					send(&clients[order[order_count - 1]], .Key, record.values)
+					in_front := order[order_count - 1]
+					send(&clients[in_front], .Key, quality_key_values(in_front, record.values))
 				}
 			case .Pointer:
 				// The input service is a program: a count of notches far
@@ -731,6 +746,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for _ in 0 ..< system.records_of_turn(&client.ring.commands) {
 				record := system.receive(&client.ring.commands) or_break
 				taken = true
+				quality_record_read()
 				// A program writes the word: a word of no command, and None,
 				// are counted, and the first one of a window writes a line,
 				// so a window that writes many cannot fill the log of the
@@ -798,6 +814,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 							changed_width = int(min(record.values[3], u64(client.surface.width - left)))
 							changed_height = int(min(record.values[4], u64(client.surface.height - top)))
 						}
+						quality_present(index, &client, client.presents == 0, record.values[display.PRESENT_KEY_SERIAL])
 						client.presents += 1
 						presents += 1
 						if damage_rectangle_add(client.x + BORDER + left, client.y + TITLE_HEIGHT + top, changed_width, changed_height) {
@@ -961,6 +978,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
 		clipboard_client_remove(index) // clipboard.odin
+		quality_window_gone(index) // quality_measures.odin
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
@@ -1207,8 +1225,11 @@ pointer_leaves_front :: proc "contextless" () {
 // draw draws again each damage rectangle, then copies it to the screen.
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
+	quality_frame_start() // quality_measures.odin
 	screen_build(now, display.interface_font_of())
 	draw_areas(damage[:damage_count])
+	// The frame is on the screen: the copy and the page flip are done.
+	quality_frame_flipped() // quality_measures.odin
 	// The windows that this frame read a picture of.
 	for &client in clients {
 		if client.surface.pixels == nil || client.presents == 0 {

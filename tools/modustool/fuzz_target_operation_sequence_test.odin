@@ -58,7 +58,9 @@ the_result_kinds_come_from_the_reference_comments :: proc(t: ^testing.T) {
 // generator of numbers.
 @(test)
 the_generator_gives_a_sequence_that_check_accepts :: proc(t: ^testing.T) {
-	testing.expect(t, fuzz_operation_sequence_start())
+	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+		return
+	}
 	expect_accepted :: proc(t: ^testing.T, input: []u8, loc := #caller_location) {
 		verdict := fuzz_operation_sequence_generated_execute(input)
 		testing.expectf(t, verdict.oracle == .None, "%v: %s", verdict.oracle, verdict.text, loc = loc)
@@ -95,7 +97,9 @@ the_generator_gives_a_sequence_that_check_accepts :: proc(t: ^testing.T) {
 // Each seed of the raw target passes its oracles.
 @(test)
 the_seeds_of_the_operation_sequence_pass :: proc(t: ^testing.T) {
-	testing.expect(t, fuzz_operation_sequence_start())
+	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+		return
+	}
 	seeds := make([dynamic][]u8, context.temp_allocator)
 	context.allocator = context.temp_allocator
 	fuzz_operation_sequence_seeds(&seeds)

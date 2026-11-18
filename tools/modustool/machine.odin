@@ -2541,7 +2541,7 @@ scenario := [?]Step {
 	// records of each second from the budget of log_reader, which counts
 	// only its own, and each child gives them back at its stop.
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
@@ -2567,7 +2567,7 @@ scenario := [?]Step {
 	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
@@ -3507,10 +3507,16 @@ scenario := [?]Step {
 scenario_measure := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
+	// The quality profile that the compositor chose at its start
+	// (quality_measure.odin).
+	{kind = .Wait, text = QUALITY_PROFILE_LINE, any_order = true},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "locks"},
+	// The start of its window: locks draws its first frame before its
+	// measures.
+	{kind = .Wait, text = QUALITY_WINDOW_START_LOCKS, any_order = true},
 	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
 	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
@@ -3537,6 +3543,11 @@ scenario_measure := [?]Step {
 	// reads the form of its lines after the machine
 	// (processor_frame_measure.odin).
 	{kind = .Type, text = "start(\"processor_frame\")"},
+	// The 24 characters of that line are more than the keys of a line of
+	// the time of a key to the screen: the compositor wrote one, with the
+	// line of the frames, since the last wait (quality_measure.odin).
+	{kind = .Wait, text = QUALITY_FRAME, any_order = true},
+	{kind = .Wait, text = QUALITY_KEY, any_order = true},
 	{kind = .Wait, text = PROCESSOR_FRAME_CLEAR_AND_PRESENT, fails_on = PROCESSOR_FRAME_WRONG},
 	{kind = .Wait, text = PROCESSOR_FRAME_FULL_FRAME, fails_on = PROCESSOR_FRAME_WRONG},
 	{kind = .Wait, text = PROCESSOR_FRAME_FRAME_IN_ITS_DAMAGE, fails_on = PROCESSOR_FRAME_WRONG},

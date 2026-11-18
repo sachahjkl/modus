@@ -4,6 +4,7 @@ package interface
 import "modus:contract/draw_record"
 import "modus:contract/glyph_cache"
 import "core:slice"
+import "core:sync"
 import "core:testing"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -55,6 +56,27 @@ test_interface_font :: proc(t: ^testing.T) -> (result: Test_Interface_Font) {
 test_interface_font_free :: proc(font: ^Test_Interface_Font) {
 	delete(font.regular_memory)
 	delete(font.bold_memory)
+}
+
+// A draw of a text in the interface font changes the blend tables of the
+// text state of the program, and its private glyph cache, so one thread of
+// a program draws at a time (src/md/features/glyphs_on_demand.md, "Subtle
+// points"). The test runner runs the tests on several threads: each test
+// of this file that draws holds this lock from its first draw to its last
+// check, and fills the table of the blend before, through blend_table.
+@(private = "file")
+interface_text_drawing_lock: sync.Mutex
+
+@(private = "file")
+@(deferred_none = interface_text_drawing_end)
+interface_text_drawing_begin :: proc() {
+	_ = blend_table()
+	sync.mutex_lock(&interface_text_drawing_lock)
+}
+
+@(private = "file")
+interface_text_drawing_end :: proc() {
+	sync.mutex_unlock(&interface_text_drawing_lock)
 }
 
 @(private = "file")
@@ -145,6 +167,7 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 // differ in one part (or in none).
 @(test)
 damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
+	interface_text_drawing_begin()
 	font := test_interface_font(t)
 	defer test_interface_font_free(&font)
 	first, second := new(Font_Tables), new(Font_Tables)
@@ -344,6 +367,7 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 // is equal to no record.
 @(test)
 hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
+	interface_text_drawing_begin()
 	font := test_interface_font(t)
 	defer test_interface_font_free(&font)
 	memory := new(Font_Tables)
@@ -424,6 +448,7 @@ cells_text_reference :: proc(canvas: graphics.Canvas, x, y: int, text: string, f
 // for several texts, each scale and each weight.
 @(test)
 each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
+	interface_text_drawing_begin()
 	font := test_interface_font(t)
 	defer test_interface_font_free(&font)
 	WIDTH :: 400
