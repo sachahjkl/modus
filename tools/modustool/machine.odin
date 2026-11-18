@@ -3503,6 +3503,16 @@ scenario_measure := [?]Step {
 	{kind = .Type, text = "measure_completion()"},
 	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
 	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
+	// A frame at 1920 x 1080 on the processor, in its three parts, after
+	// the other measures: no other program draws while it runs. The tool
+	// reads the form of its lines after the machine
+	// (processor_frame_measure.odin).
+	{kind = .Type, text = "start(\"processor_frame\")"},
+	{kind = .Wait, text = PROCESSOR_FRAME_CLEAR_AND_PRESENT, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_FULL_FRAME, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_FRAME_IN_ITS_DAMAGE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_DRAW_TABLE, fails_on = PROCESSOR_FRAME_WRONG},
+	{kind = .Wait, text = PROCESSOR_FRAME_DONE, fails_on = PROCESSOR_FRAME_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
