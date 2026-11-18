@@ -99,6 +99,7 @@ import "modus:support/interface"
 import "modus:private/compositor/bar"
 import "modus:support/mark"
 import "modus:private/compositor/palette"
+import "modus:private/compositor/quality"
 import clipboard_rules "modus:private/compositor/clipboard"
 import "modus:contract/ring"
 import "modus:support/key_path"
@@ -209,11 +210,13 @@ Client :: struct {
 	resize_asked_width, resize_asked_height: int,
 	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
 	resizes_refused: u64, // The Surface_Resize and Resize_Declined records that the compositor refused.
-	// The measure of the start of the window (quality_measures.odin): the
-	// time of Client_Started, 0 with none; and its first picture waits for
-	// the flip that shows it.
-	started_at: u64,
-	start_due:  bool,
+	// The measures of the window (quality_measures.odin): the times of its
+	// start, from Client_Started and from its first flip; its first picture
+	// waits for the flip that shows it; and the newest key serial that it
+	// got, past which a Present names no key of it.
+	start:           quality.Window_Start,
+	start_due:       bool,
+	key_serial_sent: u64,
 	clipboard: clipboard_rules.Window_State, // What waits for an answer of the program to a key of the clipboard (clipboard.odin).
 	clipboard_refused: u64, // The Copy, Copy_Declined and Paste_Taken records that the compositor refused.
 }
@@ -857,7 +860,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			shown_second = second_of_bar(now)
 			damage_clock()
 		}
-		quality_turn_end()
 		if damage_count > 0 && now >= next_frame {
 			draw(now)
 			next_frame = now + FRAME_INTERVAL
@@ -1223,6 +1225,7 @@ pointer_leaves_front :: proc "contextless" () {
 // draw draws again each damage rectangle, then copies it to the screen.
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
+	quality_frame_start() // quality_measures.odin
 	screen_build(now, display.interface_font_of())
 	draw_areas(damage[:damage_count])
 	// The frame is on the screen: the copy and the page flip are done.

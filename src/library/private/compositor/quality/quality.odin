@@ -83,9 +83,11 @@ samples_least_and_median :: proc "contextless" (samples: ^Samples) -> (least, me
 	return sorted[0], sorted[count / 2], count
 }
 
-// The keys that the table keeps until a frame shows them: a key that no
-// frame shows leaves when KEY_CAPACITY newer keys came. The table holds
-// measures, not input: a key always reaches its window.
+// The keys that the table keeps until a frame shows them. When it is full,
+// a new key takes the place of the oldest key that is not shown, and of
+// the oldest shown key only when each key is shown; each one is a measure
+// lost, and counted. The table holds measures, not input: a key always
+// reaches its window.
 KEY_CAPACITY :: 32
 
 // Where a key of the table is.
@@ -104,31 +106,64 @@ Measured_Key :: struct {
 
 Key_Table :: struct {
 	keys:        [KEY_CAPACITY]Measured_Key,
-	next:        int, // The place of the next key.
 	serial_last: u64, // The serial of the newest key: 0 before the first one.
-	refused:     u64, // The serials that a window named and that no key of the table has: a serial past the newest one.
+	refused:     u64, // The serials that a window named past the newest key that it got.
+	lost:        u64, // The keys whose place a new key took before a flip measured them.
+}
+
+// key_place gives the place of a new key: a free place, else the oldest
+// key that is sent and not shown, else the oldest shown key. lost is true
+// when the place holds a key that no flip measured.
+@(private)
+key_place :: proc "contextless" (table: ^Key_Table) -> (place: int, lost: bool) {
+	oldest_sent, oldest_shown := -1, -1
+	for key, index in table.keys {
+		switch key.state {
+		case .Free:
+			return index, false
+		case .Sent:
+			if oldest_sent < 0 || key.serial < table.keys[oldest_sent].serial {
+				oldest_sent = index
+			}
+		case .Shown:
+			if oldest_shown < 0 || key.serial < table.keys[oldest_shown].serial {
+				oldest_shown = index
+			}
+		}
+	}
+	if oldest_sent >= 0 {
+		return oldest_sent, true
+	}
+	return max(oldest_shown, 0), true
 }
 
 // key_sent gives the serial of a key that goes to a window, never 0, and
 // keeps it. A time of the input service that is 0, or after the time of
-// now, is no time of a read: the key keeps its serial and is not measured.
+// now, is no time of a read: the key keeps its serial and takes no place.
 key_sent :: proc "contextless" (table: ^Key_Table, window: int, read_at, now: u64) -> (serial: u64) {
 	table.serial_last += 1
-	state := read_at != 0 && read_at <= now ? Key_State.Sent : Key_State.Free
-	table.keys[table.next] = {serial = table.serial_last, window = window, read_at = read_at, state = state}
-	table.next = (table.next + 1) % KEY_CAPACITY
+	if read_at == 0 || read_at > now {
+		return table.serial_last
+	}
+	place, lost := key_place(table)
+	if lost {
+		table.lost += 1
+	}
+	table.keys[place] = {serial = table.serial_last, window = window, read_at = read_at, state = .Sent}
 	return table.serial_last
 }
 
 // key_shown takes the serial that a Present of a window names: each key of
 // that window up to that serial is shown by the frame that draws the
-// Present. 0 names no key. A serial past the newest key is refused and
-// counted; a key of another window is never tied. It gives the keys tied.
-key_shown :: proc "contextless" (table: ^Key_Table, window: int, serial: u64) -> (tied: int) {
+// Present. sent_to_window is the newest serial that the compositor sent to
+// that window: a serial past it names no key of the window, and is refused
+// and counted, so a program cannot name the keys of a later window or a
+// serial that no key has. 0 names no key. It gives the keys tied.
+key_shown :: proc "contextless" (table: ^Key_Table, window: int, serial: u64, sent_to_window: u64) -> (tied: int) {
 	if serial == 0 {
 		return 0
 	}
-	if serial > table.serial_last {
+	if serial > sent_to_window || serial > table.serial_last {
 		table.refused += 1
 		return 0
 	}
@@ -165,4 +200,76 @@ window_gone :: proc "contextless" (table: ^Key_Table, window: int) {
 			key.state = .Free
 		}
 	}
+}
+
+// frame_span_start gives the start of the time of a frame: the read of the
+// first record of the turn that draws it, or the start of the draw when
+// that turn read none. The wait for the next frame of an earlier turn is
+// not in it: it is the pacing of the compositor, not the cost of a frame.
+frame_span_start :: proc "contextless" (turn_read_at, draw_started: u64) -> u64 {
+	if turn_read_at != 0 && turn_read_at <= draw_started {
+		return turn_read_at
+	}
+	return draw_started
+}
+
+// The two times of the start of a window, from two programs in either
+// order: the root service sends the start, the compositor flips the first
+// frame. The line comes when both are known, once.
+Window_Start :: struct {
+	started_at:      u64, // When the root service called system.program_start; 0: not known.
+	first_flip_at:   u64, // The flip of the first frame that drew a picture of the window; 0: not yet.
+	done:            bool, // The span was given, or can never be.
+}
+
+// window_start_started takes the time of the start. A time of 0, after
+// now, or a second one is refused: it gives false, and nothing changes.
+// With the first flip known, it gives the span.
+window_start_started :: proc "contextless" (start: ^Window_Start, started_at, now: u64) -> (taken: bool, span: u64, ready: bool) {
+	if start.done || start.started_at != 0 || started_at == 0 || started_at > now {
+		return false, 0, false
+	}
+	start.started_at = started_at
+	span, ready = window_start_span(start)
+	return true, span, ready
+}
+
+// window_start_flipped takes the flip of the first frame of the window:
+// only the first one counts. With the start known, it gives the span.
+window_start_flipped :: proc "contextless" (start: ^Window_Start, flipped_at: u64) -> (span: u64, ready: bool) {
+	if start.done || start.first_flip_at != 0 || flipped_at == 0 {
+		return 0, false
+	}
+	start.first_flip_at = flipped_at
+	return window_start_span(start)
+}
+
+// window_start_span gives the span when both times are known, once. A
+// first flip before the start belongs to no start of this program: no
+// span, and none later.
+@(private)
+window_start_span :: proc "contextless" (start: ^Window_Start) -> (span: u64, ready: bool) {
+	if start.started_at == 0 || start.first_flip_at == 0 {
+		return 0, false
+	}
+	start.done = true
+	if start.first_flip_at < start.started_at {
+		return 0, false
+	}
+	return start.first_flip_at - start.started_at, true
+}
+
+// window_of_handle gives the place of the window whose ring handle the
+// root service named, in the ring handles of the client table (0: a free
+// place). The handle 0 names no window.
+window_of_handle :: proc "contextless" (handles: []u64, handle: u64) -> (window: int, found: bool) {
+	if handle == 0 {
+		return -1, false
+	}
+	for value, index in handles {
+		if value == handle {
+			return index, true
+		}
+	}
+	return -1, false
 }

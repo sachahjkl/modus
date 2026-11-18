@@ -463,7 +463,8 @@ shown_cursor: u64
 pasted_characters: u64
 paste_shown: bool
 // The serial of the newest key that changed the edit line
-// (terminal.Key.serial): each Edit record names it, and the terminal names
+// (terminal.Key.serial), first thread only: it takes the keys and calls
+// edit_show. Each Edit record names it, and the terminal names
 // it with the picture that shows the line, for the measure of a key to the
 // screen (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 key_serial_in_line: u64

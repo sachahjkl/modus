@@ -251,6 +251,12 @@ edit_line: Edit_Line
 // The serial of the newest key that an Edit record named (terminal.edit):
 // the reader keeps it, the view gives it to the drawer.
 edit_key_serial: u64
+// The newest key serial that the drawer forwarded to the program: the
+// reader refuses an Edit serial past it. The drawer stores it before the
+// send, so the reader sees it before any Edit that answers the key.
+key_serial_forwarded: u64
+// The Edit records whose serial was refused (the reader only).
+edit_serials_refused: u64
 // The runs of code that the next Edit record takes (terminal.Kind.Code_Runs).
 edit_runs_pending: terminal.Code_Runs
 // The lists of runs of code that were refused for the edit line: each one
@@ -463,8 +469,14 @@ apply :: proc "contextless" (record: ring.Record) {
 	case .Edit:
 		first, second := take(record.tag)
 		// The newest key whose character the program put in its line: the
-		// next picture shows it.
-		edit_key_serial = max(edit_key_serial, record.values[2])
+		// next picture shows it. A serial past the keys that the terminal
+		// forwarded is refused, counted, and the log says it once.
+		if terminal.edit_key_serial_take(&edit_key_serial, record.values[2], intrinsics.atomic_load(&key_serial_forwarded)) {
+			edit_serials_refused += 1
+			if edit_serials_refused == 1 {
+				system.log("terminal: ", program_name, " named a key serial past the keys that it got: it is refused, and the next ones are counted")
+			}
+		}
 		edit_line = {style = transmute(terminal.Style)record.values[0]}
 		edit_line.length = copy(edit_line.text[:], first)
 		edit_line.length += copy(edit_line.text[edit_line.length:], second)
@@ -1462,6 +1474,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// full, the key is lost, and the log has one line when the
 				// loss begins and one line with the count when it ends.
 				if program != 0 {
+					if event.key_serial > intrinsics.atomic_load(&key_serial_forwarded) {
+						intrinsics.atomic_store(&key_serial_forwarded, event.key_serial)
+					}
 					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character), 1 = u64(event.modifiers), 2 = event.key_serial}}) {
 						keys_sent += 1
 						if keys_sent == 1 {

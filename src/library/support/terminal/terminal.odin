@@ -601,6 +601,20 @@ record_part :: proc "contextless" (text: string, room: int) -> int {
 	return text_encoding.complete_characters(transmute([]u8)text[:room])
 }
 
+// edit_key_serial_take keeps the key serial of an Edit record in kept, the
+// newest one, when the terminal forwarded that key to its program: a
+// serial past forwarded, the newest serial that the terminal forwarded,
+// names no key that the program got. It is refused, and kept stays: a
+// program cannot hold the measure of the keys with a serial of its own.
+// 0 names no key.
+edit_key_serial_take :: proc "contextless" (kept: ^u64, serial, forwarded: u64) -> (refused: bool) {
+	if serial > forwarded {
+		return true
+	}
+	kept^ = max(kept^, serial)
+	return false
+}
+
 // key gives the next key that was pressed. false: no key waits.
 // A program waits for a key with system.wait_records on
 // terminal.ring.completions.

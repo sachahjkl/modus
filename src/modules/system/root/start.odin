@@ -455,7 +455,11 @@ start_program_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		// A program with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
 		if .Terminal not_in work.role.grants && work.slot.client != 0 {
-			system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}})
+			if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}}) {
+				// A measure, not a part of the start: the window runs, and
+				// has no line of its start.
+				system.log_in("programs", .Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
+			}
 		}
 		return .Ok
 	}

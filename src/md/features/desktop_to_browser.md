@@ -23,7 +23,7 @@ The standard has two quality profiles ([`docs/glossary/desktop.md`](../../../doc
 - **The measures are measures, never tests.** The tool records them in the measure record of each release and follows them over the releases ([measure_history.md](measure_history.md)). A test never fails on a time (`AGENTS.md`, "Work"). A change that makes a measure worse is a regression that a developer reads to its cause.
 - **The processor profile is accepted with no shame.** The test machine has no GPU, and a machine with no GPU still gets a desktop that answers at once.
 - **Its thresholds come from numbers.** The first measure is a frame of the desktop at 1920 × 1080 drawn on the processor, before any GPU work. Its number gives the resolution, the rate and the effects of the processor profile.
-- **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads to the flip; the time from the interrupt of a key to the flip that shows it; the time from `Program_Start` to the first frame of the window.
+- **Each measure has one sentence on the log**, which is its identity in the measure record: the time of a frame, from the first record that the compositor reads in the turn that draws it to the flip; the time from the read of a key by the input service to the flip that shows it; the time from `Program_Start` to the first frame of the window.
 
 ### The thresholds of the processor profile
 
@@ -42,9 +42,11 @@ The compositor measures all three, with `system.nanoseconds()`, the clock of the
 
 | Measure | From | To | Its line |
 |---|---|---|---|
-| The time of a frame | The read of the first record (of the root service, of the input service or of a window) of a turn that left damage, when no earlier record waits for a frame | The end of the copy into the screen page and of its page flip | Each 16 keys of the next measure, over the last 64 such frames |
-| The time of a key to the screen | The read of the byte of the key by the input service, which writes the time in its record | The flip of the frame that draws the Present that names the key | Each 16 keys that a window named |
-| The start of a window | The call of `system.program_start` by the root service, which loads the module and makes `Program_Start` | The flip of the first frame that draws the first Present of the window | One line for each window |
+| The time of a frame | The read of the first record (of the root service, of the input service or of a window) in the turn that draws the frame; the start of the draw when that turn read none | The end of the copy into the screen page and of its page flip | Each 64 frames, and with each line of the keys; over the last 64 frames |
+| The time of a key to the screen | The read of the byte of the key by the input service, which writes the time in its record (not the interrupt: the input service reads the byte just after it) | The flip of the frame that draws the Present that names the key | Each 16 keys that a window named |
+| The start of a window | The call of `system.program_start` by the root service, which loads the module and makes `Program_Start` | The flip of the first frame that draws the first Present of the window | One line for each window, when both times are known |
+
+**The time of a frame holds no pacing.** The compositor draws at most one frame each 16 ms. A record that comes during that wait is read in a turn that draws nothing; the frame starts in the turn that draws, so its time is the cost of the frame, and it compares with the 8.3 ms of a frame at 120 Hz. The wait is the rate of the compositor, which the reference screen at 120 Hz changes.
 
 ```
 compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least <t> us, median <t> us, over <n> frames
@@ -60,13 +62,19 @@ compositor: measure: the start of the window <name>, from Program_Start to its f
 4. The terminal gives the serial of the edit line that its picture shows to the window layer (`display.key_shown`). Its next `Present` names it.
 5. The compositor ties each key of that window up to that serial, and measures each one at the flip of the frame that draws that Present.
 
-So the key is measured to the frame that shows its character, not to a frame that only came after it. One case ties late: a key that the console takes with no change of its line (a character of the history search) stays sent, and the next edit of the line ties it. Its time is then too long, never too short. A window that names no serial ties none. A serial that the compositor did not send to that window ties nothing. A key that stays untied leaves the table when 32 newer keys take its place: the table holds measures, not records of input.
+So the key is measured to the frame that shows its character, not to a frame that only came after it. A key that does not change the edit line stays sent, and the next edit of the line ties it late; its time is then too long, never too short. The cases:
 
-**The start of a window.** The root service writes the time before it calls `system.program_start`, and sends it to the compositor after the start, in the control record `Client_Started`, for the ring of the window. The time holds the load of the module, its hash and `Program_Start`, as the principal waits for them. A window whose first frame comes before the record has no line.
+- a key that the terminal drops because the queue of its program is full, or that the console drops while a line runs and its keys that wait are full;
+- a key that the completion list takes, which moves the list and not the line;
+- a character of the history search, which changes the search and not the line.
+
+A window that names no serial ties none. A Present that names a serial past the newest key that its window got is refused and counted, as an `Edit` record whose serial is past the newest key that the terminal forwarded: a program cannot name the key of another window, nor hold the measure with the largest serial. When the table is full, a new key takes the place of the oldest key that is not shown, and of the oldest shown key only when all are shown; each such key is a lost measure, and counted. The counts of the lost keys and of the refused serials come in one line after a line of the keys, when they changed: the table holds measures, not records of input.
+
+**The start of a window.** The root service writes the time before it calls `system.program_start`, and sends it to the compositor after the start, in the control record `Client_Started`, for the ring of the window. The time holds the load of the module, its hash and `Program_Start`, as the principal waits for them. The two times come from two programs in either order: the compositor keeps the time of the first flip of each window, and writes the line when it has both, whichever comes second. The span is the first flip less the start. A record that names no window (the handle 0, a handle of no window, a window that ended), a time of 0 or after now, and a second record are refused. When the control ring is full, the root service writes one line, and the window has no measure.
 
 **The profile at the start.** The compositor writes one line at its start: `compositor: the quality profile is the processor profile: the system drives no GPU device`. The system drives no GPU today, so the decision is one pure procedure of the private part `quality` of the compositor, which the GPU path changes.
 
-**The checks.** The measure run waits for the line of the profile, the start of the window `locks`, and a line of the frames and of the keys after the console takes 16 keys. After the machine, the tool checks their form only, as for `processor_frame`.
+**The checks.** No wait of the measure run depends on the order of two programs or on the place of the 16th key. The line of the profile and the start of `locks` are waited for in any order with the steps after them. The line of the keys, with its line of the frames, is waited for after the 24 characters of `start("processor_frame")`: whatever the count of keys before them, more than 16 keys come after the wait before, so a line comes after it. After the machine, the tool checks the form of the lines only, as for `processor_frame`.
 
 **The refused forms.**
 
