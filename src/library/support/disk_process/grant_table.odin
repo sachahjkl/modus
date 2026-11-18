@@ -315,6 +315,11 @@ table_move :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [
 	if row.hash == hash {
 		return .Same_File
 	}
+	// The hash of the chosen start policy changes only by a new choice:
+	// the choice names one file, and principal 0 chose that file.
+	if .Start_Policy in row.grants {
+		return .Start_Policy_Row
+	}
 	row.hash = hash
 	return .None
 }
@@ -338,6 +343,10 @@ table_persistence_set :: proc "contextless" (table: ^Grant_Table, nickname: stri
 	row := table_find(table, nickname)
 	if row == nil {
 		return .Absent
+	}
+	// The choice is read at the next start only: it always persists.
+	if .Start_Policy in row.grants {
+		return .Start_Policy_Row
 	}
 	row.persistence = persistence
 	return .None

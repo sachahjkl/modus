@@ -227,7 +227,8 @@ Root_Command :: enum u32 {
 	// principal of the caller to another file: values[0..3] the hash,
 	// values[4..6] the nickname, as Start_From_Disk carries them. Its grants
 	// and its store follow. A nickname with no row is refused with `Absent`
-	// (unit `Grants`); the same file with `Bad_Value`.
+	// (unit `Grants`); the same file with `Bad_Value`; the row of the
+	// chosen start policy with `Reserved` (unit `Grants`).
 	Nickname_Move = 18,
 	// Machine_Passphrase starts `unlock` to set the machine passphrase
 	// (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase"): its
@@ -256,7 +257,8 @@ Root_Command :: enum u32 {
 	// setting; values[4] a disk_process.Persistence (0 the global setting,
 	// 1 persist, 2 forget; the global setting takes 1 or 2). The caller
 	// must act for its principal. A nickname with no row is refused with
-	// `Absent` (unit `Grants`).
+	// `Absent` (unit `Grants`); the row of the chosen start policy, which
+	// always persists, with `Reserved` (unit `Grants`).
 	Disk_Grant_Persistence = 21,
 	// Debug_Store gives the debugger service a connection to the storage
 	// service that reads only, to the store `module_files` of the principal of
@@ -355,7 +357,8 @@ Root_Command :: enum u32 {
 	// the disk"): values[0..3] the hash of its module file, values[4..6]
 	// the nickname, as Start_From_Disk carries them. The hash 0 takes the
 	// hash of the row of the nickname. A nickname of no byte ends the
-	// choice: the next start runs the default start policy. The caller must
+	// choice: the next start runs the default start policy; with a hash that
+	// is not 0 it is refused with `Bad_Value` (argument 2). The caller must
 	// act for principal 0 (`No_Grant`, unit `Acts_For_Principal`; a caller
 	// of a named principal gets `Absent`, unit `Principals`). The choice
 	// is refused with `Refused` (unit `Principals`) when the machine key

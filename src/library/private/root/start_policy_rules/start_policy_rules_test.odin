@@ -109,6 +109,67 @@ a_restart_past_the_bound_of_a_start_policy_from_the_disk_is_refused :: proc(t: ^
 	testing.expect_value(t, restart_refusal(true, 0, false), op.Status.Ok)
 }
 
+// The bound through restart_check, as the root service calls it, with the
+// count added after each start that ran: the start after 16 restarts of
+// one name is refused and changes no count, another name still starts; a
+// table whose places all hold other names refuses a new name; a start
+// policy of the boot image is never counted. The starts that pass come
+// first only because the bound is reached by them.
+@(test)
+the_restart_check_of_the_root_service_holds_the_bound :: proc(t: ^testing.T) {
+	counts: Name_Counts
+	for _ in 0 ..= start_list.RESTART_LIMIT {
+		status, _, place := restart_check(&counts, true, "console")
+		testing.expect_value(t, status, op.Status.Ok)
+		testing.expect(t, place != nil)
+		place.starts += 1
+	}
+	before := counts
+	status, refusal, place := restart_check(&counts, true, "console")
+	testing.expect_value(t, status, op.Status.No_Budget)
+	testing.expect(t, place == nil)
+	testing.expect_value(t, errors.Kind(errors.completion_record(refusal).kind), errors.Kind.Over_Limit)
+	testing.expect(t, counts == before)
+	// Another name has a count of its own.
+	status, _, place = restart_check(&counts, true, "input")
+	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect(t, place != nil && place.starts == 0)
+	// Every place holds another name: a new name is refused.
+	full: Name_Counts
+	for &item, index in full {
+		item.name[0] = 'a' + u8(index % 26)
+		item.name[1] = 'a' + u8(index / 26)
+		item.name_length = 2
+		item.starts = 1
+	}
+	status, refusal, place = restart_check(&full, true, "console")
+	testing.expect_value(t, status, op.Status.No_Budget)
+	testing.expect(t, place == nil)
+	testing.expect_value(t, errors.Kind(errors.completion_record(refusal).kind), errors.Kind.Full)
+	// A start policy of the boot image: no count, whatever the table.
+	status, _, place = restart_check(&full, false, "console")
+	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect(t, place == nil)
+}
+
+// The form of a choice: a nickname of no byte with a hash is refused with
+// Bad_Value of the hash; a nickname of no byte with no hash ends the
+// choice, and a nickname with or without a hash passes the form.
+@(test)
+an_empty_nickname_with_a_hash_is_refused :: proc(t: ^testing.T) {
+	status, refusal := choice_form_refusal(true, false)
+	testing.expect_value(t, status, op.Status.Bad_Operation)
+	record := errors.completion_record(refusal)
+	testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Bad_Value)
+	testing.expect_value(t, record.argument, 2)
+	testing.expect_value(t, record.operation, i64(root_ring.Root_Command.Start_Policy_Choice))
+	for form in ([3][2]bool{{true, true}, {false, true}, {false, false}}) {
+		status, refusal = choice_form_refusal(form[0], form[1])
+		testing.expect_value(t, status, op.Status.Ok)
+		testing.expect_value(t, refusal, [7]u64{})
+	}
+}
+
 // A choice of a start policy, refusals first, in the order of the checks: a
 // caller of a named principal, whatever the machine key; a machine with no
 // record of its machine key; a machine key that needs a passphrase. The

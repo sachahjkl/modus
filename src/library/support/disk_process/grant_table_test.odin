@@ -496,6 +496,33 @@ a_start_policy_choice_is_refused_before_any_change :: proc(t: ^testing.T) {
 	testing.expect_value(t, table_start_policy_end(&table), Table_Problem.Absent)
 }
 
+// The chosen row keeps its file and its persistence: a move to another
+// file and each setting of persistence are refused, and change nothing;
+// the global setting to forget does not reach it. After the end of the
+// choice, the row takes both again.
+@(test)
+the_chosen_row_keeps_its_file_and_its_persistence :: proc(t: ^testing.T) {
+	table: Grant_Table
+	first, second := hash_of(1), hash_of(100)
+	testing.expect_value(t, table_start_policy_choose(&table, "tiny", first), Table_Problem.None)
+	chosen := table
+	testing.expect_value(t, table_move(&table, "tiny", second), Table_Problem.Start_Policy_Row)
+	for persistence in Persistence {
+		testing.expect_value(t, table_persistence_set(&table, "tiny", persistence), Table_Problem.Start_Policy_Row)
+	}
+	testing.expect(t, table == chosen)
+	// The global setting to forget: the chosen row persists all the same.
+	testing.expect_value(t, table_persistence_set(&table, "", .Forget), Table_Problem.None)
+	testing.expect_value(t, table_persisted_rows(&table), 1)
+	// The same file is the same file: no move, whatever the row holds.
+	testing.expect_value(t, table_move(&table, "tiny", first), Table_Problem.Same_File)
+	testing.expect_value(t, table_start_policy_end(&table), Table_Problem.None)
+	testing.expect_value(t, table_persistence_set(&table, "tiny", .Forget), Table_Problem.None)
+	testing.expect_value(t, table_move(&table, "tiny", second), Table_Problem.None)
+	row := table_find(&table, "tiny")
+	testing.expect(t, row != nil && row.hash == second && row.persistence == .Forget)
+}
+
 // The persisted form keeps the choice, and its border refuses two rows
 // with the grant Start_Policy, which the key of the tag signed.
 @(test)

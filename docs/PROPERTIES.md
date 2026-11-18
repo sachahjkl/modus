@@ -378,7 +378,7 @@ Status: Decided. The detail below is proposed.
   2. Hold the key that signs the name table of property 11, or the key that verifies it.
   3. Prove to a remote party which system list runs (attestation).
   4. Give a hardware source of random numbers at boot.
-- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Processes reach it by handle (properties 2 and 7). Built: the TPM service, a process with the registers of the TPM, whose one client is `unlock`; it seals and unseals, and sends no raw command for a client.
+- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Processes reach it by handle (properties 2 and 7). Built: the TPM service, a process with the registers of the TPM, whose clients are `unlock`, which seals and unseals, and the root service, which has it extend PCR 12 with each start policy on a ring of its own, the measure ring; it sends no raw command for a client.
 - **Forbids**: an unsigned code path from firmware to kernel, a boot loader with a configuration language, kernel arguments as free text.
 - **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the principal that signs the system signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
 - **Cost**: The system needs a key management story for the principal that signs the system: creation, enrolment in the firmware, backup, loss.

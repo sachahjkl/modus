@@ -532,7 +532,9 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	return {status = .Ok, values = {0 = tpm2.SECRET_SIZE}}
 }
 
-// The extends of PCR 12 that the TPM took in this start. The service runs
+// The extends of PCR 12 that this service sent to the TPM in this start,
+// whether the TPM answered or not: the TPM can take an extend whose answer
+// the interface lost. The service runs
 // once in a start: a stop of it is not followed by another run.
 measure_count: int
 
@@ -547,6 +549,9 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	}
 	digest := transmute([tpm2.DIGEST_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 	count := tpm2.pcr_extend_command(command_bytes[:], &digest)
+	// Counted before the command: an interface that fails after the TPM
+	// took the extend must not give one more extend to a later request.
+	measure_count += 1
 	answer, step := transact(count)
 	if step != .None {
 		return {status = .Device_Error, values = {0 = u64(step)}}
@@ -556,7 +561,6 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 		system.log_in("devices", .Warning, "tpm: the TPM refused the extend of PCR 12 (response code ", system.Hex(u64(code)), ")")
 		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_EXTEND)
 	}
-	measure_count += 1
 	count = tpm2.pcr_read_command(command_bytes[:])
 	answer, step = transact(count)
 	if step != .None {

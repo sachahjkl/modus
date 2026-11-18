@@ -8,7 +8,8 @@ package root
 // with the command Start_Policy_Choice; it takes effect at the next start.
 // At that start this service reads it before any start policy runs: it
 // starts `unlock` with no window, which has the TPM release the machine
-// key, then reads the table (step 4 of the design). It then loads the
+// key, then reads the table (the read of the choice before the start
+// policy). It then loads the
 // module file of the row from the store module_files, checks its hash,
 // measures it into PCR 12, and starts it with the grant Start_Policy only.
 // Each refusal on that way starts the rescue start policy, with its line.
@@ -30,6 +31,9 @@ import "modus:support/system"
 Start_Policy_Choice_Stage :: enum u8 {
 	Done, // No read runs: a start policy started, or will start now.
 	Machine_Key, // The run of `unlock` with no window, until its stop.
+	// That run passed the hang bound and its stop is asked: the read waits
+	// for its reap, within a second hang bound.
+	Machine_Key_Stopping,
 	Table, // The read of the disk grant table of principal 0.
 	Load, // The load of the chosen module file from the store (disk_processes.odin).
 }
@@ -45,32 +49,9 @@ start_policy_from_disk: bool
 start_policy_chosen_nickname: [disk_process.NAME_LIMIT]u8
 start_policy_chosen_nickname_length: int
 
-// The starts of each name that a start policy from the disk asked for. A
-// place with no start is free.
-Start_Policy_Name_Count :: struct {
-	name:   system.Name,
-	starts: u64,
-}
-
-start_policy_name_counts: [start_policy_rules.RESTARTED_NAME_CAPACITY]Start_Policy_Name_Count
-
-// start_policy_name_count gives the count of the starts of a name, in a
-// free place for a name with none. nil: each place holds another name.
-start_policy_name_count :: proc "contextless" (name: string) -> ^Start_Policy_Name_Count {
-	for &item in start_policy_name_counts {
-		if item.starts > 0 && system.name_of(item.name[:]) == name {
-			return &item
-		}
-	}
-	for &item in start_policy_name_counts {
-		if item.starts == 0 {
-			item = {}
-			copy(item.name[:len(item.name) - 1], name)
-			return &item
-		}
-	}
-	return nil
-}
+// The starts of each name that a start policy from the disk asked for
+// (start_policy_rules.restart_check).
+start_policy_name_counts: start_policy_rules.Name_Counts
 
 // start_policy_choice_read_begin starts the read of the choice of principal
 // 0. A machine with no TPM service or no data disk has no machine key that
@@ -113,10 +94,22 @@ start_policy_choice_step :: proc "contextless" () {
 			return
 		}
 		if system.time() >= start_policy_choice_deadline {
-			system.log_in("processes", .Warning, "root: unlock gave no machine key within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the choice of principal 0 is not read")
+			system.log_in("processes", .Warning, "root: unlock gave no machine key within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the choice of principal 0 is not read, and unlock is stopped")
 			if running := find("unlock"); running != nil {
 				root_stop_ask(running)
 			}
+			// The run of the start list starts only once this one is
+			// reaped: one `unlock` at a time.
+			start_policy_choice_stage = .Machine_Key_Stopping
+			start_policy_choice_deadline = system.time() + START_POLICY_HANG_BOUND_MILLISECONDS
+		}
+	case .Machine_Key_Stopping:
+		if unlock_run.stage == .Stopped {
+			start_policy_choice_end()
+			return
+		}
+		if system.time() >= start_policy_choice_deadline {
+			system.log_in("processes", .Warning, "root: unlock did not stop within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms after its stop was asked: the start policy starts, and its row unlock does not start while it runs")
 			start_policy_choice_end()
 		}
 	case .Table:
@@ -141,7 +134,7 @@ start_policy_choice_table_check :: proc "contextless" () {
 // step of the read even with no event.
 start_policy_choice_wake :: proc "contextless" () -> u64 {
 	switch start_policy_choice_stage {
-	case .Machine_Key, .Table:
+	case .Machine_Key, .Machine_Key_Stopping, .Table:
 		return start_policy_choice_deadline
 	case .Done, .Load:
 	}
@@ -169,6 +162,14 @@ start_policy_choice_end :: proc "contextless" () {
 	start_policy_after_the_choice(chosen)
 }
 
+// nickname_reserved_for_a_start_policy says if a nickname cannot name a
+// start policy: it runs under its nickname in the table of the processes,
+// so a name that a table of this service gives a grant, or that a module of
+// the boot image has, would take them.
+nickname_reserved_for_a_start_policy :: proc "contextless" (nickname: string) -> bool {
+	return name_is_a_system_part(nickname) || role_names_the_process(nickname) || len(system.image_find(image, nickname)) != 0
+}
+
 // start_policy_chosen_nickname_text gives the nickname of the chosen start
 // policy.
 start_policy_chosen_nickname_text :: proc "contextless" () -> string {
@@ -183,6 +184,14 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 	nickname := disk_process.row_nickname(row)
 	start_policy_chosen_nickname = {}
 	start_policy_chosen_nickname_length = copy(start_policy_chosen_nickname[:], nickname)
+	// The rules of the choice again: a table restored from an older version,
+	// or a boot image that holds a new module of this name, can name what
+	// the choice refused.
+	if nickname_reserved_for_a_start_policy(nickname) {
+		system.log_in("processes", .Warning, "root: the chosen start policy \"", nickname, "\" is not read: the root service gives this name a grant, or a module of the boot image has it: the rescue start policy starts")
+		start_policy_launch(.Rescue)
+		return
+	}
 	if disk_load.stage != .Idle {
 		system.log_in("processes", .Warning, "root: the chosen start policy \"", nickname, "\" is not read: another load from the disk runs: the rescue start policy starts")
 		start_policy_launch(.Rescue)
@@ -291,7 +300,16 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	process: system.Handle
 	if status == .Ok {
 		words: [64]u8
-		start_policy_measure(hash, {}, system.format(words[:], "(nickname \"", name, "\")"))
+		// A chosen start policy never runs unmeasured: else PCR 12 would
+		// show the rescue alone after a module of the disk ran and failed,
+		// and an attestation would not see it. The rescue starts in its
+		// place, and is measured, or says why not.
+		if !start_policy_measure(hash, {}, system.format(words[:], "(nickname \"", name, "\")")) {
+			system.log_in("processes", .Warning, "root: the chosen start policy \"", name, "\" does not run unmeasured: it is not started")
+			status = .Bad_State
+		}
+	}
+	if status == .Ok {
 		process_budget := disk_budget_of(file, name, disk_processes)
 		source := load_source()
 		source.files = store_files
@@ -332,6 +350,11 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right
+	}
+	if form_status, form_refusal := start_policy_rules.choice_form_refusal(nickname == "", hash == {}); form_status != .Ok {
+		values^ = form_refusal
+		system.log_in("processes", .Warning, "root: refused a choice of a start policy: a nickname of no byte ends the choice, and the command names a hash")
+		return form_status
 	}
 	facts := start_policy_rules.Choice_Facts {
 		caller_is_principal_0          = caller.principal == principals.MACHINE,
@@ -385,7 +408,7 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 	// The start policy runs under its nickname, in the table of the
 	// processes: a name that a table of this service gives a grant, or
 	// that a module of the boot image has, would take them.
-	if name_is_a_system_part(nickname) || role_names_the_process(nickname) || len(system.image_find(image, nickname)) != 0 {
+	if nickname_reserved_for_a_start_policy(nickname) {
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		system.log_in("processes", .Warning, "root: refused the start policy ", system.Module_Name{nickname}, ": the root service gives this name a grant, or a module of the boot image has it, and the start policy runs under its nickname")
 		return .Bad_Operation

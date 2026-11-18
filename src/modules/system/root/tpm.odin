@@ -22,6 +22,9 @@ tpm_process: ^Started
 tpm_measure_memory: system.Handle
 tpm_measure_ring: ring.Ring
 tpm_measure_tag: u32
+// The TPM service ran in this run and stopped: the line of a start policy
+// that is not measured names that cause, and not an absent TPM.
+tpm_service_stopped: bool
 
 // The bound of the wait for the answer of one measure. It only ends a wait
 // for a TPM service that does not answer: an extend and a read take
@@ -118,6 +121,7 @@ tpm_service_end :: proc "contextless" (item: ^Started) {
 	}
 	tpm_ring, tpm_region, tpm_process = 0, 0, nil
 	tpm_measure_memory, tpm_measure_ring = 0, {}
+	tpm_service_stopped = true
 	system.log_in("devices", .Warning, "root: the TPM service stopped: no key is sealed or unsealed until the machine starts again")
 }
 
@@ -137,19 +141,30 @@ tpm_grants_give :: proc "contextless" (work: ^Start_Work) {
 // start_policy_measure has the TPM service extend PCR 12 with the event
 // digest of a start policy, before its Process_Start, and writes the line
 // with the value of PCR 12 that the TPM gives back. what names the start
-// policy after its hash: its nickname, or its list. It waits within its
-// bound: a TPM service that does not answer leaves the start policy
-// unmeasured, with its line, and the start goes on.
-start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]u8, what: string) {
+// policy after its hash: its nickname, or its list. measured: the TPM took
+// the extend. A start policy of the boot image starts unmeasured, with the
+// line of the cause; a chosen start policy does not start unmeasured
+// (start_policy_chosen_run).
+//
+// The wait is not a stage of the loop of this service: the bytes of the
+// chosen module file are held by the load until Process_Start, the rescue
+// starts inside the reap of the failed policy, and each would need a state
+// of its own across passes. The wait is short in practice (an extend and a
+// read), and its bound only ends a TPM service that does not answer.
+start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]u8, what: string) -> (measured: bool) {
 	head: [8 + len("…")]u8
 	copy(head[:], start_policy_hash_text(module_hash))
+	if tpm_service_stopped {
+		system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service stopped earlier in this run")
+		return false
+	}
 	if tpm_ring == 0 || tpm_process == nil {
 		system.log_in("processes", .Info, "root: the start policy ", string(head[:]), " ", what, " is not measured: the system is not measured into a TPM")
-		return
+		return false
 	}
 	if tpm_measure_ring.head == nil {
 		system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service has no measure ring")
-		return
+		return false
 	}
 	module_copy, list_copy := module_hash, list_hash
 	digest := tpm2.start_policy_event_digest(&module_copy, &list_copy)
@@ -158,7 +173,7 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 	tag := tpm_measure_tag
 	if !system.send(&tpm_measure_ring.commands, ring.Record{kind = u32(tpm_service.Command.Measure_Start_Policy), tag = tag, values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3]}}) {
 		system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the measure ring of the TPM service is full")
-		return
+		return false
 	}
 	limit := system.time() + TPM_MEASURE_BOUND_MILLISECONDS
 	for {
@@ -171,25 +186,25 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 			status, known := tpm_service.status_of_word(record.kind)
 			if !known {
 				system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service gave the status ", u64(record.kind), ", which names no status")
-				return
+				return false
 			}
 			if status != .Ok {
 				system.log_in("processes", .Warning, "root: the measure of the start policy ", string(head[:]), " ", what, " into PCR 12 failed: the TPM service answered ", tpm_measure_status_words[status], ", value ", record.values[0])
-				return
+				return false
 			}
 			value := transmute([32]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
 			digits := system_description.hexadecimal(value)
 			system.log_in("processes", .Info, "root: the start policy ", string(head[:]), " ", what, " is measured into PCR 12: PCR 12 = ", string(digits[:]))
-			return
+			return true
 		}
 		if state, _ := system.process_state(tpm_process.process); state == .Stopped {
-			system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service stopped")
-			return
+			system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service stopped during the measure")
+			return false
 		}
 		system.wait_records(&wait, &tpm_measure_ring.completions)
 		if system.wait_end(&wait, limit) >= limit {
 			system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service gave no answer within ", u64(TPM_MEASURE_BOUND_MILLISECONDS), " ms")
-			return
+			return false
 		}
 	}
 }

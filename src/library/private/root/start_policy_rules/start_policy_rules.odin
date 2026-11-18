@@ -94,6 +94,51 @@ restart_refusal :: proc "contextless" (from_disk: bool, earlier_starts: u64, tab
 	return .Ok
 }
 
+// The starts of one name that a start policy from the disk asked for. A
+// place with no start is free.
+Name_Count :: struct {
+	name:        [32]u8,
+	name_length: int,
+	starts:      u64,
+}
+
+Name_Counts :: [RESTARTED_NAME_CAPACITY]Name_Count
+
+// restart_check is the decision that the root service calls for each Start
+// of a start policy: the place of the count of the name (a free place for a
+// new name; nil when each place holds another name), then restart_refusal
+// and its record. The caller adds one start to the place after a start that
+// ran, and only then. A refusal changes no count.
+restart_check :: proc "contextless" (counts: ^Name_Counts, from_disk: bool, name: string) -> (status: op.Status, refusal: [7]u64, place: ^Name_Count) {
+	if !from_disk {
+		return .Ok, {}, nil
+	}
+	for &item in counts {
+		if item.starts > 0 && string(item.name[:item.name_length]) == name {
+			place = &item
+			break
+		}
+	}
+	if place == nil {
+		for &item in counts {
+			if item.starts == 0 {
+				place = &item
+				break
+			}
+		}
+	}
+	earlier: u64 = place != nil ? place.starts : 0
+	status = restart_refusal(true, earlier, place == nil)
+	if status != .Ok {
+		return status, restart_record(earlier, place == nil), nil
+	}
+	if place.starts == 0 {
+		place^ = {}
+		place.name_length = copy(place.name[:len(place.name) - 1], name)
+	}
+	return .Ok, {}, place
+}
+
 // restart_record is the error record of a Start that restart_refusal
 // refused: Over_Limit with the restarts asked and the bound, or Full of the
 // table of the counts.
@@ -140,6 +185,17 @@ choice_refusal :: proc "contextless" (facts: Choice_Facts) -> Choice_Refusal {
 		return .Passphrase
 	}
 	return .None
+}
+
+// choice_form_refusal checks the form of a Start_Policy_Choice: a nickname
+// of no byte ends the choice and names no file, so a hash with it is
+// refused with Bad_Value of the argument 2 (the hash), and the end of the
+// choice does not run. hash_is_zero: values[0..3] are all zero.
+choice_form_refusal :: proc "contextless" (nickname_is_empty: bool, hash_is_zero: bool) -> (status: op.Status, refusal: [7]u64) {
+	if nickname_is_empty && !hash_is_zero {
+		return .Bad_Operation, errors.ring_fail(u32(root_ring.Root_Command.Start_Policy_Choice), .Bad_Value, .None, 2)
+	}
+	return .Ok, {}
 }
 
 // choice_record is the error record of a refused choice: Absent of the

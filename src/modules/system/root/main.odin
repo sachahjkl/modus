@@ -1949,7 +1949,14 @@ reap :: proc "contextless" () {
 		}
 		state, code := system.process_state(item.process)
 		if state == .Stopped {
-			system.log_in("processes", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+			// The run of `unlock` before the start policy has a line of its
+			// own: a wait for the stop of the run of the start list never
+			// takes it.
+			if unlock_without_window_running(&item) {
+				system.log_in("processes", code == 0 ? .Info : .Warning, "root: unlock read the machine key with no window and stopped with code ", u64(code))
+			} else {
+				system.log_in("processes", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+			}
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk process keeps it here.
 			stop_report_keep(&item)

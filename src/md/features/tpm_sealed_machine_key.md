@@ -21,7 +21,7 @@ The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine k
 
 The process `tpm` is the device service of the TPM. The root service starts it at boot, before `unlock`, only when the trust record says `Measured`: the TPM is there and PCR 11 holds the measure. It gives the process the page of the registers, a ring and a region of one page, and the measure ring below. The process has no other grant.
 
-`unlock` is its one client. The root service gives the same ring and region to each run of `unlock` with the start grant `Tpm`. The ring has two commands:
+`unlock` is its client for the seal and the unseal; the root service is a second client, on the measure ring below, on which the service extends PCR 12. The root service gives the same ring and region to each run of `unlock` with the start grant `Tpm`. The ring has two commands:
 
 | Command | The region before | The region after |
 |---|---|---|

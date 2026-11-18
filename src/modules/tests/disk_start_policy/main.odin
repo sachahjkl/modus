@@ -19,7 +19,8 @@
 //
 // **What a reader sees.** No window. The log has "disk_start_policy: ok",
 // the handles of its context, the refusal of a start of the start policy
-// of the boot image, one line for each process that it starts, then
+// of the boot image and of four commands of the console, one line for each
+// process that it starts, then
 // "disk_start_policy: the console runs: the machine is usable".
 package disk_start_policy
 
@@ -81,6 +82,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("disk_start_policy: a start of the start policy of the boot image is refused with the status ", status, ": as it must")
 	} else {
 		system.log("disk_start_policy: a start of the start policy of the boot image is taken: WRONG")
+	}
+	// Its root ring sends Start, Stop and Machine_Usable only: each command
+	// of the console is refused with No_Right, before it runs.
+	refused := [4]root_ring.Root_Command{.Start_Policy_Choice, .Start_From_Disk, .Disk_Grant, .Connect}
+	taken := 0
+	for command in refused {
+		if status, _ := command_call(command, "storage"); status != .No_Right {
+			system.log("disk_start_policy: the command ", root_ring.root_command_names[command], " gives the status ", status, ", not No_Right: WRONG")
+			taken += 1
+		}
+	}
+	if taken == 0 {
+		system.log("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must")
 	}
 	order := ORDER
 	for name in order {

@@ -835,6 +835,13 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2)
 		return .Bad_Operation
 	}
+	// The chosen start policy names the file that principal 0 chose: only
+	// a new choice changes it.
+	if .Start_Policy in row.grants {
+		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
+		system.log_in("processes", .Warning, "root: refused the move of the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy; start_policy_choose names another file")
+		return .Bad_Operation
+	}
 	system.log_in("processes", .Info, "root: the file ", system.Hash{hash[:]}, " will get the data of ", system.Module_Name{nickname})
 	if disk_process.table_move(table, nickname, hash) != .None {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
@@ -881,7 +888,13 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	if disk_process.table_persistence_set(table, nickname, persistence) != .None {
+	switch disk_process.table_persistence_set(table, nickname, persistence) {
+	case .None:
+	case .Start_Policy_Row:
+		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
+		system.log_in("processes", .Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy, which persists until start_policy_default ends the choice")
+		return .Bad_Operation
+	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		system.log_in("processes", .Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
 		return .Bad_Handle

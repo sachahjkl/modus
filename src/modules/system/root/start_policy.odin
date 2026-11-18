@@ -265,7 +265,9 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	if list_entry := system.image_resource_find(image, START_POLICY_LIST_NAMES[list]); list_entry != nil {
 		list_hash = list_entry.hash
 	}
-	start_policy_measure(module_hash, list_hash, START_POLICY_LIST_WORDS[list])
+	// A start policy of the boot image starts unmeasured, with the line of
+	// the cause: it is signed and measured with the system in PCR 11.
+	_ = start_policy_measure(module_hash, list_hash, START_POLICY_LIST_WORDS[list])
 	start_policy_from_disk = false
 	start_policy_starting = true
 	status := start(START_POLICY_NAME, principals.MACHINE)
@@ -452,21 +454,12 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 	}
 	// A start policy from the disk has the bound of a start row on the
 	// restarts of each name that it asks for: no loop of starts.
-	counted: ^Start_Policy_Name_Count
-	if start_policy_from_disk {
-		counted = start_policy_name_count(name)
-	}
-	earlier: u64 = counted != nil ? counted.starts : 0
-	table_full := start_policy_from_disk && counted == nil
-	if refusal := start_policy_rules.restart_refusal(start_policy_from_disk, earlier, table_full); refusal != .Ok {
-		values^ = start_policy_rules.restart_record(earlier, table_full)
+	restart_status, restart_record, counted := start_policy_rules.restart_check(&start_policy_name_counts, start_policy_from_disk, name)
+	if restart_status != .Ok {
+		values^ = restart_record
 		written^ = true
-		if table_full {
-			system.log_in("processes", .Warning, "root: refused a start of ", system.Module_Name{name}, " by the start policy from the disk: the root service counts the starts of ", u64(start_policy_rules.RESTARTED_NAME_CAPACITY), " names, and each place is taken")
-		} else {
-			system.log_in("processes", .Warning, "root: refused a start of ", system.Module_Name{name}, " by the start policy from the disk: past its ", u64(start_list.RESTART_LIMIT), " restarts, it stays stopped")
-		}
-		return refusal
+		system.log_in("processes", .Warning, "root: refused a start of ", system.Module_Name{name}, " by the start policy from the disk: past its ", u64(start_list.RESTART_LIMIT), " restarts, or past the ", u64(start_policy_rules.RESTARTED_NAME_CAPACITY), " names whose starts the root service counts, it stays stopped")
+		return restart_status
 	}
 	status: system.Status
 	switch name {

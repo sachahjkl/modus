@@ -172,6 +172,10 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_type(&machine, fmt.aprintf("start_policy_choose(\"%s\", \"%s\")", CHOSEN_NICKNAME, string(chosen_digits[:])))
 	machine_wait(&machine, fmt.aprintf("root: principal 0 chose the start policy %s, the file %s: it runs at the next start of the machine, with the grant Start_Policy only; the machine key keeps the choice on the disk", CHOSEN_NICKNAME, string(chosen_digits[:])))
 	machine_wait(&machine, fmt.aprintf("root: the disk grant table of principal 0 is written in the store module_files: 1 rows, with the tag of the machine key"))
+	// A reserved nickname: the name of a module of the boot image, under
+	// which the start policy would run.
+	machine_type(&machine, fmt.aprintf("start_policy_choose(\"console\", \"%s\")", string(chosen_digits[:])))
+	machine_wait(&machine, fmt.aprintf("root: refused the start policy console: the root service gives this name a grant, or a module of the boot image has it, and the start policy runs under its nickname"), fails_on = "root: principal 0 chose the start policy console")
 	// A hash that does not match the row.
 	machine_type(&machine, fmt.aprintf("start_policy_choose(\"%s\", \"%s\")", CHOSEN_NICKNAME, string(broken_digits[:])))
 	machine_wait(&machine, fmt.aprintf("root: refused the start policy %s: the nickname names the file %s, and the command names the file %s", CHOSEN_NICKNAME, string(chosen_digits[:]), string(broken_digits[:])))
@@ -181,7 +185,7 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_end_steps(&machine)
 	start_policy_machine_run(part, &machine, 1) or_return
 	machine_forget(&machine)
-	foundation.test_passed_print("%s", "principal 0 chose a start policy from the disk once its machine key opened with no passphrase; a nickname that names no module, a hash that does not match and a grant store for it were refused")
+	foundation.test_passed_print("%s", "principal 0 chose a start policy from the disk once its machine key opened with no passphrase; a nickname that names no module, a reserved nickname, a hash that does not match and a grant store for it were refused")
 
 	// 2. The chosen start policy runs, measured into PCR 12.
 	machine_start_steps(&machine)
@@ -195,9 +199,17 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_wait(&machine, fmt.aprintf("root: started the chosen start policy \"%s\" from the disk, hash %s, with the grant Start_Policy only", CHOSEN_NICKNAME, string(chosen_digits[:])), any_order = true)
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: a start of the start policy of the boot image is refused with the status "), any_order = true)
+	machine_wait(&machine, fmt.aprintf("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must"), any_order = true, fails_on = "disk_start_policy: the command ")
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: the console runs: the machine is usable"), any_order = true, fails_on = "the rescue start policy starts")
+	// The run of unlock before the start policy stopped with its own line.
+	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped with code 0"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: the machine is usable, by the start policy "), any_order = true)
 	machine_wait(&machine, fmt.aprintf(" chosen by principal 0, from the disk: the budget of this service holds "))
+	// The chosen row keeps its file and its persistence.
+	machine_type(&machine, fmt.aprintf("nickname_move(\"%s\", \"%s\")", CHOSEN_NICKNAME, string(broken_digits[:])))
+	machine_wait(&machine, fmt.aprintf("root: refused the move of the nickname %s: it names the chosen start policy; start_policy_choose names another file", CHOSEN_NICKNAME), fails_on = " will get the data of ")
+	machine_type(&machine, fmt.aprintf("disk_persistence(\"%s\", \"forget\")", CHOSEN_NICKNAME))
+	machine_wait(&machine, fmt.aprintf("root: refused the setting of persistence of the nickname %s: it names the chosen start policy, which persists until start_policy_default ends the choice", CHOSEN_NICKNAME))
 	machine_type(&machine, fmt.aprintf("start_policy_choose(\"%s\", \"%s\")", BROKEN_NICKNAME, string(broken_digits[:])))
 	machine_wait(&machine, fmt.aprintf("root: principal 0 chose the start policy %s, the file %s: it runs at the next start of the machine", BROKEN_NICKNAME, string(broken_digits[:])))
 	machine_wait(&machine, fmt.aprintf("root: the disk grant table of principal 0 is written in the store module_files: 2 rows, with the tag of the machine key"))
@@ -213,6 +225,7 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_start_steps(&machine)
 	broken_words := fmt.aprintf("(nickname \"%s\")", BROKEN_NICKNAME)
 	defer delete(broken_words)
+	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped with code 0"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: reads the chosen start policy \"%s\", the file %s, from the store module_files of principal 0", BROKEN_NICKNAME, string(broken_digits[:])), any_order = true)
 	machine_wait(&machine, fmt.aprintf("%s%s", broken_words, MEASURED_WORDS))
 	machine_wait(&machine, fmt.aprintf("start_policy: the context names no start list: no row starts"), any_order = true)

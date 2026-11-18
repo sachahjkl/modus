@@ -259,7 +259,8 @@ request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Requ
 // measure_refusal decides one Measure_Start_Policy from the count of the
 // extends that ran in this start: Measure_Limit from MEASURE_LIMIT on, and
 // for a count that no start can reach (a negative one); else Ok. The service
-// counts an extend only when the TPM took it.
+// counts each extend that it sends, before its answer: the TPM can take an
+// extend whose answer the interface lost.
 measure_refusal :: proc "contextless" (extends_done: int) -> Status {
 	if extends_done < 0 || extends_done >= MEASURE_LIMIT {
 		return .Measure_Limit
