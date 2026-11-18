@@ -3,6 +3,7 @@ package interface
 
 import "modus:contract/draw_record"
 import "modus:contract/glyph_cache"
+import "core:slice"
 import "core:testing"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -179,7 +180,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 		draw_damage_on_surface(&now, partial_canvas, damage.rectangles[:damage.count])
 		graphics.clear(whole_canvas, graphics.colors.background)
 		execute(&now, whole_canvas)
-		if !same_pixels(partial, whole) {
+		if !slice.equal(partial, whole) {
 			differing_frames += 1
 		}
 	}
