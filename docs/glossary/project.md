@@ -1072,6 +1072,16 @@ The design: `src/md/infrastructure/fuzzing.md`.
 
 Do not use: seed corpus, test suite (for this).
 
+### Regression input
+
+A regression input is a minimized fuzz finding after its fix, which the corpus keeps so that each check runs it again.
+
+For a host target it is the fuzz input, and the oracles check it. For the kernel operations it is one minimized machine life with the answer of each step of its last sequence on the kernel that ships: the status, the error record and the table of error details. The test part `operation_sequences` runs each one and checks those answers. `modustool fuzz regression operations <finding>` writes it from a finding folder. It is not a seed sequence, which the tool builds in its code.
+
+The design: `src/md/infrastructure/kernel_fuzzing.md`.
+
+Do not use: regression test (for this), golden file.
+
 ### Edge counter
 
 An edge counter is a byte that instrumented code adds one to each time it passes one edge of its control flow.
