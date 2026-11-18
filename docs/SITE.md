@@ -230,11 +230,11 @@ What a feed reader needs, and what is missing with no address:
 
 An entry can name a film: `film: docs/films/<name>.webm` in its head. The command `modustool film <name>` writes the file (`TOOLS.md`, "The film of a document"), and the repository holds it. The site copies it to `films/<name>.webm` as it is: `modustool site` runs no encoder.
 
-**The file.** WebM with AV1, 30 pictures in one second, no sound, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`). Each version of the file stays in the history of the repository, and a reader loads it on a phone. Measured on the film of the palette (36.8 s, 2048 by 1536 pixels): H.264 in MP4 3 169 392 bytes, VP9 in WebM 3 019 142 bytes, AV1 in WebM 1 572 784 bytes, with the text of the screen sharp in the AV1 file. The site holds one file for a film, and no second source in another format.
+**The file.** WebM with AV1, 30 pictures in one second, no sound, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`). Each version of the file stays in the history of the repository, and a reader loads it on a phone. Measured on the film of the palette on a screen of 1024 by 768 (36.8 s, 2048 by 1536 pixels): H.264 in MP4 3 169 392 bytes, VP9 in WebM 3 019 142 bytes, AV1 in WebM 1 572 784 bytes, with the text of the screen sharp in the AV1 file. The site holds one file for a film, and no second source in another format.
 
 **The checks.** `modustool news check` reads the file: it starts with an EBML header (the bytes `1A 45 DF A3`) of the document type `webm`, it is under the size bound, and its tracks state the width and the height of its pictures. The entry has a picture. `modustool site` stops on the same faults.
 
-**The page of the news.** An entry with a film shows it under its text, over the width of the card, at most 1024 pixels wide: the width of the screen of the system. In the column of a picture (384 pixels) the text of a film of the whole screen is not readable. On a screen narrower than 720 pixels the film takes the width of the column.
+**The page of the news.** An entry with a film shows it under its text, over the width of the card, at most 1920 pixels wide: the width of the reference screen (`SITE_SCREEN_PICTURE_WIDTH`), so one pixel of the screen is never wider than one pixel of the page. The page is narrower, so the film takes the width of the card. In the column of a picture (384 pixels) the text of a film of the whole screen is not readable. On a screen narrower than 720 pixels the film takes the width of the column.
 
 ```
 <figure class="news-film">
@@ -260,7 +260,7 @@ An entry can name a film: `film: docs/films/<name>.webm` in its head. The comman
 | The `img` inside `video` | For a browser with no `video` element: the picture, as a link to the file |
 | The caption | The name of the file as a link, its format and its size: a reader chooses whether to load it, and can keep the file |
 
-**The codec text**, `av01.0.12M.08`: AV1 (`av01`), the main profile (`0`), the level 5.0 (`12`), the main tier (`M`), 8 bits a channel (`08`). The level is the one that the encoder writes in the file for this size: a picture of 2048 by 1536 has 3 145 728 pixels and 1536 lines, more than the levels 4.0 and 4.1 hold (2 228 224 pixels, 1152 lines); the level 5.0 is the first that holds it (8 912 896 pixels, 2176 lines). `ffprobe` gives `profile=Main`, `level=12` and `pix_fmt=yuv420p` for a file of the encoder of the tool. The text is a constant (`SITE_FILM_CODEC`): a film of another size of screen, or of 10 bits a channel, needs another text.
+**The codec text**, `av01.0.12M.08`: AV1 (`av01`), the main profile (`0`), the level 5.0 (`12`), the main tier (`M`), 8 bits a channel (`08`). The level is the one that the encoder writes in the file for this size: a film of the reference screen is 3840 by 2160, two pixels of the film for each pixel of the screen, so 8 294 400 pixels and 2160 lines. That is more than the levels 4.0 and 4.1 hold (2 228 224 pixels, 1152 lines), and the level 5.0 is the first that holds it (8 912 896 pixels, 2176 lines). At 30 pictures in one second it decodes 248 832 000 pixels in one second, under the 267 386 880 of the level 5.0. `ffprobe` gives `profile=Main`, `level=12` and `pix_fmt=yuv420p` for a file of the encoder of the tool. The text is a constant (`SITE_FILM_CODEC`): a film of another size of screen, or of 10 bits a channel, needs another text.
 
 **A browser that does not play AV1** (a Safari on a device with no AV1 decoder, an older browser) shows the picture of the entry, the `poster`, in the place of the film, and plays nothing. The caption still links to the file.
 
@@ -528,7 +528,7 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 |---|---|
 | `pointers.png` | The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use |
 
-A picture of the table has the size of the reference screen of the system, 1920 by 1080 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`, from the contract package `reference_screen`): the command stops on another size, a picture of the screen of 1024 by 768 of before too, and says that `modustool screenshots` makes the pictures again. The style sheet names the two widths at which a picture is shown, and they come from these constants.
+A picture of the table has the size of the reference screen of the system, 1920 by 1080 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`, from the contract package `reference_screen`): the command stops on a picture of another size and says that `modustool screenshots` makes the pictures again. The style sheet names the two widths at which a picture is shown, and they come from these constants.
 
 ### The page of the gallery
 

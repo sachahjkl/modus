@@ -214,7 +214,7 @@ gallery_test_png_head :: proc(width, height: int) -> []u8 {
 }
 
 // A picture of the gallery has the size of the reference screen: a picture
-// of the screen of before, one pixel more or less on each side, a picture
+// of a screen of 1024 by 768, one pixel more or less on each side, a picture
 // turned on its side and a file that is not a PNG file are refused.
 @(test)
 site_gallery_refuses_a_picture_of_another_screen :: proc(t: ^testing.T) {
@@ -465,6 +465,7 @@ site_carousel_rules_and_script :: proc(t: ^testing.T) {
 		".carousel-controls a[aria-current=\"true\"] {",
 		strings.concatenate({".carousel-slide img { max-width: ", fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH), "px; }"}, context.temp_allocator),
 		strings.concatenate({".gallery-pictures figure img { max-width: ", fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH / SITE_THUMBNAIL_DIVISOR), "px; }"}, context.temp_allocator),
+		strings.concatenate({".news-film { max-width: ", fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH), "px; }"}, context.temp_allocator),
 		".gallery-film { grid-column: 1 / -1;",
 	}
 	for rule in rules {

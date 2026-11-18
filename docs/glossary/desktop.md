@@ -726,7 +726,7 @@ Do not use: performance mode, power profile, quality setting.
 
 The reference screen is the screen for which the desktop is laid out and on which the test machines take their pictures: 1920 × 1080.
 
-The contract package `reference_screen` holds its size: the boot program asks the firmware for that mode, and the tool checks the screenshots and the video memory of its machines against it. Today the desktop draws on it at scale 1: a logical pixel is a pixel of the screen. A scale factor from 1.25 to 2 is the next step. It was 1024 × 768 before.
+The contract package `reference_screen` holds its size: the boot program asks the firmware for that mode, and the tool checks the screenshots and the video memory of its machines against it. The desktop draws on it at scale 1: a logical pixel is a pixel of the screen. A firmware with no mode of this size gets the largest mode inside it, and the boot program names the mode on one line.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
@@ -736,7 +736,7 @@ Do not use: default resolution, target screen.
 
 A logical pixel is the unit in which a process places and sizes what it draws; the scale factor turns it into pixels of the screen.
 
-The grid of 8 is 8 logical pixels, and a window states its size in logical pixels. Today the scale is 1, so a logical pixel is one pixel of the screen. At a scale of 1.25 the grid is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a picture, which keeps its own pixels.
+The grid of 8 is 8 logical pixels, and a window states its size in logical pixels. At scale 1 a logical pixel is one pixel of the screen. At a scale of 1.25 the grid is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a picture, which keeps its own pixels.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
@@ -756,7 +756,7 @@ Do not use: interface zoom, DPI setting, scaling percentage.
 
 The window bound is the largest size of a window with its frame: 1024 × 768 under the bar, so at most 1000 × 708 for the surface.
 
-It keeps each window of today inside the smallest logical screen that the desktop shows: the screen of before, and the reference screen at the scales up to 1.375. A window larger than the bound is a fault of its layout. The second layer of the reference screen changes the bound when it sets the range of the scale factor.
+It keeps each window inside a screen of 1024 × 768, and inside the logical screen of the reference screen at each scale up to 1.375. A window larger than the bound is a fault of its layout. The range of the scale factor sets the bound: a scale above 1.375 needs a smaller bound or resizable windows.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 

@@ -80,6 +80,11 @@ Step_Kind :: enum {
 	// of the line, and the zone must be `expected`, "+08:00"
 	// (machine_clock.odin).
 	Bar_Local_Time,
+	// As Wait, for the line of the compositor at its start (text:
+	// SCREEN_SIZE_LINE): the size on that line must be the reference
+	// screen, else the step fails at once and names the size that the
+	// firmware gave (machine_resize.odin, reference_screen_problem).
+	Screen_Size,
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -1006,7 +1011,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: fill_bytes_with_value, not aligned: ", any_order = true},
 	// The firmware gave the mode that the boot program asked for: the
 	// compositor shows the reference screen.
-	{kind = .Wait, text = REFERENCE_SCREEN_LINE, any_order = true},
+	{kind = .Screen_Size, text = SCREEN_SIZE_LINE, any_order = true},
 	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
 	// The two come in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
@@ -4456,6 +4461,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			date_check(index, value, step.text, machine.started_unix, machine.clock_offset_seconds) or_return
+		case .Screen_Size:
+			if !log_wait(machine, step.text, step.any_order) {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			// The whole log: a step in any order can find a line before the
+			// place of the last step. The size is that of the last start
+			// of the compositor.
+			if problem := reference_screen_problem(log_read(machine)); problem != "" {
+				fmt.eprintfln("modustool: test failed: step %d: %s", index + 1, problem)
+				return false
+			}
+			foundation.test_passed_print("the machine printed \"%s\"", REFERENCE_SCREEN_LINE)
 		case .Appearance_Auto:
 			appearance_auto_check(machine, index, step) or_return // machine_clock.odin
 		case .Bar_Local_Time:

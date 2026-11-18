@@ -86,6 +86,14 @@ the_reference_screen_fits_two_pages_in_the_video_memory :: proc(t: ^testing.T) {
 	testing.expect_value(t, screen_pages(&short[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), 1)
 	testing.expect_value(t, short[.Offset_Y], u16(0))
 
+	// The block that holds the end of the second page is the last one that
+	// the video memory needs: 254 blocks give two pages.
+	#assert(TWO_SCREEN_BLOCKS == 254)
+	exact := registers_of_the_firmware()
+	exact[.Video_Memory_Blocks] = TWO_SCREEN_BLOCKS
+	exact[.Virtual_Height] = PAGE_COUNT * TEST_HEIGHT
+	testing.expect_value(t, screen_pages(&exact[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
+
 	tall := registers_of_the_firmware(TEST_WIDTH, 2 * TEST_HEIGHT)
 	testing.expect_value(t, screen_pages(&tall[.Identity], TEST_WIDTH, 2 * TEST_HEIGHT, TEST_WIDTH), 1)
 
@@ -105,7 +113,7 @@ a_flip_writes_the_first_line_of_the_page :: proc(t: ^testing.T) {
 }
 
 // The mode of the firmware with room for two screens gives two pages, at
-// the reference screen and at the screen of 1024 by 768 of before.
+// the reference screen and at a screen of 1024 by 768.
 @(test)
 the_mode_of_the_firmware_gives_two_screen_pages :: proc(t: ^testing.T) {
 	registers := registers_of_the_firmware()

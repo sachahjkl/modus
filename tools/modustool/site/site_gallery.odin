@@ -375,7 +375,7 @@ site_gallery_folder_files :: proc() -> (names: []string, ok: bool) {
 
 // site_screen_picture_size gives the size of a picture of the screen, and
 // says whether it is a PNG file of the reference screen. A picture of
-// another size, a screen of before among them, is not one.
+// another size, a screen of 1024 by 768 among them, is not one.
 site_screen_picture_size :: proc(data: []u8) -> (width, height: int, is_screen: bool) {
 	is_png: bool
 	width, height, is_png = foundation.png_size(data)
@@ -704,15 +704,15 @@ SITE_GALLERY_RULES :: `
 .carousel-place { margin-right: 8px; font-family: var(--mono); font-size: 12px; }
 `
 
-// site_gallery_rules gives the rules of the gallery and of the carousel
-// for the style sheet. The two widths come from the size of a picture of
-// the screen, which the table holds only.
+// site_gallery_rules gives the rules of the gallery, of the carousel and
+// of the largest width of a film for the style sheet. The widths come from
+// the size of a picture of the screen, which the table holds only.
 site_gallery_rules :: proc() -> string {
 	// The braces of a rule are not in a format: the formatter reads a brace
 	// as the start of a value.
 	thumbnail_width := fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH / SITE_THUMBNAIL_DIVISOR)
 	picture_width := fmt.tprintf("%d", SITE_SCREEN_PICTURE_WIDTH)
-	return strings.concatenate({SITE_GALLERY_RULES, ".gallery-pictures figure img { max-width: ", thumbnail_width, "px; }\n.carousel-slide img { max-width: ", picture_width, "px; }\n"}, context.temp_allocator)
+	return strings.concatenate({SITE_GALLERY_RULES, ".gallery-pictures figure img { max-width: ", thumbnail_width, "px; }\n.carousel-slide img { max-width: ", picture_width, "px; }\n.news-film { max-width: ", picture_width, "px; }\n"}, context.temp_allocator)
 }
 
 // site_carousel_script gives the script of the carousel of the home. The

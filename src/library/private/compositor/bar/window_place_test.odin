@@ -108,7 +108,7 @@ new_window_places :: proc(t: ^testing.T) {
 // starts under the bar; the place where only the title bar shows, at the
 // bottom, is kept, and a place below it stops where TITLE_KEPT lines of
 // the title stay on the screen. A window of the window bound placed where
-// the screen of before put it keeps its place.
+// a screen of 1024 by 768 puts it keeps its place.
 @(test)
 new_window_places_on_the_reference_screen :: proc(t: ^testing.T) {
 	WIDTH_OF_SCREEN :: reference_screen.WIDTH

@@ -54,6 +54,9 @@ FIRMWARE_MAP_PAGES :: 16
 // screen. A firmware with no such mode keeps the mode that it set.
 PREFERRED_WIDTH :: reference_screen.WIDTH
 PREFERRED_HEIGHT :: reference_screen.HEIGHT
+// The graphics modes that the boot program reads: the firmware of QEMU
+// offers about 30. A firmware with more says so on one line.
+MODE_CAPACITY :: 256
 
 system: ^Efi_System_Table
 image_handle: rawptr
@@ -238,18 +241,65 @@ framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
 		print("boot program: no graphics output\r\n")
 		return
 	}
-	for mode in 0 ..< graphics.mode.mode_count {
+	// The modes of the firmware, then the choice of the reference screen,
+	// or of the largest mode inside it (reference_screen.mode_choose).
+	modes: [MODE_CAPACITY]reference_screen.Screen_Mode
+	count := 0
+	mode_count := graphics.mode != nil ? graphics.mode.mode_count : 0
+	if mode_count > MODE_CAPACITY {
+		print("boot program: the firmware offers ")
+		print_number(u64(mode_count))
+		print(" graphics modes; the boot program reads the first ")
+		print_number(MODE_CAPACITY)
+		print("\r\n")
+	}
+	for mode in 0 ..< min(mode_count, MODE_CAPACITY) {
 		size: uint
 		mode_info: ^Efi_Graphics_Mode_Info
-		if graphics.query_mode(graphics, mode, &size, &mode_info) != 0 {
+		if graphics.query_mode(graphics, mode, &size, &mode_info) != 0 || mode_info == nil {
 			continue
 		}
-		if mode_info.width == PREFERRED_WIDTH && mode_info.height == PREFERRED_HEIGHT && mode_info.format <= .Blue_Green_Red {
-			graphics.set_mode(graphics, mode)
-			break
-		}
+		modes[count] = {number = mode, width = mode_info.width, height = mode_info.height, drawable = pixel_format_drawable(mode_info.format)}
+		count += 1
+	}
+	chosen, choice := reference_screen.mode_choose(modes[:count])
+	set_status: Efi_Status
+	switch choice {
+	case .Exact, .Smaller:
+		set_status = graphics.set_mode(graphics, chosen.number)
+	case .None:
+	}
+	if graphics.mode == nil || graphics.mode.info == nil {
+		print("boot program: the graphics output gives no mode\r\n")
+		return
 	}
 	mode_info := graphics.mode.info
+	if mode_info.width != PREFERRED_WIDTH || mode_info.height != PREFERRED_HEIGHT {
+		// One line, so that a screen of another size is never silent
+		// (src/md/features/desktop_to_browser.md, "The reference screen").
+		if choice == .Exact {
+			print("boot program: the firmware refused the mode ")
+		} else {
+			print("boot program: the firmware offers no mode ")
+		}
+		print_number(PREFERRED_WIDTH)
+		print("x")
+		print_number(PREFERRED_HEIGHT)
+		print(" in 32 bits")
+		if set_status != 0 {
+			print("; set_mode of the mode ")
+			print_number(u64(chosen.width))
+			print("x")
+			print_number(u64(chosen.height))
+			print(" gave the status ")
+			print_number(u64(set_status))
+		}
+		print("; it keeps ")
+		print_number(u64(mode_info.width))
+		print("x")
+		print_number(u64(mode_info.height))
+		print("\r\n")
+	}
 	result = {
 		address         = graphics.mode.framebuffer_base,
 		width           = mode_info.width,
@@ -271,6 +321,24 @@ framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
 		result = {}
 	}
 	return
+}
+
+// pixel_format_drawable says if a mode has a format that the system draws:
+// 32 bits for each pixel, red, green and blue in one of two orders. The
+// firmware writes the format word, so it becomes its enum here, at one
+// place, and a word that names no format is refused.
+pixel_format_drawable :: proc "contextless" (format_word: Efi_Pixel_Format) -> bool {
+	format, known := enum_word.member_of_word(Efi_Pixel_Format, u64(transmute(u32)format_word))
+	if !known {
+		return false
+	}
+	switch format {
+	case .Red_Green_Blue, .Blue_Green_Red:
+		return true
+	case .Bit_Mask, .Blt_Only:
+		return false
+	}
+	return false
 }
 
 // allocate gives zero pages that stay in use after the boot program.

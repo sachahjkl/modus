@@ -109,24 +109,29 @@ import process_page "modus:contract/disk_process_page"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
-// working memory: its surfaces, its tables and the screen. The frame and
-// the background each have the size of the screen: at the reference screen
-// of 1920 x 1080 each is 2025 pages, and their page tables up to 5 each.
-// The device memory of the screen costs no page, but its page tables do:
-// the two screen pages (4050 pages, 15.8 MiB) need up to 9 page tables,
-// and the page of the display registers needs a page table and a page
-// directory. Before the reference screen, at 1024 x 768, these parts were
-// 2 x 768 pages, 2 x 3 and 4 page tables: the screen adds 2 x 1257 pages,
-// 4 page tables for the frame and the background and 5 for the screen
-// pages, 2523 pages, to the 3803 pages of before. A resize maps the new
-// surface of a window beside its old one until its Present
-// (src/md/features/window_resize.md): the largest surface, 2048 x 2048
-// pixels of 8 bytes for two pictures, is 32 MiB, whose mapping takes at
-// most 17 page tables of 2 MiB (its start need not be on a 2 MiB edge) and
-// 2 page directories (it can cross a 1 GiB edge): 19 pages. Each of the 32
-// clients can hold one such second mapping: 32 x 19 = 608 pages, and
-// 3803 + 2523 + 608 = 6934.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6934, processes = 1, threads = 2}
+// working memory is the sum of these parts, at the reference screen of
+// 1920 x 1080:
+// - the frame and the background, each the size of the screen: 2 x 2025
+//   pages, and 2 x 5 page tables (8.1 MB need 4 tables of 2 MiB, and one
+//   more when the start is not on a 2 MiB edge);
+// - the two screen pages: device memory, which costs no page, but 15.8
+//   MiB of it need up to 9 page tables;
+// - each of these three spans can cross a 1 GiB edge, and then needs a
+//   second page directory: 3 pages;
+// - the page of the display registers: a page table and a page directory,
+//   2 pages;
+// - its surfaces, its tables and the other mappings: 2255 pages;
+// - a resize maps the new surface of a window beside its old one until
+//   its Present (src/md/features/window_resize.md): the largest surface,
+//   2048 x 2048 pixels of 8 bytes for two pictures, is 32 MiB, whose
+//   mapping takes at most 17 page tables of 2 MiB (its start need not be
+//   on a 2 MiB edge) and 2 page directories (it can cross a 1 GiB edge):
+//   19 pages. Each of the 32 clients can hold one such second mapping:
+//   32 x 19 = 608 pages.
+// 4050 + 10 + 9 + 3 + 2 + 2255 + 608 = 6937. A screen whose frame and
+// background the budget cannot pay is named on one line, and the
+// compositor stops (entry).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6937, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -583,7 +588,10 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer or no ring, the compositor writes
-// `compositor: no framebuffer` and stops with the code 1. Without the
+// `compositor: no framebuffer` and stops with the code 1. When its budget
+// cannot pay the frame and the background of the screen, it writes
+// `compositor: a screen of <width>x<height> needs <n> pages, the budget
+// holds <m>` and stops with the code 1. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -602,6 +610,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	screen_pages_open(ctx)
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
+	// The frame and the background have the size of the screen, and the
+	// budget is counted at the reference screen: a firmware that kept a
+	// larger mode gives a screen that the budget cannot pay. The line names
+	// both amounts, and the compositor stops with its code, so the root
+	// service runs on with no desktop.
+	canvas_pages := (u64(width) * u64(height) * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	budget_left, budget_status := system.budget_read()
+	if budget_status != .Ok || budget_left.pages < 2 * canvas_pages {
+		system.log("compositor: a screen of ", u64(width), "x", u64(height), " needs ", 2 * canvas_pages, " pages, the budget holds ", budget_left.pages)
+		system.stop(1)
+	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
 	// The background, the mark of the bar and the measures draw in the dark
