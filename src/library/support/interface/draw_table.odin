@@ -205,17 +205,52 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 	record_append(table, placed_record(draw_record.Draw_Horizontal_Gradient{left_color = left, right_color = right}, element, x, y, width, height))
 }
 
-// draw_point_grid appends the grid of points of the background.
-draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, placed_record(draw_record.Draw_Point_Grid{color = graphics.colors.point}, 0, x, y, width, height))
+// The grid of points of the background (docs/DESIGN.md, "3. Surfaces") as
+// the pattern of a Rectangle: a point of POINT_SIZE pixels at
+// POINT_STEP / 2 + n * POINT_STEP of the surface on each axis. The pattern
+// is placed on the surface, so two areas of one surface show one grid.
+POINT_GRID_PATTERN :: draw_record.Repetition {
+	cell_x      = graphics.POINT_STEP / 2 * draw_record.UNITS_PER_PIXEL,
+	cell_y      = graphics.POINT_STEP / 2 * draw_record.UNITS_PER_PIXEL,
+	cell_width  = graphics.POINT_SIZE * draw_record.UNITS_PER_PIXEL,
+	cell_height = graphics.POINT_SIZE * draw_record.UNITS_PER_PIXEL,
+	step_x      = graphics.POINT_STEP * draw_record.UNITS_PER_PIXEL,
+	step_y      = graphics.POINT_STEP * draw_record.UNITS_PER_PIXEL,
 }
 
-// draw_folded_gap appends a part with no measure on this scale.
+// draw_point_grid appends the grid of points of the background: one
+// Rectangle whose pattern is the grid, cut to the area.
+draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
+	record_append(table, placed_record(draw_record.Draw_Rectangle{color = graphics.colors.point, repetition = POINT_GRID_PATTERN}, 0, x, y, width, height))
+}
+
+// draw_folded_gap appends a part with no measure on this scale: the track,
+// then two lines at an angle, from the bottom left up to the right
+// (docs/DESIGN.md, "2. Forms"). Three records, each with the box of the
+// gap: the lines are cut to it, as the pixels of the gap always were, so
+// their ends can lie on its right edge. A line with an end past
+// LINE_COORDINATE_LIMIT is left out: no surface reaches it.
 draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, placed_record(draw_record.Draw_Folded_Gap{line_color = graphics.colors.dim, track_color = graphics.colors.track}, element, x, y, width, height))
+	draw_rectangle(table, x, y, width, height, graphics.colors.track, element)
+	line_in_box(table, x + 2, y + height - 4, x + width - 4, y + 4, graphics.colors.dim, element, x, y, width, height)
+	line_in_box(table, x + 6, y + height - 4, x + width, y + 8, graphics.colors.dim, element, x, y, width, height)
+}
+
+// line_in_box appends a line of 1 pixel from one end to the other in the
+// order given, whose record has the box of a place and a size: the line
+// draws only inside it. The execution walks the path from the end that
+// line_ends_in_order puts first, so the ends are written in that order.
+@(private)
+line_in_box :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y: int, color: graphics.Color, element: u32, x, y, width, height: int) {
+	if !inside_line_limit(from_x) || !inside_line_limit(from_y) || !inside_line_limit(to_x) || !inside_line_limit(to_y) {
+		return
+	}
+	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
+	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = color, thickness = 1}
+	record_append(table, placed_record(line, element, x, y, width, height))
 }
 
 // draw_picture appends the pixels of a picture of the program at (x, y).
@@ -374,7 +409,7 @@ text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -
 		first, count, scale = fields.first, fields.count, int(fields.scale)
 	case draw_record.Draw_Interface_Text:
 		first, count, scale = fields.first, fields.count, int(fields.scale)
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Vertical_Gradient, draw_record.Draw_Horizontal_Gradient, draw_record.Draw_Point_Grid, draw_record.Draw_Folded_Gap, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Vertical_Gradient, draw_record.Draw_Horizontal_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
 		return "", 0, false
 	}
 	if u64(first) + u64(count) > u64(table.text_count) || u64(first) + u64(count) > u64(len(table.text)) {

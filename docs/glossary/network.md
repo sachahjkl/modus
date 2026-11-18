@@ -323,7 +323,7 @@ Do not use: snapshot (for this), poll, frame (for this).
 
 A folded gap is the part of the band of an address space between two mappings that has no mapping: the band draws it with a fixed width and lines at an angle.
 
-An address space of a program has small mappings far apart. On a scale by address, the mappings are invisible lines. `inspect` folds each gap, so each mapping keeps a readable width, and draws lines at an angle on the gap to show that it has no measure on the scale.
+On a scale by address, the small mappings of a program would be invisible lines. `inspect` folds each gap, so each mapping keeps a readable width. The element `draw_folded_gap` of the interface package draws it as a rectangle and two lines: it is no kind of draw record.
 
 A folded gap is not an ellipsis of a text: it is a part of a drawn band, and its width says nothing of its size.
 

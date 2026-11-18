@@ -264,7 +264,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_11` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_11` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 11 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
+It is the first library module. A window calls `damage_of_draw_table_12` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_12` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 12 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 
@@ -272,7 +272,7 @@ Do not use: renderer module, graphics library, render service.
 
 ### Draw record
 
-A draw record is one thing to draw, in 48 bytes: a rectangle, a gradient, a run of text, a clip, a picture, a text grid or a line, with its box and the fields of its kind.
+A draw record is one thing to draw, in 48 bytes: a rectangle or a pattern of rectangles, a gradient, a run of text, a clip, a picture, a text grid or a line, with its box and the fields of its kind.
 
 Records of one fixed size make a frame plain data: a table that can be compared, drawn again in a part, or tested. A record is a header (its kind, its element identity, its box in 1/64 pixel) and 24 bytes of the fields of its kind only. The contract package `draw_record` holds the form, its version and its one border, `draw_record.read`, which refuses a byte past its bound. A draw record is not a command to a graphics processor: it is drawn on the processor, in the memory of the program.
 

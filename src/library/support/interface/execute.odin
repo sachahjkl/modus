@@ -69,7 +69,11 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		switch fields in primitive {
 		case draw_record.Draw_Nothing, draw_record.Draw_Clip:
 		case draw_record.Draw_Rectangle:
-			graphics.fill(view, x, y, width, height, fields.color)
+			if fields.repetition == (draw_record.Repetition{}) {
+				graphics.fill(view, x, y, width, height, fields.color)
+			} else {
+				pattern_draw(view, area, fields.repetition, fields.color)
+			}
 		case draw_record.Draw_Vertical_Gradient:
 			// One mix for each line: only the lines in the view.
 			first := max(0, -y)
@@ -94,11 +98,6 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			}
 		case draw_record.Draw_Interface_Text:
 			interface_text_draw(table, fields, view, area.left, y)
-		case draw_record.Draw_Folded_Gap:
-			graphics.fill(view, x, y, width, height, fields.track_color)
-			// Two lines at an angle, from the bottom left up to the right.
-			graphics.line(view, x + 2, y + height - 4, x + width - 4, y + 4, 1, fields.line_color)
-			graphics.line(view, x + 6, y + height - 4, x + width, y + 8, 1, fields.line_color)
 		case draw_record.Draw_Picture:
 			if picture, ok := picture_pixels(table, place, fields); ok {
 				graphics.copy(view, x, y, picture)
@@ -112,20 +111,71 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			// the end that line_ends_in_order puts first.
 			start_x, start_y, end_x, end_y := line_ends_in_order(draw_record.pixels_floor(fields.start_x) - area.left, draw_record.pixels_floor(fields.start_y) - area.top, draw_record.pixels_floor(fields.end_x) - area.left, draw_record.pixels_floor(fields.end_y) - area.top)
 			graphics.line(view, start_x, start_y, end_x, end_y, int(fields.thickness), fields.color)
-		case draw_record.Draw_Point_Grid:
-			// The points are at 12 + 24 n of the surface, so that two areas
-			// of one surface show one grid. A point that starts before the
-			// area can reach into it: the loop starts one step before.
-			half := graphics.POINT_STEP / 2
-			first_x := half + max(0, (area.left - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
-			first_y := half + max(0, (area.top - half) / graphics.POINT_STEP - 1) * graphics.POINT_STEP
-			for point_y := first_y; point_y < area.bottom; point_y += graphics.POINT_STEP {
-				for point_x := first_x; point_x < area.right; point_x += graphics.POINT_STEP {
-					graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, fields.color)
-				}
-			}
 		}
 	}
+}
+
+// pattern_draw draws the cells of the pattern of a Rectangle that meet the
+// area, a rectangle of the surface that the view shows from its top left
+// corner. The cells are placed on the surface, so that two areas of one
+// surface show one pattern: the first cell is the first whose right edge
+// passes the left edge of the area, and a cell that starts before the area
+// reaches into it, cut by the view. The border keeps each size a whole
+// pixel of at least 1 and each cell inside its step, so the loop draws each
+// pixel of the area at most once.
+//
+// Cells that touch are one fill: a cell as wide as its step makes each row
+// of cells one span across the area, a cell as high as its step makes each
+// column of cells one span down it, and both make the area one fill. So a
+// dense pattern costs what a solid rectangle costs, and the most calls come
+// from a cell of 1 pixel and a step of 2 on each axis: one call for each
+// cell, a quarter of the pixels of the area. The pixel writes are never
+// more than the pixels of the area.
+@(private)
+pattern_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, pattern: draw_record.Repetition, color: graphics.Color) {
+	cell_x, cell_y := draw_record.pixels_floor(pattern.cell_x), draw_record.pixels_floor(pattern.cell_y)
+	cell_width, cell_height := int(pattern.cell_width) >> draw_record.UNIT_SHIFT, int(pattern.cell_height) >> draw_record.UNIT_SHIFT
+	step_x, step_y := int(pattern.step_x) >> draw_record.UNIT_SHIFT, int(pattern.step_y) >> draw_record.UNIT_SHIFT
+	width, height := area.right - area.left, area.bottom - area.top
+	rows_touch := cell_width == step_x
+	columns_touch := cell_height == step_y
+	if rows_touch && columns_touch {
+		graphics.fill(view, 0, 0, width, height, color)
+		return
+	}
+	first_x := cell_x + (divide_down(area.left - cell_x - cell_width, step_x) + 1) * step_x
+	first_y := cell_y + (divide_down(area.top - cell_y - cell_height, step_y) + 1) * step_y
+	if rows_touch {
+		// Each row of cells is one span across the area.
+		for top := first_y; top < area.bottom; top += step_y {
+			graphics.fill(view, 0, top - area.top, width, cell_height, color)
+		}
+		return
+	}
+	if columns_touch {
+		// Each column of cells is one span down the area.
+		for left := first_x; left < area.right; left += step_x {
+			graphics.fill(view, left - area.left, 0, cell_width, height, color)
+		}
+		return
+	}
+	for top := first_y; top < area.bottom; top += step_y {
+		for left := first_x; left < area.right; left += step_x {
+			graphics.fill(view, left - area.left, top - area.top, cell_width, cell_height, color)
+		}
+	}
+}
+
+// divide_down gives the quotient of a division rounded toward minus
+// infinity, for a divisor above 0: the index of a cell of a pattern on the
+// left of the origin of its steps is negative.
+@(private)
+divide_down :: proc "contextless" (dividend, divisor: int) -> int {
+	quotient := dividend / divisor
+	if dividend % divisor != 0 && dividend < 0 {
+		quotient -= 1
+	}
+	return quotient
 }
 
 // text_grid_draw draws the cells of a grid that the view shows, with its

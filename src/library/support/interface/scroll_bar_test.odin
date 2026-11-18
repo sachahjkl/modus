@@ -378,12 +378,14 @@ scroll_bar_takes_the_wheel_over_its_view :: proc(t: ^testing.T) {
 	testing.expect(t, !outer.wheel_taken && !outer.changed)
 }
 
-// The records of one color and one kind, and the last of them.
+// The records of one color and one kind, and the last of them. A
+// Rectangle is a solid one: a pattern, such as the grid of points, is not a
+// part of a bar.
 @(private = "file")
 records_of :: proc(table: ^Draw_Table, kind: Draw_Kind, color: graphics.Color) -> (count: int, last: Draw_Record) {
 	for record in table.records[:table.record_count] {
 		view := record_view(record)
-		if view.read && view.kind == kind && view.color == color {
+		if view.read && view.kind == kind && !is_pattern(view) && view.color == color {
 			count += 1
 			last = record
 		}
@@ -394,7 +396,7 @@ records_of :: proc(table: ^Draw_Table, kind: Draw_Kind, color: graphics.Color) -
 @(private = "file")
 expect_record :: proc(t: ^testing.T, record: Draw_Record, kind: Draw_Kind, x, y, width, height: int, first_color: graphics.Color, second_color: graphics.Color = 0, loc := #caller_location) {
 	view := record_view(record)
-	testing.expectf(t, view.read && view.kind == kind && view.x == x && view.y == y && view.width == width && view.height == height && view.color == first_color && view.second_color == second_color, "the record is %v at %d,%d of %d by %d in %06x and %06x", view.kind, view.x, view.y, view.width, view.height, view.color, view.second_color, loc = loc)
+	testing.expectf(t, view.read && view.kind == kind && !is_pattern(view) && view.x == x && view.y == y && view.width == width && view.height == height && view.color == first_color && view.second_color == second_color, "the record is %v at %d,%d of %d by %d in %06x and %06x", view.kind, view.x, view.y, view.width, view.height, view.color, view.second_color, loc = loc)
 }
 
 @(test)

@@ -85,7 +85,7 @@ bar_with_value_places_the_bar_and_the_value :: proc(t: ^testing.T) {
 	bar_with_value(&frame, area, 200, 50, 100, graphics.colors.program)
 	testing.expect_value(t, memory.table.record_count, 3)
 	track := record_view(memory.table.records[0])
-	testing.expect_value(t, track.kind, Draw_Kind.Rectangle)
+	testing.expect(t, is_solid_rectangle(track), "the track is a solid rectangle")
 	testing.expect_value(t, track.x, area.x)
 	testing.expect_value(t, track.y, area.y + (TABLE_LINE - BAR_WITH_VALUE_THICKNESS) / 2)
 	testing.expect_value(t, track.width, 200)
