@@ -853,7 +853,7 @@ disk_programs_stop_report_steps :: proc(steps: ^[dynamic]Step, fault_hash: strin
 	// The root service ends the connection at the end that the debugger
 	// sends after the read: it writes its line before or after the
 	// console draws the row.
-	append(steps, Step{kind = .Wait, text = "root: disconnected programs from the service storage", any_order = true})
+	append(steps, Step{kind = .Wait, text = "root: disconnected module_files from the service storage", any_order = true})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("debugger: the stop report of %s: ", OUTSIDE_FAULT_MODULE)})
 	line_padding := strings.repeat(" ", max(0, len("line") - len(VISITOR_LINE_OF_THE_FAULT)), context.temp_allocator)
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  visitor::fault_three  %s/main.odin  %s%s", OUTSIDE_FAULT_MODULE, OUTSIDE_DISK_MODULE, line_padding, VISITOR_LINE_OF_THE_FAULT)})
@@ -877,7 +877,7 @@ disk_programs_debugger_steps :: proc(steps: ^[dynamic]Step, outsider_hash: strin
 	// The connection lives for the read only: the root service ends it
 	// when the debugger read the object. The root service writes its line
 	// before or after the console draws the row: the system fixes no order.
-	append(steps, Step{kind = .Wait, text = "root: disconnected programs from the service storage", any_order = true})
+	append(steps, Step{kind = .Wait, text = "root: disconnected module_files from the service storage", any_order = true})
 	// The one module of the program has a debug object: the one of the store.
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s          1", OUTSIDE_DISK_MODULE)})
 	append(steps, Step{kind = .Type, text = "columns(hold(0), \"thread state\")"})
@@ -909,7 +909,7 @@ disk_programs_network_steps :: proc(steps: ^[dynamic]Step, hash: string, changed
 	// writes its line when the connection is made: the system fixes no
 	// order.
 	append(steps, Step{kind = .Wait, text = "module_files: serves the store module_files of principal 0: a file from the web server 10.0.2.100 port 80, and the list of the files with the hash of their bytes", any_order = true})
-	append(steps, Step{kind = .Wait, text = "root: connected console to the service programs"})
+	append(steps, Step{kind = .Wait, text = "root: connected console to the service module_files"})
 	append(steps, Step{kind = .Type, text = fmt.aprintf("module_files.receive(\"%s\", \"/%s\")", RECEIVED_NICKNAME, DISK_MODULE_NAME)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("module_files: stored %s from /%s: %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, DISK_MODULE_NAME, module_size, hash)})
 	// The disk grant table is an object of the same store: the service
