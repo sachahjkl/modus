@@ -34,7 +34,7 @@ The numbers come from the code of the terminal and of the window layer.
 - **No new parameter and no new export.** The damage export reads the cells of the frame before in the text table before, and the cells of the frame now in the text table now. The draw export reads the cells in the text table now.
 - **The frame before keeps its cells with no memory of its own.** `draw_table_copy` copies the text table, and the cells with it. `Draw_Table.grids` and the copy of each grid are gone.
 - **The difference.** Two grid records that are equal except their place in the text table are compared cell by cell, as before. A grid that is not valid in one of the two tables is damaged whole.
-- **The version.** The fields of a Text_Grid have another meaning, and the bytes of a cell are now part of the border. The draw record became version 9 for this form, version 10 when a cell became a code point of 16 bytes, version 11 when each record got a header and the fields of its kind ([draw_table.md](draw_table.md)), and version 12 when the look of the system left the format; the exports are `damage_of_draw_table_12` and `execute_draw_table_in_rectangles_12`.
+- **The version.** The fields of a Text_Grid have another meaning, and the bytes of a cell are now part of the border. The draw record became version 9 for this form, version 10 when a cell became a code point of 16 bytes, version 11 when each record got a header and the fields of its kind ([draw_table.md](draw_table.md)), version 12 when the look of the system left the format, and version 13 when the two text kinds became one; the exports are `damage_of_draw_table_13` and `execute_draw_table_in_rectangles_13`.
 
 ### The cost
 
@@ -59,6 +59,6 @@ The numbers come from the code of the terminal and of the window layer.
 
 ## What is built and what is left
 
-Built: the cells in the text table, the draw record of version 12, and the terminal through the module.
+Built: the cells in the text table, the draw record of version 13, and the terminal through the module.
 
 Left: an export for one run of cells, for the programs that draw cell text themselves with no draw table. The count above shows that it is not the border of the terminal. See [library_modules.md](library_modules.md), "What is left, and what blocks it".

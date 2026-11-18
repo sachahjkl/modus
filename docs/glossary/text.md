@@ -324,7 +324,7 @@ Do not use: fixed-width font (for this), terminal font.
 
 The interface font is the proportional font of the titles, the labels, the buttons, the menus and the bar: B612.
 
-B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A program uses it through `src/library/support/interface`: an element that names or explains draws an `Interface_Text` record, which text shaping places with a proportional cache. The bar and the menus use it too. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
+B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A program uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places with a proportional cache. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 
@@ -332,9 +332,9 @@ Do not use: UI font, system font (for this), sans.
 
 ### Interface text
 
-An interface text is a text that a draw table draws in the interface font: the draw record `Interface_Text`.
+An interface text is a text that a draw table draws in the interface font: the draw record `Text` whose font is `Interface`.
 
-Its rectangle is the measured box of the text widened by the ink margin on each side, so the damage of the record covers every pixel of its ink. Its origin is `text_origin_thirds` thirds of a pixel (0, 1 or 2) after `x` and the margin, so a label can start between two pixels. The table shapes the text and draws its placed glyphs with `graphics.text_proportional`. A text in the font of the cells is the record `Text`.
+Its rectangle is the measured box of the text widened by the ink margin on each side, so the damage of the record covers every pixel of its ink. Its origin is `text_origin_thirds` thirds of a pixel (0, 1 or 2) after `x` and the margin, so a label can start between two pixels. The table shapes the text and draws its placed glyphs with `graphics.text_proportional`. A text in the font of the cells is the same record with the font `Cells_8x16`, its origin the left edge of its box.
 
 The design: `docs/FONTS.md`, "12.5 What changes in `src/library/support/interface`".
 
@@ -424,7 +424,7 @@ Do not use: positioned glyph, glyph run entry.
 
 The ink margin is how far the ink of a text of a proportional font can pass the box that its measure gives, on each side: 2 pixels at scale 1 for B612.
 
-A measure gives the sum of the advances, but ink can start left of the first origin (`j`) and pass the last advance (`K` in Bold), and the subpixel filter spreads it. The damage of an `Interface_Text` record is its measured box widened by `graphics.PROPORTIONAL_INK_MARGIN`, so a frame drawn in its damage equals a whole frame. The margin is a bound measured for B612: another interface font needs its own.
+A measure gives the sum of the advances, but ink can start left of the first origin (`j`) and pass the last advance (`K` in Bold), and the subpixel filter spreads it. The damage of a `Text` record in the interface font is its measured box widened by `graphics.PROPORTIONAL_INK_MARGIN`, so a frame drawn in its damage equals a whole frame. The margin is a bound measured for B612: another interface font needs its own.
 
 The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 

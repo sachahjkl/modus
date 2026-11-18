@@ -38,7 +38,6 @@ expected_fields :: proc() -> []Expected_Field {
 	picture: draw_record.Picture_Fields
 	grid: draw_record.Text_Grid_Fields
 	line: draw_record.Line_Fields
-	interface_text: draw_record.Interface_Text_Fields
 	rows := [?]Expected_Field {
 		{"module.Header", "magic", offset_of(module.Header, magic), size_of(header.magic)},
 		{"module.Header", "version", offset_of(module.Header, version), size_of(header.version)},
@@ -128,6 +127,8 @@ expected_fields :: proc() -> []Expected_Field {
 		{"draw_record.Text_Fields", "first", offset_of(draw_record.Text_Fields, first), size_of(text.first)},
 		{"draw_record.Text_Fields", "count", offset_of(draw_record.Text_Fields, count), size_of(text.count)},
 		{"draw_record.Text_Fields", "color", offset_of(draw_record.Text_Fields, color), size_of(text.color)},
+		{"draw_record.Text_Fields", "origin_x", offset_of(draw_record.Text_Fields, origin_x), size_of(text.origin_x)},
+		{"draw_record.Text_Fields", "font", offset_of(draw_record.Text_Fields, font), size_of(text.font)},
 		{"draw_record.Text_Fields", "scale", offset_of(draw_record.Text_Fields, scale), size_of(text.scale)},
 		{"draw_record.Text_Fields", "weight", offset_of(draw_record.Text_Fields, weight), size_of(text.weight)},
 		{"draw_record.Text_Fields", "reserved", offset_of(draw_record.Text_Fields, reserved), size_of(text.reserved)},
@@ -148,13 +149,6 @@ expected_fields :: proc() -> []Expected_Field {
 		{"draw_record.Line_Fields", "color", offset_of(draw_record.Line_Fields, color), size_of(line.color)},
 		{"draw_record.Line_Fields", "thickness", offset_of(draw_record.Line_Fields, thickness), size_of(line.thickness)},
 		{"draw_record.Line_Fields", "reserved", offset_of(draw_record.Line_Fields, reserved), size_of(line.reserved)},
-		{"draw_record.Interface_Text_Fields", "first", offset_of(draw_record.Interface_Text_Fields, first), size_of(interface_text.first)},
-		{"draw_record.Interface_Text_Fields", "count", offset_of(draw_record.Interface_Text_Fields, count), size_of(interface_text.count)},
-		{"draw_record.Interface_Text_Fields", "color", offset_of(draw_record.Interface_Text_Fields, color), size_of(interface_text.color)},
-		{"draw_record.Interface_Text_Fields", "origin_x", offset_of(draw_record.Interface_Text_Fields, origin_x), size_of(interface_text.origin_x)},
-		{"draw_record.Interface_Text_Fields", "scale", offset_of(draw_record.Interface_Text_Fields, scale), size_of(interface_text.scale)},
-		{"draw_record.Interface_Text_Fields", "weight", offset_of(draw_record.Interface_Text_Fields, weight), size_of(interface_text.weight)},
-		{"draw_record.Interface_Text_Fields", "reserved", offset_of(draw_record.Interface_Text_Fields, reserved), size_of(interface_text.reserved)},
 	}
 	list := make([]Expected_Field, len(rows), context.temp_allocator)
 	copy(list, rows[:])

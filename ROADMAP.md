@@ -6,7 +6,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **One text kind in the draw record.** A text in the font of the cells and a text in the interface font are one text run, with its font as a field. A writer then has one text record, and a text keeps its pixels. [Design](src/md/api/draw_table.md)
 - **Colors with alpha in the draw record.** A color holds an alpha, and one blending rule in linear light serves every record; a rectangle and a gradient get antialiased edges inside a pixel, a gradient runs along any line, and a picture can hold alpha. A window can then draw a translucent menu or a shadow. [Design](src/md/api/draw_table.md)
 - **Paths in the draw record.** A path of lines and quadratic curves is filled and stroked with antialiased edges, and the line of today becomes a stroke. A window then draws an icon or a chart from outlines in place of rectangles. [Design](src/md/api/draw_table.md)
 - **A clip stack in the draw record.** A clip is pushed and popped, so an element that clips inside a clipped area keeps the outer clip. A list inside a scrolled card then needs no intersection by hand. [Design](src/md/api/draw_table.md)
