@@ -1,7 +1,7 @@
 title: A text copied in one window is pasted in another
 date: 2026-11-18
 release: next
-picture: none
+picture: docs/screenshots/clipboard_paste.png
 kind: Shown
 guide: docs/DESIGN.md
 
