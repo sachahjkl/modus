@@ -14,7 +14,7 @@ The terms outside module and module build file are in [`docs/glossary/communicat
 
 ## What the developer has
 
-1. A folder with one Odin package: the sources of the module, and its assembly files if it has some. The sources import the packages of the system from the source library `modus`, with the lines of a process of the system.
+1. A folder with one Odin package: the sources of the module, and its assembly files if it has some. The sources import the packages of the system from the source library `modus`, with the lines of a module of the system.
 2. In that folder, the module build file `module.txt`.
 3. A checkout of the system. For a module with an import, the checkout is built: the build of the system wrote the file of each module.
 
@@ -124,7 +124,7 @@ The rules of the repository of the system that the tool does not apply to an out
 
 `modustool check` builds two outside modules, each from a copy of a module of the system:
 
-- `tally`, a process with no import;
+- `tally`, a module with no import;
 - `agenda`, a module that imports `calendar`.
 
 For each, the check copies the sources with no change to a folder outside `src`, writes the module build file, and starts the tool as a second process in the folder of the copy, with the argument `--system`. So the check passes the path that a developer types: the read of the file, the change of the working folder, the two steps. Then it reads the module file and proves:
@@ -146,5 +146,5 @@ Built: a machine that runs the module (the command `module-disk` writes a data d
 
 Left:
 
-- **An import of another outside module.** An import names a module of the system. A developer with a library module and a process of their own needs a second place for the file of an import. The roadmap holds this work.
+- **An import of another outside module.** An import names a module of the system. A developer with a library module and a module of their own that imports it needs a second place for the file of an import. The roadmap holds this work.
 - **A module in another language.** The description of the exports comes from the Odin source.

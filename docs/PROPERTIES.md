@@ -44,7 +44,7 @@ Sources are marked as follows:
 
 ## Objective
 
-Build a kernel, then a desktop environment and user processes, that keep the functions of a current system with a small fraction of its code.
+Build a kernel, then a desktop environment and user modules, that keep the functions of a current system with a small fraction of its code.
 
 The measure of success is the amount of code and of mechanisms that the system does not need.
 Adoption is not the objective. [Blow §1]
@@ -267,7 +267,7 @@ Status: Decided. The detail below is proposed.
 - **Consequence**: A security fix is a query: "which bundles contain the hash of the bad module". [Blow §9]
 - **Cost**: A build must be deterministic for the hash to mean something. The compiler and the linker must not write times, host names or random identifiers. Old modules need garbage collection.
 - **Reuse**: The Nix store model and its closure concept. Content-addressed derivations in Nix.
-- **Open**: whether the first engine of WebAssembly compiles at run time, under the rule above, or interprets, which needs no such rule (`src/md/features/desktop_to_browser.md`, "I. WebAssembly as a process format"). The hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
+- **Open**: whether the first engine of WebAssembly compiles at run time, under the rule above, or interprets, which needs no such rule (`src/md/features/desktop_to_browser.md`, "I. WebAssembly as a code format"). The hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
 - **State**: the build is deterministic for the compiler of the flake: a fork of the release `dev-2026-11a` of Odin that adds one option for the debug information and is the release without it, on all its threads (`docs/REPRODUCIBLE_BUILD.md`). Measured on 2026-11-11: with the release `dev-2026-05` and a patch that gives it one thread, 100 builds of each of the 61 modules and of the boot program, under a host load of 9.5 to 62, gave one module, one LLVM IR file and one object each; with `dev-2026-11a` and no patch, 20 builds of each of 64 modules gave the same. The stock `dev-2026-05` with `-thread-count:1` runs two threads, and a rare build with it gives other code. Each full check builds everything two times and compares the three.
 
 ## 12. Module metadata in flat tables, read through functions
@@ -338,8 +338,8 @@ Status: Decided. Blow names it as an unsolved problem. [Blow §11]
 - **Proposal**: A process can contain several protection domains. A domain is a set of page rights inside one address space. A switch between domains costs less than a process switch. A domain can be destroyed alone.
 - **Cost**: The hardware support differs by processor. The x86-64 memory protection keys give 16 domains and do not stop all attacks by themselves. Shared lock-free state stays the problem that Blow describes.
 - **Alternative**: A standard sandboxed bytecode for untrusted code, in the role of WebAssembly. [Blow §11]
-- **Direction**: WebAssembly becomes a portable and confined process format, after the port of `gui_toolkit`. A WebAssembly file is data named by its hash; an engine module of the system, named by its hash, runs it inside one process, with only the imports that the process gives. The engine compiles at run time under the rule of property 11, or interprets: that choice is open (`src/md/features/desktop_to_browser.md`, "I. WebAssembly as a process format").
-- **Recommendation**: Do not design this now. Keep the handle table and the module format free of assumptions that prevent it. Decide after the first desktop process exists.
+- **Direction**: WebAssembly becomes a portable and confined code format, after the port of `gui_toolkit`. A WebAssembly file is data named by its hash; an engine module of the system, named by its hash, runs it inside one process, with only the imports that the process gives. The engine compiles at run time under the rule of property 11, or interprets: that choice is open (`src/md/features/desktop_to_browser.md`, "I. WebAssembly as a code format").
+- **Recommendation**: Do not design this now. Keep the handle table and the module format free of assumptions that prevent it. Decide after the first desktop module exists.
 
 ## 16. Removed concepts
 
@@ -419,8 +419,8 @@ Status: Decided. The rationalised form of the record is designed, not built (`sr
 - **Tension with property 7**: Blow wants a very thin graphics driver. A WebGPU back end for a real device is not thin. The draw table on the processor delays this problem; it does not remove it.
 - **Reuse**: the exact-area rasterizer of font-rs and stb_truetype 2, as ideas. The WebGPU and WGSL specifications, SPIR-V, and the Venus protocol of virtio-gpu for the GPU layers.
 - **Rule**: The code of the system writes its drawing and its WebGPU subset from nothing. It does not port wgpu, Dawn, Skia or another 2D library, and it uses no existing toolkit. The code of the system is the kernel, the boot program, `src/library` and the modules of `src/modules`.
-- **Rule**: A rich process and a ported process can use `gui_toolkit`, the toolkit of rich processes. Such a process is an outside module, not a source of `src/`, and it still draws through the draw table, and later through the WebGPU subset (`src/md/features/desktop_to_browser.md`, "The toolkit of rich processes").
-- **Open**: The role of the kernel for a GPU: the proposal is none beyond the mapping of device queues (property 5). A port of wgpu or Dawn as a module of a process of a third party, over the WebGPU of the system.
+- **Rule**: A rich module and a ported module can use `gui_toolkit`, the toolkit of rich modules. Each is an outside module, not a source of `src/`, and it still draws through the draw table, and later through the WebGPU subset (`src/md/features/desktop_to_browser.md`, "The toolkit of rich modules").
+- **Open**: The role of the kernel for a GPU: the proposal is none beyond the mapping of device queues (property 5). A port of wgpu or Dawn as a module of a third party, over the WebGPU of the system.
 - **State**: built: a surface is shared memory of pixels, the compositor copies the changed rectangles to the framebuffer, and processes draw on the processor through the draw table, version 15, and the drawing module (`src/library/support/graphics`, `src/library/support/interface`, `INTERFACE.md`). Of the rationalised form of the record, the first five steps are built: each record is a header with its kind, its element and its box in 1/64 pixel, then the fields of its kind only, read through one border that refuses a byte past its bound (`src/library/contract/draw_record`); the grid of points and the folded gap are elements of the interface package, drawn with a rectangle that repeats, rectangles and lines; a text is one kind, with its font as a field; a color holds an alpha that blends by one rule in linear light, in a rectangle, a gradient, a text and a picture; and a rectangle and a gradient, one kind along any line, can have edges inside a pixel. On the standard VGA of the test machine, the compositor writes the screen page that the display does not show and flips (`src/md/infrastructure/whole_frame.md`). Left: the other steps of `ROADMAP.md` (paths, the clip stack, the measure of the text grid); no virtio-gpu and no real GPU are built.
 
 ## 19. A command is a function: no text between processes
@@ -442,7 +442,7 @@ Status: Decided. The detail below is proposed.
   2. A process calls the same function as a library call. The principal at the console and the process use one interface.
   3. The output of a function is typed data: records and tables. The console displays it. The next function receives it with no parsing.
   4. Other front ends can be generated from the same metadata: a form in the desktop, a remote call, a test.
-- **Why**: Text between processes forces each process to write a parser and a printer, and each pair of processes to agree on a format that no tool checks. Errors appear at run time and in the data. Blow's "a process is a library" gives the mechanism. [Blow §3]
+- **Why**: Text between processes forces each process to write a parser and a printer, and each pair of processes to agree on a format that no tool checks. Errors appear at run time and in the data. Blow's "a program is a library" gives the mechanism. [Blow §3]
 - **Forbids**: `argv`, `stdin`, `stdout`, exit codes as the only result, a shell script language, formats that are defined only by the output of a tool.
 - **Depends on**: the contract between modules (property 10). The type description must be independent of the implementation language, so that a module in one language can call a module in another.
 - **Isolation**: A call from the console to an untrusted module starts the module as a sandboxed process, and the arguments travel as records in a ring (properties 2 and 4). A call to a trusted module can be a direct call in the same address space. The metadata is the same in both cases.
@@ -537,10 +537,10 @@ The "user" of current systems does six jobs. This system splits them:
 
 ## Tensions between properties
 
-- **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement. The kernel processes the IOMMU of Intel and the IOMMU of AMD (property 5, "As built, the devices").
+- **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement. The kernel programs the IOMMU of Intel and the IOMMU of AMD (property 5, "As built, the devices").
 - **Per-process network stack (5) against shared network identity**: Several processes share one address. A small user-space service must assign ports and steer packets to queues. It stays off the data path.
 - **Replaceable modules (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
-- **No global file system (8) against the desktop**: The principal thinks in documents, not in processes. The document store service must exist before the first real desktop process.
+- **No global file system (8) against the desktop**: The principal thinks in documents, not in processes. The document store service must exist before the first real desktop module.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
 - **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used.
 

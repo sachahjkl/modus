@@ -33,7 +33,7 @@ The graphics interface is WebGPU, in a subset that the system writes: only what 
 
 - **The shaders are compiled before the run.** The build compiles each shader of WGSL to SPIR-V with a compiler of the host, and the module carries the SPIR-V. The system holds no compiler of shaders, and no process compiles one at run time.
 - **The subset has two back ends.** The GPU back end emits Vulkan through the serialization above. The processor back end runs the same objects (buffers, pipelines, command lists, draw calls) on the processor, with a small fixed set of shaders written in Odin with SIMD ([desktop_to_browser.md](desktop_to_browser.md), "F. 3D"). A process writes the same code for both, and only the back end changes.
-- **A port of wgpu or Dawn stays open** for a process of a third party, as its own module over the WebGPU of the system ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table"). The code of the system never uses one.
+- **A port of wgpu or Dawn stays open** for a module of a third party, as its own module over the WebGPU of the system ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table"). The code of the system never uses one.
 
 Why a subset of its own first: wgpu and Dawn each carry back ends for Vulkan, Metal and Direct3D and a compiler of shaders inside. The system needs one back end and a few pipelines, and the compilers of the host already turn WGSL into SPIR-V.
 
@@ -47,7 +47,7 @@ Why a subset of its own first: wgpu and Dawn each carry back ends for Vulkan, Me
 | The kernel interface of one vendor's driver carried to the client ("native context") | Faster: within a few percent of native. But each client then holds the user-space driver of that vendor, of 100 000 lines and more. Not the first form: it comes after the measure, for one vendor |
 | The older protocol of the virtual GPU, which carries OpenGL state | The wrong shape for the one graphics interface |
 | A stream of the graphics interface itself sent to an implementation in the guest | It removes the Vulkan back end from the system, but it puts in the guest an implementation that the project did not write, and the virtual GPU of QEMU does not carry it. One mechanism on both transports is preferred |
-| An existing implementation of the graphics interface, ported into the code of the system | The property forbids it in the code of the system. For a process of a third party it stays open, over the WebGPU of the system |
+| An existing implementation of the graphics interface, ported into the code of the system | The property forbids it in the code of the system. For a module of a third party it stays open, over the WebGPU of the system |
 | A compiler of WGSL in the system, for the GPU or for the processor | The build compiles the shaders; a compiler for the processor is larger than the whole 2D drawing |
 
 ## The numbers behind the choice
@@ -64,7 +64,7 @@ The chosen form is the most modular one: any GPU with a Linux Vulkan driver work
 2. The service of the virtual GPU under QEMU, in three steps: the 2D scanout of the compositor, then Vulkan to the host through Venus, then the WebGPU subset on it. It needs one new thing of the kernel: a device mapping with the cache type that the device gives. It brings the encoder and the back end, which the next steps reuse with no change.
 3. The IOMMU, then guest support.
 4. The driver domain over a ring, on one GPU, as an opt-in test. The machine is a laptop with an integrated GPU of Intel.
-5. The measure against the same GPU under Linux with the same process.
+5. The measure against the same GPU under Linux with the same program.
 6. The native context, then a native driver later.
 
 The test of the serialization under QEMU on the development host is an opt-in test.

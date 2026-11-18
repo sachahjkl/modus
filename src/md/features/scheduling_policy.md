@@ -54,7 +54,7 @@ The balance tried one other queue only: the busiest. A queue whose threads the p
 - A thread that a process created just before the write of the limit of its creator keeps the old limit. The holder writes each thread of the process, reads the thread report again, and repeats.
 - A service that starts processes gives its own limit to them. To start a process inside a limit, the service starts it from a thread that has that limit.
 - Up to one time slice passes between the write and the move of a thread that runs.
-- Interrupts and the tick of the kernel run on each processor for all processes.
+- Interrupts and the tick of the kernel run on each processor, for the threads of every process.
 - A process can keep a thread on one processor where a thread of another process also runs. This is not a new capability: a process with one thread for each processor is on each core already. The limit that the holder writes is the control.
 
 ## A share for each budget

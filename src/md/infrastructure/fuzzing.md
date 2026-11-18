@@ -9,7 +9,7 @@ This file records the form of that machinery: the targets and their order, how a
 ## Constraints
 
 - **The real code, not a copy.** A fuzz target calls the procedures that the system runs (`module.validate`, `storage_mount`, `quic`, `tcp`, `web`), from the source library `modus`. A second reader written for the test proves nothing about the first.
-- **The tool uses the Odin standard library only** ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The commands of the tool"). No engine, mutator or runtime of another project is linked into the tool. Programs of the host that the build already runs (`odin`, `opt`, `llc`, the linker, QEMU) stay processes that the tool starts.
+- **The tool uses the Odin standard library only** ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The commands of the tool"). No engine, mutator or runtime of another project is linked into the tool. Programs of the host that the build already runs (`odin`, `opt`, `llc`, the linker, QEMU) stay host processes that the tool starts.
 - **A test checks a condition, never a speed** ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The bounds of the tests"). The run of `modustool check` is a count of executions, not a duration. A rate of executions is printed as a measure.
 - **The check is deterministic.** Two runs of `modustool check` on the same sources run the same inputs and give the same verdict.
 - **No new kernel operation and no new grant in the system that ships** ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "1. Small kernel with a small, counted interface"). The kernel side of the fuzzing lives in a test volume.
@@ -39,7 +39,7 @@ A reader of the kernel is a target only when it is pure code of a kernel part, w
 
 ### The harness is the tool
 
-A fuzz target is a procedure of the tool: it takes the bytes of one fuzz input and calls the code of the system. The tool already imports the contract and support packages, already writes most formats (the converter writes module files, the build writes stores, the peer speaks QUIC and TCP), and already reads the Odin types with `core:odin/parser`. One process then holds the targets, their generators and their writers, and all automation stays one command.
+A fuzz target is a procedure of the tool: it takes the bytes of one fuzz input and calls the code of the system. The tool already imports the contract and support packages, already writes most formats (the converter writes module files, the build writes stores, the peer speaks QUIC and TCP), and already reads the Odin types with `core:odin/parser`. One program then holds the targets, their generators and their writers, and all automation stays one command.
 
 The tool runs each target in a **child process**: a second copy of the tool binary, started as `fuzz-child <target>`. A fault of the code under test ends the child, not the tool. The child runs the loop (choose, mutate, execute, read the edge counters, keep) in its own memory, as an in-process engine does, so an execution costs a call and not a process.
 

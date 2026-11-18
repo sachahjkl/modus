@@ -34,7 +34,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 **The ports of the loopback.** What is guaranteed, and what is not:
 
-- The UDP port of the peer for the machine is never free: the peer binds it, connects it to its own port, and QEMU gets a copy of that socket at its start (`-netdev dgram,local.type=fd`). The copy is open in the tool only from the command of QEMU to its start; a process that another thread starts in that time inherits it, holds the port of that machine until it ends, and never reads it.
+- The UDP port of the peer for the machine is never free: the peer binds it, connects it to its own port, and QEMU gets a copy of that socket at its start (`-netdev dgram,local.type=fd`). The copy is open in the tool only from the command of QEMU to its start; a host process that another thread starts in that time inherits it, holds the port of that machine until it ends, and never reads it.
 - The software TPM alone of a part has Unix sockets in the folder of its output: no port.
 - The port of hostfwd is the one port that QEMU binds itself: hostfwd takes no socket. `free_port` keeps the list of the ports that it gave, so two machines never get one port from it. Any other socket that binds port 0 between the close of the tool and the bind of QEMU (a socket of the tool on another thread, or another program of the host) can still take the number. QEMU then ends at its start; `machine_test` starts it again with a new port, at most `MACHINE_START_TRIES` times in all, and a QEMU that ends at each try fails the machine.
 

@@ -94,7 +94,7 @@ Do not use: reseed of a program, entropy refresh.
 
 The cryptography module is the module `cryptography`: the cryptographic primitives that the system took from Odin's `core:crypto`, as exports that use the memory of the caller and give error records.
 
-The system does not write cryptography from nothing: it takes proven code and changes only its shell, and `modustool cryptography-origin` proves each change. The module gives AEAD, SHA-256 with HMAC and HKDF, X25519, Ed25519, Argon2id and the masks of QUIC. It reads each byte of the caller once, erases its copies of a key, and draws no random byte: the caller passes each key and nonce. A process imports it by hash, and the console can call it.
+The system does not write cryptography from nothing: it takes proven code and changes only its shell, and `modustool cryptography-origin` proves each change. The module gives AEAD, SHA-256 with HMAC and HKDF, X25519, Ed25519, Argon2id and the masks of QUIC. It reads each byte of the caller once, erases its copies of a key, and draws no random byte: the caller passes each key and nonce. A module imports it by hash, and the console can call it.
 
 The design: `docs/CRYPTOGRAPHY.md`, "6. The module `cryptography`".
 

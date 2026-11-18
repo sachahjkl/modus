@@ -244,7 +244,7 @@ Do not use: data drive, home disk.
 
 The disk of the measures is a disk that holds no data that a process keeps: the process `disk` measures the block service on it.
 
-A measure of the block service writes blocks, and a measure on the data disk destroys the stores. So the test machine has a second disk, and the root service gives its block ring to a test process only, such as `disk`. The process `disk` measures reads and writes with one request in flight and then with many, counts the kernel entries for each request, checks a pattern that it wrote, and shows the result. The storage service never uses this disk.
+A measure of the block service writes blocks, and a measure on the data disk destroys the stores. So the test machine has a second disk, and the root service gives its block ring to a test module only, such as `disk`. The process `disk` measures reads and writes with one request in flight and then with many, counts the kernel entries for each request, checks a pattern that it wrote, and shows the result. The storage service never uses this disk.
 
 The design: `src/modules/demonstrations/disk`.
 

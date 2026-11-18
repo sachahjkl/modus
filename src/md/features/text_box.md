@@ -26,7 +26,7 @@ Three procedures of `src/library/support/interface/text.odin` hold the rule:
 - `text_wrapped_line_count` gives the count of the lines, so that a caller knows the height of a row before it draws it.
 - `draw_text_wrapped` draws the lines and gives the same count.
 
-Two elements use them, and take their height from a column: `label_value_lines`, a name and a value that each take the lines that they need; and `case_lines`, the row of a table of cases, which is the same row with a band and with both texts in the font of the cells. Four processes had the same table of cases, each with its own loop and its own fixed line: one element holds it now.
+Two elements use them, and take their height from a column: `label_value_lines`, a name and a value that each take the lines that they need; and `case_lines`, the row of a table of cases, which is the same row with a band and with both texts in the font of the cells. Four modules had the same table of cases, each with its own loop and its own fixed line: one element holds it now.
 
 **A window that does not draw with the package takes the rule alone.** `text_wrap_line` reads only the font of a text. For the font of the cells it needs no draw table, so a window that draws its pixels with `src/library/support/graphics` (`tables`, `server`, `log`, `pages`, the boot display) asks the package where each line ends and draws the line itself. The rule has one implementation; a window is not converted for it.
 

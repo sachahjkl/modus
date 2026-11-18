@@ -62,7 +62,7 @@ Do not use: collection, SDK, libc, static library.
 
 A private part is a package of the source library that one module alone compiles in, with its host tests.
 
-A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole process for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
+A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
@@ -92,7 +92,7 @@ Do not use: role (the term is program role, the grants of a program), category, 
 
 A test module is a module that only a machine test starts or imports, and that is wrong on purpose or shows nothing of its own.
 
-Examples: `test_callee` and `test_caller`, the loader test of an import; `hostile_exports`, exports that are wrong on purpose; `lonely`, a module whose import is not in the boot image; `debug_target`, the process that the test of the debugger debugs. A test module is in the module group `tests`. A process that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
+Examples: `test_callee` and `test_caller`, the loader test of an import; `hostile_exports`, exports that are wrong on purpose; `lonely`, a module whose import is not in the boot image; `debug_target`, the module that the test of the debugger debugs. A test module is in the module group `tests`. A module that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
@@ -108,11 +108,11 @@ The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
 Do not use: third-party module, external module, plugin.
 
-### Rich process
+### Rich module
 
-A rich process is an outside module whose interface is built with `gui_toolkit`, the toolkit of rich processes.
+A rich module is an outside module whose interface is built with `gui_toolkit`, the toolkit of rich modules.
 
-It imports `gt:` packages and the core library of Odin on the target modus, which a source of `src/` never does. It still draws through the draw table, and later through the WebGPU subset. A process of the system in `src/modules` uses the `interface` package instead. Examples: an editor, the browser `wren` once it is ported.
+It imports `gt:` packages and the core library of Odin on the target modus, which a source of `src/` never does. It still draws through the draw table, and later through the WebGPU subset. A module of the system in `src/modules` uses the `interface` package instead. Examples: an editor, the browser `wren` once it is ported.
 
 The design: `src/md/features/desktop_to_browser.md`.
 

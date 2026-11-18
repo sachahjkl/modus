@@ -1,16 +1,16 @@
 # The hall of fame
 
-The process `hall_of_fame` shows the people whose work inspired modus: one card for each person, with the name, one line on what they made, and a portrait when the repository can hold one. It replaces a process that showed one turning portrait in a temple, with no credit on the screen.
+The module `hall_of_fame` shows the people whose work inspired modus: one card for each person, with the name, one line on what they made, and a portrait when the repository can hold one. It replaces a module that showed one turning portrait in a temple, with no credit on the screen.
 
 ## Purpose
 
 - A reader sees where the ideas of the system come from: the language that it is written in, the emulator that runs its tests, the immediate-mode interface, the engines, the browsers and the streams that showed how to build a system from scratch.
 - A person is in it for work that the system learned from or uses. Fame, a following or an opinion is no reason. A new person comes with a line that says what of their work reached modus.
-- The list is one table of the process (`people` in `src/modules/demonstrations/hall_of_fame/main.odin`). This file names nobody: the table is the one place of the names.
+- The list is one table of the module (`people` in `src/modules/demonstrations/hall_of_fame/main.odin`). This file names nobody: the table is the one place of the names.
 
 ## Constraints
 
-- The process follows the design rules ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "10. Elements"): the background with its grid of points, cards with a border of 1 pixel, the interface font for the names and the lines, no rounded form, no shadow.
+- The module follows the design rules ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "10. Elements"): the background with its grid of points, cards with a border of 1 pixel, the interface font for the names and the lines, no rounded form, no shadow.
 - No cut text and no text over text: each text is measured in the font that draws it, and wraps inside its card ([text_box.md](text_box.md)).
 - The window fits the screen of 1024 x 768 with the bar and a title bar.
 - A picture of a real person is a fact with an author and a license. The repository holds it only when the license allows it, and the credit is visible wherever the picture is.
@@ -21,7 +21,7 @@ The process `hall_of_fame` shows the people whose work inspired modus: one card 
 - **A card with a portrait**: the portrait of 96 x 128 pixels at its top left, the name and the line at its right, and under the portrait the portrait credit: "Picture: <author>", then the license, in the dim color. The credit takes the whole width of the card, so a long credit takes lines, not a cut.
 - **A card with no portrait**: the name and the line on the whole width. It is a tile in the sense of the glossary: a rectangle that stands for one person, with the name inside. It has no picture in place of the portrait, no initials and no form that imitates a face.
 - **The choice**: one chosen card, with a border of 2 pixels in the chosen blue. The arrows, Home and End move it; a press of the pointer on a card chooses it, through the input of the interface package. The view moves to keep the chosen card in it. Each card has its element name (the name of the person), so a machine test presses it by name ([../infrastructure/test_pointer.md](../infrastructure/test_pointer.md)).
-- **The pictures**: each picture is a PNG file of `resources/hall_of_fame/`, a crop of 480 x 640 pixels of its source. `modustool portraits` makes the pixels of each portrait, the mean of each square of 5 x 5 pixels, into `src/modules/demonstrations/hall_of_fame/portraits/`. The process holds them with `#load`, so the build and the process decode no image file. The five portraits are one picture memory: the drawing module reads one picture memory for each call.
+- **The pictures**: each picture is a PNG file of `resources/hall_of_fame/`, a crop of 480 x 640 pixels of its source. `modustool portraits` makes the pixels of each portrait, the mean of each square of 5 x 5 pixels, into `src/modules/demonstrations/hall_of_fame/portraits/`. The module holds them with `#load`, so the build and the module decode no image file. The five portraits are one picture memory: the drawing module reads one picture memory for each call.
 - **The credits file**: `resources/hall_of_fame/CREDITS.md` is a table with one row for each picture: the file, the person, the source with its address, the author and the license. It is the one list of the pictures: the command reads it, the page of the licenses of the site shows one row for each picture from it, and a host test checks that the process has the author and the license of each row.
 
 ## The rule of the pictures
@@ -38,7 +38,7 @@ The process `hall_of_fame` shows the people whose work inspired modus: one card 
 - **A cut name or a cut credit.** A credit that a reader cannot read whole is no credit.
 - **A view that scrolls by pixels.** The edge of the view would cut the texts of a card.
 - **The credits only on the site.** The credit goes with the picture, so it is in the window too.
-- **The turning portrait of the earlier process.** One person on a pedestal does not say where the ideas of the system come from.
+- **The turning portrait of the earlier module.** One person on a pedestal does not say where the ideas of the system come from.
 
 ## Subtle points
 

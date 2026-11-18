@@ -44,7 +44,7 @@ Do not use: dependency graph, call graph, link map.
 
 A command is an export that the console can call: it is not a separate kind of thing.
 
-In other systems a command is a process that parses text arguments and writes text. Here the console reads the description of an export, completes its name and its arguments, checks their types, calls the export and shows its typed result. So help, completion and argument checks come from the module metadata, not from code in each process. An export is a command when the console can give each of its parameters. Example: `monitor.processes()` calls the export `processes` of the module `monitor`, and gives a table.
+In other systems a command is a program that parses text arguments and writes text. Here the console reads the description of an export, completes its name and its arguments, checks their types, calls the export and shows its typed result. So help, completion and argument checks come from the module metadata, not from code in each module. An export is a command when the console can give each of its parameters. Example: `monitor.processes()` calls the export `processes` of the module `monitor`, and gives a table.
 
 The rule: `docs/PROPERTIES.md`, "19. A command is a function: no text between processes".
 
@@ -74,7 +74,7 @@ Do not use: section, blob.
 
 A replacement is a record `{hash, hash}` that the starter of a process gives to the loader: where a module imports the first module, the loader loads the second one.
 
-A replacement fixes a module in every process that imports it, with no new build of the processes. Example: module B has a security fault; a replacement `{B, B2}` makes each import of B load B2. The loader compares the description of each export that the importer uses, and one difference refuses the load. A replacement is visible in the module record of B2, and a process cannot ask for one or refuse one. The root service applies it only for a signed replacement row.
+A replacement fixes a module in every process that imports it, with no new build of its importers. Example: module B has a security fault; a replacement `{B, B2}` makes each import of B load B2. The loader compares the description of each export that the importer uses, and one difference refuses the load. A replacement is visible in the module record of B2, and a process cannot ask for one or refuse one. The root service applies it only for a signed replacement row.
 
 The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import" and "Who may replace a module".
 
@@ -166,7 +166,7 @@ Do not use: search path, library path, module store (for this).
 
 A disk process is a process whose module file is an object of the store `module_files` of the storage service, and not a file of the boot image.
 
-A disk process adds a process to a machine with no new boot image. The principal names its file by a nickname and by its hash: `start_from_disk("visitor", "5f0c…")`. The root service starts the bytes only when their BLAKE3 hash is that hash: the storage service carries the bytes and does not choose them. Its name gives it no grant: it receives the grants of its nickname in the disk grant table. A disk process is not a package: it has no signer and no version, and nothing is installed.
+A disk process adds a module to a machine with no new boot image. The principal names its file by a nickname and by its hash: `start_from_disk("visitor", "5f0c…")`. The root service starts the bytes only when their BLAKE3 hash is that hash: the storage service carries the bytes and does not choose them. Its name gives it no grant: it receives the grants of its nickname in the disk grant table. A disk process is not a package: it has no signer and no version, and nothing is installed.
 
 The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
 

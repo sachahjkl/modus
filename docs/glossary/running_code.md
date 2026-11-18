@@ -582,7 +582,7 @@ Do not use: child weight, inherited weight, creation weight.
 
 ### Process weight
 
-A process weight is a number from 32 to 1024 that the share policy divides between the threads of one process: the part of the processors of that process against the other processes.
+A process weight is a number from 32 to 1024 that the share policy divides between the threads of one process: the share of processor time of that process against the other processes.
 
 The principal sets it for the processes with one name: `scheduler.share("paint", 256)`. A process with no setting has 1024. It is a setting of the process `scheduler`: the kernel knows the weight of each thread only. The least value is 32 because a process has at most 32 threads, so each thread has a weight of 1 or more. It has an effect only while the share policy is on. Example: with the process weight 1024, the 8 threads of a process that compute have the weight 128 each.
 
@@ -778,7 +778,7 @@ Do not use: dropped events, overrun count.
 
 A performance counter is a register of the processor that counts one event of the processor, such as the cycles, the retired instructions or the cache misses.
 
-The kernel processes four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, each processor takes the trial of their registers at its start, and the line of the boot names the plan and the trial. An event record carries the cycle counter only, not a performance counter.
+The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, each processor takes the trial of their registers at its start, and the line of the boot names the plan and the trial. An event record carries the cycle counter only, not a performance counter.
 
 The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
 

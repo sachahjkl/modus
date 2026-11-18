@@ -254,7 +254,7 @@ Do not use: video (for the file), clip, movie, recording, screencast.
 
 ### Feed
 
-A feed is a file of the site in the Atom format (RFC 4287), for a process that follows a site: `news.xml` has the news entries and `releases.xml` the releases, newest first.
+A feed is a file of the site in the Atom format (RFC 4287), for a program that follows a site: `news.xml` has the news entries and `releases.xml` the releases, newest first.
 
 A feed reader subscribes to the address of the file and shows each new entry. Each page names both feeds in its head, so a browser finds them. The id of each entry is the address of its file in the repository on `master`, so it does not change when the site gets an address. With no site address the links of a feed are relative and it has no link `self`.
 
@@ -930,7 +930,7 @@ Do not use: build cache, cached build, partial build.
 
 A build key is one BLAKE3 hash over the inputs of the build of one thing (one step of a module, one boot volume, or the binary of the tool in the development shell), in a fixed order.
 
-A module has two keys, one for each step of its build. The key of the compile step covers each source file that the compiler reads, the commands with each flag, the processes of the build and the tool. The key of the conversion covers the key of the compile step, the linked file and the module file of each import. The tool never records and never compares a key with an input that it cannot read. It is not the hash of a module, which names the output.
+A module has two keys, one for each step of its build. The key of the compile step covers each source file that the compiler reads, the commands with each flag, the programs of the build and the tool. The key of the conversion covers the key of the compile step, the linked file and the module file of each import. The tool never records and never compares a key with an input that it cannot read. It is not the hash of a module, which names the output.
 
 The design: `docs/TOOLS.md`, "The incremental build".
 
@@ -952,7 +952,7 @@ Do not use: cache entry, stamp, manifest (for this).
 
 The compile step is the first of the two steps of the build of a module: the compiler, `llc`, the assembler and the link, which give the linked file of the module.
 
-It reads the sources of the module and no file of an import: a source declares an export of an import in a `foreign` block, and the link leaves that symbol not defined. So its build key holds no import, and a change inside an import does not run it. The tool runs it when a source, a command, a process of the build or the tool changed, or when the linked file is gone.
+It reads the sources of the module and no file of an import: a source declares an export of an import in a `foreign` block, and the link leaves that symbol not defined. So its build key holds no import, and a change inside an import does not run it. The tool runs it when a source, a command, a program of the build or the tool changed, or when the linked file is gone.
 
 It is not the whole build of a module: the conversion follows it.
 

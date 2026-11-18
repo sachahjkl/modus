@@ -1,6 +1,6 @@
 # From the desktop of today to a light web browser
 
-The desktop of today has windows of a fixed size, processes with fixed tables, a draw table on the processor, and a network stack with TCP and QUIC. This file records the path from there to a light web browser, and to the run of two processes of other projects in Odin: `gui_toolkit`, a toolkit of immediate-mode interfaces, and `wren`, a web browser built on it. It gives each phase, what it depends on, and why the phases come in this order, with the standard of quality that every phase keeps. The entries of the work are in `ROADMAP.md`; this file holds the reasons and the order.
+The desktop of today has windows of a fixed size, processes with fixed tables, a draw table on the processor, and a network stack with TCP and QUIC. This file records the path from there to a light web browser, and to the run of two programs of other projects in Odin: `gui_toolkit`, a toolkit of immediate-mode interfaces, and `wren`, a web browser built on it. It gives each phase, what it depends on, and why the phases come in this order, with the standard of quality that every phase keeps. The entries of the work are in `ROADMAP.md`; this file holds the reasons and the order.
 
 ## The constraints
 
@@ -142,8 +142,8 @@ No code changes with this file. The work is its entry in `ROADMAP.md`.
 | E. A light browser | HTML, a subset of CSS, links, forms, one process for each origin | A, B, C, D |
 | F. The GPU and 3D | virtio-gpu, the WebGPU subset, its back end on the processor | C |
 | G. A real machine | USB, NVMe, device services for real devices | A for the display modes |
-| H. `gui_toolkit` and `wren` | The toolkit of rich processes, then the browser `wren` | A, B, C, G for `wren` on a real machine |
-| I. WebAssembly | A portable and confined process format | H |
+| H. `gui_toolkit` and `wren` | The toolkit of rich modules, then the browser `wren` | A, B, C, G for `wren` on a real machine |
+| I. WebAssembly | A portable and confined code format | H |
 
 The reasons:
 
@@ -156,7 +156,7 @@ The reasons:
 - **F comes after C** because the GPU draws the same draw table, and 3D draws into a picture that the draw table shows.
 - **G is late** because the test machine is virtual (property 7). A real machine is a goal, not a condition of the earlier phases.
 - **H comes after the foundations** because it needs the system as a target of the core library of Odin, and for `wren` a large part of the web stack.
-- **I comes after H** because the engine of WebAssembly is a rich process, and its first users are the processes of `gui_toolkit`.
+- **I comes after H** because the engine of WebAssembly is a rich module, and its first users are the modules of `gui_toolkit`.
 
 ## SIMD on the hot paths
 
@@ -274,13 +274,13 @@ A process that draws 3D on a machine with no GPU uses the processor back end of 
 
 `gui_toolkit` is an immediate-mode toolkit in Odin. On Linux it draws through WebGPU on Vulkan, with a Rust library for text; its packages `platform`, `render` and `font` meet the operating system, and most of the others are pure Odin. `wren` is a web browser in Odin on `gui_toolkit`: Lexbor in C for HTML, Rust libraries for the network, the pictures and the text, and Wasmtime as its one engine of execution.
 
-### The toolkit of rich processes
+### The toolkit of rich modules
 
-`gui_toolkit` is ported to the system and becomes the toolkit of rich processes: a process whose interface needs more than the elements of the `interface` package (an editor, a browser, a process of a third party). A rich process is an outside module ([../infrastructure/third_party_module.md](../infrastructure/third_party_module.md)), never a source of `src/`.
+`gui_toolkit` is ported to the system and becomes the toolkit of rich modules: a module whose interface needs more than the elements of the `interface` package (an editor, a browser, a module of a third party). A rich module is an outside module ([../infrastructure/third_party_module.md](../infrastructure/third_party_module.md)), never a source of `src/`.
 
 1. **A target "modus" for the core library of Odin**, for outside modules only. `core:os` reads and writes the objects of the private store and of the handles that the process was given; `core:thread` runs on `Thread_Create`; `core:time` reads the clock of the system; `core:sync` waits on `Word_Wait`; the allocators of the language run on arenas. A path names an object of the private store or of a given handle, never a global tree. The arguments of a command line and the environment are empty. A write to the standard output is a line of the log of the process, which no process reads as input.
 
-   **A ported process adapts to the system.** The system has no global path, no `PATH`, no environment and no ambient settings, and it gets none for a ported process. Each need of a process on another system has its form here:
+   **A ported module adapts to the system.** The system has no global path, no `PATH`, no environment and no ambient settings, and it gets none for a ported module. Each need of a module on another system has its form here:
    - a file or a folder (`HOME`, `TMPDIR`, a path): a handle that the start record gives, such as the private store;
    - a process to start (`PATH`): a module, named by its hash or by its name in the signed image;
    - a service (`DISPLAY`, a socket path): `connect` to the root service, which answers only with a grant;
@@ -288,36 +288,36 @@ A process that draws 3D on a machine with no GPU uses the processor back end of 
    - the parameters of a start (`argv`): the values of the context, which a border reads as their types;
    - a secret: a handle to an object or a grant, never a text.
 
-   A port changes the code of the process where it reads one of these: a new constraint gives a new rule, and the process follows it. Each read of the process becomes explicit in its start record, typed and refusable, where an environment is inherited, untyped and invisible.
+   A port changes the code of the module where it reads one of these: a new constraint gives a new rule, and the module follows it. Each read of the module becomes explicit in its start record, typed and refusable, where an environment is inherited, untyped and invisible.
 
-   A compatibility layer stays open. It would build, for a ported process only, an environment and arguments from its start record: `HOME` to its private store, `LANG` from the settings. It would never exist for the code of the system. It is decided when the first ports show what they read, from that measure and not before (`ROADMAP.md`, "Maybe").
+   A compatibility layer stays open. It would build, for a ported module only, an environment and arguments from its start record: `HOME` to its private store, `LANG` from the settings. It would never exist for the code of the system. It is decided when the first ports show what they read, from that measure and not before (`ROADMAP.md`, "Maybe").
 2. **A `gt:platform` back end for modus**: the surface, the input, the fonts and the clipboard. Its `render` draws through the draw table, and through the WebGPU subset when it exists. What the draw table does not have yet (a blur, a blend mode, a transform) is drawn by `gt:paint` on the processor into a picture memory, which a picture record shows.
-3. **The look of the system as a style of `gui_toolkit`.** The look of the `interface` package (the grid of points, the gradient of the cards, the folded gap, the colors of each concept, the scroll bar) is possible in `gui_toolkit` as an extended style, so a rich process can look like a process of the system. The style lives in `gui_toolkit`.
+3. **The look of the system as a style of `gui_toolkit`.** The look of the `interface` package (the grid of points, the gradient of the cards, the folded gap, the colors of each concept, the scroll bar) is possible in `gui_toolkit` as an extended style, so a rich module can look like a module of the system. The style lives in `gui_toolkit`.
 
-The `interface` package of the system stays, for the processes of `src/modules`. It is limited today: fixed sizes, one pass of layout. It grows by the steps of phase A. Whether the processes of the system later move to `gui_toolkit` is not decided: it needs a change of the rule of property 18 for the code of the system, and of the import rule of `src/`.
+The `interface` package of the system stays, for the modules of `src/modules`. It is limited today: fixed sizes, one pass of layout. It grows by the steps of phase A. Whether the modules of the system later move to `gui_toolkit` is not decided: it needs a change of the rule of property 18 for the code of the system, and of the import rule of `src/`.
 
 ### `wren` by stages
 
 - Its Odin code first.
 - Lexbor, with a small library of C on the same target.
 - Its Rust libraries, through a Rust target for modus, or replaced by Odin code.
-- Wasmtime: see "I. WebAssembly as a process format".
+- Wasmtime: see "I. WebAssembly as a code format".
 - Drawing through the draw table, then the WebGPU subset when the GPU layers exist. WebGL in `wren` draws through the WebGPU subset; wgpu is not ported into the code of the system, and a port of it stays open as a module of `wren` itself.
 
 **A fast path.** `wren` whole, in a Linux guest, through the driver domain of the GPU. It needs no port, and it waits for "Linux in a guest" ([foreign_systems.md](foreign_systems.md)).
 
-## I. WebAssembly as a process format
+## I. WebAssembly as a code format
 
-WebAssembly becomes a portable and confined process format, after the port of `gui_toolkit` ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "15. Isolation inside a process"). A WebAssembly file is data named by its hash. An engine, a module of the system named by its hash, runs it inside one process, with only the imports that the process gives it. A WebAssembly file is not a module: the system keeps one module format (property 10).
+WebAssembly becomes a portable and confined code format, after the port of `gui_toolkit` ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "15. Isolation inside a process"). A WebAssembly file is data named by its hash. An engine, a module of the system named by its hash, runs it inside one process, with only the imports that the process gives it. A WebAssembly file is not a module: the system keeps one module format (property 10).
 
 Two ways are open, and the choice is open (`ROADMAP.md`, "Maybe"):
 
 - **A compiler at run time.** The engine compiles the file to code of the processor, writes it, then runs it. The rule of property 11 holds: that code is confined to its process, in its own memory, never shared with another process and never kept as a module; the compiler is a module named by its hash. The kernel refuses a page that is Write and Execute together, so this way needs a design of an explicit switch of a page from Write to Execute. It waits for that design and for a measure against the interpreter.
-- **An interpreter first.** The engine reads the file and runs it with no code written at run time. It needs no switch and no change of property 11. It is slower; it waits for a measure that says if it is enough for the processes of `gui_toolkit`.
+- **An interpreter first.** The engine reads the file and runs it with no code written at run time. It needs no switch and no change of property 11. It is slower; it waits for a measure that says if it is enough for the modules of `gui_toolkit`.
 
 ## The contradictions, and how they were resolved
 
-- **Property 18, "uses no existing toolkit".** The rule now binds the code of the system: the kernel, the boot program, `src/library` and the modules of `src/modules`. A rich process and a ported process can use `gui_toolkit`; each is an outside module, and each still draws through the draw table. The text of property 18 changed in this way.
+- **Property 18, "uses no existing toolkit".** The rule now binds the code of the system: the kernel, the boot program, `src/library` and the modules of `src/modules`. A rich module and a ported module can use `gui_toolkit`; each is an outside module, and each still draws through the draw table. The text of property 18 changed in this way.
 - **The refused form of [../infrastructure/release_image.md](../infrastructure/release_image.md), "Import the package `signing` of gui_toolkit".** It stays refused, for its own reason: two packages named `ed25519` in one build. Its text now says that this is no rule against `gui_toolkit`.
 - **The import rule of `src/`.** It does not change for a source of `src/`: `base:`, `modus:` and, for the kernel, `kernel:`; `gt:` and the core library are refused. The rule now says that it binds the code of the system only, and that an outside module imports `gt:` and the core library on the target modus (`AGENTS.md`, "Work"; [../infrastructure/repository_layout.md](../infrastructure/repository_layout.md), "The rules of the imports").
 - **The objective, "no foreign interface", and property 19.** The target modus of the core library is a binding of the language over the concepts of the system, inside the process: no global tree of paths, no arguments, no environment, no stream that a process reads.
