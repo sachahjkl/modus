@@ -1419,6 +1419,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				pointer_shape_follow(&window)
 				continue
 			}
+			// The clipboard (src/md/features/clipboard.md): the terminal has
+			// no selection, so it declines a copy; a paste goes to the
+			// program as typed characters.
+			if event.kind == .Copy_Asked {
+				display.copy_decline(&window)
+				continue
+			}
+			if event.kind == .Pasted {
+				paste_type(&window, event)
+				dirty = true
+				continue
+			}
 			if event.kind != .Key || !event.pressed {
 				continue
 			}
@@ -1719,4 +1731,41 @@ scroll_log :: proc "contextless" (act, part: string) {
 	} else {
 		system.log("terminal: ", act, part, " of the scroll bar of ", program_name, ": the view starts at line ", request.top + 1, " of ", view.count)
 	}
+}
+
+// The memory of a paste: the copy that display.paste_read checks.
+paste_bytes: [display.CLIPBOARD_TEXT_LIMIT]u8
+
+// paste_type gives the text of a paste to the program as typed characters:
+// one key record with no key code for each character, in the order of the
+// text, as the principal could type them (src/md/features/clipboard.md).
+// The text holds no control character, so a paste never presses Enter.
+// The terminal never waits for the program: the paste goes whole when the
+// queue of the program has room for each of its characters, else nothing
+// is typed, and the log says it.
+paste_type :: proc "contextless" (window: ^display.Window, event: display.Event) {
+	count, problem := display.paste_read(window, event, paste_bytes[:])
+	if problem != .None {
+		return
+	}
+	text := paste_bytes[:count]
+	characters := text_encoding.character_count(text)
+	if program == 0 {
+		system.log("terminal: a paste of ", u64(characters), " characters, and no program to type them")
+		return
+	}
+	room := int(ring.capacity(&source.completions) - ring.count(&source.completions))
+	if characters > room {
+		system.log("terminal: the paste of ", u64(characters), " characters is larger than the room of ", u64(room), " keys of ", program_name, ": nothing is typed")
+		return
+	}
+	for place := 0; place < count; {
+		character, length, _ := text_encoding.character_decode(text, place)
+		if length == 0 {
+			break
+		}
+		place += length
+		system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = 0, values = {0 = u64(character), 1 = 0}})
+	}
+	system.log("terminal: a paste of ", u64(characters), " characters goes to ", program_name)
 }

@@ -130,6 +130,16 @@ The design: `src/md/features/window_resize.md`.
 
 Do not use: live resize, size hint, stretchable window.
 
+### Clipboard
+
+The clipboard is the one slot of the compositor that holds the last text that the principal copied, until a program reads it at a paste of the principal.
+
+Control+C asks the window in front for its text; the program gives a memory object of its own with Read, so its budget pays. Control+V lends the window in front a handle with Read to it, revoked after the paste. The compositor takes both keys, so no program reads the clipboard by itself, writes it by itself, or sends the keys. The content ends with the program that copied. The clipboard is not a named object that a program opens.
+
+The design: `src/md/features/clipboard.md`.
+
+Do not use: pasteboard, selection buffer, primary selection.
+
 ### Bar
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.

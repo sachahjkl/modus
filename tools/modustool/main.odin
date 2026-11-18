@@ -112,6 +112,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/storage",
 	SOURCE_FOLDER_PRIVATE + "/compositor/bar",
 	SOURCE_FOLDER_PRIVATE + "/compositor/palette",
+	SOURCE_FOLDER_PRIVATE + "/compositor/clipboard",
 	SOURCE_FOLDER_CONTRACT + "/palette_table",
 	SOURCE_FOLDER_SUPPORT + "/bootscreen/image_card",
 	SOURCE_FOLDER_SUPPORT + "/graphics",

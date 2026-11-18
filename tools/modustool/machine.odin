@@ -3097,6 +3097,29 @@ scenario := [?]Step {
 	// Shift+Tab takes the focus back to the list, and Up on the list
 	// chooses the line before.
 	{kind = .Shot, text = "action_bar"},
+	// The clipboard (src/md/features/clipboard.md): Control+C copies the
+	// text "hello" of the field that has the focus in interface_elements,
+	// and Control+V puts it in the line of the console as typed
+	// characters. The compositor takes both keys: no program sees them.
+	// A program can write its line before the compositor writes its own:
+	// the first wait of each key leaves the place of the log as it was.
+	{kind = .Key, text = "ctrl-c"},
+	{kind = .Wait, text = "compositor: the copy key goes to interface_elements", any_order = true},
+	{kind = .Wait, text = "display: interface_elements: a copy of 5 bytes of text"},
+	{kind = .Wait, text = "compositor: a copy of 5 bytes of text from interface_elements"},
+	{kind = .Front, text = "console"},
+	{kind = .Key, text = "ctrl-v"},
+	{kind = .Wait, text = "compositor: a paste of 5 bytes of text from interface_elements goes to console", any_order = true},
+	{kind = .Wait, text = "display: console: a paste of 5 bytes of text"},
+	{kind = .Wait, text = "terminal: a paste of 5 characters goes to console"},
+	{kind = .Shot, text = "clipboard_paste"},
+	// The pasted characters leave the line of the console for the steps
+	// that type in it later.
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
 	{kind = .Click_Element, text = "interface_elements", element = "element before"},
 	{kind = .Click_Element, text = "interface_elements", element = "line before"},
 	{kind = .Wait, text = "interface_elements: the list chooses boot"},

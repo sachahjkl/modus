@@ -914,7 +914,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 				pressed = down
-			case .None, .Go_To, .Resized:
+			case .None, .Go_To, .Resized, .Copy_Asked, .Pasted:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

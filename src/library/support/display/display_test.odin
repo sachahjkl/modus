@@ -263,6 +263,109 @@ surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
 	}
 }
 
+// The border of a text of the clipboard, refusals first: no byte, one byte
+// past the limit, one byte past the room of a field, a byte that starts no
+// sequence, a cut sequence, a surrogate, and each control character that a
+// paste could carry into a line (Enter, Tab, Escape, the deletion and a C1
+// character). Then the texts that hold: one byte, the limit, and a text of
+// several bytes for each character.
+@(test)
+clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T) {
+	limit_and_one: [CLIPBOARD_TEXT_LIMIT + 1]u8
+	for &value in limit_and_one {
+		value = 'a'
+	}
+	refused := [?]struct {
+		text:    []u8,
+		room:    int,
+		problem: Clipboard_Problem,
+	}{
+		{nil, CLIPBOARD_TEXT_LIMIT, .Empty},
+		{limit_and_one[:], CLIPBOARD_TEXT_LIMIT + 1, .Too_Large},
+		{limit_and_one[:8], 7, .Too_Large},
+		{limit_and_one[:1], 0, .Too_Large},
+		{{0xFF}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xC3}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xED, 0xA0, 0x80}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'l', 's', '\r'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'l', 's', '\n'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'\t'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x1B, '['}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x7F}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xC2, 0x85}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+	}
+	for each, index in refused {
+		problem := clipboard_text_problem(each.text, each.room)
+		testing.expectf(t, problem == each.problem, "case %d gives %v, not %v", index, problem, each.problem)
+	}
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT), Clipboard_Problem.None)
+	euro := [?]u8{0xE2, 0x82, 0xAC, 'h', 0xC3, 0xA9}
+	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro)), Clipboard_Problem.None)
+}
+
+// A Pasted whose words are out of their range is refused, and gives the
+// zero event: a handle of 0 and past 32 bits, a kind of None, past the last
+// member and the largest word, a count of 0, one past the limit and the
+// largest word. Then a paste and a copy that hold.
+@(test)
+event_of_record_refuses_a_paste_out_of_its_range :: proc(t: ^testing.T) {
+	TEXT :: u64(Clipboard_Kind.Text)
+	refused := [?][3]u64{
+		{0, TEXT, 5},
+		{u64(max(u32)) + 1, TEXT, 5},
+		{max(u64), TEXT, 5},
+		{7, u64(Clipboard_Kind.None), 5},
+		{7, u64(max(Clipboard_Kind)) + 1, 5},
+		{7, max(u64), 5},
+		{7, TEXT, 0},
+		{7, TEXT, CLIPBOARD_TEXT_LIMIT + 1},
+		{7, TEXT, max(u64)},
+	}
+	for words in refused {
+		record := ring.Record{kind = u32(Event_Kind.Pasted)}
+		record.values[0], record.values[1], record.values[2] = words[0], words[1], words[2]
+		event, ok := event_of_record(record)
+		testing.expectf(t, !ok, "the paste %v is taken", words)
+		testing.expect_value(t, event, Event{})
+	}
+	record := ring.Record{kind = u32(Event_Kind.Pasted)}
+	record.values[0], record.values[1], record.values[2] = u64(max(u32)), TEXT, CLIPBOARD_TEXT_LIMIT
+	event, ok := event_of_record(record)
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Pasted, paste_handle = op.Handle(max(u32)), clipboard_kind = .Text, byte_count = CLIPBOARD_TEXT_LIMIT})
+	event, ok = event_of_record(ring.Record{kind = u32(Event_Kind.Copy_Asked)})
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Copy_Asked})
+}
+
+// The kind of a content refuses None, one past the last member and the
+// largest word; Text comes back.
+@(test)
+clipboard_kind_of_word_refuses_a_word_that_names_no_kind :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(Clipboard_Kind.None), u64(max(Clipboard_Kind)) + 1, max(u64)}) {
+		kind, ok := clipboard_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d is taken", word)
+		testing.expect_value(t, kind, Clipboard_Kind.None)
+	}
+	kind, ok := clipboard_kind_of_word(u64(Clipboard_Kind.Text))
+	testing.expect(t, ok && kind == .Text)
+}
+
+// copy_send refuses with no request, and changes nothing: a copy that no
+// key of the principal asked for makes no memory and sends no record.
+@(test)
+copy_send_refuses_a_copy_that_no_key_asked_for :: proc(t: ^testing.T) {
+	window: Window
+	text := [?]u8{'h', 'i'}
+	problem, status := copy_send(&window, text[:])
+	testing.expect_value(t, problem, Clipboard_Problem.Not_Asked)
+	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect_value(t, window, Window{})
+	testing.expect(t, !copy_decline(&window))
+}
+
 // Each member that is an event comes back from its own kind, with its
 // values, last.
 @(test)

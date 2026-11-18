@@ -1,0 +1,202 @@
+package compositor
+
+import clipboard_rules "modus:private/compositor/clipboard"
+import "modus:contract/ring"
+import "modus:support/display"
+import "modus:support/system"
+
+// The clipboard (src/md/features/clipboard.md): one slot of the
+// compositor, which a program reaches only at a key of the principal.
+//
+// Control+C sends Copy_Asked to the window in front; its program answers
+// with Copy (a memory object of its own, with Read and Give) or
+// Copy_Declined. Control+V lends the window in front a handle with Read to
+// the content, from a copy of the handle of the slot that the compositor
+// revokes at Paste_Taken, at the next key of the clipboard, or at the end
+// of the program. The compositor reads no byte of the content: the reader
+// copies it, then checks its copy.
+
+#assert(clipboard_rules.MODIFIER_CONTROL == display.MODIFIER_CONTROL)
+#assert(clipboard_rules.TEXT_LIMIT == display.CLIPBOARD_TEXT_LIMIT)
+
+// The content of the clipboard. memory 0: the slot is empty.
+Clipboard_Content :: struct {
+	memory: system.Handle, // The gift of the program that copied, with Read and Give.
+	kind:   display.Clipboard_Kind,
+	count:  int, // Its bytes, 1 to CLIPBOARD_TEXT_LIMIT.
+	owner:  int, // The client that copied: its end empties the slot.
+	owner_title: system.Name, // Its title, for the line of a paste.
+}
+
+clipboard_content: Clipboard_Content
+
+// The one lend of a paste: the client, and the copy of the handle of the
+// slot in this program that its handle came from. client -1: no lend.
+clipboard_lend_client := -1
+clipboard_lend_handle: system.Handle
+
+// clipboard_key takes a key record of the input service that is a key of
+// the clipboard, and gives false for any other key. The press acts; the
+// release is taken too, so no program sees half of the key.
+clipboard_key :: proc "contextless" (character: rune, modifiers: u32, pressed: bool) -> bool {
+	key := clipboard_rules.clipboard_key_of(character, modifiers)
+	switch key {
+	case .None:
+		return false
+	case .Copy:
+		if pressed {
+			clipboard_copy_key()
+		}
+	case .Paste:
+		if pressed {
+			clipboard_paste_key()
+		}
+	}
+	return true
+}
+
+// clipboard_lend_end revokes the lend of a paste, if one waits: each
+// handle and each mapping that came from the lent handle ends.
+clipboard_lend_end :: proc "contextless" () {
+	if clipboard_lend_client < 0 {
+		return
+	}
+	system.handle_revoke(clipboard_lend_handle)
+	system.close(clipboard_lend_handle)
+	clients[clipboard_lend_client].clipboard.lend_waits = false
+	clipboard_lend_client, clipboard_lend_handle = -1, 0
+}
+
+// clipboard_copy_key sends Copy_Asked to the window in front, once until
+// it answers.
+clipboard_copy_key :: proc "contextless" () {
+	clipboard_lend_end()
+	if order_count == 0 {
+		system.log_in("surfaces", .Info, "compositor: the copy key with no window in front")
+		return
+	}
+	client := &clients[order[order_count - 1]]
+	if clipboard_rules.copy_key_take(&client.clipboard) {
+		send(client, .Copy_Asked, {})
+		system.log_in("surfaces", .Info, "compositor: the copy key goes to ", system.name_of(client.title[:]))
+	}
+}
+
+// clipboard_paste_key lends the content to the window in front: a copy of
+// the handle of the slot in this program, then a handle with Read from it
+// to the program, and the event Pasted.
+clipboard_paste_key :: proc "contextless" () {
+	clipboard_lend_end()
+	empty_state: clipboard_rules.Window_State
+	client: ^Client
+	index := -1
+	if order_count > 0 {
+		index = order[order_count - 1]
+		client = &clients[index]
+	}
+	state := client != nil ? &client.clipboard : &empty_state
+	refusal, _ := clipboard_rules.paste_key_take(state, client != nil, clipboard_content.memory != 0)
+	switch refusal {
+	case .None:
+	case .No_Window:
+		system.log_in("surfaces", .Info, "compositor: the paste key with no window in front")
+		return
+	case .No_Content:
+		system.log_in("surfaces", .Info, "compositor: a paste with an empty clipboard: nothing goes to ", system.name_of(client.title[:]))
+		return
+	}
+	lent, status := system.give(0, clipboard_content.memory, {.Read, .Give})
+	given: system.Handle
+	if status == .Ok {
+		given, status = system.give(client.ring_memory, lent, {.Read})
+		if status != .Ok {
+			system.close(lent)
+		}
+	}
+	if status != .Ok {
+		client.clipboard.lend_waits = false
+		system.log_in("surfaces", .Warning, "compositor: the paste to ", system.name_of(client.title[:]), " is refused by the kernel: nothing goes")
+		return
+	}
+	clipboard_lend_client, clipboard_lend_handle = index, lent
+	send(client, .Pasted, {0 = u64(given), 1 = u64(clipboard_content.kind), 2 = u64(clipboard_content.count)})
+	system.log_in("surfaces", .Info, "compositor: a paste of ", u64(clipboard_content.count), " bytes of text from ", system.name_of(clipboard_content.owner_title[:]), " goes to ", system.name_of(client.title[:]))
+}
+
+// clipboard_copy_take takes the record Copy of a window: the content of a
+// copy that the principal asked for. The checks are
+// clipboard_rules.copy_refusal; a refused record changes nothing and is
+// counted. A taken one replaces the slot.
+clipboard_copy_take :: proc "contextless" (index: int, record: ring.Record) {
+	client := &clients[index]
+	// The program wrote the number of the handle: a number with no proof
+	// of this program is neither used nor closed (surface_create).
+	memory := system.Handle(record.values[0])
+	kind, rights, through := system.handle_state(memory, client.ring_memory)
+	content_kind, kind_known := display.clipboard_kind_of_word(record.values[1])
+	facts := clipboard_rules.Copy_Facts {
+		asked      = client.clipboard.copy_waits,
+		through    = through,
+		is_memory  = kind == .Memory,
+		readable   = .Read in rights,
+		giveable   = .Give in rights,
+		kind_word  = record.values[1],
+		kind_known = kind_known,
+		count      = record.values[2],
+	}
+	if facts.through && facts.is_memory {
+		if pages, size_status := system.memory_size(memory); size_status == .Ok {
+			facts.memory_bytes = pages * system.PAGE_SIZE
+		}
+	}
+	if refusal := clipboard_rules.copy_refusal(facts); refusal != .None {
+		if facts.through {
+			system.close(memory)
+		}
+		client.clipboard_refused += 1
+		return
+	}
+	clipboard_rules.answer_take(&client.clipboard, .Copy)
+	if clipboard_content.memory != 0 {
+		system.close(clipboard_content.memory)
+	}
+	clipboard_content = {memory = memory, kind = content_kind, count = int(facts.count), owner = index, owner_title = client.title}
+	system.log_in("surfaces", .Info, "compositor: a copy of ", facts.count, " bytes of text from ", system.name_of(client.title[:]))
+}
+
+// clipboard_answer_take takes Copy_Declined or Paste_Taken: only when the
+// state that it ends waits for this window, else it is refused and counted.
+clipboard_answer_take :: proc "contextless" (index: int, answer: clipboard_rules.Answer) {
+	client := &clients[index]
+	if !clipboard_rules.answer_take(&client.clipboard, answer) {
+		client.clipboard_refused += 1
+		return
+	}
+	switch answer {
+	case .Copy:
+		// A Copy goes through clipboard_copy_take.
+	case .Copy_Declined:
+		system.log_in("surfaces", .Info, "compositor: ", system.name_of(client.title[:]), " has nothing to copy")
+	case .Paste_Taken:
+		if clipboard_lend_client == index {
+			clipboard_lend_end()
+		}
+	}
+}
+
+// clipboard_client_remove ends what the clipboard holds of a client that
+// leaves: its lend, and the content that it copied, whose memory belongs to
+// a program that ends.
+clipboard_client_remove :: proc "contextless" (index: int) {
+	if clipboard_lend_client == index {
+		clipboard_lend_end()
+	}
+	if clipboard_content.memory != 0 && clipboard_content.owner == index {
+		system.close(clipboard_content.memory)
+		clipboard_content = {}
+		system.log_in("surfaces", .Info, "compositor: the clipboard is empty: ", system.name_of(clients[index].title[:]), " ended")
+	}
+	if clients[index].clipboard_refused != 0 {
+		system.log("compositor: window ", system.name_of(clients[index].title[:]), " closed after ", clients[index].clipboard_refused, " clipboard records that no key of the principal started or that the border refused")
+	}
+}
