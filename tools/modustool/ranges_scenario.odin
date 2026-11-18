@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The large objects of a store (docs/STORAGE.md, "Large objects"): the
 // process `ranges` makes an object of 8 GiB from three range writes, makes
@@ -67,7 +68,7 @@ scenario_ranges_second := [?]Step {
 }
 
 ranges_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	disk_prepare(TEST_RANGES_DISK, DATA_DISK_SIZE, true) or_return
-	machine_test(part, scenario_ranges_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_RANGES, 1), exit_status = MACHINE_STOP_OK, data_disk = TEST_RANGES_DISK}) or_return
-	return machine_test(part, scenario_ranges_second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_RANGES, 2), exit_status = MACHINE_STOP_OK, data_disk = TEST_RANGES_DISK})
+	disk_prepare(TEST_RANGES_DISK, build.DATA_DISK_SIZE, true) or_return
+	machine_test(part, scenario_ranges_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_RANGES, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_RANGES_DISK}) or_return
+	return machine_test(part, scenario_ranges_second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_RANGES, 2), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_RANGES_DISK})
 }

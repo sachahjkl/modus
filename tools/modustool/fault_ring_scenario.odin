@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"): one machine. The
 // process fault_ring runs one child for each role; a fault of a child is a
@@ -108,5 +109,5 @@ scenario_fault_ring := [?]Step {
 }
 
 fault_ring_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_fault_ring[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_FAULT_RING, exit_status = MACHINE_STOP_OK})
+	return machine_test(part, scenario_fault_ring[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_FAULT_RING, exit_status = build.MACHINE_STOP_OK})
 }

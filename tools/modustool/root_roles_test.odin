@@ -13,6 +13,7 @@ import "modus:contract/start_grant"
 import "modus:support/pci"
 import "modus:support/system"
 import "modustool:foundation"
+import "modustool:build"
 
 // Each role that the root service gives by a name starts: its handles take
 // one context slot each. The roles are the rows of `process_roles`, as the
@@ -75,7 +76,7 @@ each_role_of_process_roles_takes_each_context_slot_once :: proc(t: ^testing.T) {
 		every_handle += {handle}
 	}
 	testing.expect_value(t, named, every_handle)
-	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
+	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
 	testing.expect_value(t, rows_problem, "")
 	testing.expect(t, len(rows) > 0)
 	for row in rows {
@@ -171,7 +172,7 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 		return rows[:]
 	}
 	expect_one :: proc(t: ^testing.T, rows: []foundation.Site_Role_Row, system_parts: []string, builds: []foundation.Module_Build, part: string) {
-		problems := process_roles_problems(rows, system_parts, builds, "roles.odin")
+		problems := build.process_roles_problems(rows, system_parts, builds, "roles.odin")
 		testing.expectf(t, len(problems) == 1 && strings.contains(problems[0], part), "the problems are %v, not one with %q", problems, part)
 	}
 	whole := []foundation.Site_Role_Row {
@@ -212,12 +213,12 @@ the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	expect_one(t, whole, []string{"root", "compositor", "block", "glyphs"}, builds, "system_part_names names glyphs, which has no row")
 	// A module with no entry may have a row: a service that starts as
 	// a process at its first connection.
-	testing.expect_value(t, len(process_roles_problems(with(whole, {name = "library", line = 5}), system_parts, builds, "roles.odin")), 0)
-	testing.expect_value(t, len(process_roles_problems(whole, system_parts, builds, "roles.odin")), 0)
+	testing.expect_value(t, len(build.process_roles_problems(with(whole, {name = "library", line = 5}), system_parts, builds, "roles.odin")), 0)
+	testing.expect_value(t, len(build.process_roles_problems(whole, system_parts, builds, "roles.odin")), 0)
 	roles_text, roles_read := foundation.site_read_quiet(foundation.SITE_ROOT_ROLES_FILE)
 	testing.expect(t, roles_read)
-	rows, repository_parts, problem := process_roles_read(roles_text)
+	rows, repository_parts, problem := build.process_roles_read(roles_text)
 	testing.expect_value(t, problem, "")
 	testing.expect(t, len(repository_parts) > 1 && slice.contains(repository_parts, "block"))
-	testing.expect_value(t, len(process_roles_problems(rows, repository_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
+	testing.expect_value(t, len(build.process_roles_problems(rows, repository_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
 }

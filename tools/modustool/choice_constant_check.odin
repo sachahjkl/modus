@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // A closed set of choices is an enum, never a family of integer constants
 // passed as an integer (src/md/infrastructure/choice_constants.md). The
@@ -111,8 +112,8 @@ CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
 	{foundation.SYSTEM_MODULE_SOURCES + "input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
 	{foundation.SOURCE_FOLDER_SUPPORT + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
 	{foundation.SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},
-	{foundation.TOOL_SOURCE_FOLDER, "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
-	{foundation.TOOL_SOURCE_FOLDER, "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},
+	{foundation.TOOL_SOURCE_FOLDER + "/build", "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
+	{foundation.TOOL_SOURCE_FOLDER + "/build", "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},
 	{foundation.TOOL_SOURCE_FOLDER, "NBD", .First, "the options, the replies and the commands of the network block device protocol (NBD, the protocol document): a client sends options that the server of the tests answers as unsupported"},
 	{foundation.SOURCE_FOLDER_CONTRACT + "/remote", "FIELD", .First, "the places of the fields of a Request, from 1, which the argument of an error record names (REQUEST_FIELD_NAMES): a place in a record, not a choice; the test of the peer selects the field to break by its place"},
 	{foundation.SOURCE_FOLDER_KERNEL, "EVENT", .First, "the event types of the event injection of AMD SVM (AMD64 volume 2, section 15.20): the numbers of the processor"},
@@ -500,15 +501,21 @@ imports_of :: proc(file: ^ast.File, folder: string) -> map[string]string {
 		path := strings.trim(declaration.fullpath, "\"`")
 		target: string
 		library_folder, in_source_library := foundation.source_library_package_folder(path)
+		// A package of the tool that another package of the tool imports: a
+		// constant that it uses with its package is a use as the package of
+		// the constant sees it, so a split of the tool hides no family.
+		tool_folder, in_tool_library := foundation.tool_library_package_folder(path)
 		switch {
 		case in_source_library:
 			target = library_folder
+		case in_tool_library:
+			target = tool_folder
 		case strings.contains(path, ":"):
 			continue
 		case:
 			// "../x" names a folder beside the one of the file: the key of
 			// a package is its folder with no "." and no "..".
-			target = path_without_dots(foundation.join(folder, "/", path))
+			target = build.path_without_dots(foundation.join(folder, "/", path))
 		}
 		name := declaration.name.text
 		if name == "" {

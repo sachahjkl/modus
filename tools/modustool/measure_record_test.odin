@@ -4,6 +4,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "modustool:foundation"
+import "modustool:build"
 
 @(private = "file")
 test_measure_record :: proc() -> Measure_Record {
@@ -202,7 +203,7 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 				waited ||= waits(scenario_cryptography[:], measure.pattern)
 			case foundation.BUILD_FOLDER + "/test_output_persist_1.txt":
 				waited ||= waits(scenario_persist_first[:], measure.pattern)
-			case REPRODUCIBLE_BUILD_RECORD:
+			case build.REPRODUCIBLE_BUILD_RECORD:
 				waited = true
 			}
 		}

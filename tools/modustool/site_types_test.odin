@@ -8,6 +8,7 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modustool:foundation"
+import "modustool:build"
 
 // A struct whose layout has padding inside and at its end: a u8, three
 // bytes, a u32, a u16, two bytes.
@@ -309,8 +310,8 @@ site_type_references_and_cards :: proc(t: ^testing.T) {
 @(test)
 site_signatures_with_type_references :: proc(t: ^testing.T) {
 	site := site_with_types()
-	description := Module_Description{records = []Record_Description{{name = "Rectangle", size = 16}}}
-	export := Export_Description{name = "fill", parameters = []module.Type{.Table, .Text}, names = []string{"rows", "name"}, details = []u32{1, 0}, directions = []module.Direction{.Change, .Read}, result = .Integer}
+	description := build.Module_Description{records = []build.Record_Description{{name = "Rectangle", size = 16}}}
+	export := build.Export_Description{name = "fill", parameters = []module.Type{.Table, .Text}, names = []string{"rows", "name"}, details = []u32{1, 0}, directions = []module.Direction{.Change, .Read}, result = .Integer}
 	html := site_export_signature_html(&site, "draw", description, export)
 	testing.expect(t, strings.contains(html, "popovertarget=\"card-type-wire-table\""), html)
 	testing.expect(t, strings.contains(html, "popovertarget=\"card-type-record-draw-rectangle\""), html)

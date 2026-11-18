@@ -19,6 +19,7 @@ import "core:strings"
 import "modus:contract/draw_record"
 import module "modus:contract/module"
 import "modustool:foundation"
+import "modustool:build"
 
 // A row of a diagram: 8 bytes, so that a 64-bit field of the format is one
 // rectangle and never crosses two rows.
@@ -158,7 +159,7 @@ byte_layout_source_size :: proc(source: Byte_Layout_Source) -> int {
 // byte_layout_comment gives the Markdown of the comment of a field: the
 // lines before it, then the comment at the end of its line.
 byte_layout_comment :: proc(before, line: ^ast.Comment_Group) -> string {
-	above, after := markdown_of(before), markdown_of(line)
+	above, after := build.markdown_of(before), build.markdown_of(line)
 	if above == "" {
 		return after
 	}

@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The measure runs of the processes
 // (docs/TOOLS.md, "A check by count, a measure by time").
@@ -92,7 +93,7 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 	steps := make([dynamic]Step)
 	defer delete(steps)
 	measure_process_steps(process, &steps)
-	if !machine_test(part, steps[:], {volume = BOOT_VOLUME_MEASURE, output = output, exit_status = MACHINE_STOP_OK}) {
+	if !machine_test(part, steps[:], {volume = build.BOOT_VOLUME_MEASURE, output = output, exit_status = build.MACHINE_STOP_OK}) {
 		return false
 	}
 	log, read_error := os.read_entire_file(output, context.temp_allocator)
@@ -112,16 +113,16 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 // strategies. `modustool screenshots` calls it on the host, with no other
 // machine: the test itself measures no rate.
 measure_runs_of_the_record :: proc() -> bool {
-	part := test_part_run_make(MEASURE_COMMAND)
+	part := test_part_run_make(build.MEASURE_COMMAND)
 	defer test_part_run_free(&part)
 	test_part_run_start(&part) or_return
-	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
+	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) || !quality_lines_check(TEST_OUTPUT_MEASURE) {
 		return false
 	}
 	for name in ([]string{"clock", "disk"}) {
 		process := measure_process_find(name) or_return
 		measure_process_run(&part, process) or_return
 	}
-	part.passed = machine_test(&part, scenario_measure_scheduler[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_SCHEDULER, exit_status = MACHINE_STOP_OK})
+	part.passed = machine_test(&part, scenario_measure_scheduler[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_SCHEDULER, exit_status = build.MACHINE_STOP_OK})
 	return part.passed
 }

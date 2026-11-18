@@ -10,6 +10,7 @@ import "core:slice"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 SITE_BOOT_STAGE_PREFIX :: "kernel: boot: "
 // The file of the table of the commands of the tool.
@@ -303,7 +304,7 @@ site_readme_documents :: proc(content: string) -> map[string]string {
 		if !strings.has_prefix(line, "| `docs/") {
 			continue
 		}
-		cells := site_table_row_cells(line)
+		cells := build.site_table_row_cells(line)
 		if len(cells) >= 2 {
 			about[strings.trim(cells[0], "`")] = cells[1]
 		}
@@ -318,17 +319,17 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	// First the documents in the order of the table of README.md, then the others.
 	section, _ := site_section_lines(foundation.site_lines(readme_text), "## Documents")
 	for line in section {
-		cells := site_table_row_cells(line)
+		cells := build.site_table_row_cells(line)
 		if len(cells) >= 2 && strings.has_prefix(cells[0], "`docs/") {
 			path := strings.trim(cells[0], "`")
-			if _, found := site.documents[path]; found && !glossary_is_file(path) && strings.has_suffix(path, ".md") {
+			if _, found := site.documents[path]; found && !build.glossary_is_file(path) && strings.has_suffix(path, ".md") {
 				append(&sources, path)
 			}
 		}
 	}
 	others := make([dynamic]string, context.temp_allocator)
 	for path in site.documents {
-		if !strings.has_prefix(path, "docs/") || glossary_is_file(path) {
+		if !strings.has_prefix(path, "docs/") || build.glossary_is_file(path) {
 			continue
 		}
 		listed := false

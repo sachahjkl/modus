@@ -12,6 +12,7 @@ import "core:strings"
 import "modus:contract/blake3"
 import "modus:support/graphics"
 import "modustool:foundation"
+import "modustool:build"
 
 SITE_MODULE_GRAPH_FOLDER :: SITE_REFERENCE_FOLDER + "/module-graph"
 SITE_MODULE_GRAPH_SCRIPT :: "module_graph.js"
@@ -510,7 +511,7 @@ site_module_card_id :: proc(name: string) -> string {
 site_module_card_of :: proc(site: ^Site, item: Site_Module, inputs: []Site_Graph_Input, layout: Site_Graph_Layout) -> Site_Module_Card {
 	card := Site_Module_Card{name = item.build.name, page = item.page, export_count = len(item.description.exports), import_count = len(item.build.imports)}
 	for export in item.description.exports {
-		if export.name == ENTRY_NAME {
+		if export.name == build.ENTRY_NAME {
 			card.export_count -= 1 // The entry is not a function that a caller calls.
 		}
 	}
@@ -627,7 +628,7 @@ site_module_graph_inputs :: proc(site: ^Site) -> []Site_Graph_Input {
 			input.kind = .Kernel
 		} else {
 			for export in item.description.exports {
-				if export.name == ENTRY_NAME {
+				if export.name == build.ENTRY_NAME {
 					input.kind = .Entry
 				}
 			}

@@ -16,6 +16,7 @@ import "core:strings"
 import "core:time"
 import "modus:support/sentence"
 import "modustool:foundation"
+import "modustool:build"
 
 // The call from the host (docs/MODULE_CONTRACT.md, section 4, "A call from
 // the host"): `modustool call "monitor.processes()"` calls an export of a
@@ -755,7 +756,7 @@ table_value :: proc(table: ^Call_Table, row: int, name: string) -> string {
 	for number in 0 ..< table.described.field_count {
 		item, _ := module.field(table.file, table.described, number)
 		if module.string_at(table.file, item.name_offset, item.name_count) == name {
-			return field_value(bytes, item)
+			return build.field_value(bytes, item)
 		}
 	}
 	return ""
@@ -825,30 +826,6 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 	return "", false
 }
 
-// field_value gives the text of one field of a record.
-field_value :: proc(record: []u8, item: module.Field) -> string {
-	// A byte that names no type has no value: "?", as a field of no value.
-	type, type_ok := module.field_type(item)
-	if !type_ok {
-		return "?"
-	}
-	switch type {
-	case .None, .Record, .Table, .Bytes:
-		// record_type refuses a field of these types: it has no value.
-	case .Integer:
-		if u64(item.offset) + u64(module.field_size(item)) <= u64(len(record)) {
-			return fmt.tprintf("%d", module.field_integer(record, item))
-		}
-	case .Handle:
-		if u64(item.offset) + 4 <= u64(len(record)) {
-			return fmt.tprintf("0x%x", (^u32)(&record[item.offset])^)
-		}
-	case .Text:
-		return module.field_text(record, item)
-	}
-	return "?"
-}
-
 // record_text gives a record as Name{field = value, field = "text"}.
 record_text :: proc(file: []u8, described: module.Record, record: []u8) -> string {
 	builder := strings.builder_make(context.temp_allocator)
@@ -861,7 +838,7 @@ record_text :: proc(file: []u8, described: module.Record, record: []u8) -> strin
 		}
 		strings.write_string(&builder, module.string_at(file, item.name_offset, item.name_count))
 		strings.write_string(&builder, " = ")
-		value := field_value(record, item)
+		value := build.field_value(record, item)
 		if item.type == u8(module.Type.Text) {
 			strings.write_quoted_string(&builder, value)
 		} else {
@@ -886,7 +863,7 @@ table_print :: proc(lines: ^[dynamic]string, file: []u8, described: module.Recor
 		cells[row] = make([]string, columns, context.temp_allocator)
 		for column in 0 ..< columns {
 			item, _ := module.field(file, described, u32(column))
-			value := row == 0 ? module.string_at(file, item.name_offset, item.name_count) : field_value(bytes[(row - 1) * size:][:size], item)
+			value := row == 0 ? module.string_at(file, item.name_offset, item.name_count) : build.field_value(bytes[(row - 1) * size:][:size], item)
 			cells[row][column] = value
 			widths[column] = max(widths[column], len(value))
 			numeric[column] = item.type != u8(module.Type.Text)

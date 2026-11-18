@@ -12,15 +12,12 @@ import "core:os"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 REUSE_LIST_DOCUMENT :: SITE_PROPERTIES_FILE
 REUSE_LIST_HEADING :: "## Reuse list"
 REUSE_LIST_HEADER_ROW :: "| Work | Place | License | License file |"
 REUSE_LIST_COLUMN_COUNT :: 4
-// The SPDX value of a work with no license.
-REUSE_LICENSE_NONE :: "NONE"
-// The words of a record that grants no license at all.
-REUSE_NO_LICENSE_WORDS :: "All rights reserved"
 // The runtime of the compiler: the compiler puts it in each module and in
 // the boot program with no import, so no scan of the imports finds it.
 REUSE_COMPILER_RUNTIME :: "base:runtime"
@@ -49,20 +46,6 @@ Reuse_Row :: struct {
 	place:        string,
 	license:      string,
 	license_file: string,
-}
-
-// reuse_spdx_of_record_words gives the SPDX identifier that the words of a
-// record name, or "" when the words name none that the site translates.
-reuse_spdx_of_record_words :: proc(words: string) -> string {
-	for pair in site_spdx_names {
-		if strings.has_prefix(words, pair[0]) {
-			return pair[1]
-		}
-	}
-	if strings.has_prefix(words, REUSE_NO_LICENSE_WORDS) {
-		return REUSE_LICENSE_NONE
-	}
-	return ""
 }
 
 // reuse_license_is_spdx_expression tells whether a cell is an SPDX
@@ -151,7 +134,7 @@ reuse_list_rows_parse :: proc(document: string, problems: ^[dynamic]string) -> [
 		case !file_found:
 			append(problems, fmt.tprintf("%s:%d: the license file of a row of the reuse list is one code span: a path of the repository", REUSE_LIST_DOCUMENT, number))
 		case !reuse_license_is_spdx_expression(row.license):
-			append(problems, fmt.tprintf("%s:%d: the license %q is not an SPDX identifier, or identifiers joined by OR and AND (%s for a work with no license)", REUSE_LIST_DOCUMENT, number, row.license, REUSE_LICENSE_NONE))
+			append(problems, fmt.tprintf("%s:%d: the license %q is not an SPDX identifier, or identifiers joined by OR and AND (%s for a work with no license)", REUSE_LIST_DOCUMENT, number, row.license, build.REUSE_LICENSE_NONE))
 		case:
 			append(&rows, row)
 		}
@@ -250,7 +233,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	// the system, not of others.
 	repository_license := ""
 	if text, ok := foundation.site_read_quiet(resources.SITE_LICENSE_FILE); ok {
-		repository_license = reuse_spdx_of_record_words(strings.trim_space(foundation.site_lines(text)[0]))
+		repository_license = build.reuse_spdx_of_record_words(strings.trim_space(foundation.site_lines(text)[0]))
 	} else {
 		missing(problems, resources.SITE_LICENSE_FILE, "the license of the repository")
 	}
@@ -273,7 +256,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 			append(&works, Reused_Work {
 				what         = font.family,
 				place        = foundation.join(SITE_FONT_FOLDER, "/", candidate.name, ".ttf"),
-				license      = reuse_spdx_of_record_words(font.license),
+				license      = build.reuse_spdx_of_record_words(font.license),
 				license_file = foundation.join(SITE_FONT_FOLDER, "/", candidate.license_file),
 			})
 		}
@@ -382,7 +365,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 		append(&works, Reused_Work {
 			what         = foundation.join("the portrait of ", credit.person),
 			place        = foundation.join(resources.HALL_OF_FAME_RESOURCE_FOLDER, "/", credit.file),
-			license      = reuse_spdx_of_record_words(credit.license),
+			license      = build.reuse_spdx_of_record_words(credit.license),
 			license_file = resources.HALL_OF_FAME_CREDITS_FILE,
 		})
 	}

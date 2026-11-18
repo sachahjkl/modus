@@ -14,6 +14,7 @@ import "core:sync"
 import "core:time"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 // The machine test: the tool starts the machine under QEMU, and it acts as
 // the input. It presses keys and moves the mouse through the QEMU monitor,
@@ -36,8 +37,6 @@ PROGRESS_CASE_HANG_BOUND_SECONDS :: 660
 BOOT_HANG_BOUND :: 180 * time.Second
 // The most pixels of one relative move of the virtual mouse, on each axis.
 MOUSE_STEP :: 40
-// The exit status of QEMU when the kernel stops the machine with code 0.
-MACHINE_STOP_OK :: 1
 
 // A line of 100 keys, none with Shift, so that the terminal sends 100 key
 // presses for it: 1000 less 24 times 1, which is 976.
@@ -915,10 +914,10 @@ tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (f
 // first_root_cut makes a new disk with a first root that a stop cut: the
 // first half of a first root in block 1, and zero bytes after it.
 first_root_cut :: proc(path: string) -> bool {
-	disk_prepare(path, DATA_DISK_SIZE, true) or_return
+	disk_prepare(path, build.DATA_DISK_SIZE, true) or_return
 	file := disk_open(path) or_return
 	defer os.close(file)
-	root := store.Root{magic = store.ROOT_MAGIC, generation = 1, disk_blocks = DATA_DISK_SIZE / store.BLOCK_SIZE}
+	root := store.Root{magic = store.ROOT_MAGIC, generation = 1, disk_blocks = build.DATA_DISK_SIZE / store.BLOCK_SIZE}
 	if _, err := os.write_at(file, ([^]u8)(&root)[:store.BLOCK_SIZE / 2], store.BLOCK_SIZE); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", path, err)
 		return false
@@ -928,48 +927,21 @@ first_root_cut :: proc(path: string) -> bool {
 }
 
 persistence_run :: proc(part: ^Test_Part_Run) -> bool {
-	disk_prepare(TEST_PERSIST_DISK, DATA_DISK_SIZE, true) or_return
-	machine_test(part, scenario_persist_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 1), exit_status = MACHINE_STOP_OK, data_disk = TEST_PERSIST_DISK}) or_return
-	machine_test(part, scenario_persist_second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 2), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
-	machine_test(part, scenario_persist_crash[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 3), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	disk_prepare(TEST_PERSIST_DISK, build.DATA_DISK_SIZE, true) or_return
+	machine_test(part, scenario_persist_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 2), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_crash[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 3), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	root_cut(TEST_PERSIST_DISK) or_return
-	machine_test(part, scenario_persist_cut[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 4), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_cut[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 4), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
-	machine_test(part, scenario_persist_damaged[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 5), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
-	machine_test(part, scenario_persist_replaced[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 6), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_damaged[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 5), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_replaced[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 6), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	// The last commit wrote the last letter of the note: only the newest
 	// root names the block of data that the tool changes now.
 	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
-	machine_test(part, scenario_persist_older[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 7), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	machine_test(part, scenario_persist_older[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 7), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	first_root_cut(TEST_PERSIST_DISK) or_return
-	return machine_test(part, scenario_persist_first_cut[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 8), exit_status = 0, data_disk = TEST_PERSIST_DISK})
-}
-
-// A test of the kernel on itself (boot_info.Self_Test): the kernel does one
-// thing that the processor must refuse. For a test of the page tables, the
-// processor refuses, and the kernel reports the fault and stops the machine
-// with code 2. For the register trial, the kernel goes on after the
-// refusal, says so, and stops the machine with code 0.
-Self_Test :: struct {
-	number:  int, // boot_info.Self_Test.
-	does:    string,
-	reports: []string, // Parts of the report of the fault, or the line of the kernel after the refusal.
-	stop:    int, // The status of QEMU at the stop of the machine.
-}
-
-MACHINE_STOP_FAULT :: 2 << 1 | 1 // The status of QEMU for the code 2.
-
-self_tests := [?]Self_Test {
-	{1, "use more than the kernel stack", {" vector 8 ", ": the kernel stack of the processor is full"}, MACHINE_STOP_FAULT},
-	{2, "write to the code of the kernel", {" vector 14 ", ": write to a read-only page"}, MACHINE_STOP_FAULT},
-	{3, "write to the code of the kernel through the direct map", {" vector 14 ", ": write to a read-only page"}, MACHINE_STOP_FAULT},
-	{4, "execute the data of the kernel", {" vector 14 ", ": execute of a page that is not code"}, MACHINE_STOP_FAULT},
-	{5, "read the memory of a process outside a copy", {" vector 14 ", ": the kernel used memory of a process outside a copy"}, MACHINE_STOP_FAULT},
-	{6, "execute the code of a process", {" vector 14 ", ": the kernel executed memory of a process"}, MACHINE_STOP_FAULT},
-	// The way back from a register that the processor refuses
-	// (src/kernel/register_trial.odin): the kernel writes an address that is
-	// not canonical to the gs base of a process, IA32_KERNEL_GS_BASE.
-	{7, "write an address that is not canonical to a register in a register trial", {"kernel: self test: the processor refused the write to the register 00000000c0000102 in a register trial, and the kernel went on after it: as it must"}, MACHINE_STOP_OK},
+	return machine_test(part, scenario_persist_first_cut[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 8), exit_status = 0, data_disk = TEST_PERSIST_DISK})
 }
 
 self_test_file :: proc(pattern: string, number: int) -> string {
@@ -978,14 +950,14 @@ self_test_file :: proc(pattern: string, number: int) -> string {
 }
 
 self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	for test in self_tests {
+	for test in build.self_tests {
 		steps := make([dynamic]Step)
 		append(&steps, Step{kind = .Wait, text = "kernel: ok"})
 		append(&steps, Step{kind = .Wait, text = fmt.aprintf("kernel: self test: %s", test.does)})
 		for report in test.reports {
 			append(&steps, Step{kind = .Wait, text = report, any_order = true})
 		}
-		if !machine_test(part, steps[:], {volume = self_test_file(BOOT_VOLUME_SELF_TEST, test.number), output = self_test_file(TEST_OUTPUT_SELF_TEST, test.number), exit_status = test.stop}) {
+		if !machine_test(part, steps[:], {volume = self_test_file(build.BOOT_VOLUME_SELF_TEST, test.number), output = self_test_file(TEST_OUTPUT_SELF_TEST, test.number), exit_status = test.stop}) {
 			return false
 		}
 	}
@@ -4297,7 +4269,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	// The kernel with a check skipped runs only from its own boot volume:
 	// another machine that prints its line ran a kernel of the test by
 	// mistake, and its result is not a result of the kernel.
-	if passed && volume != BOOT_VOLUME_WITHOUT_RETURN_CHECK {
+	if passed && volume != build.BOOT_VOLUME_WITHOUT_RETURN_CHECK {
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		if strings.contains(string(log), TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE) {
 			fmt.eprintfln("modustool: test failed: the machine of %s ran the kernel of the test with a check skipped: \"%s\"", volume, TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE)
@@ -5158,7 +5130,7 @@ measure_windows :: proc(part: ^Test_Part_Run) -> bool {
 	// A copy outside the temporary allocator: the scenario frees it.
 	load_before := strings.clone(load_of_the_host())
 	defer delete(load_before)
-	if !machine_test(part, steps[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_WINDOWS, exit_status = MACHINE_STOP_OK}) {
+	if !machine_test(part, steps[:], {volume = build.BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE_WINDOWS, exit_status = build.MACHINE_STOP_OK}) {
 		return false
 	}
 	load_after := load_of_the_host()

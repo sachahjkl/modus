@@ -30,7 +30,7 @@ import "modus:support/tpm2"
 
 // The key of the system, 40 bytes: the public key of the signing key, then
 // its key number as a little-endian u64. The tool writes it before it
-// builds the boot program (tools/modustool/system_description.odin).
+// builds the boot program (tools/modustool/build/system_description.odin).
 system_key := #load(#config(SYSTEM_KEY, "../../build/system_key.bin"))
 SYSTEM_KEY_SIZE :: system_description.PUBLIC_KEY_SIZE + 8
 

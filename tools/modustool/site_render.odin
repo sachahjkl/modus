@@ -12,6 +12,7 @@ import "core:os"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 Site_Heading :: struct {
 	level:           int,
@@ -116,78 +117,6 @@ site_not_rendered :: proc(renderer: ^Site_Renderer, line: int, what: string) {
 	append(&renderer.site.not_rendered, fmt.tprintf("%s, line %d: %s", renderer.source, line, what))
 }
 
-// The start of a list item: its indentation, its marker and its text.
-Site_Marker :: struct {
-	indent:  int,
-	ordered: bool,
-	label:   string,
-	text:    string,
-}
-
-// site_list_marker reads "- text", "* text", "12. text" or "34b. text" after
-// spaces.
-site_list_marker :: proc(line: string) -> (marker: Site_Marker, found: bool) {
-	indent := 0
-	for indent < len(line) && line[indent] == ' ' {
-		indent += 1
-	}
-	rest := line[indent:]
-	if strings.has_prefix(rest, "- ") || strings.has_prefix(rest, "* ") {
-		return {indent = indent, text = rest[2:]}, true
-	}
-	digits := 0
-	for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
-		digits += 1
-	}
-	if digits == 0 || digits > 4 {
-		return {}, false
-	}
-	end := digits
-	if end < len(rest) && rest[end] >= 'a' && rest[end] <= 'z' {
-		end += 1
-	}
-	if end + 1 < len(rest) && rest[end] == '.' && rest[end + 1] == ' ' {
-		return {indent = indent, ordered = true, label = rest[:end], text = rest[end + 2:]}, true
-	}
-	return {}, false
-}
-
-site_heading_level :: proc(line: string) -> (level: int, text: string) {
-	for level < len(line) && line[level] == '#' {
-		level += 1
-	}
-	if level == 0 || level > 6 || level >= len(line) || line[level] != ' ' {
-		return 0, ""
-	}
-	return level, strings.trim_space(line[level + 1:])
-}
-
-// site_table_row_cells splits a row of a table; "\|" is a "|" of the text.
-site_table_row_cells :: proc(line: string) -> []string {
-	cells := make([dynamic]string, context.temp_allocator)
-	inner := strings.trim_space(line)
-	inner = strings.trim_prefix(inner, "|")
-	if strings.has_suffix(inner, "|") && !strings.has_suffix(inner, "\\|") {
-		inner = inner[:len(inner) - 1]
-	}
-	cell := strings.builder_make(context.temp_allocator)
-	for index := 0; index < len(inner); index += 1 {
-		if inner[index] == '\\' && index + 1 < len(inner) && inner[index + 1] == '|' {
-			strings.write_byte(&cell, '|')
-			index += 1
-			continue
-		}
-		if inner[index] == '|' {
-			append(&cells, strings.trim_space(strings.clone(strings.to_string(cell), context.temp_allocator)))
-			strings.builder_reset(&cell)
-			continue
-		}
-		strings.write_byte(&cell, inner[index])
-	}
-	append(&cells, strings.trim_space(strings.clone(strings.to_string(cell), context.temp_allocator)))
-	return cells[:]
-}
-
 site_is_table_separator :: proc(line: string) -> bool {
 	trimmed := strings.trim_space(line)
 	if !strings.has_prefix(trimmed, "|") {
@@ -224,7 +153,7 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 		if renderer.comment {
 			// A comment sits under the heading of its symbol, in a page or
 			// in a cell: it has paragraphs, lists and examples only.
-			if _, is_marker := site_list_marker(line); is_marker {
+			if _, is_marker := build.site_list_marker(line); is_marker {
 				index = site_render_list(renderer, lines, index, first_line_number)
 			} else if line[0] == ' ' {
 				index = site_render_example(renderer, lines, index)
@@ -233,7 +162,7 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 			}
 			continue
 		}
-		if level, text := site_heading_level(line); level > 0 {
+		if level, text := build.site_heading_level(line); level > 0 {
 			id := site_unique_id(renderer, foundation.site_slug(text))
 			if level == 2 {
 				renderer.section = id
@@ -272,7 +201,7 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 			strings.write_string(b, "</p>\n</blockquote>\n")
 			continue
 		}
-		if _, is_marker := site_list_marker(line); is_marker {
+		if _, is_marker := build.site_list_marker(line); is_marker {
 			index = site_render_list(renderer, lines, index, first_line_number)
 			continue
 		}
@@ -296,7 +225,7 @@ site_render_paragraph :: proc(renderer: ^Site_Renderer, lines: []string, start: 
 		if next == "" || strings.has_prefix(next, "```") {
 			break
 		}
-		if _, is_marker := site_list_marker(line); is_marker && len(parts) > 0 {
+		if _, is_marker := build.site_list_marker(line); is_marker && len(parts) > 0 {
 			break
 		}
 		if renderer.comment {
@@ -307,7 +236,7 @@ site_render_paragraph :: proc(renderer: ^Site_Renderer, lines: []string, start: 
 			if strings.has_prefix(next, "|") || strings.has_prefix(next, ">") {
 				break
 			}
-			if level, _ := site_heading_level(line); level > 0 {
+			if level, _ := build.site_heading_level(line); level > 0 {
 				break
 			}
 		}
@@ -338,7 +267,7 @@ site_render_example :: proc(renderer: ^Site_Renderer, lines: []string, start: in
 		if line == "" || line[0] != ' ' {
 			break
 		}
-		if _, is_marker := site_list_marker(line); is_marker {
+		if _, is_marker := build.site_list_marker(line); is_marker {
 			break
 		}
 		if strings.trim_space(line) != "" {
@@ -426,7 +355,7 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		strings.write_string(b, "</p>\n")
 		return end
 	}
-	header := site_table_row_cells(lines[start])
+	header := build.site_table_row_cells(lines[start])
 	// The box of the table: a region that the keyboard reaches, named by the
 	// heading above the table. A column of a document has no known kind: it
 	// gets the general least width, and a cell that holds only a number or
@@ -450,7 +379,7 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		labels[cell_index] = strings.to_string(label)
 	}
 	for row in lines[start + 2:end] {
-		cells := site_table_row_cells(row)
+		cells := build.site_table_row_cells(row)
 		strings.write_string(b, "<tr>")
 		for cell_index in 0 ..< len(header) {
 			kind := cell_index < len(cells) ? site_cell_kind(cells[cell_index]) : Site_Column_Kind.Any
@@ -473,7 +402,7 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 // A list item before it is written: its marker, its text with the lines
 // that continue it, and the blocks of code inside it.
 Site_Pending_Item :: struct {
-	marker: Site_Marker,
+	marker: build.Site_Marker,
 	text:   [dynamic]string,
 	code:   [dynamic]string, // The HTML of each fenced block of the item.
 	line:   int, // The line of its marker in the file.
@@ -496,14 +425,14 @@ site_render_list :: proc(renderer: ^Site_Renderer, lines: []string, start: int, 
 				index = next
 				break
 			}
-			if _, is_marker := site_list_marker(lines[next]); is_marker || strings.has_prefix(lines[next], "  ") {
+			if _, is_marker := build.site_list_marker(lines[next]); is_marker || strings.has_prefix(lines[next], "  ") {
 				index = next
 				continue
 			}
 			index = next
 			break
 		}
-		if marker, is_marker := site_list_marker(line); is_marker {
+		if marker, is_marker := build.site_list_marker(line); is_marker {
 			item := Site_Pending_Item {
 				marker = marker,
 				text   = make([dynamic]string, context.temp_allocator),
@@ -576,13 +505,6 @@ site_write_list :: proc(renderer: ^Site_Renderer, items: []Site_Pending_Item, po
 		strings.write_string(b, "</li>\n")
 	}
 	strings.write_string(b, ordered ? "</ol>\n" : "</ul>\n")
-}
-
-// site_term_name gives the name of a term from the heading of its entry in
-// the glossary: its text with no code marks.
-site_term_name :: proc(cell: string) -> string {
-	name, _ := strings.remove_all(cell, "`", context.temp_allocator)
-	return strings.trim_space(name)
 }
 
 // site_repository_path says if a code span names a file or a folder of the
@@ -667,14 +589,14 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 		}
 		// Italics: "*words*", and only when the closing star exists, so a
 		// star of an expression ("a * b", "2*3") stays a star.
-		if character == '*' && (index == italic_close || italic_close < 0 && markdown_italic_opens(text, index)) {
+		if character == '*' && (index == italic_close || italic_close < 0 && build.markdown_italic_opens(text, index)) {
 			flush(renderer, text[plain_start:index])
 			if index == italic_close {
 				strings.write_string(b, "</em>")
 				italic_close = -1
 			} else {
 				strings.write_string(b, "<em>")
-				italic_close = markdown_italic_close(text, index + 1)
+				italic_close = build.markdown_italic_close(text, index + 1)
 			}
 			index += 1
 			plain_start = index
@@ -698,7 +620,7 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 		// A comment links to the places of the site, not to files, and has
 		// no picture: "![" is text there.
 		if renderer.comment && character == '[' {
-			if label, target, end, found := markdown_link_at(text, index); found {
+			if label, target, end, found := build.markdown_link_at(text, index); found {
 				flush(renderer, text[plain_start:index])
 				site_comment_link_write(renderer, label, target)
 				index = end
@@ -830,7 +752,7 @@ site_write_picture :: proc(renderer: ^Site_Renderer, alt, target: string) {
 		foundation.site_escape(&renderer.builder, alt)
 		return
 	}
-	site_path := strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", site_file_name(resolved)}, context.temp_allocator)
+	site_path := strings.concatenate({resources.SITE_PICTURE_FOLDER, "/", build.site_file_name(resolved)}, context.temp_allocator)
 	renderer.site.copies[site_path] = resolved
 	fmt.sbprintf(&renderer.builder, "<img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", site_relative(renderer.page, site_path), width, height)
 	site_plain(&renderer.builder, alt)

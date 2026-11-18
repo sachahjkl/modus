@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The debugger of a process (docs/ARCHITECTURE.md, "The debugger of a
 // process"): one machine. The process debugged starts children of its own
@@ -419,7 +420,7 @@ QEMU_QUIT_STATUS :: 0
 // of the kernel, then the commands. The second one runs also when the
 // first one fails: each one has its own verdict.
 debugger_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	kernel_contract := machine_test(part, scenario_debugger[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER, exit_status = MACHINE_STOP_OK})
-	commands := machine_test(part, scenario_debugger_commands[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER_COMMANDS, exit_status = QEMU_QUIT_STATUS})
+	kernel_contract := machine_test(part, scenario_debugger[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER, exit_status = build.MACHINE_STOP_OK})
+	commands := machine_test(part, scenario_debugger_commands[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER_COMMANDS, exit_status = QEMU_QUIT_STATUS})
 	return kernel_contract && commands
 }

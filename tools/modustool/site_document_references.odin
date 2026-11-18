@@ -10,10 +10,10 @@
 package modustool
 
 import "core:fmt"
-import "core:os"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The words that start a label of a place in a document: "section 8",
 // "sections 4 and 5", "property <n>". The last one names a numbered item
@@ -468,7 +468,7 @@ site_is_working_record :: proc(path: string) -> bool {
 		return true
 	}
 	records := SITE_WORKING_RECORDS
-	name := site_file_name(path)
+	name := build.site_file_name(path)
 	for record in records {
 		if name == record {
 			return true
@@ -529,7 +529,7 @@ site_markdown_outline :: proc(content: string) -> Site_Document_Outline {
 		if fenced {
 			continue
 		}
-		if level, heading_text := site_heading_level(line); level > 0 {
+		if level, heading_text := build.site_heading_level(line); level > 0 {
 			if level == 1 && outline.title == "" {
 				outline.title = heading_text
 			}
@@ -537,7 +537,7 @@ site_markdown_outline :: proc(content: string) -> Site_Document_Outline {
 			continue
 		}
 		start := strings.trim_space(line)
-		if marker, is_marker := site_list_marker(line); is_marker {
+		if marker, is_marker := build.site_list_marker(line); is_marker {
 			start = marker.text
 			if marker.ordered && marker.indent == 0 {
 				append(&item_list, Site_Document_Item{label = marker.label, title = site_item_words(marker.text), heading = len(heading_list) - 1, line = index + 1})
@@ -568,7 +568,7 @@ site_document_file_outline :: proc(site: ^Site, path: string) -> Site_Document_O
 		read = site_markdown_outline(content)
 		read.found = true
 		if read.title == "" {
-			read.title = site_file_name(path)
+			read.title = build.site_file_name(path)
 		}
 	}
 	site.document_outlines[path] = read
@@ -598,13 +598,13 @@ site_document_outline :: proc(site: ^Site, path: string) -> Site_Document_Outlin
 	if !is_page && !site_is_working_record(path) {
 		return {}
 	}
-	if is_page && glossary_is_file(path) {
+	if is_page && build.glossary_is_file(path) {
 		// The glossary is read already: its outline needs no file. The
 		// ids are those that glossary_read gives: the anchor of a term
 		// counts the terms of the files before it.
 		outline := Site_Document_Outline{page = page, found = true}
 		headings := make([dynamic]Site_Document_Heading, context.temp_allocator)
-		if path == GLOSSARY_INDEX_FILE {
+		if path == build.GLOSSARY_INDEX_FILE {
 			append(&headings, Site_Document_Heading{level = 1, text = site.glossary.title, id = foundation.site_slug(site.glossary.title), line = 1})
 		}
 		for group in site.glossary.groups {
@@ -784,7 +784,7 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 	// its entry has the anchor of the term. Else it is the heading of the
 	// group. A term of another group is not in the file, and does not
 	// resolve.
-	if glossary_is_file(path) && len(labels) == 1 {
+	if build.glossary_is_file(path) && len(labels) == 1 {
 		key, quoted := site_label_key(labels[0])
 		for group in site.glossary.groups {
 			if group.file != path {
@@ -1105,7 +1105,7 @@ site_comment_is_one_paragraph :: proc(markdown: string) -> bool {
 		if strings.trim_space(line) == "" || line[0] == ' ' || strings.has_prefix(line, "```") {
 			return false
 		}
-		if _, is_marker := site_list_marker(line); is_marker {
+		if _, is_marker := build.site_list_marker(line); is_marker {
 			return false
 		}
 	}
@@ -1167,7 +1167,7 @@ site_source_comment_html :: proc(site: ^Site, from_page, text: string, form: Sit
 site_source_comment_plain :: proc(site: ^Site, text: string) -> string {
 	after := make([dynamic]Site_Document_Target, context.temp_allocator)
 	marked, in_place := site_comment_parts(site, text, false, &after)
-	return strings.trim_space(markdown_inline_plain(site_comment_marks_plain(marked, in_place), false))
+	return strings.trim_space(build.markdown_inline_plain(site_comment_marks_plain(marked, in_place), false))
 }
 
 // site_comment_cell writes a cell of a table that holds a source comment.
@@ -1187,7 +1187,7 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 	}
 	// A file of the glossary is named by its folder too: its name alone
 	// ("README.md", "text.md") is the name of other files.
-	if glossary_path := strings.concatenate({"docs/", strings.trim_prefix(code, "docs/")}, context.temp_allocator); glossary_is_file(glossary_path) {
+	if glossary_path := strings.concatenate({"docs/", strings.trim_prefix(code, "docs/")}, context.temp_allocator); build.glossary_is_file(glossary_path) {
 		if _, is_page := site.documents[glossary_path]; is_page {
 			return glossary_path, true
 		}
@@ -1210,23 +1210,6 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 // sources of the system. The tool is not read: its tests hold pointers
 // that do not resolve on purpose.
 SITE_POINTER_SOURCE_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_MODULES, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_BOOT}
-
-// site_odin_files_under adds the path of each source file of a folder and
-// of its folders, but the tests, to paths.
-site_odin_files_under :: proc(folder: string, paths: ^[dynamic]string) {
-	entries, list_error := os.read_all_directory_by_path(folder, context.temp_allocator)
-	if list_error != nil {
-		return
-	}
-	for entry in entries {
-		path := strings.concatenate({folder, "/", entry.name}, context.temp_allocator)
-		if entry.type == .Directory {
-			site_odin_files_under(path, paths)
-		} else if strings.has_suffix(entry.name, ".odin") && !strings.has_suffix(entry.name, "_test.odin") {
-			append(paths, path)
-		}
-	}
-}
 
 // site_pointer_problem gives the fault of a pointer whose labels do not all
 // find their place, or "": a pointer to no document of docs/ is not one.
@@ -1278,7 +1261,7 @@ site_guide_pointer_problems :: proc(site: ^Site, file, content: string) -> []str
 		if fenced {
 			continue
 		}
-		if level, _ := site_heading_level(line); level > 0 {
+		if level, _ := build.site_heading_level(line); level > 0 {
 			continue // A code span of a heading stays code.
 		}
 		position := 0
@@ -1319,7 +1302,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	files := make([dynamic]string, context.temp_allocator)
 	folders := SITE_POINTER_SOURCE_FOLDERS
 	for folder in folders {
-		site_odin_files_under(folder, &files)
+		build.site_odin_files_under(folder, &files)
 	}
 	for file in files {
 		content, read_ok := foundation.site_read_quiet(file)
@@ -1333,7 +1316,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	for guide in site.guides {
 		append(&documents, guide.source)
 	}
-	append(&documents, GLOSSARY_INDEX_FILE)
+	append(&documents, build.GLOSSARY_INDEX_FILE)
 	for group in site.glossary.groups {
 		append(&documents, group.file)
 	}
@@ -1366,7 +1349,7 @@ SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "ROADMAP.md", "AGE
 site_document_names :: proc(site: ^Site) -> map[string]bool {
 	names := make(map[string]bool, context.temp_allocator)
 	for path in site.documents {
-		names[site_file_name(path)] = true
+		names[build.site_file_name(path)] = true
 	}
 	records := SITE_WORKING_RECORDS
 	for record in records {

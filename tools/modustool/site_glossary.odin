@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The script of the index of the glossary: it sends an address of an entry
 // at the index to the page of the group of the term. The index is whole
@@ -30,7 +31,7 @@ site_glossary_group_page :: proc(group_id: string) -> string {
 
 // site_glossary_page_paths gives the pages of the glossary: the index, then
 // the page of each group in the order of the index of the folder.
-site_glossary_page_paths :: proc(glossary: Glossary) -> []string {
+site_glossary_page_paths :: proc(glossary: build.Glossary) -> []string {
 	paths := make([dynamic]string, context.temp_allocator)
 	append(&paths, site_page_file(SITE_GLOSSARY_FOLDER))
 	for group in glossary.groups {
@@ -44,7 +45,7 @@ site_glossary_page_paths :: proc(glossary: Glossary) -> []string {
 // is the page of the group. A file of the glossary is named by its path
 // from the root only: its name alone is the name of other files.
 site_glossary_documents_add :: proc(site: ^Site) {
-	site.documents[GLOSSARY_INDEX_FILE] = site_page_file(SITE_GLOSSARY_FOLDER)
+	site.documents[build.GLOSSARY_INDEX_FILE] = site_page_file(SITE_GLOSSARY_FOLDER)
 	for group in site.glossary.groups {
 		site.documents[group.file] = site_glossary_group_page(group.id)
 	}
@@ -52,7 +53,7 @@ site_glossary_documents_add :: proc(site: ^Site) {
 
 // site_glossary_group_of_page gives the place of the group whose page is
 // path in the groups of the glossary, or -1.
-site_glossary_group_of_page :: proc(glossary: Glossary, path: string) -> int {
+site_glossary_group_of_page :: proc(glossary: build.Glossary, path: string) -> int {
 	for group, index in glossary.groups {
 		if site_glossary_group_page(group.id) == path {
 			return index
@@ -92,7 +93,7 @@ site_glossary_term_count_words :: proc(count: int) -> string {
 // with its anchor, its short definition set apart, its explanation, and the
 // words that it replaces. The list "On this page" reads the headings, so it
 // is the list of the terms of the group.
-site_glossary_write :: proc(renderer: ^Site_Renderer, group: Glossary_Group) {
+site_glossary_write :: proc(renderer: ^Site_Renderer, group: build.Glossary_Group) {
 	b := &renderer.builder
 	if group.introduction != "" {
 		site_render_markdown(renderer, group.introduction, group.introduction_line)
@@ -193,14 +194,14 @@ site_glossary_letter_id :: proc(letter: string) -> string {
 // script of the page goes on to the entry.
 site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 	glossary := site.glossary
-	renderer := site_renderer_make(site, index_page, GLOSSARY_INDEX_FILE)
+	renderer := site_renderer_make(site, index_page, build.GLOSSARY_INDEX_FILE)
 	// The index links each term by its own row: no word of a definition
 	// links a term, so that a link to a term never names the index.
 	for term in site.terms {
 		renderer.linked_terms[term.id] = true
 	}
-	terms := slice.clone(glossary_terms_in_order(glossary), context.temp_allocator)
-	slice.stable_sort_by(terms, proc(a, b: Glossary_Term) -> bool {return site_glossary_name_less(a.name, b.name)})
+	terms := slice.clone(build.glossary_terms_in_order(glossary), context.temp_allocator)
+	slice.stable_sort_by(terms, proc(a, b: build.Glossary_Term) -> bool {return site_glossary_name_less(a.name, b.name)})
 	for term in terms {
 		renderer.ids[term.id] = true
 	}
@@ -273,7 +274,7 @@ site_glossary_pages_add :: proc(site: ^Site) -> Site_Reference_Entry {
 	glossary := site.glossary
 	index_page := site_page_file(SITE_GLOSSARY_FOLDER)
 	title := glossary.title
-	term_count := len(glossary_terms_in_order(glossary))
+	term_count := len(build.glossary_terms_in_order(glossary))
 	group_crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
 	append(&group_crumbs, ..site_crumbs(.Reference))
 	append(&group_crumbs, Site_Crumb{title = title, path = index_page})
@@ -309,8 +310,8 @@ site_glossary_pages_add :: proc(site: ^Site) -> Site_Reference_Entry {
 	}
 
 	description := site_description_cut(fmt.tprintf("The %d terms of %s from A to Z: one term for each concept, with its short definition and a link to its entry in one of the %d groups.", term_count, SITE_SYSTEM_NAME, len(glossary.groups)))
-	site_page_add(site, Site_Page{path = index_page, title = title, description = description, section = .Reference, crumbs = site_crumbs(.Reference), body = site_glossary_index_write(site, index_page), sources = site_sources(GLOSSARY_INDEX_FILE), layout = .Documentation, script = SITE_GLOSSARY_SCRIPT})
-	return Site_Reference_Entry{path = index_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = GLOSSARY_INDEX_FILE, count = term_count, kind = .Term}
+	site_page_add(site, Site_Page{path = index_page, title = title, description = description, section = .Reference, crumbs = site_crumbs(.Reference), body = site_glossary_index_write(site, index_page), sources = site_sources(build.GLOSSARY_INDEX_FILE), layout = .Documentation, script = SITE_GLOSSARY_SCRIPT})
+	return Site_Reference_Entry{path = index_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = build.GLOSSARY_INDEX_FILE, count = term_count, kind = .Term}
 }
 
 // site_glossary_problems checks the pages of the glossary as the command

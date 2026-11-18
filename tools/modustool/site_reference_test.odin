@@ -10,6 +10,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
 import "modustool:foundation"
+import "modustool:build"
 
 @(private = "file")
 read_text :: proc(t: ^testing.T, path: string) -> string {
@@ -115,7 +116,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, known && name == grant.name, "the start grant %s has the number %d, which grant_name names %q", grant.name, grant.number, name)
 	}
 	testing.expect_value(t, len(at_start), len(start_grant.Grant))
-	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
+	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
 	testing.expect_value(t, rows_problem, "")
 	console, named := site_role_row_of(rows, "console")
 	testing.expect(t, named && len(console.grants) > 1 && console.grants[0] == "Root_Ring", "a set is read as its members, with no period")
@@ -126,9 +127,9 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	// A row with no grant is a row of the table, with no grant.
 	plasma, plasma_named := site_role_row_of(rows, "plasma")
 	testing.expect(t, plasma_named && len(plasma.grants) == 0)
-	_, system_parts, parts_problem := process_roles_read(roles_text)
+	_, system_parts, parts_problem := build.process_roles_read(roles_text)
 	testing.expect_value(t, parts_problem, "")
-	testing.expect_value(t, len(process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
+	testing.expect_value(t, len(build.process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
 }
 
 // A set of grants is a list of values: each grant one link to its row in
@@ -182,12 +183,12 @@ site_property_names_in_a_text :: proc(t: ^testing.T) {
 
 @(test)
 site_type_text_as_the_console :: proc(t: ^testing.T) {
-	description := Module_Description{records = []Record_Description{{name = "Rectangle"}}}
+	description := build.Module_Description{records = []build.Record_Description{{name = "Rectangle"}}}
 	testing.expect_value(t, site_type_text(description, .Handle, transmute(u32)op.Rights{.Read, .Write}, .Read, true), "Handle(Read, Write)")
 	testing.expect_value(t, site_type_text(description, .Table, 1, .Change, true), "Table(Rectangle, Change)")
 	testing.expect_value(t, site_type_text(description, .Table, 1, .Read, false), "Table(Rectangle)")
 	testing.expect_value(t, site_type_text(description, .Record, 1, .Read, false), "Rectangle")
-	export := Export_Description{name = "write", parameters = []module.Type{.Text, .Text}, names = []string{"name", "data"}, details = []u32{0, 0}, directions = []module.Direction{.Read, .Read}, result = .Integer}
+	export := build.Export_Description{name = "write", parameters = []module.Type{.Text, .Text}, names = []string{"name", "data"}, details = []u32{0, 0}, directions = []module.Direction{.Read, .Read}, result = .Integer}
 	testing.expect_value(t, site_export_signature(description, export), "write(name: Text, data: Text) -> Integer")
 }
 

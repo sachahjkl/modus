@@ -2,6 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
+import "modustool:build"
 
 // The check of the layout: a documentation page has one tree and one list
 // "On this page" whose links name ids of the page; a presentation page has
@@ -142,9 +143,9 @@ site_documentation_tree_has_tree_lines :: proc(t: ^testing.T) {
 	guide_page :: SITE_GUIDE_FOLDER + "/A/" + SITE_PAGE
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 	append(&site.guides, Site_Guide{source = "docs/A.md", path = guide_page, title = "Guide A"})
-	terms := make([]Glossary_Term, 2, context.temp_allocator)
-	groups := make([]Glossary_Group, 1, context.temp_allocator)
-	groups[0] = Glossary_Group{name = "Code", id = "code", terms = terms}
+	terms := make([]build.Glossary_Term, 2, context.temp_allocator)
+	groups := make([]build.Glossary_Group, 1, context.temp_allocator)
+	groups[0] = build.Glossary_Group{name = "Code", id = "code", terms = terms}
 	site.glossary.groups = groups
 	entries := make([]Site_Reference_Entry, 2, context.temp_allocator)
 	entries[0] = Site_Reference_Entry{path = glossary_page, title = "Glossary"}

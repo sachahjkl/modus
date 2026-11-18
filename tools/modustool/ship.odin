@@ -20,6 +20,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 SHIP_REMOTE :: "origin"
 SHIP_BRANCH :: "master"
@@ -157,7 +158,7 @@ ship_publish_commands :: proc(number: Release_Number) -> [][]string {
 	tag := release_tag_name(number)
 	message := ship_commit_message(number)
 	commands := make([][]string, 4, context.temp_allocator)
-	commands[0] = command_words("git", "add", "-A", "--", CHANGELOG_FILE, RELEASE_NUMBER_SOURCE, FRAGMENT_FOLDER, MEASURE_HISTORY_FOLDER)
+	commands[0] = command_words("git", "add", "-A", "--", CHANGELOG_FILE, build.RELEASE_NUMBER_SOURCE, FRAGMENT_FOLDER, MEASURE_HISTORY_FOLDER)
 	commands[1] = command_words("git", "commit", "-q", "-m", message)
 	// Signed and annotated: the tag holds who released, when, and a
 	// signature that the git configuration of the publisher makes.
@@ -186,9 +187,9 @@ command_succeeds :: proc(command: []string) -> bool {
 // ship_newest_release_read reads the newest release from the source of the
 // release number and the release tags of the repository.
 ship_newest_release_read :: proc() -> (newest: Release_Number, ok: bool) {
-	source, err := os.read_entire_file(RELEASE_NUMBER_SOURCE, context.temp_allocator)
+	source, err := os.read_entire_file(build.RELEASE_NUMBER_SOURCE, context.temp_allocator)
 	if err != nil {
-		fmt.eprintfln("modustool: ship: cannot read %s: %v", RELEASE_NUMBER_SOURCE, err)
+		fmt.eprintfln("modustool: ship: cannot read %s: %v", build.RELEASE_NUMBER_SOURCE, err)
 		return {}, false
 	}
 	tags, tags_ok := command_output(ship_tag_list_command())
@@ -198,7 +199,7 @@ ship_newest_release_read :: proc() -> (newest: Release_Number, ok: bool) {
 	}
 	newest, ok = ship_newest_release(string(source), tags)
 	if !ok {
-		fmt.eprintfln("modustool: ship: %s has no release number on a line that starts with %q", RELEASE_NUMBER_SOURCE, RELEASE_NUMBER_LINE_START)
+		fmt.eprintfln("modustool: ship: %s has no release number on a line that starts with %q", build.RELEASE_NUMBER_SOURCE, RELEASE_NUMBER_LINE_START)
 	}
 	return
 }

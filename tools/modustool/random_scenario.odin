@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // The randomness of the system: three machines (docs/RANDOMNESS.md).
 //
@@ -98,5 +99,5 @@ scenario_random_without_the_processor := [?]Step {
 }
 
 random_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_random_with_the_processor[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = MACHINE_STOP_OK, entropy_device = true}) && machine_test(part, scenario_random_restart[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = MACHINE_STOP_OK}) && machine_test(part, scenario_random_without_the_processor[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = MACHINE_STOP_OK, processor = .Without_Random})
+	return machine_test(part, scenario_random_with_the_processor[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = build.MACHINE_STOP_OK, entropy_device = true}) && machine_test(part, scenario_random_restart[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_random_without_the_processor[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = build.MACHINE_STOP_OK, processor = .Without_Random})
 }

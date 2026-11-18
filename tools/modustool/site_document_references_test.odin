@@ -3,6 +3,7 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
+import "modustool:build"
 
 // A site with the guide of the architecture, whose page has a few headings
 // of known ids. The file of the guide is read for its title only when the
@@ -351,7 +352,7 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 	paths, ok := foundation.files_with_suffix("docs", ".md")
 	testing.expect(t, ok)
 	for path in paths {
-		name := site_file_name(path)
+		name := build.site_file_name(path)
 		if site_is_working_record(name) {
 			continue
 		}
@@ -359,7 +360,7 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 		site.documents[path] = page
 		site.documents[name] = page
 	}
-	glossary_terms, glossary_problems, glossary_ok := glossary_read_folder()
+	glossary_terms, glossary_problems, glossary_ok := build.glossary_read_folder()
 	testing.expect(t, glossary_ok)
 	testing.expectf(t, len(glossary_problems) == 0, "the glossary: %v", glossary_problems)
 	site.glossary = glossary_terms

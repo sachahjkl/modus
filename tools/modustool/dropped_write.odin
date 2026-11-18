@@ -6,6 +6,7 @@ import "core:os"
 import "core:sync"
 import "modus:private/storage/storage_mount"
 import "modustool:foundation"
+import "modustool:build"
 
 // The dropped write (src/md/features/dropped_write.md). The disk that the
 // tool serves drops three writes of the console to one object, each found
@@ -146,7 +147,7 @@ dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected,
 }
 
 dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
-	fresh := make([]u8, DATA_DISK_SIZE)
+	fresh := make([]u8, build.DATA_DISK_SIZE)
 	defer delete(fresh)
 	server: Network_Block_Device
 	if !disk_server_start(&server, fresh) {
@@ -161,7 +162,7 @@ dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
 	server.root_drop_marker = DROPPED_WRITE_ROOT_MARKER
 	sync.mutex_unlock(&server.lock)
 	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
-	ran := machine_test(part, scenario_dropped_write_first[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 1), exit_status = 0, data_disk = address, disk_server = &server})
+	ran := machine_test(part, scenario_dropped_write_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 1), exit_status = 0, data_disk = address, disk_server = &server})
 	disk_server_stop(&server)
 	if !ran {
 		return false
@@ -203,5 +204,5 @@ dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&second, Step{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"})
 	append(&second, Step{kind = .Wait, text = "[console] " + DROPPED_WRITE_FIRST_VERSION, fails_on = "[console] " + DROPPED_WRITE_MARKER})
 	append(&second, Step{kind = .Quit})
-	return machine_test(part, second[:], {volume = BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 2), exit_status = 0, data_disk = TEST_DROPPED_WRITE_DISK})
+	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 2), exit_status = 0, data_disk = TEST_DROPPED_WRITE_DISK})
 }

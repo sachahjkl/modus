@@ -13,6 +13,7 @@ import "core:image/png"
 import "core:strings"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 
 // The folder of the pictures of the screen that the machine tests take.
 SITE_SCREEN_PICTURE_FOLDER :: "docs/screenshots"
@@ -364,7 +365,7 @@ site_gallery_folder_files :: proc() -> (names: []string, ok: bool) {
 	paths := foundation.files_with_suffix(SITE_SCREEN_PICTURE_FOLDER, ".png") or_return
 	list := make([]string, len(paths), context.temp_allocator)
 	for path, index in paths {
-		list[index] = site_file_name(path)
+		list[index] = build.site_file_name(path)
 	}
 	return list, true
 }
@@ -410,7 +411,7 @@ site_gallery_read :: proc(site: ^Site) -> bool {
 				return false
 			}
 			picture.film = Site_News{picture = picture.site_path, picture_width = width, picture_height = height, picture_alt = row.caption}
-			picture.film.film = strings.concatenate({SITE_FILM_FOLDER, "/", site_file_name(row.film)}, context.temp_allocator)
+			picture.film.film = strings.concatenate({SITE_FILM_FOLDER, "/", build.site_file_name(row.film)}, context.temp_allocator)
 			picture.film.film_width, picture.film.film_height, picture.film.film_bytes = film_width, film_height, len(film_data)
 			site.copies[picture.film.film] = row.film
 		}
@@ -504,7 +505,7 @@ site_gallery_guide_link :: proc(site: ^Site, b: ^strings.Builder, from_page, gui
 	if !is_page {
 		return
 	}
-	title := strings.trim_suffix(site_file_name(guide), ".md")
+	title := strings.trim_suffix(build.site_file_name(guide), ".md")
 	for candidate in site.guides {
 		if candidate.source == guide {
 			title = candidate.title

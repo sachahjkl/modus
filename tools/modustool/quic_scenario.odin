@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // QUIC through the network service (docs/QUIC.md, section 6): the network
 // device goes to the peer of the tool. `quic_echo` listens on the UDP port
@@ -81,5 +82,5 @@ scenario_quic := [?]Step {
 }
 
 quic_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_quic[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_QUIC, exit_status = MACHINE_STOP_OK})
+	return machine_test(part, scenario_quic[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_QUIC, exit_status = build.MACHINE_STOP_OK})
 }

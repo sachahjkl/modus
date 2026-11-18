@@ -10,6 +10,7 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // The prefix of a target that names a term of the glossary: "term:handle".
 SITE_TERM_TARGET_PREFIX :: "term:"
@@ -77,7 +78,7 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 		if !site_document_has_id(site, path, anchor) {
 			return {}, fmt.tprintf("%s has no heading with the id \"%s\"", path, anchor)
 		}
-		if glossary_is_file(path) {
+		if build.glossary_is_file(path) {
 			// A term and a group are on the page of their group.
 			page = site_glossary_anchor_page(site, anchor)
 		}
@@ -101,11 +102,11 @@ site_comment_link_target :: proc(site: ^Site, target: string) -> (link: Site_Com
 			// declaration of the package.
 		}
 	}
-	span, is_name := site_declaration_span_read(target)
+	span, is_name := build.site_declaration_span_read(target)
 	if !is_name {
 		return {}, "the target is not an address, a term (term:<name>), a guide (docs/<NAME>.md#<id>) or a name"
 	}
-	place, resolution := site_declaration_resolve(&site.declarations, span, nil)
+	place, resolution := build.site_declaration_resolve(&site.declarations, span, nil)
 	switch resolution {
 	case .Linked:
 		if key := site_declaration_type_key(site, site.declarations.declarations[place]); key != "" {
@@ -180,37 +181,8 @@ site_comment_link_write :: proc(renderer: ^Site_Renderer, label, target: string)
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
 	case .Type:
-		site_type_reference(site, b, link.type_key, markdown_inline_plain(label, false), true)
+		site_type_reference(site, b, link.type_key, build.markdown_inline_plain(label, false), true)
 	}
-}
-
-// site_comment_links gives each link "[label](target)" of the text of a
-// comment, outside its code spans, with the byte where it starts.
-site_comment_links :: proc(text: string) -> (targets: []string, starts: []int) {
-	target_list := make([dynamic]string, context.temp_allocator)
-	start_list := make([dynamic]int, context.temp_allocator)
-	index := 0
-	for index < len(text) {
-		switch text[index] {
-		case '`':
-			end := strings.index_byte(text[index + 1:], '`')
-			if end < 0 {
-				index = len(text)
-				continue
-			}
-			index += end + 2
-			continue
-		case '[':
-			if _, target, end, found := markdown_link_at(text, index); found {
-				append(&target_list, target)
-				append(&start_list, index)
-				index = end
-				continue
-			}
-		}
-		index += 1
-	}
-	return target_list[:], start_list[:]
 }
 
 // site_comment_link_problems reads the comments of one source file: each
@@ -224,7 +196,7 @@ site_comment_link_problems :: proc(site: ^Site, file, content: string) -> []stri
 		return problems[:]
 	}
 	for block in foundation.comment_blocks(content, syntax) {
-		targets, starts := site_comment_links(block.text)
+		targets, starts := build.site_comment_links(block.text)
 		for target, index in targets {
 			if _, problem := site_comment_link_target(site, target); problem != "" {
 				append(&problems, fmt.tprintf("%s, line %d: the link to %s names nothing: %s", file, foundation.comment_block_line(block, starts[index]), target, problem))

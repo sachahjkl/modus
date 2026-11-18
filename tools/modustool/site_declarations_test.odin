@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
+import "modustool:build"
 
 // A file of a package "graphics": a procedure with a comment, a constant, a
 // type, a global variable, a procedure inside a "when", and a name that a
@@ -25,14 +26,14 @@ CONSOLE_FILE :: "processes/console/count_test_source.odin"
 @(private = "file")
 declaration_test_site :: proc() -> Site {
 	site := test_site()
-	site.declarations = site_declaration_index_make()
+	site.declarations = build.site_declaration_index_make()
 	for file in ([][2]string{{GRAPHICS_FILE, SOURCE_OF_GRAPHICS}, {CONSOLE_FILE, SOURCE_OF_CONSOLE}}) {
-		found, parsed := site_declarations_of_file(file[0], file[1])
+		found, parsed := build.site_declarations_of_file(file[0], file[1])
 		if !parsed {
 			continue
 		}
 		for declaration in found {
-			site_declaration_add(&site.declarations, declaration)
+			build.site_declaration_add(&site.declarations, declaration)
 		}
 	}
 	return site
@@ -55,13 +56,13 @@ place_of :: proc(site: ^Site, name, package_name: string) -> int {
 // inside a "when"; a name that two packages declare.
 @(test)
 site_declaration_index_of_two_files :: proc(t: ^testing.T) {
-	_, parsed := site_declarations_of_file(GRAPHICS_FILE, SOURCE_OF_GRAPHICS)
+	_, parsed := build.site_declarations_of_file(GRAPHICS_FILE, SOURCE_OF_GRAPHICS)
 	testing.expect(t, parsed, "the parser refuses the file of the test")
 	site := declaration_test_site()
 	testing.expect_value(t, len(site.declarations.declarations), 8)
 	Expected :: struct {
 		name, package_name: string,
-		kind:               Site_Declaration_Kind,
+		kind:               build.Site_Declaration_Kind,
 		line:               int,
 		signature:          string,
 		first_sentence:     string,
@@ -97,11 +98,11 @@ site_declaration_index_of_two_files :: proc(t: ^testing.T) {
 	testing.expect(t, "graphics" in site.declarations.packages && "console" in site.declarations.packages)
 	testing.expect(t, "support/graphics" in site.declarations.folders)
 	// A file that the parser refuses gives no declaration.
-	_, refused := site_declarations_of_file("support/x/broken.odin", "package x\n\nbroken :: proc( {\n")
+	_, refused := build.site_declarations_of_file("support/x/broken.odin", "package x\n\nbroken :: proc( {\n")
 	testing.expect(t, !refused, "the parser accepts a broken file")
 	// One line: no comment, no space inside the brackets, no comma before
 	// a closing bracket.
-	long := site_declaration_one_line("name :: proc(a: int, // one\n\tb: int,\n)")
+	long := build.site_declaration_one_line("name :: proc(a: int, // one\n\tb: int,\n)")
 	testing.expect_value(t, long, "name :: proc(a: int, b: int)")
 }
 
@@ -109,24 +110,24 @@ site_declaration_index_of_two_files :: proc(t: ^testing.T) {
 // a file name, a keyword, a built-in type and two words are not names.
 @(test)
 site_declaration_span_forms :: proc(t: ^testing.T) {
-	span, is_name := site_declaration_span_read("blend_row")
+	span, is_name := build.site_declaration_span_read("blend_row")
 	testing.expect(t, is_name && span.name == "blend_row" && span.qualifier == "" && !span.called)
-	span, is_name = site_declaration_span_read("blend_row()")
+	span, is_name = build.site_declaration_span_read("blend_row()")
 	testing.expect(t, is_name && span.name == "blend_row" && span.called)
-	span, is_name = site_declaration_span_read("graphics.blend_row")
+	span, is_name = build.site_declaration_span_read("graphics.blend_row")
 	testing.expect(t, is_name && span.qualifier == "graphics" && span.name == "blend_row")
-	span, is_name = site_declaration_span_read("graphics.blend_row()")
+	span, is_name = build.site_declaration_span_read("graphics.blend_row()")
 	testing.expect(t, is_name && span.qualifier == "graphics" && span.called)
 	for text in ([]string{"boot.image", "flake.nix", "u64", "proc", "bit_set", "a b", "f(x)", "", "3d", "a.b.c"}) {
-		_, is_name = site_declaration_span_read(text)
+		_, is_name = build.site_declaration_span_read(text)
 		testing.expectf(t, !is_name, "%q is read as a name", text)
 	}
 
 	site := declaration_test_site()
 	index := &site.declarations
-	resolve :: proc(declarations_index: ^Site_Declaration_Index, code: string, context_folders: []string) -> (int, Site_Declaration_Resolution) {
-		read, _ := site_declaration_span_read(code)
-		return site_declaration_resolve(declarations_index, read, context_folders)
+	resolve :: proc(declarations_index: ^build.Site_Declaration_Index, code: string, context_folders: []string) -> (int, build.Site_Declaration_Resolution) {
+		read, _ := build.site_declaration_span_read(code)
+		return build.site_declaration_resolve(declarations_index, read, context_folders)
 	}
 	graphics_shared := place_of(&site, "shared_name", "graphics")
 	console_shared := place_of(&site, "shared_name", "console")
@@ -135,7 +136,7 @@ site_declaration_span_forms :: proc(t: ^testing.T) {
 	// Two packages with one name: plain, unless the span or the text names
 	// the package.
 	_, resolution = resolve(index, "shared_name", nil)
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Ambiguous)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Ambiguous)
 	place, resolution = resolve(index, "graphics.shared_name", nil)
 	testing.expect(t, resolution == .Linked && place == graphics_shared)
 	place, resolution = resolve(index, "console.shared_name()", nil)
@@ -143,22 +144,22 @@ site_declaration_span_forms :: proc(t: ^testing.T) {
 	place, resolution = resolve(index, "shared_name", []string{"processes/console"})
 	testing.expect(t, resolution == .Linked && place == console_shared)
 	place, resolution = resolve(index, "shared_name", []string{"processes"})
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Linked)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Linked)
 	testing.expect_value(t, place, console_shared)
 	// A common word: linked when the span calls it or the text places it.
 	_, resolution = resolve(index, "count", nil)
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Ambiguous)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Ambiguous)
 	_, resolution = resolve(index, "count()", nil)
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Linked)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Linked)
 	_, resolution = resolve(index, "count", []string{"processes/console"})
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Linked)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Linked)
 	// A constant is not called; a name that no file declares is not found.
 	_, resolution = resolve(index, "PAGE_SIZE()", nil)
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Not_Found)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Not_Found)
 	_, resolution = resolve(index, "missing_name", nil)
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Not_Found)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Not_Found)
 	_, resolution = resolve(index, "audio.blend_row", nil)
-	testing.expect_value(t, resolution, Site_Declaration_Resolution.Not_Found)
+	testing.expect_value(t, resolution, build.Site_Declaration_Resolution.Not_Found)
 
 	// The folders that a text names: a folder, and the folder of a file.
 	folders := site_context_folders(index, "3. The blend of a glyph (`support/graphics`), in support/graphics/blend.odin:12, not in support/other.")
@@ -262,12 +263,12 @@ site_declaration_index_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, site_declarations_read(&site), "the sources cannot be read")
 	testing.expectf(t, site.declarations.files_not_parsed == 0, "%d files not parsed, the first: %s", site.declarations.files_not_parsed, site.declarations.first_file_not_parsed)
 	testing.expect(t, len(site.declarations.declarations) > 1000, "the index holds too few declarations")
-	kinds: [Site_Declaration_Kind]int
+	kinds: [build.Site_Declaration_Kind]int
 	for declaration in site.declarations.declarations {
 		kinds[declaration.kind] += 1
 		testing.expectf(t, declaration.signature != "", "%s, line %d: the line of %s is %q", declaration.file, declaration.line, declaration.name, declaration.signature)
 	}
-	for kind in Site_Declaration_Kind {
+	for kind in build.Site_Declaration_Kind {
 		testing.expectf(t, kinds[kind] > 0, "the index has no %v", kind)
 	}
 	// A type of the contract is a type of its package.

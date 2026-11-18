@@ -66,7 +66,7 @@ shown :: proc(text: string) -> string {
 }
 
 // The comment of the tests of the tool that uses each construct of the
-// subset (tools/modustool/comment_markdown_test.odin).
+// subset (tools/modustool/build/comment_markdown_test.odin).
 @(private = "file")
 COMMENT_WITH_EACH_CONSTRUCT :: "Seals a **text** with a *key*, as [the seal](system.word_wait) says. The second sentence.\nIt continues the paragraph.\n\n- `key`: 32 bytes;\n- `nonce`: 12 bytes, which\nnever repeat;\n  - a nested item.\n\n1. the first result;\n2. the second result.\n\n```odin\nx := seal(&key)\n```\n\n  a line   kept as it is"
 

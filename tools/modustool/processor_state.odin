@@ -6,6 +6,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:build"
 
 // The state of the processors of a test machine when one of its steps
 // failed. A step that ends at its bound says only that a line did not come:
@@ -492,13 +493,13 @@ known_code_of :: proc(output, volume: string, firmware: Machine_Firmware) -> Kno
 	known: Known_Code
 	// The kernel module of the volume comes from the table of the volumes,
 	// the one place that says which kernel each boot program holds.
-	for row in boot_volumes() {
+	for row in build.boot_volumes() {
 		if row.path == volume {
 			known.kernel_module = row.kernel
 		}
 	}
 	if known.kernel_module != "" {
-		if object, error := os.read_entire_file(debug_object_path(known.kernel_module), context.temp_allocator); error == nil && debug_object.check(object) == .None {
+		if object, error := os.read_entire_file(build.debug_object_path(known.kernel_module), context.temp_allocator); error == nil && debug_object.check(object) == .None {
 			known.kernel_debug_object = object
 		}
 	}

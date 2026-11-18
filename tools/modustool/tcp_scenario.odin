@@ -1,6 +1,7 @@
 package modustool
 
 import "modustool:foundation"
+import "modustool:build"
 
 // TCP: two machines of their own (docs/NETWORK.md, "The tests").
 //
@@ -207,7 +208,7 @@ scenario_tcp_real := [?]Step {
 }
 
 tcp_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	if !machine_test(part, scenario_tcp[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_TCP, exit_status = MACHINE_STOP_OK}) || !machine_test(part, scenario_tcp_real[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_TCP_REAL, exit_status = MACHINE_STOP_OK, user_network = true}) {
+	if !machine_test(part, scenario_tcp[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_TCP, exit_status = build.MACHINE_STOP_OK}) || !machine_test(part, scenario_tcp_real[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_TCP_REAL, exit_status = build.MACHINE_STOP_OK, user_network = true}) {
 		return false
 	}
 	frames_of_the_fetch_report(TEST_OUTPUT_TCP_REAL)

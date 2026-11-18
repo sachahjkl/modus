@@ -10,6 +10,7 @@ import "core:strings"
 import "core:time"
 import "modus:support/graphics"
 import "modustool:foundation"
+import "modustool:build"
 
 SITE_FOLDER :: foundation.BUILD_FOLDER + "/site"
 SITE_PAGE :: "index.html"
@@ -20,8 +21,6 @@ SITE_REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/modus"
 SITE_SYSTEM_NAME :: "modus"
 SITE_RELEASE_COUNT :: 5
 SITE_NOT_MEASURED :: "Not measured."
-// `modustool check` writes here the line of its comparison of two builds.
-REPRODUCIBLE_BUILD_RECORD :: foundation.BUILD_FOLDER + "/reproducible_build.txt"
 
 // Which line a number takes when the log has several lines with its text.
 Site_Line_Choice :: enum {
@@ -79,7 +78,7 @@ site_measures := [?]Site_Measure {
 	{sentence = "TCP: 1 MiB that the process `fetch` receives from a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: GET /large:", choice = .First, accent = graphics.DARK_MACHINE, place = .Numbers, required = true, reading = "The process `fetch` receives 1 MiB over TCP from a server of the host, through the user networking of QEMU (libslirp); a hash checks each byte. The rate includes libslirp, which is not a part of the system."},
 	{sentence = "TCP: 1 MiB that the process `fetch` sends to a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: POST /sink, 1 MiB", choice = .First, accent = graphics.DARK_MACHINE, place = .Numbers, required = true, reading = "The process `fetch` sends 1 MiB over TCP to a server of the host, which checks the hash. The rate includes the user networking of QEMU, which is not a part of the system."},
 	{sentence = "ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`", files = {TEST_OUTPUT_CRYPTOGRAPHY, ""}, pattern = "cryptography_vectors: seal ChaCha20-Poly1305", choice = .First, accent = graphics.DARK_PROCESS, place = .Numbers, required = true, reading = "The time of the seal of one datagram of 1200 bytes, the size of a QUIC datagram, by the module `cryptography`, and its rate."},
-	{sentence = "The same bytes after a second build", files = {REPRODUCIBLE_BUILD_RECORD, ""}, pattern = "the same bytes after a second build", choice = .Last, accent = graphics.DARK_KERNEL, place = .Build, required = true, reading = "Not a time: a fact. A second build gives each module, its LLVM IR, its object, the pointer theme files and the boot program, byte for byte. It holds for the compiler of the flake, on the host of the run."},
+	{sentence = "The same bytes after a second build", files = {build.REPRODUCIBLE_BUILD_RECORD, ""}, pattern = "the same bytes after a second build", choice = .Last, accent = graphics.DARK_KERNEL, place = .Build, required = true, reading = "Not a time: a fact. A second build gives each module, its LLVM IR, its object, the pointer theme files and the boot program, byte for byte. It holds for the compiler of the flake, on the host of the run."},
 }
 
 // What each log is: the machine that wrote it and what else ran.
@@ -98,7 +97,7 @@ site_output_files := [?]Site_Output_File {
 	{TEST_OUTPUT_TCP_REAL, "The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp"},
 	{TEST_OUTPUT_CRYPTOGRAPHY, "The machine of `modustool test crypto`"},
 	{foundation.BUILD_FOLDER + "/test_output_persist_1.txt", "The first machine of the test of persistence of `modustool test`, on a new data disk"},
-	{REPRODUCIBLE_BUILD_RECORD, "Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes"},
+	{build.REPRODUCIBLE_BUILD_RECORD, "Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes"},
 }
 
 // Where a number or the stages of the start that a page shows come from:
@@ -155,11 +154,6 @@ site_accents := [?]Site_Accent {
 // form of the page.
 site_accent_graphic_color :: proc(accent: Site_Accent, light: bool) -> graphics.Color {
 	return light ? graphics.shade(accent.color, accent.light_graphic_percent) : accent.color
-}
-
-// site_file_name gives the name of a file after the last "/" of its path.
-site_file_name :: proc(path: string) -> string {
-	return path[strings.last_index_byte(path, '/') + 1:]
 }
 
 // site_without_process_label takes the label "[process] " or

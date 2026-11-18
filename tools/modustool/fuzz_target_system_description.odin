@@ -6,6 +6,7 @@ import "core:slice"
 import info "modus:contract/boot_info"
 import "modus:contract/system_description"
 import "modustool:foundation"
+import "modustool:build"
 
 // The fuzz targets of the system description and the boot image
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
@@ -135,26 +136,26 @@ fuzz_boot_image_generated_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	choices := fuzz_choices_of(input)
 	kernel := make([]u8, fuzz_choice_below(&choices, 65), context.temp_allocator)
 	fuzz_choice_fill(&choices, kernel)
-	files := make([dynamic]Image_File, context.temp_allocator)
+	files := make([dynamic]build.Image_File, context.temp_allocator)
 	module_count := fuzz_choice_below(&choices, 4)
 	file_count := module_count + fuzz_choice_below(&choices, 3)
 	for index in 0 ..< file_count {
 		bytes := make([]u8, fuzz_choice_below(&choices, 65), context.temp_allocator)
 		fuzz_choice_fill(&choices, bytes)
-		append(&files, Image_File{name = fmt.tprintf("file_%d", index), file = bytes})
+		append(&files, build.Image_File{name = fmt.tprintf("file_%d", index), file = bytes})
 	}
 	entries := make([dynamic]system_description.Entry, context.temp_allocator)
-	append(&entries, description_entry(system_description.KERNEL_ENTRY_NAME, .Kernel, kernel))
+	append(&entries, build.description_entry(system_description.KERNEL_ENTRY_NAME, .Kernel, kernel))
 	for item, index in files {
 		kind := index < module_count ? system_description.Entry_Kind.Module : system_description.Entry_Kind.Resource
-		append(&entries, description_entry(item.name, kind, item.file))
+		append(&entries, build.description_entry(item.name, kind, item.file))
 	}
 	security_version := u32(fuzz_choice_range(&choices, 1, system_description.SECURITY_VERSION_LIMIT))
 	description := fuzz_description_write(security_version, entries[:])
 	signature := make([]u8, system_description.SIGNATURE_SIZE, context.temp_allocator)
 	all := slice.clone_to_dynamic(files[:], context.temp_allocator)
-	append(&all, Image_File{name = system_description.RESOURCE_DESCRIPTION, file = description}, Image_File{name = system_description.RESOURCE_SIGNATURE, file = signature})
-	image := boot_image_encode(all[:], module_count)
+	append(&all, build.Image_File{name = system_description.RESOURCE_DESCRIPTION, file = description}, build.Image_File{name = system_description.RESOURCE_SIGNATURE, file = signature})
+	image := build.boot_image_encode(all[:], module_count)
 
 	description_in_image := description
 	change := foundation.enum_member_at(Fuzz_Boot_Change, fuzz_choice_below(&choices, len(Fuzz_Boot_Change)))

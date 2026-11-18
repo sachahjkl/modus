@@ -2,6 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
+import "modustool:build"
 
 @(private = "file")
 command_text :: proc(command: []string) -> string {
@@ -72,7 +73,7 @@ ship_plan_is_one_atomic_push_of_a_signed_tag :: proc(t: ^testing.T) {
 	number := Release_Number{0, 93, 0}
 	publish := ship_publish_commands(number)
 	testing.expect_value(t, len(publish), 4)
-	testing.expect_value(t, command_text(publish[0]), "git add -A -- " + CHANGELOG_FILE + " " + RELEASE_NUMBER_SOURCE + " " + FRAGMENT_FOLDER + " " + MEASURE_HISTORY_FOLDER)
+	testing.expect_value(t, command_text(publish[0]), "git add -A -- " + CHANGELOG_FILE + " " + build.RELEASE_NUMBER_SOURCE + " " + FRAGMENT_FOLDER + " " + MEASURE_HISTORY_FOLDER)
 	testing.expect_value(t, command_text(publish[1]), "git commit -q -m Release 0.93.0")
 	testing.expect_value(t, len(publish[1]), 5)
 	testing.expect_value(t, publish[1][4], "Release 0.93.0")

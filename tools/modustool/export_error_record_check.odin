@@ -6,6 +6,7 @@ import "core:odin/parser"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // Each export that fails gives an error record (src/md/api/export_error_records.md).
 // A negative result is not always a failure: math.number("-5") is -5. So
@@ -142,7 +143,7 @@ export_name_of_declaration :: proc(declaration: ^ast.Value_Decl, declared: strin
 // result is the code of the end of the process.
 @(private = "file")
 export_needs_a_check :: proc(literal: ^ast.Proc_Lit, name: string) -> bool {
-	if literal.body == nil || name == ENTRY_NAME || literal.type == nil || literal.type.results == nil {
+	if literal.body == nil || name == build.ENTRY_NAME || literal.type == nil || literal.type.results == nil {
 		return false
 	}
 	results := literal.type.results.list

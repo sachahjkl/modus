@@ -3,33 +3,34 @@ package modustool
 import module "modus:contract/module"
 import "core:strings"
 import "core:testing"
+import "modustool:build"
 
 // The constant of a source gives the stated budget: each part from its
 // integer literal, a part left out 0.
 @(test)
 budget_request_read_takes_the_constant :: proc(t: ^testing.T) {
 	source :: "package p\n\nimport \"modus:support/system\"\n\n// Its loop, and one more thread.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4_096, threads = 2}\n"
-	state: Describe_State
-	file, parsed := parse_source("budget.odin", source, &state)
+	state: build.Describe_State
+	file, parsed := build.parse_source("budget.odin", source, &state)
 	if !testing.expect(t, parsed) {
 		return
 	}
-	budget: Budget_Description
-	testing.expect(t, budget_request_read(file, &budget))
+	budget: build.Budget_Description
+	testing.expect(t, build.budget_request_read(file, &budget))
 	testing.expect(t, budget.stated)
-	testing.expect_value(t, budget.parts, Stated_Budget{working_memory_pages = 4096, processes = 0, threads = 2})
+	testing.expect_value(t, budget.parts, build.Stated_Budget{working_memory_pages = 4096, processes = 0, threads = 2})
 	testing.expect_value(t, budget.comment, "Its loop, and one more thread.")
 	testing.expect_value(t, budget.line, 6)
 
 	// A source with no constant states no request: the module asks for the
 	// least budget, and the conversion writes no table.
-	other_state: Describe_State
-	other, other_parsed := parse_source("none.odin", "package p\n\nWIDTH :: 720\n", &other_state)
+	other_state: build.Describe_State
+	other, other_parsed := build.parse_source("none.odin", "package p\n\nWIDTH :: 720\n", &other_state)
 	if !testing.expect(t, other_parsed) {
 		return
 	}
-	none: Budget_Description
-	testing.expect(t, budget_request_read(other, &none))
+	none: build.Budget_Description
+	testing.expect(t, build.budget_request_read(other, &none))
 	testing.expect(t, !none.stated)
 }
 
@@ -40,7 +41,7 @@ budget_request_read_takes_the_constant :: proc(t: ^testing.T) {
 budget_request_read_takes_the_typed_form_and_prefixes :: proc(t: ^testing.T) {
 	cases := [?]struct {
 		about, source: string,
-		parts:         Stated_Budget,
+		parts:         build.Stated_Budget,
 	} {
 		{"the type on the declaration", "package p\n// Why.\nMODULE_BUDGET : system.Stated_Budget : {working_memory_pages = 4096, threads = 2}\n", {working_memory_pages = 4096, threads = 2}},
 		{"the type on both", "package p\n// Why.\nMODULE_BUDGET : system.Stated_Budget : system.Stated_Budget{working_memory_pages = 4096}\n", {working_memory_pages = 4096}},
@@ -49,13 +50,13 @@ budget_request_read_takes_the_typed_form_and_prefixes :: proc(t: ^testing.T) {
 		{"a window of literals", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = 640, window_height = 480}\n", {window_width = 640, window_height = 480}},
 	}
 	for item in cases {
-		state: Describe_State
-		file, parsed := parse_source("case.odin", item.source, &state)
+		state: build.Describe_State
+		file, parsed := build.parse_source("case.odin", item.source, &state)
 		if !testing.expectf(t, parsed, "%s: the parser takes it", item.about) {
 			continue
 		}
-		budget: Budget_Description
-		testing.expectf(t, budget_request_read(file, &budget), "%s", item.about)
+		budget: build.Budget_Description
+		testing.expectf(t, build.budget_request_read(file, &budget), "%s", item.about)
 		testing.expectf(t, budget.stated && budget.parts == item.parts, "%s: %v", item.about, budget.parts)
 	}
 }
@@ -67,20 +68,20 @@ budget_request_read_takes_the_typed_form_and_prefixes :: proc(t: ^testing.T) {
 budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) {
 	budget_source :: "package p\n// Its tables.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 100, window_width = WIDTH, window_height = HEIGHT}\n"
 	layout_source :: "package p\nWIDTH :: 1000 // The window and its borders fit the screen.\nHEIGHT : int : 0x2C0\nMARGIN :: 2 * 6\n"
-	state: Describe_State
-	budget_file, budget_parsed := parse_source("main.odin", budget_source, &state)
-	layout_file, layout_parsed := parse_source("layout.odin", layout_source, &state)
+	state: build.Describe_State
+	budget_file, budget_parsed := build.parse_source("main.odin", budget_source, &state)
+	layout_file, layout_parsed := build.parse_source("layout.odin", layout_source, &state)
 	if !testing.expect(t, budget_parsed && layout_parsed) {
 		return
 	}
-	budget: Budget_Description
+	budget: build.Budget_Description
 	constants := make(map[string]u64, context.temp_allocator)
-	testing.expect(t, budget_request_read(budget_file, &budget))
-	integer_constants_read(budget_file, &constants)
-	integer_constants_read(layout_file, &constants)
+	testing.expect(t, build.budget_request_read(budget_file, &budget))
+	build.integer_constants_read(budget_file, &constants)
+	build.integer_constants_read(layout_file, &constants)
 	testing.expect_value(t, budget.window_names, [2]string{"WIDTH", "HEIGHT"})
-	testing.expect(t, budget_window_resolve(&budget, constants))
-	testing.expect_value(t, budget.parts, Stated_Budget{working_memory_pages = 100, window_width = 1000, window_height = 704})
+	testing.expect(t, build.budget_window_resolve(&budget, constants))
+	testing.expect_value(t, budget.parts, build.Stated_Budget{working_memory_pages = 100, window_width = 1000, window_height = 704})
 	_, has_expression := constants["MARGIN"]
 	testing.expect(t, !has_expression, "a constant of an expression is not read: the tool evaluates none")
 
@@ -94,14 +95,14 @@ budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) 
 		{"a width above the limit", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = 4096, window_height = HEIGHT}\n"},
 	}
 	for item in refused {
-		item_state: Describe_State
-		file, parsed := parse_source("case.odin", item.source, &item_state)
+		item_state: build.Describe_State
+		file, parsed := build.parse_source("case.odin", item.source, &item_state)
 		if !testing.expectf(t, parsed, "%s: the parser takes it", item.about) {
 			continue
 		}
-		item_budget: Budget_Description
-		testing.expectf(t, budget_request_read(file, &item_budget), "%s: the constant is read", item.about)
-		testing.expectf(t, !budget_window_resolve(&item_budget, constants), "%s", item.about)
+		item_budget: build.Budget_Description
+		testing.expectf(t, build.budget_request_read(file, &item_budget), "%s: the constant is read", item.about)
+		testing.expectf(t, !build.budget_window_resolve(&item_budget, constants), "%s", item.about)
 	}
 }
 
@@ -110,11 +111,11 @@ budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) 
 // two pictures of a window of 1000 x 704.
 @(test)
 budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
-	stated := Stated_Budget{working_memory_pages = 2536, processes = 2, threads = 3, window_width = 1000, window_height = 704}
+	stated := build.Stated_Budget{working_memory_pages = 2536, processes = 2, threads = 3, window_width = 1000, window_height = 704}
 	// 98 pages and a part of one more; two imports of 19 and of 72 pages.
 	module_size := u64(98 * 4096 + 1)
 	imports := []u64{19 * 4096, 72 * 4096}
-	counted, ok := budget_count(stated, module_size, imports)
+	counted, ok := build.budget_count(stated, module_size, imports)
 	testing.expect(t, ok)
 	testing.expect_value(t, counted.working_memory_pages, 2536)
 	testing.expect_value(t, counted.module_pages, 99 + 19 + 72)
@@ -128,22 +129,22 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 
 	// No part of threads: the tool counts the first thread, and the table
 	// leaves the part to the starter. No window: no pictures.
-	alone, alone_ok := budget_count({working_memory_pages = 10}, 4096, nil)
+	alone, alone_ok := build.budget_count({working_memory_pages = 10}, 4096, nil)
 	testing.expect(t, alone_ok)
 	testing.expect_value(t, alone.request, module.Budget_Request{pages = 10 + 1 + 72})
 	testing.expect_value(t, alone.window_pages, 0)
 
 	// A count of threads that passes the end of 64 bits is refused.
-	_, huge_ok := budget_count({threads = ~u64(0)}, 0, nil)
+	_, huge_ok := build.budget_count({threads = ~u64(0)}, 0, nil)
 	testing.expect(t, !huge_ok)
 }
 
 // The measure of a build has one line with the request of each module.
 @(test)
 build_measure_lines_name_each_budget_request_once :: proc(t: ^testing.T) {
-	requests := make([dynamic]Build_Budget_Request, context.temp_allocator)
-	append(&requests, Build_Budget_Request{name = "block", request = {pages = 256, processes = 1, threads = 1}}, Build_Budget_Request{name = "console", request = {pages = 8192, processes = 5, threads = 6}})
-	lines := build_measure_lines(Build_Measure{budget_requests = requests}, 0)
+	requests := make([dynamic]build.Build_Budget_Request, context.temp_allocator)
+	append(&requests, build.Build_Budget_Request{name = "block", request = {pages = 256, processes = 1, threads = 1}}, build.Build_Budget_Request{name = "console", request = {pages = 8192, processes = 5, threads = 6}})
+	lines := build.build_measure_lines(build.Build_Measure{budget_requests = requests}, 0)
 	last := lines[len(lines) - 1]
 	testing.expect(t, strings.contains(last, "block 256 pages, 1 processes, 1 threads; console 8192 pages, 5 processes, 6 threads"), last)
 	testing.expect_value(t, strings.count(last, "console"), 1)
@@ -185,15 +186,15 @@ budget_request_read_refuses_another_form :: proc(t: ^testing.T) {
 		{"after another name", "package p\n// Why.\nMODULE_BUDGET, MODULE_NAME :: system.Stated_Budget{working_memory_pages = 4096}, \"x\"\n"},
 	}
 	for item in cases {
-		state: Describe_State
-		file, parsed := parse_source("case.odin", item.source, &state)
+		state: build.Describe_State
+		file, parsed := build.parse_source("case.odin", item.source, &state)
 		// Each case is a source that the parser takes: the refusal is the
 		// refusal of the tool.
 		if !testing.expectf(t, parsed, "%s: the parser takes it", item.about) {
 			continue
 		}
-		budget: Budget_Description
-		testing.expectf(t, !budget_request_read(file, &budget), "%s", item.about)
+		budget: build.Budget_Description
+		testing.expectf(t, !build.budget_request_read(file, &budget), "%s", item.about)
 		testing.expectf(t, !budget.stated || item.about == "two constants", "%s: no request is kept", item.about)
 	}
 }

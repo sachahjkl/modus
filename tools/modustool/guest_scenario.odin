@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modustool:foundation"
+import "modustool:build"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): one
 // machine. The process guest_demo makes a guest process, maps one page of
@@ -105,8 +106,8 @@ guest_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	gives, reason := host_gives_guest_support()
 	if gives {
 		fmt.printfln("modustool: the part guest runs a guest: %s", reason)
-		return machine_test(part, scenario_guest[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = MACHINE_STOP_OK})
+		return machine_test(part, scenario_guest[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = build.MACHINE_STOP_OK})
 	}
 	fmt.printfln("modustool: the part guest runs NO guest on this host: %s; the machine checks only that Guest_Run refuses with Unsupported", reason)
-	return machine_test(part, scenario_guest_unsupported[:], {volume = BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = MACHINE_STOP_OK})
+	return machine_test(part, scenario_guest_unsupported[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = build.MACHINE_STOP_OK})
 }
