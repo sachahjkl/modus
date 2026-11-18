@@ -2541,6 +2541,15 @@ folded_gap_reference :: proc(canvas: graphics.Canvas, x, y, width, height: int) 
 	graphics.line(view, 6, height - 4, width, 8, 1, graphics.colors.dim)
 }
 
+// folded_gap_lines_whole draws the two lines of the folded gap of before on
+// the whole canvas, with no cut to the gap: the second line ends one pixel
+// right of a narrow gap, so its cut pixels are still near the stroke.
+@(private = "file")
+folded_gap_lines_whole :: proc(canvas: graphics.Canvas, x, y, width, height: int) {
+	graphics.line(canvas, x + 2, y + height - 4, x + width - 4, y + 4, 1, graphics.colors.dim)
+	graphics.line(canvas, x + 6, y + height - 4, x + width, y + 8, 1, graphics.colors.dim)
+}
+
 // The grid of points is one Rectangle with a pattern, cut to its area, and
 // draws the pixels of the kind that it replaced, in areas at each phase of
 // the grid: at the corner, inside a step, on a point, across a point, and
@@ -2593,9 +2602,10 @@ the_folded_gap_is_two_records_near_the_pixels_of_before :: proc(t: ^testing.T) {
 			}
 			testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Rectangle)
 			testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Path)
-			drawn, expected, parts: [WIDTH * HEIGHT]graphics.Color
+			drawn, expected, parts, lines_whole: [WIDTH * HEIGHT]graphics.Color
 			execute(&table, {pixels = raw_data(drawn[:]), width = WIDTH, height = HEIGHT, stride = WIDTH})
 			folded_gap_reference({pixels = raw_data(expected[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, 7, 5, width, height)
+			folded_gap_lines_whole({pixels = raw_data(lines_whole[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, 7, 5, width, height)
 			rectangles := [4]Rectangle{{0, 0, 19, HEIGHT}, {19, 0, 30, 11}, {19, 11, 30, HEIGHT}, {30, 0, WIDTH, HEIGHT}}
 			execute_in_rectangles(&table, {pixels = raw_data(parts[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, rectangles[:])
 			if parts != drawn {
@@ -2615,7 +2625,7 @@ the_folded_gap_is_two_records_near_the_pixels_of_before :: proc(t: ^testing.T) {
 						testing.expectf(t, false, "a gap of %d by %d: the pixel (%d, %d) of the line of before is not drawn", width, height, x, y)
 						return
 					}
-					if pixel != graphics.colors.track && !near_line_of_before(expected[:], WIDTH, HEIGHT, x, y) {
+					if pixel != graphics.colors.track && !near_line_of_before(lines_whole[:], WIDTH, HEIGHT, x, y) {
 						testing.expectf(t, false, "a gap of %d by %d: the pixel (%d, %d) is far from the line of before", width, height, x, y)
 						return
 					}
