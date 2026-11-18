@@ -70,8 +70,8 @@ each_entry_maps_back_to_itself :: proc(t: ^testing.T) {
 }
 
 // The places follow the widths: a wider label moves the button windows to
-// the right by the same pixels, and a wider name widens each column on the
-// grid of 8. In B612 each name fits its line with its padding, and the
+// the right by the same pixels, and a wider name widens each column by the
+// same pixels, past COLUMN_LEAST. In B612 each name fits its line with its padding, and the
 // names of the bar are not the widths of the cells.
 @(test)
 places_follow_the_measured_widths :: proc(t: ^testing.T) {
@@ -80,8 +80,11 @@ places_follow_the_measured_widths :: proc(t: ^testing.T) {
 	narrow_x, _, _, _ := windows_button(narrow)
 	wide_x, _, _, _ := windows_button(wide)
 	testing.expect_value(t, wide_x - narrow_x, 12)
-	testing.expect_value(t, column_width(narrow), 120) // 100 + 16 is 116: up to the grid, and COLUMN_LEAST.
-	testing.expect_value(t, column_width({label_width = 40, windows_label_width = 40, longest_name_width = 113}), 136) // 113 + 16 = 129, up to 136.
+	testing.expect_value(t, column_width(narrow), COLUMN_LEAST) // 100 + 16 is 116: under COLUMN_LEAST.
+	testing.expect_value(t, column_width({longest_name_width = COLUMN_LEAST - 2 * PADDING}), COLUMN_LEAST)
+	testing.expect_value(t, column_width({longest_name_width = COLUMN_LEAST - 2 * PADDING + 1}), COLUMN_LEAST + 1) // One pixel past the least: one pixel wider, no round up.
+	testing.expect_value(t, column_width({label_width = 40, windows_label_width = 40, longest_name_width = 113}), 113 + 2 * PADDING)
+	testing.expect_value(t, column_width({}), COLUMN_LEAST) // No name: the least width.
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
 	layout := layout_of(&cache)

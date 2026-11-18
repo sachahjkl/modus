@@ -112,8 +112,8 @@ expected_machine_rows := [?]Expected_Row {
 	{.Bad_Header, .Arp},
 }
 
-// The window follows docs/DESIGN.md where it is cheap now: rectangles, a
-// grid of 8 pixels, names in the dim color, values in the text color, the
+// The window follows docs/DESIGN.md where it is cheap now: rectangles, the
+// spacing tokens, names in the dim color, values in the text color, the
 // state of a case in the color of a process that runs or in the color
 // "failed", with a text that says the same.
 LINE :: interface.TABLE_LINE

@@ -14,7 +14,7 @@ LINE :: interface.TABLE_LINE
 CONNECTIONS_HEIGHT :: 244 // The card of the connections: its title, the header of the table, six rows, and the line that counts the connections with no row.
 COUNTED_Y :: 116 + CONNECTIONS_HEIGHT + 8 // The card of the counts, under it.
 // The card of the counts holds seven rows, three of them with a sentence of two lines.
-#assert(HEIGHT - COUNTED_Y - 8 - graphics.CARD_TITLE - 8 >= 7 * LINE + 3 * graphics.LINE_HEIGHT)
+#assert(HEIGHT - COUNTED_Y - 8 - graphics.TITLE - 8 >= 7 * LINE + 3 * graphics.LINE_HEIGHT)
 
 window_memory: interface.Window_Memory(768, 16384)
 

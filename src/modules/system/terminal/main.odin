@@ -104,11 +104,11 @@ ROWS_LIMIT :: terminal.ROWS_LIMIT
 CELL_WIDTH :: graphics.CELL_WIDTH
 CELL_HEIGHT :: graphics.CELL_HEIGHT
 
-MARGIN :: 8
+MARGIN :: graphics.GAP
 HEAD_HEIGHT :: 72
 TEXT_X :: MARGIN
 SCROLL_WIDTH :: interface.SCROLL_BAR_THICKNESS
-SCROLL_GAP :: 7 // From the text to the scroll bar: with the bar, three units of the grid.
+SCROLL_GAP :: graphics.GAP // From the text to the scroll bar.
 // The scroll bar of the completion list takes its last two cells and the
 // column of its border.
 LIST_SCROLL_CELLS :: 2
@@ -116,7 +116,6 @@ LIST_SCROLL_CELLS :: 2
 // icon of 12 pixels, then a space before the name.
 LIST_ICON_CELLS :: 3
 #assert(LIST_SCROLL_CELLS * CELL_WIDTH + 1 == SCROLL_WIDTH)
-#assert((SCROLL_GAP + SCROLL_WIDTH) % 8 == 0)
 
 // What the root service chose for this terminal, and the places that
 // follow from it.

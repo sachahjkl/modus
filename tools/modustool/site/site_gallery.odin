@@ -93,7 +93,7 @@ Site_Gallery_Row :: struct {
 site_gallery_rows := [?]Site_Gallery_Row {
 	// The desktop and the palette.
 	{file = "desktop.png", group = .Desktop, home = true, guide = "docs/INTERFACE.md", caption = "The desktop: the console, life, monitor and plasma in windows, under the bar with the mark, the two menus and the clock."},
-	{file = "desktop_moved.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "Windows after a move with the pointer: plasma, paint, life and monitor on the grid of the desktop."},
+	{file = "desktop_moved.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "Windows after a move with the pointer: plasma, paint, life and monitor where the pointer put them."},
 	{file = "menu.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "The start menu: the button of the bar opens it."},
 	{file = "windows.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "The menu of the windows: a press on a line brings the window to the front."},
 	{file = "disk_process_windows.png", group = .Desktop, guide = "docs/MODULE_CONTRACT.md", caption = "The process of a module from a disk in the menu of the windows and in the monitor: its nickname, with the hash prefix of its file faded beside it."},

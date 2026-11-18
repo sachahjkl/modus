@@ -1,14 +1,27 @@
-// The design rules (docs/DESIGN.md) as one table of constants: the grid,
-// the surfaces, the colors of the concepts and the colors of the desktop.
-// The boot display, the compositor and the other modules read this one table.
+// The design rules (docs/DESIGN.md) as one table of constants: the spacing
+// tokens, the text size tokens, the surfaces, the colors of the concepts and
+// the colors of the desktop. The boot display, the compositor and the other
+// modules read this one table.
 package graphics
 
-// The grid (DESIGN.md, section 6).
-GRID :: 8 // A position and a size are multiples of GRID, or of GRID / 2 inside a form.
-LINE_HEIGHT :: 16 // One line of text.
-CARD_GAP :: 8 // The space between two cards.
-CARD_MARGIN :: 16 // The margin inside a card.
-CARD_TITLE :: 40 // The height of the title of a card.
+// The spacing tokens, in logical pixels (docs/DESIGN.md, "6. Spacing"). A
+// space between two elements of the desktop is a token or a sum of tokens,
+// so the elements of two windows line up. Each is a multiple of 8, so at a
+// scale in eighths each is a whole count of pixels of the screen. A size
+// that a content gives is that size: nothing rounds it to a token.
+GAP :: 8 // The space between two elements: two cards, a label and its value.
+MARGIN :: 16 // The margin inside a card or a window.
+TITLE :: 40 // The height of the title of a card.
+
+// The text size tokens, in logical pixels (docs/DESIGN.md, "5. Text"): the
+// height of a line of text at each size that the desktop uses.
+TEXT_CAPTION :: 14 // The caption of a card, the detail of a row of a list.
+TEXT_BODY :: 16 // Each other text.
+TEXT_HEADING :: 24 // A heading of a page, the heading of a group of a list.
+TEXT_LARGE :: 32 // The one number of a card.
+TEXT_LARGEST :: 48 // The one number that a whole window is about.
+
+LINE_HEIGHT :: TEXT_BODY // One line of text.
 
 POINT_SIZE :: 2 // The side of one point of the grid, in pixels.
 POINT_STEP :: 24 // The distance between two points of the grid, in pixels.

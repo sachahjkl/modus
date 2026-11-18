@@ -25,8 +25,8 @@ HEIGHT :: 680
 //   machine       the remote machines and the link.
 //   not usable    a connection that ended.
 
-CARD_TITLE :: graphics.CARD_TITLE
-CARD_MARGIN :: graphics.CARD_MARGIN
+CARD_TITLE :: graphics.TITLE
+CARD_MARGIN :: graphics.MARGIN
 LINE :: 24
 
 // bar draws the full part of a bar: 120 % of its color at the top, 78 % at the bottom.
