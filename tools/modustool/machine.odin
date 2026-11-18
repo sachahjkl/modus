@@ -2571,6 +2571,15 @@ scenario := [?]Step {
 	{kind = .Record, program = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
+	// An arena grows one page at a time until its budget refuses the
+	// commit: the refusal is a value that the program reads, the arena
+	// keeps its state, a reset takes the same pages again with no commit,
+	// and the end gives every page back to the budget
+	// (src/md/features/memory_without_a_bound.md).
+	{kind = .Type, text = "start(\"arena\")"},
+	{kind = .Wait, text = "arena: grew to ", fails_on = "arena: WRONG"},
+	{kind = .Wait, text = "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must", fails_on = "arena: WRONG"},
+	{kind = .Wait, text = "root: arena stopped with code 0"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two

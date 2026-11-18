@@ -62,7 +62,7 @@ Do not use: madvise(DONTNEED), VirtualFree(MEM_DECOMMIT), discard.
 
 An arena is an uncommitted object of a program that grows by an explicit commit and ends whole.
 
-A program holds in an arena data with no known bound, such as the tree of a document. A push past the committed end commits the next pages; a budget that cannot pay refuses with `No_Budget`, which the push gives back to its caller, and the arena stays as it was. No object of an arena is freed alone: one decommit returns every page. A scratch arena of a frame is set back to its start at each frame. An arena is not an allocator of the language and not a heap of the system.
+A program holds in an arena data with no known bound, such as the tree of a document. A push past the committed end commits the next pages; a budget that cannot pay refuses with `No_Budget`, which the push gives back to its caller, and the arena stays as it was. No object of an arena is freed alone: its end returns every page. A scratch arena of a frame is set back to its start at each frame. An arena is not an allocator of the language and not a heap of the system.
 
 The design: `src/md/features/memory_without_a_bound.md`.
 

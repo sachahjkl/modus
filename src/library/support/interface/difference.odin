@@ -65,7 +65,7 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // are 0), so two records whose bytes differ draw different things, or one
 // of them draws nothing: they are not equal, and no read through the border
 // is needed to know it. The one exception is the first byte of the range of
-// a Text, an Interface_Text or a Text_Grid, which can move in the text table
+// a Text or a Text_Grid, which can move in the text table
 // with no change of what is drawn: those records are compared with that
 // word masked. Two refused records that are equal under the mask draw
 // nothing in both frames, or are damaged by the comparison of their texts
@@ -79,10 +79,10 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 			return true
 		}
 		switch kind {
-		case .Text, .Interface_Text:
+		case .Text:
 			range := transmute(Range_Fields)new.fields
 			return texts_equal(before, range.first, now, range.first, range.count)
-		case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Point_Grid, .Folded_Gap, .Picture, .Text_Grid, .Line:
+		case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Picture, .Text_Grid, .Line:
 			return true
 		}
 		return true
@@ -91,7 +91,7 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		return false
 	}
 	switch kind {
-	case .Text, .Interface_Text, .Text_Grid:
+	case .Text, .Text_Grid:
 		old_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
 		new_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
 		if old_words != new_words {
@@ -103,13 +103,13 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		old_range := transmute(Range_Fields)old.fields
 		new_range := transmute(Range_Fields)new.fields
 		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
-	case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Point_Grid, .Folded_Gap, .Picture, .Line:
+	case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Picture, .Line:
 		return false
 	}
 	return false
 }
 
-// The first two fields of a Text, an Interface_Text and a Text_Grid: the
+// The first two fields of a Text and a Text_Grid: the
 // place of the range in the text table, and its count of bytes.
 @(private)
 Range_Fields :: struct {
@@ -130,7 +130,6 @@ RANGE_FIRST_MASK :: u64(0xFFFF_FFFF)
 #assert(draw_record.HEADER_SIZE % size_of(u64) == 0)
 #assert(size_of(Range_Fields) == draw_record.FIELDS_SIZE)
 #assert(offset_of(draw_record.Text_Fields, first) == 0 && offset_of(draw_record.Text_Fields, count) == 4)
-#assert(offset_of(draw_record.Interface_Text_Fields, first) == 0 && offset_of(draw_record.Interface_Text_Fields, count) == 4)
 #assert(offset_of(draw_record.Text_Grid_Fields, first) == 0 && offset_of(draw_record.Text_Grid_Fields, count) == 4)
 
 // texts_equal says if two ranges of count bytes, in the text tables of two

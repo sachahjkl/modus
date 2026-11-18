@@ -14,11 +14,9 @@ import "modus:support/text_shaping"
 // names, titles, labels, buttons and lists (B612), when the program has it
 // (Draw_Table.interface_font) and the setting is the vector font; else a
 // text of this kind is measured and drawn in the font of the cells. A text
-// is always measured in the font that will draw it.
-Font_Kind :: enum u8 {
-	Cells_8x16, // The font of the cells: each character is one cell wide.
-	Interface, // The proportional interface font.
-}
+// is always measured in the font that will draw it. The font is a field of
+// a text record: the type is the one of the contract.
+Font_Kind :: draw_record.Font_Kind
 
 // A font and a size. scale: 1, 2 or 3 times the native size (docs/DESIGN.md,
 // section 5); 0 means 1.
