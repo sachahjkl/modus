@@ -103,9 +103,11 @@ read_refuses_the_words_of_the_kinds_that_left :: proc(t: ^testing.T) {
 
 // The words of the vertical (2) and the horizontal (3) gradient, which
 // became one Gradient, name no kind: a record of the form of version 14,
-// with two opaque colors and the rest 0, is refused with each word, and the
-// same bytes with the word of the Gradient are refused too, for their two
-// equal points.
+// with two opaque colors and the rest 0, is refused with each word. The
+// same bytes with the word of the Gradient are refused too: read as points,
+// the two opaque colors are a first point at 0xFF000000 units on each axis
+// (-2^24, inside the limit) and the zeros a second point at 0, a span of
+// 2^24 units, past GRADIENT_SPAN_LIMIT.
 @(test)
 read_refuses_the_words_of_the_two_gradients :: proc(t: ^testing.T) {
 	VERTICAL_GRADIENT_WORD :: 2
@@ -127,6 +129,18 @@ read_refuses_the_words_of_the_two_gradients :: proc(t: ^testing.T) {
 	as_gradient.fields = old_fields
 	primitive, problem := read(as_gradient)
 	testing.expectf(t, problem == .Field_Past_Bound && primitive == nil, "the bytes of an old gradient as a Gradient: %v", problem)
+	// The refusal is for the span: the points are inside the limit and
+	// differ, and the same points one span apart are read.
+	fields := transmute(Gradient_Fields)as_gradient.fields
+	testing.expect_value(t, fields.start_x, i32(-1 << 24))
+	testing.expect_value(t, fields.start_y, i32(-1 << 24))
+	testing.expect(t, inside_coordinate_limit(fields.start_x) && fields.start_x != fields.end_x, "the old bytes are not two different points inside the limit")
+	testing.expect(t, i64(fields.end_x) - i64(fields.start_x) > GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL, "the old bytes are not past the span")
+	fields.end_x = fields.start_x + GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL
+	fields.end_y = fields.start_y
+	as_gradient.fields = transmute([FIELDS_SIZE]u8)fields
+	_, within := read(as_gradient)
+	testing.expectf(t, within == .None, "the old colors as points one span apart: %v", within)
 }
 
 // The two points of a gradient, each other field valid: equal points are
@@ -174,6 +188,28 @@ read_refuses_the_points_of_a_gradient_out_of_their_bounds :: proc(t: ^testing.T)
 		expected := index < 2 ? Problem.None : Problem.Field_Past_Bound
 		testing.expectf(t, problem == expected, "a point at %d: %v", limit, problem)
 	}
+	// The second point alone past the limit, one unit past it and at the
+	// largest and the smallest i32, the first point inside: refused.
+	past_ends := [4]i32{COORDINATE_UNIT_LIMIT + 1, -COORDINATE_UNIT_LIMIT - 1, max(i32), min(i32)}
+	for end in past_ends {
+		for axis in 0 ..< 2 {
+			gradient := colors
+			gradient.start_x, gradient.start_y = 0, 0
+			gradient.end_x, gradient.end_y = 0, 0
+			if axis == 0 {
+				gradient.end_x = end
+			} else {
+				gradient.end_y = end
+			}
+			_, problem := read(sample_record(gradient))
+			testing.expectf(t, problem == .Field_Past_Bound, "a second point at %d on the axis %d: %v", end, axis, problem)
+		}
+	}
+	// The first point alone at the largest i32.
+	largest := colors
+	largest.start_x, largest.start_y, largest.end_x, largest.end_y = max(i32), 0, 0, 0
+	_, problem := read(sample_record(largest))
+	testing.expectf(t, problem == .Field_Past_Bound, "a first point at the largest i32: %v", problem)
 }
 
 // The level of a gradient: on an axis with the points at the centers of the

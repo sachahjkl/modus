@@ -207,8 +207,15 @@ draw_vertical_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, h
 // to the same color with alpha 0 keeps the color. It is a Gradient whose
 // points are the centers of the first and the last line, so line r of h
 // has the level r * 255 / (h - 1). A box of one line is a rectangle of the
-// top color, the color of its one line; a gradient longer than
-// GRADIENT_SPAN_LIMIT has no record: no surface reaches it.
+// top color, the color of its one line.
+//
+// A gradient whose first and last lines are more than GRADIENT_SPAN_LIMIT
+// pixels apart, after the cut of its box to COORDINATE_LIMIT, is not
+// written, and sets refused. Its points cannot be cut: the table knows the
+// limit and not the surface, and the limit is far past the span, so a cut
+// keeps the span; and two records of a part each would round the level of
+// each part again, so the colors at the edge of a part would move. A box
+// that the cut leaves empty draws nothing, and needs no record.
 draw_vertical_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, top, bottom: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
@@ -219,7 +226,11 @@ draw_vertical_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, 
 		record_append(table, record_of_pixels(draw_record.Draw_Rectangle{color = canonical_color(top)}, element, left, first, right, last))
 		return
 	}
-	if last - first <= 0 || last - first - 1 > draw_record.GRADIENT_SPAN_LIMIT {
+	if last - first <= 0 {
+		return
+	}
+	if last - first - 1 > draw_record.GRADIENT_SPAN_LIMIT {
+		table.refused = true
 		return
 	}
 	top_color, bottom_color := canonical_gradient_colors(top, bottom)
@@ -236,7 +247,8 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 
 // draw_horizontal_gradient_with_alpha appends a horizontal gradient between
 // two colors with alpha, as draw_vertical_gradient_with_alpha, with the
-// points at the centers of the first and the last column.
+// points at the centers of the first and the last column; a span past
+// GRADIENT_SPAN_LIMIT sets refused in the same way.
 draw_horizontal_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, left, right: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
@@ -247,7 +259,11 @@ draw_horizontal_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x
 		record_append(table, record_of_pixels(draw_record.Draw_Rectangle{color = canonical_color(left)}, element, first, top, last, bottom))
 		return
 	}
-	if last - first <= 0 || last - first - 1 > draw_record.GRADIENT_SPAN_LIMIT {
+	if last - first <= 0 {
+		return
+	}
+	if last - first - 1 > draw_record.GRADIENT_SPAN_LIMIT {
+		table.refused = true
 		return
 	}
 	left_color, right_color := canonical_gradient_colors(left, right)

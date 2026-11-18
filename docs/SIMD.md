@@ -158,7 +158,7 @@ The compositor draws each frame of the screen. This table says, for each kind of
 | The blend of the pointer picture (`blend_premultiplied_alpha`) | SSE2 form, `blend_premultiplied_alpha_row_sse2` |
 | Opaque rectangles on whole pixels (`Rectangle` records), opaque gradients down (a fill for each line) | `graphics.fill`: a vector loop of the compiler |
 | Rectangles inside the pixels: at most nine parts, each of one covered alpha | SSE2 form, `blend_straight_alpha_row_sse2`, one `blend_fill` for each part: no coverage is computed for each pixel |
-| Gradients across (one row of colors for each span of rows) and at an angle (one row for each line) | the row of colors is scalar: the level of each pixel, one division, and its mix; then the SSE2 form blends the row, and a group of four opaque colors is a store |
+| Gradients across (one row of colors for each span of rows) and at an angle (one row for each line) | the row of colors is scalar: the level of each pixel, one division, and its mix; an opaque gradient across covered whole copies its row into each line (`copy_bytes_without_overlap`), else the SSE2 form blends the row, and a group of four opaque colors is a store |
 | Rectangles, gradients and pictures with alpha (`graphics.blend_fill`, `graphics.blend_copy`) | SSE2 form, `blend_straight_alpha_row_sse2` |
 | A text with alpha | the blend of a glyph with each coverage times the alpha: SSE2 form `blend_coverage_row_sse2`, and the blend tables, which the scaled coverage reads; Spleen and the replacement box blend each pixel of ink with `blend_fill` |
 

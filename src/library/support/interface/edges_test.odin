@@ -1,6 +1,7 @@
 #+build !freestanding
 package interface
 
+import "core:fmt"
 import "core:slice"
 import "core:testing"
 import "modus:contract/draw_record"
@@ -182,9 +183,10 @@ gradients_along_a_line_draw_the_level_of_each_pixel :: proc(t: ^testing.T) {
 // The writers of the two axes: a gradient down keeps the pixels of the
 // vertical gradient before it, the fill of the mix of each line at the
 // level r * 255 / (h - 1), cut to the canvas. A gradient across mixes in
-// the same steps of 1/255: each channel is within 1 of the row of
-// graphics.gradient that the horizontal gradient drew before. A box of one
-// line or one column is a rectangle of the first color.
+// the same steps of 1/255: each channel is within GRADIENT_ACROSS_BOUND of
+// the row of graphics.gradient that the horizontal gradient drew before
+// (the exhaustive bound is the test below). A box of one line or one column
+// is a rectangle of the first color.
 @(test)
 gradients_of_the_two_axes_keep_their_pixels :: proc(t: ^testing.T) {
 	_ = blend_table()
@@ -226,13 +228,69 @@ gradients_of_the_two_axes_keep_their_pixels :: proc(t: ^testing.T) {
 		graphics.fill(canvas, 28 + column, -5, 1, 20, color)
 		for shift in ([3]uint{0, 8, 16}) {
 			new_channel, old_channel := int(color >> shift & 0xFF), int(before[column] >> shift & 0xFF)
-			testing.expectf(t, abs(new_channel - old_channel) <= 1, "the column %d across differs by %d from before", column, new_channel - old_channel)
+			testing.expectf(t, abs(new_channel - old_channel) <= GRADIENT_ACROSS_BOUND, "the column %d across differs by %d from before", column, new_channel - old_channel)
 		}
 	}
 	graphics.fill(canvas, 5, 2, 10, 1, TOP)
 	graphics.fill(canvas, 20, 2, 1, 10, LEFT)
 	testing.expect(t, slice.equal(drawn, expected), "the gradients of the two axes draw other pixels")
 	testing.expect(t, slice.equal(parts, expected), "the gradients of the two axes in parts draw other pixels")
+}
+
+// The largest difference in a channel between a gradient across and the
+// horizontal gradient of before: the gradient rounds its level down to a
+// step of 1/255, then the mix rounds down again, where the old form stepped
+// each channel in fixed point with one rounding. The two roundings add up
+// to 2, and no more. A gradient down keeps the pixels of before exactly: it
+// is the formula of the vertical gradient of before.
+@(private = "file")
+GRADIENT_ACROSS_BOUND :: 2
+
+// The bound of a gradient across, over every width from 2 to 2048 and each
+// column, for the pairs of channel values 0 to 255, 255 to 0, 13 to 200, 1
+// to 254, and each pair of 0, 1, 2, 127, 128, 254 and 255: the level of the
+// center of each column on a line between the centers of the first and the
+// last column (draw_record.gradient_level), the mix at it (graphics.mix),
+// against graphics.gradient. The largest difference is GRADIENT_ACROSS_BOUND,
+// reached, and printed.
+@(test)
+a_gradient_across_is_within_its_bound_of_before :: proc(t: ^testing.T) {
+	HALF :: draw_record.UNITS_PER_PIXEL / 2
+	WIDEST :: 2048
+	Pair :: struct {
+		first, second: u32,
+	}
+	pairs: [dynamic]Pair
+	defer delete(pairs)
+	append(&pairs, Pair{0, 255}, Pair{255, 0}, Pair{13, 200}, Pair{1, 254})
+	values := [7]u32{0, 1, 2, 127, 128, 254, 255}
+	for first in values {
+		for second in values {
+			append(&pairs, Pair{first, second})
+		}
+	}
+	before := make([]graphics.Color, WIDEST)
+	defer delete(before)
+	largest := 0
+	where_width, where_column: int
+	where_pair: Pair
+	for width in 2 ..= WIDEST {
+		gradient := draw_record.Draw_Gradient{start_x = HALF, end_x = i32(width - 1) * draw_record.UNITS_PER_PIXEL + HALF}
+		for pair in pairs {
+			graphics.gradient(before[:width], pair.first, pair.second, width, 0)
+			for column in 0 ..< width {
+				level := draw_record.gradient_level(gradient, i64(column) * draw_record.UNITS_PER_PIXEL + HALF, 0)
+				now := int(graphics.mix(pair.first, pair.second, level) & 0xFF)
+				difference := abs(now - int(before[column] & 0xFF))
+				if difference > largest {
+					largest, where_width, where_column, where_pair = difference, width, column, pair
+				}
+			}
+		}
+	}
+	testing.expectf(t, largest <= GRADIENT_ACROSS_BOUND, "a gradient across differs by %d from before, at width %d, column %d, from %d to %d", largest, where_width, where_column, where_pair.first, where_pair.second)
+	testing.expectf(t, largest == GRADIENT_ACROSS_BOUND, "the bound is %d, not GRADIENT_ACROSS_BOUND: the documents state a bound that is not reached", largest)
+	fmt.printfln("interface: a gradient across differs from before by at most %d in a channel, first at width %d, column %d, from %d to %d", largest, where_width, where_column, where_pair.first, where_pair.second)
 }
 
 // A rectangle inside the pixels that moves by one unit is another record:
@@ -295,6 +353,36 @@ the_writers_inside_the_pixels_refuse_what_the_border_refuses :: proc(t: ^testing
 	table.refused = false
 	draw_gradient(&table, 0, 0, 10 * UNITS, 10 * UNITS, 0, 0, SPAN, -SPAN, color, color)
 	testing.expect(t, table.record_count == 1 && !table.refused && record_view(table.records[0]).axis == .Slanted, "the gradient of the largest span is not written")
+	// The writers of the two axes: a box whose first and last lines are
+	// GRADIENT_SPAN_LIMIT pixels apart is written; one pixel more sets
+	// refused and writes nothing; a box past the limit, which the cut
+	// leaves empty, writes nothing and is not refused.
+	LIMIT :: draw_record.GRADIENT_SPAN_LIMIT
+	top, bottom := graphics.Color(0x00102030), graphics.Color(0x00F0E0D0)
+	Writer :: enum {
+		Vertical,
+		Horizontal,
+	}
+	for writer in Writer {
+		axis_memory := new(Edges_Tables)
+		axes := Draw_Table{records = axis_memory.records[:], text = axis_memory.text[:]}
+		write :: proc(writer: Writer, table: ^Draw_Table, x, y, size: int, first, second: graphics.Color) {
+			switch writer {
+			case .Vertical:
+				draw_vertical_gradient(table, x, y, 4, size, first, second)
+			case .Horizontal:
+				draw_horizontal_gradient(table, x, y, size, 4, first, second)
+			}
+		}
+		write(writer, &axes, -100, -100, LIMIT + 1, top, bottom)
+		testing.expectf(t, axes.record_count == 1 && !axes.refused, "%v: the gradient of the largest span is not written", writer)
+		write(writer, &axes, -100, -100, LIMIT + 2, top, bottom)
+		testing.expectf(t, axes.record_count == 1 && axes.refused, "%v: a gradient one pixel past the span is written or not refused", writer)
+		axes.refused = false
+		write(writer, &axes, COORDINATE_LIMIT + 10, COORDINATE_LIMIT + 10, LIMIT + 2, top, bottom)
+		testing.expectf(t, axes.record_count == 1 && !axes.refused, "%v: a gradient that the cut leaves empty is written or refused", writer)
+		free(axis_memory)
+	}
 }
 
 // A text with alpha: the record holds the color with its alpha, an alpha

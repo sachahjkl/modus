@@ -217,8 +217,10 @@ rectangle_inside_pixels_draw :: proc "contextless" (view: graphics.Canvas, area:
 //
 // Three forms, by the line of the gradient: a line down (the two points on
 // one x) gives one color to each row, which is one blend_fill for each
-// span of columns; a line across (on one y) gives one row of colors for the
-// columns of the view, blended on each row of a span of rows; another line
+// span of columns, a fill when it is opaque; a line across (on one y) gives
+// one row of colors for the columns of the view and each span of rows, the
+// level and the mix of each column one time, then copied into each line of
+// the span when it is opaque and covered whole, else blended; another line
 // computes the level of each pixel, one division each.
 @(private)
 gradient_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, record: Draw_Record, gradient: draw_record.Draw_Gradient) {
@@ -251,6 +253,12 @@ gradient_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, rec
 	row: [512]u32
 	across := gradient.start_y == gradient.end_y
 	first_x, last_x := max(area.left, columns[0].first), min(area.right, columns[column_count - 1].first + columns[column_count - 1].count)
+	// Two opaque ends: each mixed color is opaque. With columns covered
+	// whole too, a row covered whole needs no blend: it is copied into
+	// each line, with the high byte 0, as the horizontal gradient of
+	// before was (the title bars, the scroll bar).
+	opaque_ends := draw_record.alpha_of(gradient.start_color) == draw_record.OPAQUE_ALPHA && draw_record.alpha_of(gradient.end_color) == draw_record.OPAQUE_ALPHA
+	columns_whole := column_count == 1 && columns[0].covered == UNITS
 	for span in rows[:row_count] {
 		first_y, last_y := max(span.first, area.top), min(span.first + span.count, area.bottom)
 		if first_y >= last_y {
@@ -262,7 +270,15 @@ gradient_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, rec
 				// One row of colors for each span of rows: the level does
 				// not change down the box.
 				gradient_row(row[:count], gradient, part, i64(gradient.start_y), columns[:column_count], span.covered)
-				graphics.blend_copy(view, part - area.left, first_y - area.top, {pixels = raw_data(row[:]), width = count, height = last_y - first_y}, square_root)
+				source := graphics.Canvas{pixels = raw_data(row[:]), width = count, height = last_y - first_y}
+				if opaque_ends && columns_whole && span.covered == UNITS {
+					for &color in row[:count] {
+						color &= 0x00FFFFFF
+					}
+					graphics.copy(view, part - area.left, first_y - area.top, source)
+				} else {
+					graphics.blend_copy(view, part - area.left, first_y - area.top, source, square_root)
+				}
 				continue
 			}
 			for y in first_y ..< last_y {
