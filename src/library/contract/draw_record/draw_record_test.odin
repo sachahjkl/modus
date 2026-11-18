@@ -401,7 +401,7 @@ read_refuses_an_interface_text_past_its_bounds :: proc(t: ^testing.T) {
 read_refuses_a_line_past_its_bounds :: proc(t: ^testing.T) {
 	thicknesses := [?]u8{0, LINE_THICKNESS_LIMIT + 1, max(u8)}
 	for thickness in thicknesses {
-		record := sample_record(Draw_Line{thickness = thickness})
+		record := sample_record(Draw_Line{color = SAMPLE_COLOR, thickness = thickness})
 		_, problem := read(record)
 		testing.expectf(t, problem == .Field_Past_Bound, "a line of thickness %d: %v", thickness, problem)
 	}
@@ -416,7 +416,7 @@ read_refuses_a_line_past_its_bounds :: proc(t: ^testing.T) {
 		for side in 0 ..< 4 {
 			coordinates := [4]i32{}
 			coordinates[side] = end
-			record := sample_record(Draw_Line{start_x = coordinates[0], start_y = coordinates[1], end_x = coordinates[2], end_y = coordinates[3], thickness = 1})
+			record := sample_record(Draw_Line{start_x = coordinates[0], start_y = coordinates[1], end_x = coordinates[2], end_y = coordinates[3], color = SAMPLE_COLOR, thickness = 1})
 			_, problem := read(record)
 			testing.expectf(t, problem == .Field_Past_Bound, "a line whose coordinate %d is %d units: %v", side, end, problem)
 		}
@@ -432,8 +432,8 @@ read_takes_each_bound :: proc(t: ^testing.T) {
 		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, scale = TEXT_SCALE_LIMIT, weight = max(Font_Weight)},
 		Draw_Text{font = .Interface, count = INTERFACE_TEXT_LIMIT, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = TEXT_SCALE_LIMIT},
 		Draw_Text{font = .Interface, count = 0, color = SAMPLE_COLOR, origin_x = units_of_pixels(10 + INK_MARGIN_LIMIT) + UNITS_PER_PIXEL * 2 / 3, scale = 1, weight = .Bold},
-		Draw_Line{start_x = units_of_pixels(-LINE_COORDINATE_LIMIT), start_y = units_of_pixels(LINE_COORDINATE_LIMIT), end_x = units_of_pixels(LINE_COORDINATE_LIMIT), end_y = units_of_pixels(-LINE_COORDINATE_LIMIT), thickness = LINE_THICKNESS_LIMIT},
-		Draw_Line{thickness = 1},
+		Draw_Line{start_x = units_of_pixels(-LINE_COORDINATE_LIMIT), start_y = units_of_pixels(LINE_COORDINATE_LIMIT), end_x = units_of_pixels(LINE_COORDINATE_LIMIT), end_y = units_of_pixels(-LINE_COORDINATE_LIMIT), color = SAMPLE_COLOR, thickness = LINE_THICKNESS_LIMIT},
+		Draw_Line{color = SAMPLE_COLOR, thickness = 1},
 	}
 	for primitive in accepted {
 		record := sample_record(primitive)
