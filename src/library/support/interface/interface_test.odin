@@ -661,16 +661,30 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 		item.build(&now, 1)
 		partial_equals_whole(t, &before, &now, item.name)
 	}
+	// The cases by their names, so that a case added to the list moves none.
+	many_changes, full_table: Case_Builder
+	for item in cases {
+		switch item.name {
+		case "more than 8 rectangles of damage":
+			many_changes = item.build
+		case "a table that is full":
+			full_table = item.build
+		}
+	}
+	testing.expect(t, many_changes != nil && full_table != nil)
+	if many_changes == nil || full_table == nil {
+		return
+	}
 	// The merge path: 12 changes far apart give at most 8 rectangles.
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
-	cases[5].build(&before, 0)
-	cases[5].build(&now, 1)
+	many_changes(&before, 0)
+	many_changes(&now, 1)
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect(t, damage.count <= DAMAGE_CAPACITY)
 	// The full table: 256 records fit, the others are dropped, and it says so.
-	cases[6].build(&now, 1)
+	full_table(&now, 1)
 	testing.expect(t, now.full)
 }
 
