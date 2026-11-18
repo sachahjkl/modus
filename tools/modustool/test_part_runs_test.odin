@@ -257,8 +257,16 @@ part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 		testing.expect(t, error == nil)
 		rest := string(bytes)
 		for line in strings.split_lines_iterator(&rest) {
+			// The package foundation holds BUILD_FOLDER, so a constant of
+			// the main package names it with its package.
 			MARK :: " :: BUILD_FOLDER + \""
+			QUALIFIED_MARK :: " :: foundation.BUILD_FOLDER + \""
 			at := strings.index(line, MARK)
+			mark_length := len(MARK)
+			if at < 0 {
+				at = strings.index(line, QUALIFIED_MARK)
+				mark_length = len(QUALIFIED_MARK)
+			}
 			if at <= 0 || !strings.has_prefix(line, "TEST_") {
 				continue
 			}
@@ -266,7 +274,7 @@ part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 			if !(strings.has_prefix(name, "TEST_OUTPUT") || strings.has_suffix(name, "_DISK")) || strings.contains(name, "MEASURE") || strings.contains(name, "FILM") {
 				continue
 			}
-			value := line[at + len(MARK):]
+			value := line[at + mark_length:]
 			value = value[:max(strings.index_byte(value, '"'), 0)]
 			if strings.contains(value, "%d") {
 				for number in 0 ..= PATTERN_NUMBERS {

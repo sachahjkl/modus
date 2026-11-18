@@ -3,7 +3,6 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "core:testing"
-import "modustool:foundation"
 
 // The host tests of the similarity finder: small sources with a known
 // answer (src/md/infrastructure/similarity_finder.md, "13. The tests").
@@ -299,9 +298,9 @@ SIMILARITY_TEST_OTHER_WORK :: `	first_other := extra * 4
 
 @(private = "file")
 similarity_test_run_sources :: proc(inside: string) -> []Similarity_Source {
-	foundation.run, _ := strings.replace_all(SIMILARITY_TEST_RUN, "{inside}", inside, context.temp_allocator)
-	first := strings.concatenate({"first_user :: proc(base: int) -> int {\n", foundation.run, "\treturn total + base\n}\n"}, context.temp_allocator)
-	second := strings.concatenate({"second_user :: proc(base: int, extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, foundation.run, SIMILARITY_TEST_OTHER_WORK, "\treturn total - extra\n}\n"}, context.temp_allocator)
+	run, _ := strings.replace_all(SIMILARITY_TEST_RUN, "{inside}", inside, context.temp_allocator)
+	first := strings.concatenate({"first_user :: proc(base: int) -> int {\n", run, "\treturn total + base\n}\n"}, context.temp_allocator)
+	second := strings.concatenate({"second_user :: proc(base: int, extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, run, SIMILARITY_TEST_OTHER_WORK, "\treturn total - extra\n}\n"}, context.temp_allocator)
 	sources := make([]Similarity_Source, 1, context.temp_allocator)
 	sources[0] = {path = "src/processes/runs/main.odin", text = similarity_test_file("runs", first, second)}
 	return sources
@@ -423,9 +422,9 @@ similarity_held_family_is_not_reported :: proc(t: ^testing.T) {
 // nodes once, so it ranks one of the two.
 @(test)
 similarity_greedy_selection_counts_shared_nodes_once :: proc(t: ^testing.T) {
-	foundation.run, _ := strings.replace_all(SIMILARITY_TEST_RUN, "{inside}", "total = 1000", context.temp_allocator)
-	equal := strings.concatenate({"proc(base: int) -> int {\n", foundation.run, "\treturn total + base\n}\n"}, context.temp_allocator)
-	third := strings.concatenate({"third_user :: proc(base: int, extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, foundation.run, SIMILARITY_TEST_OTHER_WORK, "\treturn total - extra\n}\n"}, context.temp_allocator)
+	run, _ := strings.replace_all(SIMILARITY_TEST_RUN, "{inside}", "total = 1000", context.temp_allocator)
+	equal := strings.concatenate({"proc(base: int) -> int {\n", run, "\treturn total + base\n}\n"}, context.temp_allocator)
+	third := strings.concatenate({"third_user :: proc(base: int, extra: int) -> int {\n", SIMILARITY_TEST_OTHER_WORK, run, SIMILARITY_TEST_OTHER_WORK, "\treturn total - extra\n}\n"}, context.temp_allocator)
 	text := similarity_test_file("greedy", strings.concatenate({"first_user :: ", equal}, context.temp_allocator), strings.concatenate({"second_user :: ", equal}, context.temp_allocator), third)
 	analysis := similarity_analyse([]Similarity_Source{{path = "src/processes/greedy/main.odin", text = text}}, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)

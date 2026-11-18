@@ -868,14 +868,14 @@ a_run_ends_at_its_bound_of_findings :: proc(t: ^testing.T) {
 a_run_keeps_a_fault_after_the_last_count_of_a_life :: proc(t: ^testing.T) {
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND, at_drain = true}
 	machine := fake_machine_of(&fake)
-	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 100, life_sequences = 1, findings_most = OPERATION_FINDINGS_MOST})
-	defer operation_run_free(&foundation.run)
+	run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 100, life_sequences = 1, findings_most = OPERATION_FINDINGS_MOST})
+	defer operation_run_free(&run)
 	testing.expect(t, ok)
-	testing.expect_value(t, len(foundation.run.kept), 1)
+	testing.expect_value(t, len(run.kept), 1)
 	testing.expect(t, fake.drains > 0, "no life was drained")
-	if len(foundation.run.kept) == 1 {
-		testing.expect_value(t, len(foundation.run.kept[0].life), 1)
-		words := words_of(foundation.run.kept[0].minimized.life[0])
+	if len(run.kept) == 1 {
+		testing.expect_value(t, len(run.kept[0].life), 1)
+		words := words_of(run.kept[0].minimized.life[0])
 		testing.expectf(t, slice.equal(words, []u32{FAKE_FIRST, FAKE_SECOND}), "the minimized steps are %v", words)
 	}
 }
@@ -886,12 +886,12 @@ a_run_keeps_a_fault_after_the_last_count_of_a_life :: proc(t: ^testing.T) {
 a_run_drains_its_last_life :: proc(t: ^testing.T) {
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND}
 	machine := fake_machine_of(&fake)
-	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 1, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST})
-	defer operation_run_free(&foundation.run)
+	run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 1, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST})
+	defer operation_run_free(&run)
 	testing.expect(t, ok)
 	testing.expect_value(t, fake.drains, 1)
-	testing.expect_value(t, foundation.run.executions, 1)
-	testing.expect_value(t, len(foundation.run.kept), 0)
+	testing.expect_value(t, run.executions, 1)
+	testing.expect_value(t, len(run.kept), 0)
 }
 
 // An error of the tool ends the run with an error, and is never a finding.
@@ -899,12 +899,12 @@ a_run_drains_its_last_life :: proc(t: ^testing.T) {
 an_error_of_the_tool_ends_the_run_and_is_no_finding :: proc(t: ^testing.T) {
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND, tool_error_at = 3}
 	machine := fake_machine_of(&fake)
-	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 50, life_sequences = 4, findings_most = OPERATION_FINDINGS_MOST})
-	defer operation_run_free(&foundation.run)
+	run, ok := operation_fuzzing_loop(&machine, fake_generate_noise, FAKE_SEED, {executions = 50, life_sequences = 4, findings_most = OPERATION_FINDINGS_MOST})
+	defer operation_run_free(&run)
 	testing.expect(t, !ok, "an error of the tool is taken")
-	testing.expect_value(t, foundation.run.executions, 3)
-	testing.expect_value(t, foundation.run.faults, 0)
-	testing.expect_value(t, len(foundation.run.kept), 0)
+	testing.expect_value(t, run.executions, 3)
+	testing.expect_value(t, run.faults, 0)
+	testing.expect_value(t, len(run.kept), 0)
 	testing.expect(t, !fake.running, "the machine was not ended")
 }
 
@@ -938,13 +938,13 @@ a_kept_fault_outlives_the_temporary_memory :: proc(t: ^testing.T) {
 	keeper_saw_the_signature = false
 	fake := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND, temporary_signature = true}
 	machine := fake_machine_of(&fake)
-	foundation.run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 200, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST}, keeper_over_temporary_memory)
-	defer operation_run_free(&foundation.run)
+	run, ok := operation_fuzzing_loop(&machine, fake_generate_pairs, FAKE_SEED, {executions = 200, life_sequences = 16, findings_most = OPERATION_FINDINGS_MOST}, keeper_over_temporary_memory)
+	defer operation_run_free(&run)
 	testing.expect(t, ok)
 	testing.expect(t, keeper_saw_the_signature, "the keeper saw another signature")
-	testing.expect_value(t, len(foundation.run.kept), 1)
-	if len(foundation.run.kept) == 1 {
-		testing.expect_value(t, foundation.run.kept[0].fault.signature, FAKE_SIGNATURE)
+	testing.expect_value(t, len(run.kept), 1)
+	if len(run.kept) == 1 {
+		testing.expect_value(t, run.kept[0].fault.signature, FAKE_SIGNATURE)
 	}
 	failing := Fake_Machine{first = FAKE_FIRST, second = FAKE_SECOND}
 	failing_machine := fake_machine_of(&failing)

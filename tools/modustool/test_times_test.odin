@@ -3,7 +3,6 @@ package modustool
 import "core:strings"
 import "core:testing"
 import "core:time"
-import "modustool:foundation"
 
 // A list of step records made by hand: two machines, with waits, typed
 // lines, a picture and a launch.
@@ -129,9 +128,9 @@ times_of_parts_keep_each_step_under_its_machine :: proc(t: ^testing.T) {
 	runs := make([]Test_Part_Run, 3, context.temp_allocator)
 	runs[0].name, runs[1].name, runs[2].name = "main", "empty", "tcp"
 	defer {
-		for &foundation.run in runs {
-			delete(foundation.run.times.steps)
-			delete(foundation.run.times.machines)
+		for &run in runs {
+			delete(run.times.steps)
+			delete(run.times.machines)
 		}
 	}
 	append(&runs[0].times.machines, Machine_Time{part = "main", output = "build/a.txt"}, Machine_Time{part = "main", output = "build/b.txt"})
