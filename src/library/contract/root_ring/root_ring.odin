@@ -487,7 +487,7 @@ Role_Handle :: enum u8 {
 	Service_Ring, // Serve.
 	Terminal_Ring, // Terminal.
 	Terminal_Text, // Terminal.
-	Device_Ring, // Data_Disk, Scratch_Disk or Network_Device: one device service.
+	Device_Ring, // Data_Disk, Scratch_Disk, Network_Device or Sound_Device: one device service.
 	Date_Page, // Clock.
 	Date_Ports, // Clock.
 	Storage_Ring, // Store, without Acts_For_Principal: its private store at its start.
@@ -528,7 +528,7 @@ role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handle
 	if .Serve in role {
 		handles += {.Service_Ring}
 	}
-	if role & {.Data_Disk, .Scratch_Disk, .Network_Device} != {} {
+	if role & {.Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device} != {} {
 		handles += {.Device_Ring}
 	}
 	if .Network_Device in role {

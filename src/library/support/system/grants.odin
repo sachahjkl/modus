@@ -63,10 +63,11 @@ GRANT_SERVICE :: 5 // Memory: the service ring. The root service names each conn
 // the terminal ring (package terminal).
 GRANT_TERMINAL_RING :: 6 // Memory: the terminal ring.
 // The handle 6 of the client of a device service: the block ring of the
-// grant Data_Disk or Scratch_Disk (modus:contract/block), or the frame ring
-// of the grant Network_Device (modus:contract/frame). A client has one
+// grant Data_Disk or Scratch_Disk (modus:contract/block), the frame ring
+// of the grant Network_Device (modus:contract/frame), or the stream ring of
+// the grant Sound_Device (modus:contract/timed_stream). A client has one
 // device service, and no terminal.
-GRANT_DEVICE_RING :: 6 // Memory: the block ring or the frame ring.
+GRANT_DEVICE_RING :: 6 // Memory: the block ring, the frame ring or the stream ring.
 // The handle 6 of the program `date`: the date page, with **Write**
 // (modus:contract/date).
 GRANT_DATE_PAGE :: 6 // Memory: the date page.

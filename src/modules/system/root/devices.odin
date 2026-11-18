@@ -10,6 +10,7 @@ import "modus:contract/ring"
 import "modus:support/pci"
 import "modus:support/random"
 import "modus:support/system"
+import "modus:contract/timed_stream"
 
 // The devices of the bus. This service holds the two ports of the
 // configuration of all devices: no other program has them. It gives a
@@ -45,6 +46,10 @@ DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, 
 DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
 // The entropy service, whose one client is this service (entropy.odin).
 DRIVER_ENTROPY :: Driver{"entropy", pci.DEVICE_VIRTIO_ENTROPY, entropy_service.RING_CAPACITY, entropy_service.SERVICE_RING}
+// The sound service, whose one client is the program with the grant
+// Sound_Device (src/md/features/timed_stream.md).
+DRIVER_SOUND :: Driver{"sound", pci.DEVICE_VIRTIO_SOUND, timed_stream.RING_CAPACITY, timed_stream.SERVICE_RING}
+#assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
 
 // configuration_open takes the ports of the configuration, once.
 configuration_open :: proc "contextless" () -> system.Status {

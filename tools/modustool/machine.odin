@@ -4085,6 +4085,9 @@ Machine_Options :: struct {
 	vnc:            bool, // A display for a film (film.odin).
 	paused:         bool, // The machine waits for the step Monitor "cont".
 	entropy_device: bool,
+	// The sound device, whose output goes to the wave file beside the log
+	// (SOUND_OUTPUT_SUFFIX): the check of the tone reads it after the machine.
+	sound_device:   bool,
 	tpm_device:     bool, // A software TPM, on any firmware.
 	tpm_state:      string, // The state of the TPM that the machines of a part share, or "" for a new one.
 	// The memory of the machine in this file, and one processor: the
@@ -4146,7 +4149,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "")
 		if !ok {
 			return false
 		}

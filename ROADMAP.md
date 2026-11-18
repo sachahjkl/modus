@@ -15,10 +15,12 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The tool in packages.** The tool is one command over packages for the build, the checks, the resources, the fuzzer, the similarity finder, the machine tests and the site. A developer reads one concern in one folder and runs the host tests of one package. [Design](src/md/infrastructure/repository_layout.md)
 - **The measures of the standard of quality.** The tool records the time of a frame, of a key to the screen and of the start of a window in each profile, and the system writes on the log the profile that it chose at its start. [Design](src/md/features/desktop_to_browser.md)
 - **The reference screen of 1920 × 1080 with a scale.** The test machines, the screenshots, the sizes of the windows, the grid, the fonts and the pointers move from 1024 × 768 to 1920 × 1080 with a scale from 1.25 to 2. [Design](src/md/features/desktop_to_browser.md)
-- **Sound, a timed stream.** A program plays samples through the sound device of the test machine, each at the time that its record names. [Design](src/md/features/desktop_to_browser.md)
 
 ## Later
 
+- **Sound of several programs at once.** A sound service of the class between the programs and the device service gives each program a timed stream of its own and sums their frames, so a second program plays in place of being refused. [Design](src/md/features/timed_stream.md)
+- **The drift of the clock of a sound device.** The sound service measures the rate of its device from the times of the completions and changes its stream clock, so a record plays at its time after an hour on a real device. [Design](src/md/features/timed_stream.md)
+- **Capture of sound.** A program with a grant reads the microphone as records of a timed stream, with a visible indicator while it reads. [Design](src/md/features/timed_stream.md)
 - **A kernel copy out of a memory object.** A program copies bytes of a memory object that another program gave into its own memory with no mapping, and gets a refusal in place of a fault when the giver revokes the object. A paste then never stops the terminal, whatever the program that copied does. [Design](src/md/features/clipboard.md)
 - **A selection, a cut and a paste in the palette.** The principal chooses a part of a text to copy, cuts it with Control+X, copies from the terminal and pastes into the palette, and each window with its own loop of events takes the clipboard keys. [Design](src/md/features/clipboard.md)
 - **A terminal that the principal resizes.** The window of the terminal, and so the console, takes a size that the principal drags, and the program of the terminal gets the new count of columns and rows of its text grid. [Design](src/md/features/window_resize.md)

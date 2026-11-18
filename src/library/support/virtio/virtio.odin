@@ -100,6 +100,7 @@ COMMON_CONFIG_SIZE :: COMMON_QUEUE_DEVICE + 8
 Device :: struct {
 	common:        uintptr, // The common configuration, mapped.
 	device_config: uintptr, // The configuration of the device class.
+	device_config_length: u64, // Its bytes, as the capability gives them, inside the memory of the BAR: a service reads no field past them.
 	notify_base:   uintptr, // The first notify register.
 	notify_length: u64, // The bytes of the notify registers, from notify_base, that the capability gives and the memory of the BAR holds.
 	multiplier:    u32, // The bytes between the notify registers of two queues, per unit of COMMON_QUEUE_NOTIFY_OFF.
@@ -231,6 +232,7 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 					device.multiplier = intrinsics.unaligned_load((^u32)(&configuration[offset + 16]))
 				case CAPABILITY_DEVICE:
 					device.device_config = base + uintptr(place)
+					device.device_config_length = u64(length)
 				}
 			}
 		}
