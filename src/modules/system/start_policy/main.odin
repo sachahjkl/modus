@@ -33,8 +33,10 @@ import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:support/system"
 
-// One root ring, one thread, and the rows on its stack.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4, processes = 1, threads = 1}
+// One thread and the rows on its stack, which the tool counts; the working
+// memory pays what the process maps at its start: its root ring and its
+// region, the machine parts page and the start list, with their page tables.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
 // The stop codes of a start policy that stops before Machine_Usable: the
 // root service then starts the rescue start policy, and writes the code.
