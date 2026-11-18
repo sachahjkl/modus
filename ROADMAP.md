@@ -6,16 +6,14 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **Paths in the draw record.** A path of lines and quadratic curves is filled and stroked with antialiased edges, and the line of today becomes a stroke. A window then draws an icon or a chart from outlines in place of rectangles. [Design](src/md/api/draw_table.md)
 - **A clip stack in the draw record.** A clip is pushed and popped, so an element that clips inside a clipped area keeps the outer clip. A list inside a scrolled card then needs no intersection by hand. [Design](src/md/api/draw_table.md)
 - **The text grid measured against text runs.** The terminal draws a full grid both ways through the drawing module, and the kind `Text_Grid` stays only if the runs cost more than 1 ms more for a frame or more than 4 096 records. The format then has one text form, or a measured reason for two. [Design](src/md/api/draw_table.md)
 - **The counted kernel.** A test kernel counts the edges of the kernel code that each operation sequence reaches, which only the tool reads, and the engine keeps the sequences that reach new code, which become the reach inputs of the corpus. The release refuses it by its hash, its signature and its bytes. [Design](src/md/infrastructure/kernel_fuzzing.md)
-- **The reference screen of 1920 × 1080 with a scale.** The test machines, the screenshots, the sizes of the windows, the grid, the fonts and the pointers move from 1024 × 768 to 1920 × 1080 with a scale from 1.25 to 2. [Design](src/md/features/desktop_to_browser.md)
+- **The scale factor of the reference screen.** The windows, the grid, the fonts and the pointers of the screen of 1920 × 1080 draw at a scale from 1.25 to 2, in place of scale 1, so a text on that screen has the size that a reader needs. [Design](src/md/features/desktop_to_browser.md)
 - **A disk that stops to answer.** A block request past its deadline fails, and the storage service ends its wait when the block service stops, so the store, the settings and the unlock write a line and refuse in place of a hang. [Design](src/md/features/missing_hardware.md)
 - **A machine with no screen.** The root service starts no console, writes one line and starts the other services, so a machine with no screen still serves the calls of `remote`. [Design](src/md/features/missing_hardware.md)
 - **No PS/2 controller.** The input service writes one line and stops in place of a spin on one processor, and the desktop runs with no keyboard and no mouse. [Design](src/md/features/missing_hardware.md)
 - **A frame service that stops.** The network service ends its wait when the frame service stops, writes one line and stops, so the root service refuses the network and starts the rest. [Design](src/md/features/missing_hardware.md)
-- **A readable stop of the boot program.** A stop for memory or for the map of the firmware stays on the boot display with the watchdog off, in place of a power off at once, and the map of the firmware has the room that the firmware asks. [Design](src/md/features/missing_hardware.md)
 - **An entropy read that never completes.** A read past its deadline counts as refused, with its line, so the fresh bytes do not stop in silence. [Design](src/md/features/missing_hardware.md)
 
 ## Later

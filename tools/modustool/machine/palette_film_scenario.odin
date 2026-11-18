@@ -52,7 +52,7 @@ scenario_palette_film := [?]Step {
 	{kind = .Move, text = "settings", to_x = 448, to_y = 216},
 	// The pointer leaves the place of the panel: a press on the background,
 	// in the corner of the screen, which no window covers.
-	{kind = .Click, x = 1018, y = 762},
+	{kind = .Click, x = SCREEN_CORNER_X, y = SCREEN_CORNER_Y},
 
 	// Scene 1: the desktop.
 	{kind = .Film_Start, text = "palette"},

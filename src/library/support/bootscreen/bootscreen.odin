@@ -34,7 +34,7 @@ import op "modus:contract/operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The size that the display needs.
-HEIGHT :: 708 // Pixels: a window of this height fits the screen of 768 lines under the bar and its title.
+HEIGHT :: 708 // Pixels: a window of this height fits the window bound of 768 lines under the bar and its title.
 PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
 PROCESS_ROWS :: 12 // The processes that the card of the processes shows.
 
@@ -49,8 +49,8 @@ State :: enum {
 // which step the machine does now: the steps before it are done.
 Step :: enum {
 	Firmware, // The firmware runs the boot program.
+	Boot_Image, // The boot program copies the boot image and checks its system description, the kernel and each file of it.
 	Kernel_Module, // The boot program loads the kernel module.
-	Boot_Image, // The boot program loads the boot image and checks it.
 	Memory_Map, // The boot program reads the memory map.
 	Kernel, // The boot program ends the firmware and jumps.
 	Processors, // The kernel starts the other processors.
@@ -368,8 +368,8 @@ stage_color :: proc "contextless" (name: []u8, index: int) -> graphics.Color {
 @(private, rodata)
 step_names := [Step]string {
 	.Firmware      = "the firmware",
-	.Kernel_Module = "the kernel module",
 	.Boot_Image    = "the boot image",
+	.Kernel_Module = "the kernel module",
 	.Memory_Map    = "the memory map",
 	.Kernel        = "the kernel",
 	.Processors    = "the processors",

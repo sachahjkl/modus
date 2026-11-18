@@ -19,9 +19,15 @@
 //
 // Places are in units of 1/64 pixel. A rectangle with no pattern and a
 // gradient draw inside a pixel: the part of an edge pixel that the box
-// covers scales the alpha of that pixel. The other kinds draw on whole
-// pixels, so the border refuses their box off whole pixels; the origin of
-// a text in the interface font is on a third of a pixel.
+// covers scales the alpha of that pixel. A path draws inside a pixel too:
+// its points are places in units, and its box, on whole pixels, cuts it.
+// The other kinds draw on whole pixels, so the border refuses their box off
+// whole pixels; the origin of a text in the interface font is on a third of
+// a pixel.
+//
+// A path names its points in the text table of its frame, as a text names
+// its bytes there. `read` checks the record; `path_points_read` is the
+// border of the points, which the reader calls on its one copy of them.
 //
 // A color is a Draw_Color, 0xAARRGGBB with straight alpha: alpha 255 is
 // opaque, and a color of 0 is transparent. A record blends its color over
@@ -37,7 +43,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 15
+VERSION :: 16
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -53,14 +59,30 @@ UNIT_SHIFT :: 6 // log2 of UNITS_PER_PIXEL: a place in units to pixels is a shif
 COORDINATE_LIMIT :: 1 << 23
 COORDINATE_UNIT_LIMIT :: COORDINATE_LIMIT * UNITS_PER_PIXEL // The same limit in units.
 
-// The largest thickness of a line, in pixels: past it, the squares of a
-// long line cost too much to draw again in each damage rectangle.
-LINE_THICKNESS_LIMIT :: 32
+// The most points of one path. The execution copies the points once onto
+// its stack (12 KiB) and walks each segment once for each band of rows, so
+// the bound is a bound of its memory and of its work.
+PATH_POINT_LIMIT :: 1024
 
-// The ends of a line stay inside this distance of the corner of the
-// surface, in pixels: the drawing walks each point of the path, so a line
-// of a billion points would stop the process.
-LINE_COORDINATE_LIMIT :: 1 << 15
+// The bytes of one point of a path in the text table: Path_Point_Record.
+PATH_POINT_SIZE :: 12
+
+// The widest stroke, in pixels: a stroke grows the box of its path by half
+// its width, and each pixel of that band is drawn again in each damage
+// rectangle that the box meets.
+STROKE_WIDTH_LIMIT :: 64
+STROKE_WIDTH_UNIT_LIMIT :: STROKE_WIDTH_LIMIT * UNITS_PER_PIXEL // The same limit in units.
+
+// The most line segments of one quadratic curve. The execution cuts a
+// curve into the fewest segments, 1 to this count, whose distance from the
+// curve is at most CURVE_TOLERANCE_UNITS; a curve whose bend needs more is
+// cut into this count, and its distance from the curve is then at most its
+// bend over 4 * CURVE_SEGMENT_LIMIT^2 (curve_segment_count).
+CURVE_SEGMENT_LIMIT :: 16
+
+// The largest distance of the segments of a curve from the curve, in units:
+// 1/8 pixel, the tolerance of the glyphs.
+CURVE_TOLERANCE_UNITS :: 8
 
 // The largest distance between the two points of a gradient on each axis,
 // in pixels. The execution multiplies the distance of a pixel from the
@@ -83,8 +105,11 @@ INK_MARGIN_LIMIT :: 16
 // module, so they are stated. The format holds primitives only: the look
 // of the system (the grid of points, the folded gap) is elements of the
 // interface package, drawn with them. A text run is one kind for each font:
-// its font is a field, and a gradient is one kind along any line. The
-// values 2, 3, 6, 7 and 11 name no kind.
+// its font is a field, a gradient is one kind along any line, and a line is
+// the stroke of a path. The values 2, 3, 6, 7, 10 and 11 name no kind: each
+// named a kind that left the format, and a new kind takes a new value, so
+// that a record of an older form is refused and never read with other
+// fields.
 Draw_Kind :: enum u8 {
 	None      = 0, // Nothing.
 	Rectangle = 1, // The box in one color, or a pattern of cells of that color that repeats, cut to the box.
@@ -92,8 +117,31 @@ Draw_Kind :: enum u8 {
 	Clip      = 5, // The next records are cut to the box; a box of no width ends the cut.
 	Picture   = 8, // The pixels of a picture of the caller, by values in a picture memory.
 	Text_Grid = 9, // A grid of text cells, copied into the text table.
-	Line      = 10, // A straight line between two whole pixels, with a thickness.
 	Gradient  = 12, // The box in a color that goes from a color at one point to a color at another, along the line of the two points.
+	Path      = 13, // Lines and quadratic curves, from points in the text table: filled, then stroked, with antialiased edges, cut to the box.
+}
+
+// The command of one point of a path. The values cross the border of the
+// drawing module in the text table, so they are stated; 0 names no
+// command, so a range of zeros is no path.
+Path_Command :: enum u32 {
+	Move          = 1, // Starts a subpath at the point.
+	Line          = 2, // A line segment from the point before to the point; also the end of a curve.
+	Curve_Control = 3, // The control point of a quadratic curve. The next point is a Line: the end of the curve.
+	Close         = 4, // Closes the subpath with a segment to its Move; its x and y are 0.
+}
+
+// Why the border of the points of a path refuses them.
+Path_Problem :: enum u8 {
+	None                        = 0, // The points are read.
+	Count_Out_Of_Range          = 1, // The bytes are not a whole count of points, or the points are fewer than 2 or more than PATH_POINT_LIMIT.
+	Unknown_Command             = 2, // The word of a command names no member of Path_Command.
+	Not_Started_By_Move         = 3, // The first point is not a Move.
+	Empty_Subpath               = 4, // A Move is followed by a Move, or is the last point: a subpath with no segment.
+	Curve_Without_End           = 5, // A Curve_Control is not followed by a Line.
+	Close_Out_Of_Place          = 6, // A Close does not follow a Line, or is followed by a point that is not a Move.
+	Close_Point_Not_Zero        = 7, // The x or the y of a Close is not 0.
+	Point_Past_Coordinate_Limit = 8, // A point is past COORDINATE_LIMIT.
 }
 
 // The weight of a text. Bold draws at scale 1 only (the titles of the
@@ -133,8 +181,8 @@ Problem :: enum u8 {
 	Reserved_Not_Zero         = 2, // A reserved byte of the header, or a byte that the kind does not name, is not 0.
 	Box_Inverted              = 3, // The right edge of the box is left of its left edge, or its bottom above its top.
 	Box_Past_Coordinate_Limit = 4, // An edge of the box is past COORDINATE_LIMIT.
-	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel, in a kind that draws on whole pixels only: each kind but a rectangle with no pattern and a gradient.
-	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical or not opaque where the kind asks for it, a format, a scale, a weight, a thickness, an end of a line, the two points of a gradient, a count, an origin.
+	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel, in a kind whose box is on whole pixels: each kind but a rectangle with no pattern and a gradient.
+	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical, a format, a scale, a weight, the two points of a gradient, a count, an origin, the first byte of a path, the width of a stroke.
 }
 
 // One draw record, 48 bytes, little-endian. A record holds values only:
@@ -231,15 +279,29 @@ Text_Grid_Fields :: struct {
 	reserved: [12]u8, // 0.
 }
 
-// The fields of a Line. The box holds each square of its path.
-Line_Fields :: struct {
-	start_x:   i32, // The first end, in 1/64 pixel: a whole pixel.
-	start_y:   i32,
-	end_x:     i32, // The second end, in 1/64 pixel: a whole pixel.
-	end_y:     i32,
-	color:     u32, // An opaque Draw_Color: the squares of a thick line overlap, so a translucent one would blend twice.
-	thickness: u8, // The side of the square drawn at each point of the path, 1 to LINE_THICKNESS_LIMIT pixels.
-	reserved:  [3]u8, // 0.
+// The fields of a Path. Its points are in the text table: count bytes from
+// the byte first, PATH_POINT_SIZE bytes each (Path_Point_Record). The fill
+// covers the inside of the subpaths by the nonzero rule, each subpath
+// closed for the fill; then the stroke covers a band of stroke_width along
+// each segment, with butt ends and bevel joins. A color of 0 is no fill or
+// no stroke; a stroke color of 0 has a width of 0, and a width of 0 has a
+// stroke color of 0, so that no stroke has one form. The range stays the
+// first field, as in a Text: the difference masks it.
+Path_Fields :: struct {
+	first:        u32, // The first byte of the points in the text table, a multiple of 4.
+	count:        u32, // The bytes of the points: 2 to PATH_POINT_LIMIT times PATH_POINT_SIZE.
+	fill_color:   u32, // A Draw_Color, canonical: 0 is no fill.
+	stroke_color: u32, // A Draw_Color, canonical: 0 is no stroke.
+	stroke_width: u32, // In 1/64 pixel: 1 to STROKE_WIDTH_UNIT_LIMIT with a stroke color, 0 without.
+	reserved:     [4]u8, // 0.
+}
+
+// One point of a path, 12 bytes in the text table, little-endian. A Close
+// has the x and the y 0.
+Path_Point_Record :: struct {
+	command: u32, // The word of a Path_Command.
+	x:       i32, // In 1/64 pixel of the surface, inside COORDINATE_LIMIT.
+	y:       i32,
 }
 
 #assert(size_of(Rectangle_Fields) == FIELDS_SIZE)
@@ -247,7 +309,8 @@ Line_Fields :: struct {
 #assert(size_of(Text_Fields) == FIELDS_SIZE)
 #assert(size_of(Picture_Fields) == FIELDS_SIZE)
 #assert(size_of(Text_Grid_Fields) == FIELDS_SIZE)
-#assert(size_of(Line_Fields) == FIELDS_SIZE)
+#assert(size_of(Path_Fields) == FIELDS_SIZE)
+#assert(size_of(Path_Point_Record) == PATH_POINT_SIZE)
 
 // The primitives: what a record draws, as the reader sees it past the
 // border. Each has the fields of its kind only, with the words of the
@@ -284,10 +347,16 @@ Draw_Picture :: struct {
 Draw_Text_Grid :: struct {
 	first, count, columns: u32,
 }
-Draw_Line :: struct {
-	start_x, start_y, end_x, end_y: i32, // In 1/64 pixel.
-	color:                          Draw_Color, // Opaque.
-	thickness:                      u8,
+Draw_Path :: struct {
+	first, count:             u32, // The range of the points in the text table, in bytes.
+	fill_color, stroke_color: Draw_Color,
+	stroke_width:             u32, // In 1/64 pixel; 0 with no stroke.
+}
+
+// One point of a path past the border of the points.
+Path_Point :: struct {
+	command: Path_Command,
+	x, y:    i32, // In 1/64 pixel of the surface.
 }
 
 // One primitive of each kind. A record that `read` accepts is never nil:
@@ -300,7 +369,7 @@ Draw_Primitive :: union {
 	Draw_Clip,
 	Draw_Picture,
 	Draw_Text_Grid,
-	Draw_Line,
+	Draw_Path,
 }
 
 // draw_kind_of_word reads the word of the kind of a record. A word that
@@ -322,6 +391,11 @@ font_kind_of_word :: proc "contextless" (word: u8) -> (font: Font_Kind, ok: bool
 // picture_format_of_word reads the word of the format of a picture.
 picture_format_of_word :: proc "contextless" (word: u8) -> (format: Picture_Format, ok: bool) {
 	return enum_word.member_of_word(Picture_Format, u64(word))
+}
+
+// path_command_of_word reads the word of the command of a point of a path.
+path_command_of_word :: proc "contextless" (word: u32) -> (command: Path_Command, ok: bool) {
+	return enum_word.member_of_word(Path_Command, u64(word))
 }
 
 // opaque gives the opaque draw color of a color of a canvas, 0x00RRGGBB:
@@ -372,8 +446,10 @@ copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Rec
 // whose right is left of its left or whose bottom is above its top, an
 // edge past COORDINATE_LIMIT, an edge not on a whole pixel in a kind that
 // draws on whole pixels, and a field of the kind out of its range: a color
-// that is not canonical, a color of a line that is not opaque, and two
-// points of a gradient that are equal, past the limit or too far apart,
+// that is not canonical, two points of a gradient that are equal, past the
+// limit or too far apart, and a path whose range is not a whole count of
+// 2 to PATH_POINT_LIMIT points from a multiple of 4, or whose stroke has a
+// width of 0, a width past STROKE_WIDTH_LIMIT, or a width with no color,
 // too. A refused record draws nothing.
 // The checks run in that order, so a record with two faults gives the
 // problem of the first check.
@@ -388,8 +464,9 @@ copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Rec
 // boxes: too large, never too small.
 //
 // The checks are on the record alone. What a record names in the tables of
-// its frame (a range of the text table, the pixels of a picture memory) is
-// checked where the table is: the record does not hold it.
+// its frame (a range of the text table, the pixels of a picture memory, the
+// points of a path) is checked where the table is: the record does not hold
+// it. path_points_read is the border of the points.
 read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, problem: Problem) {
 	kind, known := draw_kind_of_word(record.kind)
 	if !known {
@@ -404,8 +481,9 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 	if record.right < record.left || record.bottom < record.top {
 		return nil, .Box_Inverted
 	}
-	// A rectangle and a gradient draw inside a pixel; each other kind, and
-	// a rectangle with a pattern (below), draws on whole pixels.
+	// A rectangle and a gradient take a box inside a pixel; each other kind,
+	// and a rectangle with a pattern (below), has a box on whole pixels. The
+	// points of a path are not its box: they lie inside a pixel.
 	whole := on_whole_pixel(record.left) && on_whole_pixel(record.top) && on_whole_pixel(record.right) && on_whole_pixel(record.bottom)
 	if !whole && kind != .Rectangle && kind != .Gradient {
 		return nil, .Box_Not_On_Whole_Pixels
@@ -483,15 +561,16 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Text_Grid{first = fields.first, count = fields.count, columns = fields.columns}, .None
-	case .Line:
-		fields := transmute(Line_Fields)record.fields
+	case .Path:
+		fields := transmute(Path_Fields)record.fields
 		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		if !color_opaque(Draw_Color(fields.color)) || fields.thickness < 1 || fields.thickness > LINE_THICKNESS_LIMIT || !line_end_valid(fields.start_x) || !line_end_valid(fields.start_y) || !line_end_valid(fields.end_x) || !line_end_valid(fields.end_y) {
+		path := Draw_Path{first = fields.first, count = fields.count, fill_color = Draw_Color(fields.fill_color), stroke_color = Draw_Color(fields.stroke_color), stroke_width = fields.stroke_width}
+		if !path_fields_valid(path) {
 			return nil, .Field_Past_Bound
 		}
-		return Draw_Line{start_x = fields.start_x, start_y = fields.start_y, end_x = fields.end_x, end_y = fields.end_y, color = Draw_Color(fields.color), thickness = fields.thickness}, .None
+		return path, .None
 	}
 	// The switch above is whole, and each case returns.
 	return nil, .Unknown_Kind
@@ -524,23 +603,25 @@ record_of :: proc "contextless" (primitive: Draw_Primitive, element: u32, left, 
 	case Draw_Text_Grid:
 		record.kind = u8(Draw_Kind.Text_Grid)
 		record.fields = transmute([FIELDS_SIZE]u8)Text_Grid_Fields{first = value.first, count = value.count, columns = value.columns}
-	case Draw_Line:
-		record.kind = u8(Draw_Kind.Line)
-		record.fields = transmute([FIELDS_SIZE]u8)Line_Fields{start_x = value.start_x, start_y = value.start_y, end_x = value.end_x, end_y = value.end_y, color = u32(value.color), thickness = value.thickness}
+	case Draw_Path:
+		record.kind = u8(Draw_Kind.Path)
+		record.fields = transmute([FIELDS_SIZE]u8)Path_Fields{first = value.first, count = value.count, fill_color = u32(value.fill_color), stroke_color = u32(value.stroke_color), stroke_width = value.stroke_width}
 	}
 	return record
 }
 
 // byte_range_of gives the range of the text table that a primitive names:
-// the bytes of a text and the cells of a grid. has_range is false for a
-// primitive that names none.
+// the bytes of a text, the cells of a grid and the points of a path.
+// has_range is false for a primitive that names none.
 byte_range_of :: proc "contextless" (primitive: Draw_Primitive) -> (first, count: u32, has_range: bool) {
 	switch value in primitive {
 	case Draw_Text:
 		return value.first, value.count, true
 	case Draw_Text_Grid:
 		return value.first, value.count, true
-	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture, Draw_Line:
+	case Draw_Path:
+		return value.first, value.count, true
+	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture:
 	}
 	return 0, 0, false
 }
@@ -559,7 +640,11 @@ with_byte_place :: proc "contextless" (primitive: Draw_Primitive, first: u32) ->
 		moved := value
 		moved.first = first
 		return moved
-	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture, Draw_Line:
+	case Draw_Path:
+		moved := value
+		moved.first = first
+		return moved
+	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture:
 	}
 	return primitive
 }
@@ -660,10 +745,169 @@ gradient_level :: proc "contextless" (gradient: Draw_Gradient, x, y: i64) -> u32
 	return u32(along * GRADIENT_LEVELS / length)
 }
 
-// line_end_valid says if a coordinate can be an end of a line: a whole
-// pixel inside LINE_COORDINATE_LIMIT.
-line_end_valid :: proc "contextless" (place: i32) -> bool {
-	return on_whole_pixel(place) && place >= -LINE_COORDINATE_LIMIT * UNITS_PER_PIXEL && place <= LINE_COORDINATE_LIMIT * UNITS_PER_PIXEL
+// path_fields_valid says if the fields of a path are in their bounds: a
+// range from a multiple of 4 of a whole count of 2 to PATH_POINT_LIMIT
+// points, two canonical colors, and a stroke width of 1 unit to
+// STROKE_WIDTH_UNIT_LIMIT with a stroke color, 0 without. A path of one
+// point draws nothing whatever it holds: it has no segment.
+path_fields_valid :: proc "contextless" (path: Draw_Path) -> bool {
+	if path.first % 4 != 0 || path.count % PATH_POINT_SIZE != 0 {
+		return false
+	}
+	points := path.count / PATH_POINT_SIZE
+	if points < 2 || points > PATH_POINT_LIMIT {
+		return false
+	}
+	if !color_canonical(path.fill_color) || !color_canonical(path.stroke_color) {
+		return false
+	}
+	if (path.stroke_color == 0) != (path.stroke_width == 0) {
+		return false
+	}
+	return path.stroke_width <= STROKE_WIDTH_UNIT_LIMIT
+}
+
+// path_points_read is the border of the points of a path. records are the
+// points in the text table, which another process can write during the
+// call: each is loaded once, and every check reads the copy in points,
+// which the caller then draws. It gives the count of points, or the
+// problem of the first point that is wrong, in the order of the points:
+// a command word that names no member, a point past COORDINATE_LIMIT, a
+// Close whose x or y is not 0, a first point that is not a Move, a Move
+// with no segment after it, a Curve_Control with no Line after it, and a
+// Close that does not follow a Line or that a point other than a Move
+// follows. The count comes first: fewer than 2 points, more than
+// PATH_POINT_LIMIT, or more than points holds.
+//
+// So a path that is read starts with a Move, each subpath has a segment,
+// each curve has its end, and a Close is the last point of its subpath.
+path_points_read :: proc "contextless" (records: []Path_Point_Record, points: []Path_Point) -> (count: int, problem: Path_Problem) {
+	if len(points) < len(records) {
+		return 0, .Count_Out_Of_Range
+	}
+	return path_points_walk(records, points)
+}
+
+// path_points_check is the border of the points with no copy: a writer
+// checks the points that it wrote into its own text table.
+path_points_check :: proc "contextless" (records: []Path_Point_Record) -> Path_Problem {
+	_, problem := path_points_walk(records, nil)
+	return problem
+}
+
+// path_points_walk loads each point once and checks it, and writes it into
+// points when points holds it.
+@(private)
+path_points_walk :: proc "contextless" (records: []Path_Point_Record, points: []Path_Point) -> (count: int, problem: Path_Problem) {
+	if len(records) < 2 || len(records) > PATH_POINT_LIMIT {
+		return 0, .Count_Out_Of_Range
+	}
+	previous: Path_Command
+	for index in 0 ..< len(records) {
+		words := intrinsics.volatile_load((^[3]u32)(&records[index]))
+		command, known := path_command_of_word(words[0])
+		if !known {
+			return 0, .Unknown_Command
+		}
+		x, y := i32(words[1]), i32(words[2])
+		if !inside_coordinate_limit(x) || !inside_coordinate_limit(y) {
+			return 0, .Point_Past_Coordinate_Limit
+		}
+		if command == .Close && (x != 0 || y != 0) {
+			return 0, .Close_Point_Not_Zero
+		}
+		if index == 0 {
+			if command != .Move {
+				return 0, .Not_Started_By_Move
+			}
+		} else {
+			order := path_command_after(previous, command)
+			if order != .None {
+				return 0, order
+			}
+		}
+		if index < len(points) {
+			points[index] = {command = command, x = x, y = y}
+		}
+		previous = command
+	}
+	// The last point ends its subpath: a Move and a Curve_Control there have
+	// no segment and no end.
+	switch previous {
+	case .Move:
+		return 0, .Empty_Subpath
+	case .Curve_Control:
+		return 0, .Curve_Without_End
+	case .Line, .Close:
+	}
+	return len(records), .None
+}
+
+// path_command_after says if a command can follow another one in a path.
+@(private)
+path_command_after :: proc "contextless" (previous, command: Path_Command) -> Path_Problem {
+	switch previous {
+	case .Move:
+		if command != .Line && command != .Curve_Control {
+			return .Empty_Subpath
+		}
+	case .Curve_Control:
+		if command != .Line {
+			return .Curve_Without_End
+		}
+	case .Close:
+		if command != .Move {
+			return .Close_Out_Of_Place
+		}
+	case .Line:
+		// After a Line, each command can come; a Close only there.
+	}
+	if command == .Close && previous != .Line {
+		return .Close_Out_Of_Place
+	}
+	return .None
+}
+
+// curve_segment_count gives the count of line segments of a quadratic curve
+// from (start_x, start_y) by the control point to (end_x, end_y), in units:
+// the fewest, from 1 to CURVE_SEGMENT_LIMIT, whose distance from the curve
+// is at most CURVE_TOLERANCE_UNITS. With n segments of equal steps of the
+// parameter, that distance is at most |start - 2 * control + end| / (4 * n * n),
+// and the sum of the two axes bounds the length of that vector. So a curve
+// whose bend (that sum) is at most 4 * CURVE_TOLERANCE_UNITS * 256 units,
+// 128 pixels, is within the tolerance; past it, the 16 segments are at most
+// bend / 1024 units from the curve. Each place is inside COORDINATE_LIMIT,
+// so the bend is below 2^33 and each product fits an i64.
+curve_segment_count :: proc "contextless" (start_x, start_y, control_x, control_y, end_x, end_y: i32) -> int {
+	bend := abs(i64(start_x) - 2 * i64(control_x) + i64(end_x)) + abs(i64(start_y) - 2 * i64(control_y) + i64(end_y))
+	count: i64 = 1
+	for count < CURVE_SEGMENT_LIMIT && bend > 4 * CURVE_TOLERANCE_UNITS * count * count {
+		count += 1
+	}
+	return int(count)
+}
+
+// curve_point gives the point step of count of a quadratic curve, in units,
+// each axis rounded to the nearest unit: step 0 is the start, step count the
+// end. Each point comes from the three points of the curve, so no error adds
+// up along it, and the points stay inside the box of the three points.
+curve_point :: proc "contextless" (start_x, start_y, control_x, control_y, end_x, end_y: i32, step, count: int) -> (x, y: i32) {
+	before, after, square := i64(count - step), i64(step), i64(count * count)
+	x = i32(divide_rounded(before * before * i64(start_x) + 2 * after * before * i64(control_x) + after * after * i64(end_x), square))
+	y = i32(divide_rounded(before * before * i64(start_y) + 2 * after * before * i64(control_y) + after * after * i64(end_y), square))
+	return
+}
+
+// divide_rounded gives numerator / denominator rounded to the nearest
+// integer, a half up, for a denominator above 0 and a numerator of any
+// sign: the division rounds toward minus infinity.
+divide_rounded :: proc "contextless" (numerator, denominator: i64) -> i64 {
+	twice := 2 * numerator + denominator
+	quotient := twice / (2 * denominator)
+	if twice % (2 * denominator) < 0 {
+		quotient -= 1
+	}
+	return quotient
 }
 
 // The parts of a pixel where the origin of a text in the interface font
@@ -716,8 +960,3 @@ gradient_colors_canonical :: proc "contextless" (first, second: Draw_Color) -> b
 	return alpha_of(first) != 0 || alpha_of(second) != 0 || (first == 0 && second == 0)
 }
 
-// color_opaque says if a color has alpha 255: the color of a line, whose
-// squares overlap, so a translucent one would blend twice.
-color_opaque :: proc "contextless" (color: Draw_Color) -> bool {
-	return alpha_of(color) == OPAQUE_ALPHA
-}

@@ -37,7 +37,8 @@ expected_fields :: proc() -> []Expected_Field {
 	text: draw_record.Text_Fields
 	picture: draw_record.Picture_Fields
 	grid: draw_record.Text_Grid_Fields
-	line: draw_record.Line_Fields
+	path: draw_record.Path_Fields
+	point: draw_record.Path_Point_Record
 	rows := [?]Expected_Field {
 		{"module.Header", "magic", offset_of(module.Header, magic), size_of(header.magic)},
 		{"module.Header", "version", offset_of(module.Header, version), size_of(header.version)},
@@ -143,13 +144,15 @@ expected_fields :: proc() -> []Expected_Field {
 		{"draw_record.Text_Grid_Fields", "count", offset_of(draw_record.Text_Grid_Fields, count), size_of(grid.count)},
 		{"draw_record.Text_Grid_Fields", "columns", offset_of(draw_record.Text_Grid_Fields, columns), size_of(grid.columns)},
 		{"draw_record.Text_Grid_Fields", "reserved", offset_of(draw_record.Text_Grid_Fields, reserved), size_of(grid.reserved)},
-		{"draw_record.Line_Fields", "start_x", offset_of(draw_record.Line_Fields, start_x), size_of(line.start_x)},
-		{"draw_record.Line_Fields", "start_y", offset_of(draw_record.Line_Fields, start_y), size_of(line.start_y)},
-		{"draw_record.Line_Fields", "end_x", offset_of(draw_record.Line_Fields, end_x), size_of(line.end_x)},
-		{"draw_record.Line_Fields", "end_y", offset_of(draw_record.Line_Fields, end_y), size_of(line.end_y)},
-		{"draw_record.Line_Fields", "color", offset_of(draw_record.Line_Fields, color), size_of(line.color)},
-		{"draw_record.Line_Fields", "thickness", offset_of(draw_record.Line_Fields, thickness), size_of(line.thickness)},
-		{"draw_record.Line_Fields", "reserved", offset_of(draw_record.Line_Fields, reserved), size_of(line.reserved)},
+		{"draw_record.Path_Fields", "first", offset_of(draw_record.Path_Fields, first), size_of(path.first)},
+		{"draw_record.Path_Fields", "count", offset_of(draw_record.Path_Fields, count), size_of(path.count)},
+		{"draw_record.Path_Fields", "fill_color", offset_of(draw_record.Path_Fields, fill_color), size_of(path.fill_color)},
+		{"draw_record.Path_Fields", "stroke_color", offset_of(draw_record.Path_Fields, stroke_color), size_of(path.stroke_color)},
+		{"draw_record.Path_Fields", "stroke_width", offset_of(draw_record.Path_Fields, stroke_width), size_of(path.stroke_width)},
+		{"draw_record.Path_Fields", "reserved", offset_of(draw_record.Path_Fields, reserved), size_of(path.reserved)},
+		{"draw_record.Path_Point_Record", "command", offset_of(draw_record.Path_Point_Record, command), size_of(point.command)},
+		{"draw_record.Path_Point_Record", "x", offset_of(draw_record.Path_Point_Record, x), size_of(point.x)},
+		{"draw_record.Path_Point_Record", "y", offset_of(draw_record.Path_Point_Record, y), size_of(point.y)},
 	}
 	list := make([]Expected_Field, len(rows), context.temp_allocator)
 	copy(list, rows[:])

@@ -109,19 +109,29 @@ import process_page "modus:contract/disk_process_page"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
-// working memory: its surfaces, its tables and the screen. The device
-// memory of the screen costs no page, but its page tables do: the two
-// screen pages (1536 pages, 6 MiB) need up to 4 page tables where the one
-// framebuffer needed up to 3, and the page of the display registers needs
-// a page table and a page directory: 4 pages more. A resize maps the new
-// surface of a window beside its old one until its Present
-// (src/md/features/window_resize.md): the largest surface, 2048 x 2048
-// pixels of 8 bytes for two pictures, is 32 MiB, whose mapping takes at
-// most 17 page tables of 2 MiB (its start need not be on a 2 MiB edge) and
-// 2 page directories (it can cross a 1 GiB edge): 19 pages. Each of the 32
-// clients can hold one such second mapping: 32 x 19 = 608 pages, and
-// 3803 + 608 = 4411.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4411, processes = 1, threads = 2}
+// working memory is the sum of these parts, at the reference screen of
+// 1920 x 1080:
+// - the frame and the background, each the size of the screen: 2 x 2025
+//   pages, and 2 x 5 page tables (8.1 MB need 4 tables of 2 MiB, and one
+//   more when the start is not on a 2 MiB edge);
+// - the two screen pages: device memory, which costs no page, but 15.8
+//   MiB of it need up to 9 page tables;
+// - each of these three spans can cross a 1 GiB edge, and then needs a
+//   second page directory: 3 pages;
+// - the page of the display registers: a page table and a page directory,
+//   2 pages;
+// - its surfaces, its tables and the other mappings: 2255 pages;
+// - a resize maps the new surface of a window beside its old one until
+//   its Present (src/md/features/window_resize.md): the largest surface,
+//   2048 x 2048 pixels of 8 bytes for two pictures, is 32 MiB, whose
+//   mapping takes at most 17 page tables of 2 MiB (its start need not be
+//   on a 2 MiB edge) and 2 page directories (it can cross a 1 GiB edge):
+//   19 pages. Each of the 32 clients can hold one such second mapping:
+//   32 x 19 = 608 pages.
+// 4050 + 10 + 9 + 3 + 2 + 2255 + 608 = 6937. A screen whose frame and
+// background the budget cannot pay is named on one line, and the
+// compositor stops (entry).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6937, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -578,7 +588,10 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer or no ring, the compositor writes
-// `compositor: no framebuffer` and stops with the code 1. Without the
+// `compositor: no framebuffer` and stops with the code 1. When its budget
+// cannot pay the frame and the background of the screen, it writes
+// `compositor: a screen of <width>x<height> needs <n> pages, the budget
+// holds <m>` and stops with the code 1. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -597,6 +610,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	screen_pages_open(ctx)
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
+	// The frame and the background have the size of the screen, and the
+	// budget is counted at the reference screen: a firmware that kept a
+	// larger mode gives a screen that the budget cannot pay. The line names
+	// both amounts, and the compositor stops with its code, so the root
+	// service runs on with no desktop.
+	canvas_pages := (u64(width) * u64(height) * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	needed_pages: u64 = 2 * canvas_pages
+	budget_left, budget_status := system.budget_read()
+	if budget_status != .Ok || budget_left.pages < needed_pages {
+		system.log("compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
+		system.stop(1)
+	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
 	// The background, the mark of the bar and the measures draw in the dark
@@ -1455,7 +1480,10 @@ close_button_under_pointer :: proc "contextless" () -> ^Client {
 // has the time of one call in nanoseconds, and what the processor says of
 // its string instructions (CPUID leaf 7: ERMS, FSRM).
 memory_measure :: proc "contextless" () {
-	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20 - 128} // The last one: a frame, less the offsets of the measure.
+	// The last one: 3 MiB less the offsets of the measure, past the caches of
+	// the processor. It stays this size, smaller than a frame of the
+	// reference screen, so that its line keeps one series over the releases.
+	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20 - 128}
 	to := ([^]u8)(frame.pixels)
 	from := ([^]u8)(background.pixels)
 	limit := min(frame.width * frame.height, background.width * background.height) * size_of(graphics.Color)
@@ -1615,7 +1643,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_15 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_16 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the

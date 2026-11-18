@@ -93,8 +93,9 @@ pixel :: #force_inline proc "contextless" (canvas: Canvas, x, y: int, color: Col
 
 // line paints a straight line from one point to another, both included: a
 // square of `thickness` pixels at each point of the path (the algorithm of
-// Bresenham). Its cost grows with the length: a caller bounds the points
-// (`interface.LINE_COORDINATE_LIMIT`).
+// Bresenham), into the pixels of a picture that the caller holds. Its cost
+// grows with the length: a caller bounds the points, as `paint` does. A line
+// of a draw table is the stroke of a path (`interface.draw_line`).
 line :: proc "contextless" (canvas: Canvas, from_x, from_y, to_x, to_y: int, thickness: int, color: Color) {
 	x, y := from_x, from_y
 	distance_x := abs(to_x - from_x)
