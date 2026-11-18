@@ -227,7 +227,7 @@ At most `OPERATION_MINIMIZE_BOOTS_MOST` boots, 256, serve one finding. A try boo
 
 ### The corpus of the operations
 
-The corpus is in `tools/modustool/fuzzing_corpus/operations/`, with the layout of the corpus of the host targets ([fuzzing.md](fuzzing.md), "Fuzz findings, minimization and the corpus"): `regression/` and `reach/`, one file for each input, named by the BLAKE3 hash of its bytes, within the bounds of a target. The folder names no fuzz target, and the check of the corpus knows it by its name.
+The corpus is in `tools/modustool/fuzz/fuzzing_corpus/operations/`, with the layout of the corpus of the host targets ([fuzzing.md](fuzzing.md), "Fuzz findings, minimization and the corpus"): `regression/` and `reach/`, one file for each input, named by the BLAKE3 hash of its bytes, within the bounds of a target. The folder names no fuzz target, and the check of the corpus knows it by its name.
 
 - **A regression input** is one minimized life, in the sequence format of the contract, and the answer of each step of its last sequence on the kernel that ships after the fix: the status and, for a refusal, the kind and the argument of the error record and each record of the table of error details, in order. It also keeps the signature of its finding, for its reader. A regression input then means the same after a change of the generator, and the test part checks the refusal itself, not only the oracles. An answer of `Ok` names only its status: its values hold handles and addresses of one run.
 - **A reach input** is a choice sequence of the generator. Only the engine guided by the counters chooses one, so the folder stays empty until the counted kernel, and `fuzz corpus operations` comes with it.

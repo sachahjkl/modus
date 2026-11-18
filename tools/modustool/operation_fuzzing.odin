@@ -12,6 +12,7 @@ import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:fuzz"
 
 // The loop of the kernel fuzzing with no counters
 // (src/md/infrastructure/kernel_fuzzing.md, "The loop and the speed";
@@ -25,7 +26,7 @@ import "modustool:build"
 
 // The files of a run, which git ignores: the repository never holds a
 // finding of a run. The findings of a run are in a folder of its seed.
-OPERATION_FUZZING_FOLDER :: FUZZING_BUILD_FOLDER + "/operations"
+OPERATION_FUZZING_FOLDER :: fuzz.FUZZING_BUILD_FOLDER + "/operations"
 OPERATION_FUZZING_OUTPUT :: OPERATION_FUZZING_FOLDER + "/machine_log.txt"
 OPERATION_FUZZING_MEMORY_FILE :: OPERATION_FUZZING_FOLDER + "/machine_memory.raw"
 
@@ -43,9 +44,6 @@ OPERATION_MINIMIZE_BOOTS_MOST :: 256
 // The boots in a row with no line of the mailbox that end a run: then the
 // build is wrong, and no sequence is the cause.
 OPERATION_BOOT_TRIES :: 2
-// The choices that the generator reads for one sequence: more than the
-// largest sequence reads, so the bytes never run out in a normal draw.
-OPERATION_CHOICE_BYTES :: 4096
 // The hexadecimal digits of the hash of a signature that name the folder
 // of its finding: enough that two signatures of one run never share them.
 OPERATION_FINDING_NAME_DIGITS :: 16
@@ -59,11 +57,6 @@ OPERATION_KERNEL_HEX_DIGITS :: 16
 // the tool can wait for, so the bound is the end of the look, and a line
 // past it is lost with the life.
 OPERATION_LOG_DRAIN_BOUND :: 1 * time.Second
-// The byte that replaces the first byte of a protected process name in a
-// generated sequence.
-OPERATION_PROTECTED_NAME_CHANGE :: '_'
-// The module of the root service.
-OPERATION_ROOT_MODULE :: "root"
 
 // ---------------------------------------------------------------------
 // The arguments.
@@ -331,15 +324,9 @@ operation_oracle_signature :: proc(finding: Operation_Finding, sequence: ^operat
 	return fmt.tprintf("oracle %v: the outcome %v", finding.oracle, outcome)
 }
 
-// The processes that a sequence must never reach. The generator never names
-// a child with one of these names, so the line of a fault of a child is
-// never the line of a fault of isolation.
-@(rodata)
-operation_protected_names := [?]string{foundation.OPERATION_FUZZING_MODULE, OPERATION_ROOT_MODULE}
-
 // The starts of the lines of the kernel when one of them stops.
 @(rodata)
-operation_isolation_marks := [?]string{"kernel: process " + foundation.OPERATION_FUZZING_MODULE + " stopped", "kernel: process " + OPERATION_ROOT_MODULE + " stopped"}
+operation_isolation_marks := [?]string{"kernel: process " + foundation.OPERATION_FUZZING_MODULE + " stopped", "kernel: process " + fuzz.OPERATION_ROOT_MODULE + " stopped"}
 
 // operation_isolation_line gives the first line of the log that starts
 // with a mark of operation_isolation_marks, or "".
@@ -439,24 +426,6 @@ Operation_Machine :: struct {
 	drain:   proc(data: rawptr) -> Operation_Fault,
 	// Ends the machine, whatever its state.
 	end:     proc(data: rawptr),
-}
-
-// operation_sequence_encode writes a sequence, then reads the bytes back
-// with check: the bytes are what a machine gets, and a sequence that check
-// refuses gives none.
-operation_sequence_encode :: proc(sequence: ^operation_sequence.Sequence, allocator := context.allocator) -> (bytes: []u8, accepted: bool) {
-	size, sized := operation_sequence.size(sequence)
-	if !sized {
-		return nil, false
-	}
-	bytes = make([]u8, size, allocator)
-	read_back := new(operation_sequence.Sequence)
-	defer free(read_back)
-	if _, written := operation_sequence.write(bytes, sequence); !written || operation_sequence.check(bytes, read_back).problem != .None {
-		delete(bytes, allocator)
-		return nil, false
-	}
-	return bytes, true
 }
 
 Operation_Life_Outcome :: struct {
@@ -691,7 +660,7 @@ operation_steps_minimize :: proc(minimizer: ^Operation_Minimizer, current: ^[dyn
 		for start < sequence.step_count {
 			count := min(chunk, sequence.step_count - start)
 			operation_steps_removed(sequence, start, count, candidate)
-			if bytes, accepted := operation_sequence_encode(candidate); accepted {
+			if bytes, accepted := fuzz.operation_sequence_encode(candidate); accepted {
 				life[last] = bytes
 				if operation_life_holds(minimizer, life) {
 					delete(current^[last])
@@ -712,7 +681,7 @@ operation_steps_minimize :: proc(minimizer: ^Operation_Minimizer, current: ^[dyn
 // The loop.
 
 // A generator of sequences: the same random state gives the same sequence.
-Operation_Generator :: #type proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence)
+Operation_Generator :: #type proc(random: ^fuzz.Fuzz_Random, sequence: ^operation_sequence.Sequence)
 
 Operation_Run_Bounds :: struct {
 	executions:     u64,
@@ -780,7 +749,7 @@ operation_signature_kept :: proc(kept: []Operation_Kept_Fault, signature: string
 // false at an error of the build or of the tool. The loop frees the
 // temporary memory after each execution: the caller keeps nothing there.
 operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_Generator, seed: u64, bounds: Operation_Run_Bounds, keeper: Operation_Fault_Keeper = nil) -> (run: Operation_Run, ok: bool) {
-	random := Fuzz_Random{state = seed}
+	random := fuzz.Fuzz_Random{state = seed}
 	life := make([dynamic][]u8)
 	defer {
 		for bytes in life {
@@ -821,7 +790,7 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 			clear(&life)
 		}
 		generate(&random, generated)
-		bytes, accepted := operation_sequence_encode(generated)
+		bytes, accepted := fuzz.operation_sequence_encode(generated)
 		if !accepted || operation_sequence.check(bytes, checked).problem != .None {
 			fmt.eprintln("modustool: fuzz operations: the generator built a sequence that check refuses: a fault of the tool")
 			delete(bytes)
@@ -884,75 +853,13 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 	return run, true
 }
 
-// operation_parameter_place gives the place of a parameter of an operation
-// by its name in OPERATIONS, or -1.
-operation_parameter_place :: proc(chosen: operation.Operation, name: string) -> int {
-	for parameter, place in operation.OPERATIONS[chosen].parameters {
-		if parameter.name == name {
-			return place
-		}
-	}
-	return -1
-}
-
-// operation_protected_names_changed changes the first byte of each name of
-// a Process_Create that is the name of a protected process, in the content
-// of the area that the step names: a child with that name would make the
-// line of its fault the line of a fault of isolation. The rule reads only
-// the sequence, so a seed still gives one sequence. A name that is not in
-// the content of its area, or whose length is not a plain value, stays.
-operation_protected_names_changed :: proc(sequence: ^operation_sequence.Sequence) -> (changed: int) {
-	name_place := operation_parameter_place(.Process_Create, "name")
-	length_place := operation_parameter_place(.Process_Create, "name_length")
-	if name_place < 0 || length_place < 0 {
-		return 0
-	}
-	for &item in sequence.steps[:sequence.step_count] {
-		if item.operation != u32(operation.Operation.Process_Create) {
-			continue
-		}
-		name, length := item.arguments[name_place], item.arguments[length_place]
-		if name.source != .Area_Address || length.source != .Value || name.area < 0 || name.area >= sequence.area_count {
-			continue
-		}
-		content := operation_sequence.area_content(sequence, name.area)
-		if name.offset > u64(len(content)) || length.value == 0 || length.value > u64(len(content)) - name.offset {
-			continue
-		}
-		bytes := content[name.offset:][:length.value]
-		for protected in operation_protected_names {
-			if string(bytes) == protected {
-				bytes[0] = OPERATION_PROTECTED_NAME_CHANGE
-				changed += 1
-				break
-			}
-		}
-	}
-	return changed
-}
-
 // operation_sequence_generate_random draws the choices of one sequence
 // from the random state, then builds it with the generator of the fuzz
 // target operation_sequence_generated, which a host test and that target
 // check: each sequence that it builds is one that check accepts. It then
 // changes each protected process name.
-operation_sequence_generate_random :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence) {
-	operation_sequence_generate_random_written(random, sequence, nil)
-}
-
-// operation_sequence_generate_random_written is the same, and `written`
-// receives each record that the generator wrote, for a host test.
-operation_sequence_generate_random_written :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence, written: ^[dynamic]Fuzz_Record_Written) {
-	choice_bytes: [OPERATION_CHOICE_BYTES]u8
-	for place := 0; place < len(choice_bytes); place += 8 {
-		word := fuzz_random_next(random)
-		for index in 0 ..< 8 {
-			choice_bytes[place + index] = u8(word >> (8 * u64(index)))
-		}
-	}
-	choices := fuzz_choices_of(choice_bytes[:])
-	fuzz_operation_sequence_generate(&choices, sequence, written)
-	_ = operation_protected_names_changed(sequence)
+operation_sequence_generate_random :: proc(random: ^fuzz.Fuzz_Random, sequence: ^operation_sequence.Sequence) {
+	fuzz.operation_sequence_generate_random_written(random, sequence, nil)
 }
 
 // ---------------------------------------------------------------------
@@ -996,7 +903,7 @@ operation_text_write :: proc(path, text: string) -> bool {
 // named by the start of the hash of its signature, and prints where it is.
 // false: a file was not written, an error of the tool.
 operation_fault_write :: proc(kept: ^Operation_Kept_Fault, seed: u64) -> bool {
-	name := fuzz_input_name(transmute([]u8)kept.fault.signature)
+	name := fuzz.fuzz_input_name(transmute([]u8)kept.fault.signature)
 	folder := fmt.tprintf("%s/%s", operation_run_folder(seed), name[:OPERATION_FINDING_NAME_DIGITS])
 	if !foundation.make_folder(folder) || !operation_life_write(fmt.tprintf("%s/life", folder), kept.life) || !operation_life_write(fmt.tprintf("%s/minimized", folder), kept.minimized.life) {
 		return false
@@ -1173,7 +1080,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 			operation_machine_end(state)
 			return false
 		}
-		time.sleep(FUZZ_POLL_INTERVAL)
+		time.sleep(fuzz.FUZZ_POLL_INTERVAL)
 	}
 	fmt.eprintfln("modustool: fuzz operations: the machine wrote no line \"%s\" within %v; the log is %s", OPERATION_MAILBOX_LINE, BOOT_HANG_BOUND, OPERATION_FUZZING_OUTPUT)
 	operation_machine_end(state)
@@ -1289,7 +1196,7 @@ operation_machine_end :: proc(data: rawptr) {
 // printed. The commands `fuzz operations` and `fuzz regression operations`
 // share it, so a regression input is written by the machine that finds it.
 operation_qemu_open :: proc() -> ^Operation_Qemu {
-	if !fuzz_operation_sequence_start() {
+	if !fuzz.fuzz_operation_sequence_start() {
 		return nil
 	}
 	grammar, grammar_read := operation_grammar_read()
@@ -1349,7 +1256,7 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 	}
 	seed := arguments.seed
 	if !arguments.seed_given {
-		seed = fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
+		seed = fuzz.fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
 	}
 	state := operation_qemu_open()
 	if state == nil {

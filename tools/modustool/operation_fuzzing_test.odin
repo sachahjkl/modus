@@ -9,6 +9,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modustool:foundation"
+import "modustool:fuzz"
 
 // ---------------------------------------------------------------------
 // The arguments.
@@ -265,8 +266,8 @@ the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
 a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	BEFORE_SERVICE :: "rootrootx"
 	CONTENT :: BEFORE_SERVICE + foundation.OPERATION_FUZZING_MODULE
-	name_place := operation_parameter_place(.Process_Create, "name")
-	length_place := operation_parameter_place(.Process_Create, "name_length")
+	name_place := fuzz.operation_parameter_place(.Process_Create, "name")
+	length_place := fuzz.operation_parameter_place(.Process_Create, "name_length")
 	testing.expect(t, name_place >= 0 && length_place >= 0, "Process_Create has no name or no name_length")
 	if name_place < 0 || length_place < 0 {
 		return
@@ -289,12 +290,12 @@ a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	create(sequence, name_place, length_place, 4, 3) // "roo"
 	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(foundation.OPERATION_FUZZING_MODULE))
 	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(CONTENT)) // past the content
-	testing.expect_value(t, operation_protected_names_changed(sequence), 2)
+	testing.expect_value(t, fuzz.operation_protected_names_changed(sequence), 2)
 	testing.expect_value(t, string(sequence.content[:len(BEFORE_SERVICE)]), "_ootrootx")
-	testing.expect_value(t, sequence.content[len(BEFORE_SERVICE)], u8(OPERATION_PROTECTED_NAME_CHANGE))
+	testing.expect_value(t, sequence.content[len(BEFORE_SERVICE)], u8(fuzz.OPERATION_PROTECTED_NAME_CHANGE))
 	testing.expect_value(t, string(sequence.content[len(BEFORE_SERVICE) + 1:len(CONTENT)]), string(foundation.OPERATION_FUZZING_MODULE)[1:])
-	testing.expect_value(t, operation_protected_names_changed(sequence), 0)
-	bytes, accepted := operation_sequence_encode(sequence)
+	testing.expect_value(t, fuzz.operation_protected_names_changed(sequence), 0)
+	bytes, accepted := fuzz.operation_sequence_encode(sequence)
 	defer delete(bytes)
 	testing.expect(t, accepted, "check refuses the changed sequence")
 }
@@ -476,7 +477,7 @@ fake_machine_of :: proc(fake: ^Fake_Machine) -> Operation_Machine {
 words_bytes :: proc(words: ..u32) -> []u8 {
 	sequence := words_sequence(..words)
 	defer free(sequence)
-	bytes, accepted := operation_sequence_encode(sequence)
+	bytes, accepted := fuzz.operation_sequence_encode(sequence)
 	assert(accepted)
 	return bytes
 }
@@ -511,7 +512,7 @@ the_steps_removed_keep_the_results_that_stay :: proc(t: ^testing.T) {
 	from.steps[2].arguments[0] = {source = .Result, step = 0}
 	from.steps[3].arguments[0] = {source = .Result, step = 2, place = 1, offset = 8}
 	from.steps[4].arguments[0] = {source = .Result, step = 1}
-	from_bytes, from_accepted := operation_sequence_encode(from)
+	from_bytes, from_accepted := fuzz.operation_sequence_encode(from)
 	defer delete(from_bytes)
 	testing.expect(t, from_accepted, "check refuses the sequence before the removal")
 	into := new(operation_sequence.Sequence)
@@ -524,14 +525,14 @@ the_steps_removed_keep_the_results_that_stay :: proc(t: ^testing.T) {
 	testing.expect_value(t, into.steps[1].arguments[0], operation_sequence.Argument{source = .Result, step = 0, place = 1, offset = 8})
 	testing.expect_value(t, into.steps[2].arguments[0], operation_sequence.Argument{source = .Value})
 	testing.expect_value(t, into.steps[3], operation_sequence.Sequence_Step{})
-	removed_bytes, accepted := operation_sequence_encode(into)
+	removed_bytes, accepted := fuzz.operation_sequence_encode(into)
 	delete(removed_bytes)
 	testing.expect(t, accepted, "check refuses the sequence with two steps removed")
 	operation_steps_removed(from, 4, 1, into)
 	testing.expect_value(t, into.steps[3].arguments[0], operation_sequence.Argument{source = .Result, step = 2, place = 1, offset = 8})
 	operation_steps_removed(from, 0, from.step_count, into)
 	testing.expect_value(t, into.step_count, 0)
-	empty, empty_accepted := operation_sequence_encode(into)
+	empty, empty_accepted := fuzz.operation_sequence_encode(into)
 	defer delete(empty)
 	testing.expect(t, empty_accepted, "check refuses a sequence with no step")
 }
@@ -550,7 +551,7 @@ the_step_after_a_removed_range_starts_a_kernel_entry :: proc(t: ^testing.T) {
 	testing.expect_value(t, into.step_count, 3)
 	testing.expect(t, .Same_Entry not_in into.steps[1].flags, "the step after the range joins the entry before the range")
 	testing.expect(t, .Same_Entry in into.steps[2].flags, "a later step lost its kernel entry")
-	bytes, accepted := operation_sequence_encode(into)
+	bytes, accepted := fuzz.operation_sequence_encode(into)
 	delete(bytes)
 	testing.expect(t, accepted)
 	operation_steps_removed(from, 3, 1, into)
@@ -731,20 +732,20 @@ a_fault_after_the_last_count_belongs_to_the_last_sequence :: proc(t: ^testing.T)
 // The loop, on a fake machine.
 
 @(private = "file")
-fake_generate_noise :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence) {
+fake_generate_noise :: proc(random: ^fuzz.Fuzz_Random, sequence: ^operation_sequence.Sequence) {
 	steps: [3]operation_sequence.Sequence_Step
 	for &item in steps {
-		item.operation = fuzz_random_below(random, 2) == 0 ? FAKE_NOISE : FAKE_OTHER_NOISE
+		item.operation = fuzz.fuzz_random_below(random, 2) == 0 ? FAKE_NOISE : FAKE_OTHER_NOISE
 	}
 	sequence^ = operation_seed_sequence(steps[:])
 }
 
 @(private = "file")
-fake_generate_pairs :: proc(random: ^Fuzz_Random, sequence: ^operation_sequence.Sequence) {
+fake_generate_pairs :: proc(random: ^fuzz.Fuzz_Random, sequence: ^operation_sequence.Sequence) {
 	words := [3]u32{FAKE_NOISE, FAKE_FIRST, FAKE_SECOND}
 	steps: [4]operation_sequence.Sequence_Step
 	for &item in steps {
-		item.operation = words[fuzz_random_below(random, len(words))]
+		item.operation = words[fuzz.fuzz_random_below(random, len(words))]
 	}
 	sequence^ = operation_seed_sequence(steps[:])
 }
@@ -958,20 +959,20 @@ a_kept_fault_outlives_the_temporary_memory :: proc(t: ^testing.T) {
 // same random state builds the same sequence.
 @(test)
 the_generator_of_the_run_is_a_function_of_its_seed :: proc(t: ^testing.T) {
-	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+	if !testing.expect(t, fuzz.fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
 		return
 	}
 	first_sequence := new(operation_sequence.Sequence)
 	defer free(first_sequence)
 	second_sequence := new(operation_sequence.Sequence)
 	defer free(second_sequence)
-	first_random := Fuzz_Random{state = FAKE_SEED}
-	second_random := Fuzz_Random{state = FAKE_SEED}
+	first_random := fuzz.Fuzz_Random{state = FAKE_SEED}
+	second_random := fuzz.Fuzz_Random{state = FAKE_SEED}
 	for _ in 0 ..< 64 {
 		operation_sequence_generate_random(&first_random, first_sequence)
 		operation_sequence_generate_random(&second_random, second_sequence)
-		first_bytes, first_accepted := operation_sequence_encode(first_sequence)
-		second_bytes, second_accepted := operation_sequence_encode(second_sequence)
+		first_bytes, first_accepted := fuzz.operation_sequence_encode(first_sequence)
+		second_bytes, second_accepted := fuzz.operation_sequence_encode(second_sequence)
 		testing.expect(t, first_accepted && second_accepted, "check refuses a sequence of the generator")
 		testing.expect(t, slice.equal(first_bytes, second_bytes), "one random state gives two sequences")
 		delete(first_bytes)

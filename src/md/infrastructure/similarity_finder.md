@@ -170,7 +170,7 @@ A family of similar behaviour has no saved nodes: no one call replaces its membe
 
 ### 11. The kept list
 
-A family that a human or an agent decided to keep is one line of `tools/modustool/similarity_kept.txt`: the template hash in 16 hexadecimal digits, a space, and the reason in words. The template hash is the hash of the template with its blanks, after the normal form. It does not change when a file moves, when a local is renamed, or when an argument changes. The report lists the kept families in their own section, with their reason, and counts them in the measures but not in the ranking. A line whose hash names no family is listed as stale, so the file stays true.
+A family that a human or an agent decided to keep is one line of `tools/modustool/similarity/similarity_kept.txt`: the template hash in 16 hexadecimal digits, a space, and the reason in words. The template hash is the hash of the template with its blanks, after the normal form. It does not change when a file moves, when a local is renamed, or when an argument changes. The report lists the kept families in their own section, with their reason, and counts them in the measures but not in the ranking. A line whose hash names no family is listed as stale, so the file stays true.
 
 ### 12. The commands and the output
 
@@ -256,6 +256,6 @@ Host tests of the tool, on small sources in the test, each with a known answer:
 
 ## State
 
-Built: the command `similarity` with `near` and `pair` (`tools/modustool/similarity_*.odin`), the kept list, the host tests of section 13, and the guide ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The similarity finder").
+Built: the command `similarity` with `near` and `pair` (`tools/modustool/similarity/similarity_*.odin`), the kept list, the host tests of section 13, and the guide ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The similarity finder").
 
 Left: the minimums (40 and 12 nodes) and the coverage (0.70) are first values; the counts of the report just outside them decide a change after the first runs on the repository.

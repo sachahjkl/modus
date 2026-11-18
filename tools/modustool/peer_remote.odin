@@ -12,6 +12,7 @@ import "core:time"
 import "modus:support/quic"
 import "modus:support/random"
 import "modustool:foundation"
+import "modustool:fuzz"
 
 // The peer as the QUIC client of the remote service (docs/QUIC.md,
 // section 7). The thread of the peer holds one connection to `remote` and
@@ -191,7 +192,7 @@ peer_remote_make :: proc() -> ^Peer_Remote {
 		call.request = make([]u8, remote.REQUEST_LIMIT + 1)
 		call.answer = make([]u8, remote.ANSWER_LIMIT + 1)
 	}
-	state.cryptography = quic_cryptography_of_the_host()
+	state.cryptography = fuzz.quic_cryptography_of_the_host()
 	// A client of the test: a fixed seed, as the QUIC cases. Its keys
 	// protect nothing but the test; the key of `remote` is the one that is
 	// pinned.

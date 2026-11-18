@@ -9,6 +9,7 @@ import "modus:support/principals"
 import "modus:private/storage/storage_mount"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:fuzz"
 
 // The line that the scenario of the debugger names is the line of the
 // call of sleep_for_ever in the entry of visitor.
@@ -47,7 +48,7 @@ test_file_bytes :: proc(count: int, seed: u8) -> []u8 {
 }
 
 @(private = "file")
-stored_module :: proc(contents: ^Disk_Contents, name: string) -> ^Stored_Object {
+stored_module :: proc(contents: ^fuzz.Disk_Contents, name: string) -> ^fuzz.Stored_Object {
 	for &item in contents.objects {
 		if item.store == disk_process.STORE_NAME && item.name == name {
 			return &item
@@ -76,7 +77,7 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 	defer delete(image)
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	mount := contents.mount
 	testing.expect(t, !mount.failed && !mount.needs_format, "the open takes the disk")
 	testing.expect_value(t, mount.generation, u64(build.MODULE_DISK_GENERATION))
@@ -125,7 +126,7 @@ the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
 	defer delete(image)
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
 	testing.expect_value(t, contents.mount.stores, u64(2))
 	testing.expect_value(t, contents.mount.objects, u64(3))
@@ -188,7 +189,7 @@ a_file_with_a_hole :: proc(t: ^testing.T) {
 	defer delete(image)
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
 	testing.expect_value(t, contents.mount.wrong, u64(0))
 	testing.expect_value(t, contents.mount.damaged_objects, u64(0))
@@ -228,7 +229,7 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 	defer delete(image)
 	state := new(storage_mount.State)
 	defer free(state)
-	contents := disk_contents(image, state)
+	contents := fuzz.disk_contents(image, state)
 	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
 	testing.expect_value(t, contents.mount.objects, u64(2))
 	stored := stored_module(&contents, string(digits[:]))

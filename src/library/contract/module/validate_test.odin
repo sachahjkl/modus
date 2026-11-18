@@ -3,7 +3,7 @@ package module
 
 import "core:testing"
 
-// The fuzz finding of the target module_file (tools/modustool/fuzzing_corpus):
+// The fuzz finding of the target module_file (tools/modustool/fuzz/fuzzing_corpus):
 // 80 bytes whose table of segments states 0x04000000 records of no byte.
 // The table took no byte of the file, so validate accepted it, then looped
 // over 67 million empty segments, and copy_segments did it again: an input
