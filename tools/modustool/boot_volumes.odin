@@ -836,6 +836,7 @@ command_volumes := [?]Volumes_Of_Part {
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_program_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
 	{part = OPERATION_REPLAY_COMMAND, procedures = {"operation_sequences_replay"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
+	{part = OPERATION_FUZZING_COMMAND, procedures = {"operation_machine_start", "operation_machine_kernel_object"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 }
 
 // boot_volumes_of_command gives the volumes that a command of

@@ -378,13 +378,21 @@ fuzz_print_literal :: proc(name: string, input: []u8) {
 
 // run_fuzz is the command `fuzz` (docs/TOOLS.md, "The fuzzing").
 run_fuzz :: proc(args: []string) -> int {
-	usage_text :: "modustool: fuzz list | <target> [<executions> [<processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | replay operations <file>"
+	usage_text :: "modustool: fuzz list | <target> [<executions> [<processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | replay operations <file>"
 	if len(args) == 0 {
 		fmt.eprintln(usage_text)
 		return EXIT_USAGE
 	}
 	targets := fuzz_targets()
 	switch args[0] {
+	case "operations":
+		// The kernel operations on machines of the kernel that ships
+		// (operation_fuzzing.odin).
+		code := operation_fuzzing_run(args[1:])
+		if code == EXIT_USAGE {
+			fmt.eprintln(usage_text)
+		}
+		return code
 	case "replay":
 		// One operation sequence on a machine of the kernel that ships
 		// (operation_sequences.odin).
