@@ -415,6 +415,57 @@ OPERATION_SEED_ABSENT_HANDLE :: u64(0xFFFF_0FFF)
 // line of the log.
 OPERATION_SEED_TEXT :: "seed"
 
+// The answer that a step of a seed case must get, past what the oracles
+// check: its status, the kind and the argument of its error record, one
+// error detail of its table when `detail_kind` is not None, and no detail
+// of the argument `absent_detail_argument` when it is not 0. A seed case
+// names only what its comment says; a regression input of the corpus holds
+// every answer, which a machine wrote.
+Operation_Seed_Expectation :: struct {
+	sequence:               int, // The seed, from 0, in the order of operation_seed_sequences.
+	step:                   int,
+	status:                 operation.Status,
+	record_kind:            errors.Kind,
+	record_argument:        i64, // From 1; 0: the call as a whole.
+	detail_kind:            errors.Kind,
+	detail_argument:        i64,
+	absent_detail_argument: i64, // From 1; 0: none is checked.
+}
+
+// operation_seed_expectation_problem checks one step against its
+// expectation, and gives what differs, or "". The words come from the
+// memory of the machine: a count is bounded before its use.
+operation_seed_expectation_problem :: proc(expected: Operation_Seed_Expectation, results: ^operation_sequence.Runner_Results) -> string {
+	if expected.step < 0 || u64(expected.step) >= results.steps_run {
+		return fmt.tprintf("the step %d did not run: %d steps ran", expected.step, results.steps_run)
+	}
+	result := &results.results[expected.step]
+	if result.status != u64(expected.status) {
+		return fmt.tprintf("the step %d gave the status word %d, and must give %v", expected.step, result.status, expected.status)
+	}
+	record := transmute(errors.Error_Record)result.values
+	if record.kind != i64(expected.record_kind) || record.argument != expected.record_argument {
+		return fmt.tprintf("the step %d has the error record %v, and must have the kind %v of the argument %d", expected.step, record, expected.record_kind, expected.record_argument)
+	}
+	count := min(result.details_count, u64(operation.ERROR_DETAILS_MOST))
+	if expected.absent_detail_argument != 0 {
+		for detail in result.details[:count] {
+			if detail.argument == expected.absent_detail_argument {
+				return fmt.tprintf("the step %d has an error detail %d of the argument %d, and must have none", expected.step, detail.kind, detail.argument)
+			}
+		}
+	}
+	if expected.detail_kind == .None {
+		return ""
+	}
+	for detail in result.details[:count] {
+		if detail.kind == i64(expected.detail_kind) && detail.argument == expected.detail_argument {
+			return ""
+		}
+	}
+	return fmt.tprintf("the step %d has no error detail %v of the argument %d among its %d details", expected.step, expected.detail_kind, expected.detail_argument, result.details_count)
+}
+
 operation_seed_sequence :: proc(steps: []operation_sequence.Sequence_Step) -> operation_sequence.Sequence {
 	sequence: operation_sequence.Sequence
 	sequence.area_count = 1
@@ -431,11 +482,23 @@ operation_seed_sequence :: proc(steps: []operation_sequence.Sequence_Step) -> op
 // bytes: one step of each operation with the arguments of
 // operation_seed_step, then the cases that must succeed or be refused with
 // their details. Each is a sequence that `check` accepts: a host test
-// checks it. The regression of a fuzz finding is no seed: it is a
-// regression input of the corpus, with the answer of each step
-// (operation_corpus.odin).
-operation_seed_sequences :: proc(allocator := context.allocator) -> [][]u8 {
+// checks it. When `expectations` is not nil, it receives the answer that
+// each named step of a seed case must get. A minimized fuzz finding is no
+// seed: it is a regression input of the corpus (operation_corpus.odin). A
+// seed case holds the variants of a finding that the corpus does not
+// hold, and is not repeated there.
+operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^[dynamic]Operation_Seed_Expectation = nil) -> [][]u8 {
 	list := make([dynamic][]u8, allocator)
+	expect :: proc(expectations: ^[dynamic]Operation_Seed_Expectation, list: ^[dynamic][]u8, items: ..Operation_Seed_Expectation) {
+		if expectations == nil {
+			return
+		}
+		for item in items {
+			named := item
+			named.sequence = len(list) - 1 // The seed that the last add wrote.
+			append(expectations, named)
+		}
+	}
 	add :: proc(list: ^[dynamic][]u8, sequence: operation_sequence.Sequence, allocator := context.allocator) {
 		sequence := sequence
 		size, _ := operation_sequence.size(&sequence)
@@ -483,13 +546,42 @@ operation_seed_sequences :: proc(allocator := context.allocator) -> [][]u8 {
 		steps := [?]operation_sequence.Sequence_Step{budget_read, too_large, absent, budget_read}
 		add(&list, operation_seed_sequence(steps[:]), allocator)
 	}
-	// A word past the operations, with and without a table of details.
+	// A word past the operations and the word 0, each with and without a
+	// table of details: each refused with Bad_Operation and the record
+	// Unknown_Operation, and no change of the budget. The corpus holds the
+	// finding of the word 0 in its one form; these are its variants.
 	{
 		unknown := operation_sequence.Sequence_Step{operation = u32(max(operation.Operation)) + 1}
 		no_table := unknown
 		no_table.flags = {.No_Error_Details}
-		steps := [?]operation_sequence.Sequence_Step{unknown, no_table}
+		none := operation_sequence.Sequence_Step{operation = u32(operation.Operation.None)}
+		none_no_table := none
+		none_no_table.flags = {.No_Error_Details}
+		steps := [?]operation_sequence.Sequence_Step{budget_read, unknown, no_table, none, none_no_table, budget_read}
 		add(&list, operation_seed_sequence(steps[:]), allocator)
+		for step in 1 ..= 4 {
+			expect(expectations, &list, Operation_Seed_Expectation{step = step, status = .Bad_Operation, record_kind = .Unknown_Operation})
+		}
+	}
+	// A commit whose memory and budget are 0 and whose count passes its
+	// limit, then the same decommit. The commit reads its budget, so it has
+	// the detail of the budget and the detail of the count; the decommit
+	// reads no budget, so it has the detail of the count and no detail of
+	// the budget. The budget does not change. The corpus holds the finding
+	// of the budget of a commit in its one form; these are its variants.
+	{
+		commit := operation_sequence.Sequence_Step{operation = u32(operation.Operation.Memory_Commit)}
+		commit.arguments[0] = {source = .Value, value = 0}
+		commit.arguments[3] = {source = .Value, value = max(u64)}
+		decommit := commit
+		decommit.arguments[4] = {source = .Value, value = transmute(u64)operation.Commit_Flags{.Decommit}}
+		steps := [?]operation_sequence.Sequence_Step{budget_read, commit, decommit, budget_read}
+		add(&list, operation_seed_sequence(steps[:]), allocator)
+		COMMIT_BUDGET_ARGUMENT :: 2
+		COMMIT_COUNT_ARGUMENT :: 4
+		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Handle_Absent, detail_argument = COMMIT_BUDGET_ARGUMENT})
+		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT})
+		expect(expectations, &list, Operation_Seed_Expectation{step = 2, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT, absent_detail_argument = COMMIT_BUDGET_ARGUMENT})
 	}
 	// A budget and a program from the budget of the runner, with their
 	// kinds: the stop of the runner ends both, and the budget of the
@@ -666,14 +758,15 @@ operation_sequences_step :: proc(machine: ^Machine, index: int, replay: string) 
 	defer os.close(mailbox.file)
 	inputs: [][]u8
 	regressions: []Operation_Regression_Input
+	expectations := make([dynamic]Operation_Seed_Expectation, context.temp_allocator)
 	if replay == "" {
-		inputs = operation_seed_sequences(context.temp_allocator)
+		inputs = operation_seed_sequences(context.temp_allocator, &expectations)
 		// Each regression input of the corpus, after the seeds. A file
 		// that the reader refuses fails the step: no input stays unrun.
 		problems: []string
 		regressions, problems = operation_regression_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
-		for problem in problems {
-			fmt.eprintfln("modustool: test failed: step %d: %s", index + 1, problem)
+		for input_problem in problems {
+			fmt.eprintfln("modustool: test failed: step %d: %s", index + 1, input_problem)
 		}
 		if len(problems) > 0 {
 			return false
@@ -691,33 +784,27 @@ operation_sequences_step :: proc(machine: ^Machine, index: int, replay: string) 
 	header := new(operation_sequence.Mailbox_Header, context.temp_allocator)
 	results := new(operation_sequence.Runner_Results, context.temp_allocator)
 	steps, findings_total := 0, 0
-	run :: proc(mailbox: ^Operation_Mailbox, grammar: ^Operation_Grammar, input: []u8, name: string, index: int, sequence: ^operation_sequence.Sequence, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, findings_total: ^int) -> bool {
-		if refusal := operation_sequence.check(input, sequence); refusal.problem != .None {
-			fmt.eprintfln("modustool: test failed: step %d: the sequence %s is refused by check: %v", index + 1, name, refusal)
-			return false
-		}
-		if failure := operation_execute(mailbox, input, header, results); failure != "" {
-			fmt.eprintfln("modustool: test failed: step %d: the sequence %s: %s", index + 1, name, failure)
-			return false
-		}
-		for finding in operation_findings(sequence, header, results, grammar) {
-			fmt.eprintfln("modustool: test failed: step %d: the sequence %s, step %d: %v: %s", index + 1, name, finding.step, finding.oracle, finding.text)
-			findings_total^ += 1
-		}
-		return true
-	}
 	for input, number in inputs {
-		run(&mailbox, &grammar, input, fmt.tprintf("%d", number), index, sequence, header, results, &findings_total) or_return
+		operation_sequence_run_checked(&mailbox, &grammar, input, fmt.tprintf("%d", number), index, sequence, header, results, &findings_total) or_return
 		steps += int(results.steps_run)
+		for expected in expectations {
+			if expected.sequence != number {
+				continue
+			}
+			if seed_problem := operation_seed_expectation_problem(expected, results); seed_problem != "" {
+				fmt.eprintfln("modustool: test failed: step %d: the sequence %d: %s", index + 1, number, seed_problem)
+				findings_total += 1
+			}
+		}
 	}
 	expected_steps := 0
 	for regression in regressions {
 		for input, place in regression.regression.life {
-			run(&mailbox, &grammar, input, fmt.tprintf("%d of the regression input %s", place, regression.name), index, sequence, header, results, &findings_total) or_return
+			operation_sequence_run_checked(&mailbox, &grammar, input, fmt.tprintf("%d of the regression input %s", place, regression.name), index, sequence, header, results, &findings_total) or_return
 			steps += int(results.steps_run)
 		}
-		if problem := operation_step_expectations_problem(regression.regression.expectations, results); problem != "" {
-			fmt.eprintfln("modustool: test failed: step %d: the regression input %s (%s): %s", index + 1, regression.name, regression.regression.signature, problem)
+		if answer_problem := operation_step_expectations_problem(regression.regression.expectations, results); answer_problem != "" {
+			fmt.eprintfln("modustool: test failed: step %d: the regression input %s (%s): %s", index + 1, regression.name, regression.regression.signature, answer_problem)
 			findings_total += 1
 		}
 		expected_steps += len(regression.regression.expectations)
@@ -725,7 +812,27 @@ operation_sequences_step :: proc(machine: ^Machine, index: int, replay: string) 
 	if findings_total > 0 {
 		return false
 	}
-	test_passed_print("the machine ran %d operation sequences and %d regression inputs, %d steps, through the mailbox: each status is in the reference of its operation, each table of error details agrees with the forms, each budget came back whole, and the %d steps of the last sequences of the regression inputs got their answers", len(inputs), len(regressions), steps, expected_steps)
+	test_passed_print("the machine ran %d operation sequences and %d regression inputs, %d steps, through the mailbox: each status is in the reference of its operation, each table of error details agrees with the forms, each budget came back whole, the %d answers of the seed cases came, and the %d steps of the last sequences of the regression inputs got their answers", len(inputs), len(regressions), steps, len(expectations), expected_steps)
+	return true
+}
+
+// operation_sequence_run_checked runs one sequence of the test part with
+// every oracle, and counts each broken oracle in findings_total. false: the
+// sequence is refused, or the mailbox failed, and the step ends.
+@(private = "file")
+operation_sequence_run_checked :: proc(mailbox: ^Operation_Mailbox, grammar: ^Operation_Grammar, input: []u8, name: string, scenario_step: int, sequence: ^operation_sequence.Sequence, header: ^operation_sequence.Mailbox_Header, results: ^operation_sequence.Runner_Results, findings_total: ^int) -> bool {
+	if refusal := operation_sequence.check(input, sequence); refusal.problem != .None {
+		fmt.eprintfln("modustool: test failed: step %d: the sequence %s is refused by check: %v", scenario_step + 1, name, refusal)
+		return false
+	}
+	if failure := operation_execute(mailbox, input, header, results); failure != "" {
+		fmt.eprintfln("modustool: test failed: step %d: the sequence %s: %s", scenario_step + 1, name, failure)
+		return false
+	}
+	for finding in operation_findings(sequence, header, results, grammar) {
+		fmt.eprintfln("modustool: test failed: step %d: the sequence %s, step %d: %v: %s", scenario_step + 1, name, finding.step, finding.oracle, finding.text)
+		findings_total^ += 1
+	}
 	return true
 }
 

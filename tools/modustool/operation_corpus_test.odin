@@ -265,7 +265,7 @@ the_answers_kept_from_a_machine_are_read_through_their_borders :: proc(t: ^testi
 // not exist holds no input.
 @(test)
 each_file_of_a_folder_of_regression_inputs_is_read_or_refused :: proc(t: ^testing.T) {
-	root := BUILD_FOLDER + "/operation_regression_inputs_test"
+	root :: BUILD_FOLDER + "/operation_regression_inputs_test"
 	defer {
 		_ = os.remove_all(root)
 	}
@@ -316,7 +316,7 @@ each_regression_input_of_the_corpus_is_run :: proc(t: ^testing.T) {
 // regression or reach is one too.
 @(test)
 the_corpus_of_the_operations_has_its_form :: proc(t: ^testing.T) {
-	root := BUILD_FOLDER + "/operation_corpus_form_test"
+	root :: BUILD_FOLDER + "/operation_corpus_form_test"
 	defer {
 		_ = os.remove_all(root)
 	}
@@ -342,7 +342,7 @@ the_corpus_of_the_operations_has_its_form :: proc(t: ^testing.T) {
 // of finding.txt are read last.
 @(test)
 the_life_of_a_finding_is_read_or_refused :: proc(t: ^testing.T) {
-	root := BUILD_FOLDER + "/operation_finding_life_test"
+	root :: BUILD_FOLDER + "/operation_finding_life_test"
 	defer {
 		_ = os.remove_all(root)
 	}
