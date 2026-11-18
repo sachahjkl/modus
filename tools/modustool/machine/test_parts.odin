@@ -137,7 +137,7 @@ test_parts := [?]Test_Part {
 	{name = "fails", does = "The machine of a start that fails: a boot image with no start policy, so the rescue start policy is absent too, and the boot display shows the cause", run = fails_tests_run, procedures = {"fails_tests_run"}, volumes = {build.BOOT_VOLUME_FAILS}},
 	{
 		name = "start_policy",
-		does = "The five machines of the rescue start policy (`ARCHITECTURE.md`, \"The start policy\"): the key R held at the start; a start list whose row of the console names a module that does not exist, so the rescue takes over; then three machines with one variable store: the boot program writes the boot entry `modus (rescue)`, `BootNext` to that entry starts the rescue, and the entry with a word that names no start request stops the boot program",
+		does = "The five machines of the rescue start policy (`ARCHITECTURE.md`, \"The start policy\"): the key R on the serial line, the console input of the firmware with no screen; a start list whose row of the console names a module that does not exist, so the rescue takes over; then three machines with one variable store: the boot program writes the boot entry `modus (rescue)`, `BootNext` to that entry starts the rescue, and the entry with a word that names no start request stops the boot program",
 		run = start_policy_tests_run,
 		procedures = {"start_policy_tests_run", "start_policy_boot_entry_tests_run"},
 		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_MISSING_CONSOLE},

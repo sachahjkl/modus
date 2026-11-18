@@ -42,6 +42,10 @@ SCRATCH_DISK :: foundation.BUILD_FOLDER + "/scratch_disk.img"
 
 SCRATCH_DISK_SUFFIX :: "_scratch_disk.img"
 
+// The FIFO of the input of the serial line of a test machine, beside its
+// log (serial_input_linux.odin).
+SERIAL_INPUT_SUFFIX :: "_serial_input.fifo"
+
 // The socket of the source of an entropy device that never answers, beside
 // the log of its machine.
 ENTROPY_SOURCE_SOCKET_SUFFIX :: "_entropy_source.socket"
@@ -146,8 +150,10 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // without_pit leaves the 8254 out of the machine (`pit=off`): the start of
 // the kernel with no time base (src/md/features/missing_hardware.md).
 // shared_variables: the variable store that the machines of a part share
-// (start_policy_scenario.odin), or "" for a new copy.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "") -> (command: []string, ok: bool) {
+// (start_policy_scenario.odin), or "" for a new copy. serial_input: the
+// FIFO that is the input of the serial line of a test machine, which the
+// caller made and opened (serial_input_linux.odin), or "" for none.
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -423,7 +429,14 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		} else {
 			append(&list, "-display", "none")
 		}
-		append(&list, "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator), "-monitor", "stdio")
+		// With an input, the same file is the output of a file chardev, and
+		// the FIFO beside it its input: each reader of the log is the same.
+		if serial_input != "" {
+			append(&list, "-chardev", strings.concatenate({"file,id=serial0,path=", test_output, ",input-path=", serial_input}, context.temp_allocator), "-serial", "chardev:serial0")
+		} else {
+			append(&list, "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator))
+		}
+		append(&list, "-monitor", "stdio")
 		append(&list, "-qmp", strings.concatenate({"unix:", qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
 		// A second socket of the same protocol, for the worker of a film:
 		// its pictures and the keys of the scenario never share a reply

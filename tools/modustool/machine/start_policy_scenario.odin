@@ -11,7 +11,8 @@ import "modustool:foundation"
 
 // The machines of the rescue start policy (src/md/features/start_policy.md):
 //
-// 1. the key R, pressed until the boot program reads it: the root service
+// 1. the key R, written on the serial line, the console input of the
+//    firmware with no screen, until the boot program reads it: the root service
 //    starts the rescue start policy in place of the default one, and the
 //    rescue makes the machine usable with its console;
 // 2. a start list with a row of `shortage`, which this image does not hold,
@@ -99,7 +100,9 @@ scenario_start_policy_boot_next := [?]Step {
 RESCUE_ENTRY_WRONG_WORD :: u32(max(info.Start_Request)) + 1
 
 start_policy_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	machine_test(part, scenario_start_policy_key[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_START_POLICY_KEY, exit_status = 0}) or_return
+	// The key R on the serial line: the console input of the firmware of a
+	// machine with no screen (-display none).
+	machine_test(part, scenario_start_policy_key[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_START_POLICY_KEY, exit_status = 0, serial_input = true}) or_return
 	machine_test(part, scenario_start_policy_missing_console[:], {volume = build.BOOT_VOLUME_MISSING_CONSOLE, output = TEST_OUTPUT_START_POLICY_MISSING_CONSOLE, exit_status = 0}) or_return
 	return start_policy_boot_entry_tests_run(part)
 }
