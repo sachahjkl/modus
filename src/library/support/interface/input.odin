@@ -66,13 +66,19 @@ Input :: struct {
 	wheel:                int,
 	keys:                 [KEY_CAPACITY]Key_Press, // The keys of the frame, in order.
 	key_count:            int, // The keys in use.
+	// The keys of the clipboard of the principal (src/md/features/clipboard.md),
+	// which window_events keeps for the next frame: the element with the
+	// focus takes them, and window_frame_end answers after the frame.
+	copy_asked:           bool, // A copy waits for the text of the element with the focus.
+	paste:                display.Event, // A paste (kind Pasted) for the element with the focus, or kind None.
+	paste_window:         ^display.Window, // The window of the paste: the element reads it with display.paste_read.
 }
 
 // input_add adds one display event to the input of a frame. It gives false
 // for an event that it does not take (a key released).
 input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 	switch event.kind {
-	case .None, .Settings_Changed, .Go_To, .Resized:
+	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
 		// The window layer takes these events itself (window_events).
 	case .Pointer:
 		input.pointer_x, input.pointer_y = event.x, event.y
@@ -216,6 +222,9 @@ Frame :: struct {
 	act_name_count:      int, // The entries of `act_names` in use.
 	act_names_dropped:   int, // The act names that the frame did not keep: too long, empty, or past the capacity.
 	element_places:      Element_Places, // The named elements of this frame, so far (element_name): a window writes their changes on the log.
+	copied:              []u8, // The text that the element with the focus gives to a copy: memory of the caller, until the end of the frame.
+	copy_given:          bool, // An element took the copy of this frame.
+	paste_taken:         bool, // An element took the paste of this frame, inserted or refused.
 }
 
 // frame_begin clears the table and starts a frame. Tab and Shift+Tab move

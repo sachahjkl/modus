@@ -403,8 +403,44 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		if event.kind == .Resized && display.surface_resize(window, event.width, event.height) == .Ok {
 			draw_whole_window_next(drawing)
 		}
+		// The keys of the clipboard wait for the next frame, whose element
+		// with the focus takes them (clipboard_answer).
+		if event.kind == .Copy_Asked {
+			drawing.input.copy_asked = true
+		}
+		if event.kind == .Pasted {
+			// A newer paste: the compositor ended the lend of the one
+			// before, which no frame took.
+			if drawing.input.paste.kind == .Pasted {
+				display.paste_refuse(window, drawing.input.paste)
+			}
+			drawing.input.paste, drawing.input.paste_window = event, window
+		}
 	}
 	return came
+}
+
+// clipboard_answer answers, after a frame, the keys of the clipboard that
+// the frame had: the text that an element gave to a copy, or no content;
+// and a paste that no element took. Then the frame holds them no more.
+@(private = "file")
+clipboard_answer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
+	input := &drawing.input
+	if input.copy_asked {
+		if frame.copy_given {
+			display.copy_send(window, frame.copied)
+		} else {
+			display.copy_decline(window)
+		}
+		input.copy_asked = false
+	}
+	if input.paste.kind == .Pasted {
+		if !frame.paste_taken {
+			display.paste_refuse(window, input.paste)
+		}
+		input.paste, input.paste_window = {}, nil
+	}
+	frame.copied, frame.copy_given, frame.paste_taken = nil, false, false
 }
 
 // draw_whole_window_next makes the next frame of each picture of the
@@ -470,6 +506,7 @@ window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time
 // measures the time between them.
 window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> int {
 	frame_end(frame)
+	clipboard_answer(drawing, frame, window)
 	input_clear(&drawing.input)
 	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start
@@ -579,6 +616,7 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 // nothing and does not present.
 window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> bool {
 	frame_end(frame)
+	clipboard_answer(drawing, frame, window)
 	input_clear(&drawing.input)
 	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start

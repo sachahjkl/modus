@@ -371,6 +371,12 @@ change :: proc "contextless" () {
 // key first when it is open; else Enter runs the line, Tab completes, Up
 // and Down walk the line history, and a printable key edits the line.
 key :: proc "contextless" (pressed: Key) {
+	// A key record with no key code is a character of a paste: the
+	// terminal types a paste so (src/md/features/clipboard.md). A key of
+	// the keyboard always has a code.
+	if pressed.code == 0 && line_editor.printable(pressed.character) {
+		pasted_characters += 1
+	}
 	if completion_key(pressed) {
 		return
 	}
@@ -447,6 +453,12 @@ history_walk :: proc "contextless" (step: int) {
 shown: [terminal.RUN_LIMIT]u8
 shown_count := -1
 shown_cursor: u64
+// The characters of a paste that the line took since edit_show last gave
+// the line to the terminal, and whether a line with a paste was shown and
+// is not empty again: a machine test waits for the two lines of the log
+// before it takes a picture of the line.
+pasted_characters: u64
+paste_shown: bool
 
 edit_show :: proc "contextless" () {
 	buffer: [terminal.RUN_LIMIT]u8
@@ -498,6 +510,15 @@ edit_show :: proc "contextless" () {
 			terminal.code_runs_send(&output, .Edit, 0, runs[:run_count])
 		}
 		terminal.edit(&output, text, cursor, style)
+		// The terminal has the line now: its next picture shows it.
+		if !running && pasted_characters > 0 {
+			pasted_characters = 0
+			paste_shown = true
+			system.log("console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
+		} else if !running && paste_shown && len(line_editor.line_text(&line)) == 0 {
+			paste_shown = false
+			system.log("console: the line is empty again after a paste")
+		}
 	}
 	completion_show()
 }

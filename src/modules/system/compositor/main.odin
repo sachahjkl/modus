@@ -33,6 +33,8 @@
 // - drag an edge or a corner of a
 //   [resizable window](term:resizable-window): its program draws it at
 //   the new size (window_resize.odin);
+// - press Control+C and Control+V: the [clipboard](term:clipboard) copies
+//   from the window in front and pastes into it (clipboard.odin);
 // - press the close button: the root service stops the program.
 //
 // The keys go to the window in front, unless the palette is open.
@@ -97,6 +99,7 @@ import "modus:support/interface"
 import "modus:private/compositor/bar"
 import "modus:support/mark"
 import "modus:private/compositor/palette"
+import clipboard_rules "modus:private/compositor/clipboard"
 import "modus:contract/ring"
 import "modus:support/key_path"
 import "modus:support/system"
@@ -206,6 +209,8 @@ Client :: struct {
 	resize_asked_width, resize_asked_height: int,
 	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
 	resizes_refused: u64, // The Surface_Resize and Resize_Declined records that the compositor refused.
+	clipboard: clipboard_rules.Window_State, // What waits for an answer of the program to a key of the clipboard (clipboard.odin).
+	clipboard_refused: u64, // The Copy, Copy_Declined and Paste_Taken records that the compositor refused.
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -696,7 +701,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The border refused None above.
 			case .Key:
 				key_records += 1
-				if !palette_key(u32(record.values[0]), display.key_character_of(record.values[1]), record.values[2] != 0, u32(record.values[3])) && order_count > 0 {
+				character := display.key_character_of(record.values[1])
+				switch {
+				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
+					// The palette took the key.
+				case clipboard_key(character, u32(record.values[3]), record.values[2] != 0):
+					// A key of the clipboard goes to no program (clipboard.odin).
+				case order_count > 0:
 					send(&clients[order[order_count - 1]], .Key, record.values)
 				}
 			case .Pointer:
@@ -805,6 +816,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					surface_resize_take(&client, record)
 				case .Resize_Declined:
 					resize_declined_take(&client)
+				case .Copy:
+					clipboard_copy_take(index, record) // clipboard.odin
+				case .Copy_Declined:
+					clipboard_answer_take(index, .Copy_Declined, record)
+				case .Paste_Taken:
+					clipboard_answer_take(index, .Paste_Taken, record)
 				}
 			}
 			// The program can wait until this loop took its last picture
@@ -943,6 +960,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if client.commands_refused != 0 {
 			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
+		clipboard_client_remove(index) // clipboard.odin
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
