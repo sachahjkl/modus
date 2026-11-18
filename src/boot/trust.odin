@@ -194,7 +194,7 @@ check_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 	case .None, .Not_Valid, .Image_Not_Valid, .Count_Differs:
 		// No one file of the boot image is at fault.
 	}
-	trust_stop(boot, step, string(shown.bytes[:shown.count]))
+	boot_stop(boot, step, string(shown.bytes[:shown.count]))
 }
 
 // trust_fail writes one failure on the log and on the boot display, then
@@ -203,21 +203,7 @@ trust_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 	print("boot program: ")
 	print(text)
 	print("\r\n")
-	trust_stop(boot, step, text)
-}
-
-// trust_stop shows the failure and keeps it on the screen. The watchdog of
-// the firmware restarts the machine after 5 minutes and starts the same
-// boot program again: the boot program turns the watchdog off, so the
-// failure stays until a person stops the machine.
-trust_stop :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, text: string) -> ! {
-	display(boot, text, .Failed, step)
-	// After the draw, print writes on the serial port only (src/boot/main.odin).
-	print("boot program: the boot display shows the failure\r\n")
-	system.boot_services.set_watchdog_timer(0, 0, 0, nil)
-	for {
-		intrinsics.cpu_relax()
-	}
+	boot_stop(boot, step, text)
 }
 
 // The commands of the TPM that the boot program sends (TPM 2.0 Library,

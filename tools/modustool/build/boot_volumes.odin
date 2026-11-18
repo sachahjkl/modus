@@ -61,7 +61,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 16 fixed ones and one
+// boot_volumes gives every boot volume of the build: 17 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -91,6 +91,10 @@ boot_volumes :: proc() -> []Boot_Volume {
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_CHANGED_KERNEL, image = BOOT_IMAGE, kernel = "kernel", change = {kernel_changed_after_description = true}})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_WITHOUT_DESCRIPTION, image = BOOT_IMAGE, kernel = "kernel", change = {description_left_out = true}})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_STATED_HASH, image = BOOT_IMAGE, kernel = "kernel", change = {stated_hash_changed_module = CHANGED_MODULE}})
+	// A volume that passes each check and asks more memory than the
+	// machine has: the boot program stops with its message on the boot
+	// display.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_KERNEL_MEMORY_RAISED, image = BOOT_IMAGE, kernel = "kernel", change = {kernel_memory_raised = true}})
 	// Secure Boot: the boot program signed with the firmware signing key
 	// (with the variable store that enrols its certificate), and the same
 	// with one byte changed.
@@ -149,9 +153,10 @@ boot_volume_record_path :: proc(volume: Boot_Volume) -> string {
 
 // boot_volume_kernel_module_path gives the kernel module that the boot
 // program of a volume holds: the module of the build, or the copy with one
-// byte changed that boot_image_signed_write writes beside the volume.
+// byte changed or with its memory raised that boot_image_signed_write
+// writes beside the volume.
 boot_volume_kernel_module_path :: proc(volume: Boot_Volume) -> string {
-	if volume.change.kernel_changed_after_description {
+	if volume.change.kernel_changed_after_description || volume.change.kernel_memory_raised {
 		return foundation.join(strings.trim_suffix(signed_image_path(volume.path), ".image"), "_kernel.module")
 	}
 	return foundation.module_path(volume.kernel)
@@ -922,6 +927,10 @@ BOOT_VOLUME_CHANGED_KERNEL :: foundation.BUILD_FOLDER + "/boot_volume_changed_ke
 BOOT_VOLUME_WITHOUT_DESCRIPTION :: foundation.BUILD_FOLDER + "/boot_volume_without_description.img"
 
 BOOT_VOLUME_STATED_HASH :: foundation.BUILD_FOLDER + "/boot_volume_stated_hash.img"
+
+// A volume that the boot program cannot start: its kernel asks more memory
+// than the machine has (Image_Change.kernel_memory_raised).
+BOOT_VOLUME_KERNEL_MEMORY_RAISED :: foundation.BUILD_FOLDER + "/boot_volume_kernel_memory_raised.img"
 
 // The boot program signed for Secure Boot, and the same with one byte
 // changed after the signature (secure_boot.odin).

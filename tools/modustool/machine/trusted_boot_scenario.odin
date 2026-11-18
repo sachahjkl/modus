@@ -19,7 +19,10 @@ import "modustool:build"
 //   3. one byte of the kernel module changed;
 //   4. a boot image with no system description;
 //   5. an entry of console that states another hash, with the right bytes.
-// Each names the file and stops, and the kernel never starts.
+// Each names the file and stops, and the kernel never starts. Then a
+// volume that passes each check and whose kernel asks more memory than the
+// machine has: the boot program stops with its message on the boot
+// display, as for a refusal, and waits.
 // With the firmware with a TPM driver and no system management mode, and a
 // software TPM (swtpm):
 //   6. the boot program measures the description into PCR 11 and reads it
@@ -67,6 +70,7 @@ TEST_OUTPUT_WRONG_SIGNATURE :: foundation.BUILD_FOLDER + "/test_output_wrong_sig
 TEST_OUTPUT_CHANGED_KERNEL :: foundation.BUILD_FOLDER + "/test_output_changed_kernel.txt"
 TEST_OUTPUT_WITHOUT_DESCRIPTION :: foundation.BUILD_FOLDER + "/test_output_without_description.txt"
 TEST_OUTPUT_STATED_HASH :: foundation.BUILD_FOLDER + "/test_output_stated_hash.txt"
+TEST_OUTPUT_KERNEL_MEMORY_RAISED :: foundation.BUILD_FOLDER + "/test_output_kernel_memory_raised.txt"
 TEST_OUTPUT_MEASURED :: foundation.BUILD_FOLDER + "/test_output_measured.txt"
 TEST_OUTPUT_OTHER_SYSTEM :: foundation.BUILD_FOLDER + "/test_output_other_system.txt"
 TEST_OUTPUT_SECURE_BOOT :: foundation.BUILD_FOLDER + "/test_output_secure_boot.txt"
@@ -284,6 +288,18 @@ scenario_stated_hash := [?]Step {
 	{kind = .Quit},
 }
 
+// The kernel asks more memory than the machine has: each check passes, the
+// firmware gives no pages, and the boot program stops with its message on
+// the boot display, in place of a power off (src/boot/main.odin, stop).
+// The tool ends the machine, which waits.
+scenario_kernel_memory_raised := [?]Step {
+	{kind = .Wait, text = "boot program: started"},
+	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description"},
+	{kind = .Wait, text = "boot program: the firmware gives no memory for "},
+	{kind = .Wait, text = "boot program: the boot display shows the failure"},
+	{kind = .Quit},
+}
+
 MEASURE_LINE :: "boot program: PCR 11 = "
 // The line of the boot program that says who verified it: the firmware
 // with Secure Boot, or the boot program alone.
@@ -331,15 +347,16 @@ scenario_secure_boot_refused := [?]Step {
 	{kind = .Quit},
 }
 
-// trusted_boot_tests_run runs the ten machines: the five refusals of the
-// boot program, the two machines of the measure, and the three machines of
-// Secure Boot.
+// trusted_boot_tests_run runs the eleven machines: the five refusals of the
+// boot program, the stop for memory, the two machines of the measure, and
+// the three machines of Secure Boot; then the release image and the floors.
 trusted_boot_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	refused_machine_run(part, scenario_changed_module[:], build.BOOT_VOLUME_CHANGED_MODULE, TEST_OUTPUT_CHANGED_MODULE) or_return
 	refused_machine_run(part, scenario_wrong_signature[:], build.BOOT_VOLUME_WRONG_SIGNATURE, TEST_OUTPUT_WRONG_SIGNATURE) or_return
 	refused_machine_run(part, scenario_changed_kernel[:], build.BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
 	refused_machine_run(part, scenario_without_description[:], build.BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
 	refused_machine_run(part, scenario_stated_hash[:], build.BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
+	refused_machine_run(part, scenario_kernel_memory_raised[:], build.BOOT_VOLUME_KERNEL_MEMORY_RAISED, TEST_OUTPUT_KERNEL_MEMORY_RAISED) or_return
 	measured := measure_machine_run(part, scenario_measured[:], build.BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
 	other := measure_machine_run(part, scenario_other_system[:], build.BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
 	if measured == other {

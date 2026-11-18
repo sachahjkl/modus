@@ -227,7 +227,8 @@ A UEFI program (P17). It runs before the kernel. It holds the kernel module, the
 - Verifies the description signature, then compares the kernel module and each module and resource of the boot image with the system description (`docs/TRUSTED_BOOT.md`). A failed check stops the boot: the boot display shows the file and the two hashes, and the kernel does not start.
 - Asks the firmware to measure the system description into PCR 11 of the TPM, and reads the register back.
 - Loads the kernel module.
-- Collects the memory map, the framebuffer and the device list.
+- Collects the memory map, the framebuffer and the device list. The buffer of the memory map takes the size that the firmware asks. The boot record holds 1024 ranges: each usable range is kept, and the reserved ranges past the room are left out with one line.
+- A stop for memory, for the memory map or for the kernel module stays on the boot display with the watchdog of the firmware off, as a failed check does; the machine is not powered off.
 - Gives all of this to the kernel in one fixed structure, with the trust record, then leaves the firmware.
 - With Secure Boot on, the firmware verifies the boot program before it starts it, and the trust record says so (`docs/TRUSTED_BOOT.md`, "7. Secure Boot"). With Secure Boot off, nothing verifies the boot program itself: its checks then find a damaged or swapped file, not an attacker who can write the boot volume.
 

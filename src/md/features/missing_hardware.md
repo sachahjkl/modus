@@ -29,10 +29,20 @@ The places, by the risk for a user:
 | No PS/2 controller | The input service spins on one processor for ever | The input service writes its line and stops; the root service starts the other services |
 | A frame service that stops after it maps its ring | The network service waits with no end | The network service holds the handle of the frame service, writes its line and stops |
 | An IOMMU unit that does not finish its first invalidation | The machine stops | No device service holds memory yet, so the units go off and the machine runs as a machine with no IOMMU, with its line |
-| A stop of the boot program for memory or for the map of the firmware | A message on the firmware console, then a power off at once | The message stays on the boot display, the watchdog is off, and the boot program waits, as for a refusal of trust |
+| A stop of the boot program for memory or for the map of the firmware | A message on the firmware console, then a power off at once | Built: the message stays on the boot display, the watchdog is off, and the boot program waits, as for a refusal of trust; the buffer of the map takes the size that the firmware asks; past the room of the boot record, only reserved ranges are left out, with their line ("The stop of the boot program") |
 | An xsave area that the processor does not read back | `Start_Failed` | One more proof with the form `fxsave`, with its line |
 | No table of the APIC | One processor, with no line | One processor, with its line |
 | An entropy read that never completes | The fresh bytes stop with no line | A deadline; the read counts as refused |
+
+## The stop of the boot program
+
+The boot program cannot run a smaller system: with no memory for the kernel, or no map of the memory, no kernel starts. Its stop is needed; the fault was its silence. The code is `stop` and `boot_stop` in `src/boot/main.odin`, and the arithmetic of the map in `src/library/support/firmware_memory_map`, which the host tests run.
+
+- **One stop for each failure.** A refusal of trust and a stop for memory, for the map or for the kernel module take the same path: the line on the log, the failure in red on the boot display with its step, the watchdog off, then a wait. With no screen, or before the boot record has its pages, the line stays on the console of the firmware, and a second line says so. A power off is refused: it removes the message before anyone reads it, and a machine whose firmware restarts it would run the same failure again.
+- **The buffer of the map.** The first read of the map asks its size with a buffer of no byte. The buffer then gets that size and a margin of 8 descriptors, because its own allocation, and the free of a smaller buffer, split ranges of the map. Each read that is too small again gets a larger buffer, up to 4 reads; then the boot program stops. A size past 4 MiB, a step between descriptors below the 40 bytes of the specification, and a size of 0 stop it too.
+- **The room of the boot record.** The kernel receives at most 1024 ranges. It reads an address that no range lists as an address that a device can hold (`device_range`): a usable range left out could then be given to a device service, the pages of the kernel too. So each `Free` and `Boot` range is kept, and only `Reserved` ranges are left out, which the kernel reads as it reads an address of no range. A range that follows the last one, with the same kind, joins it, so a map has far fewer ranges than descriptors. The boot program counts the usable ranges first; when they alone pass the room, it stops. The reserved ranges left out give one line, on the serial port, after the end of the firmware services: `boot program: the memory map has more ranges than the 1024 of the boot record: <count> reserved ranges of <pages> pages are left out, and the kernel reads them as reserved`.
+- **Refused: drop the ranges past the room in the order of the map.** That form was silent, and a usable range at the end of the map was lost: with the rule of `device_range`, that is a breach, not a smaller system.
+- **Refused: a fixed buffer of more pages.** Any fixed size is a bet on the firmware; the firmware states the size it needs.
 
 ## The tests
 
@@ -42,7 +52,8 @@ Each absence has a machine test that removes the part from QEMU, and checks its 
 - no PIT: `-machine q35,pit=off`;
 - no screen: `-vga none`, then a call through `remote`;
 - no network device, no data disk: the machine leaves the device out;
-- a disk that stops to answer: the NBD server of the tool stops to answer after a count of requests.
+- a disk that stops to answer: the NBD server of the tool stops to answer after a count of requests;
+- a stop of the boot program: a test volume of `test trusted_boot` whose kernel states 1 TiB more memory, signed as it is, so each check passes and the firmware gives no pages; the test waits for `boot program: the firmware gives no memory for ` and `boot program: the boot display shows the failure`, then the tool ends the machine, which waits. No firmware of the tests gives a map past 1024 ranges or a map that grows at each read: the host tests of `firmware_memory_map` cover those, with 0 ranges, exactly 1024, and 1025.
 
 ## The refused forms
 

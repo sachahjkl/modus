@@ -2,6 +2,7 @@ package build
 
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/module"
 import "modus:contract/replacement_list"
 import "modus:contract/system_description"
 import "core:fmt"
@@ -72,6 +73,11 @@ Image_Change :: struct {
 	// One byte of the kernel module changes after the description is made:
 	// the boot program must refuse the volume at the kernel.
 	kernel_changed_after_description:  bool,
+	// The kernel module states KERNEL_MEMORY_RAISE more bytes of memory,
+	// before the description is made: the checks pass, and the firmware
+	// gives no memory for the kernel, so the boot program must stop with
+	// its message on the boot display.
+	kernel_memory_raised:              bool,
 	// The boot image has no description and no signature: the boot program
 	// must refuse the volume.
 	description_left_out:              bool,
@@ -316,6 +322,9 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 		image_file_change(files[:module_count], change.module_changed_before_description) or_return
 	}
 	kernel := foundation.read_file(foundation.module_path(kernel_name)) or_return
+	if change.kernel_memory_raised {
+		kernel = kernel_memory_raise(kernel) or_return
+	}
 
 	key := signing_key_read() or_return
 	// The private key leaves the memory of the tool after its uses: the
@@ -369,10 +378,12 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	}
 	signed.kernel_module_path = foundation.module_path(kernel_name)
 	kernel_held := kernel
-	if change.kernel_changed_after_description {
-		kernel_held = make([]u8, len(kernel), context.temp_allocator)
-		copy(kernel_held, kernel)
-		kernel_held[len(kernel_held) - 1] ~= 0x01
+	if change.kernel_changed_after_description || change.kernel_memory_raised {
+		if change.kernel_changed_after_description {
+			kernel_held = make([]u8, len(kernel), context.temp_allocator)
+			copy(kernel_held, kernel)
+			kernel_held[len(kernel_held) - 1] ~= 0x01
+		}
 		signed.kernel_module_path = strings.concatenate({strings.trim_suffix(output_path, ".image"), "_kernel.module"}, context.temp_allocator)
 		if err := os.write_entire_file(signed.kernel_module_path, kernel_held); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", signed.kernel_module_path, err)
@@ -405,6 +416,31 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	}
 	signed.signed_by_test_key = key.is_test
 	return signed, true
+}
+
+// The memory that the kernel of the test of a stop of the boot program
+// states past its own: 1 TiB, more than any test machine has, so the
+// firmware gives no pages for it (Image_Change.kernel_memory_raised).
+KERNEL_MEMORY_RAISE :: u64(1) << 40
+
+// kernel_memory_raise gives a copy of a kernel module whose header states
+// KERNEL_MEMORY_RAISE more bytes of memory. Each segment stays inside it,
+// so the module stays valid; only the size of its address range changes.
+kernel_memory_raise :: proc(kernel: []u8) -> (raised: []u8, ok: bool) {
+	head, error := module.header(kernel)
+	if error != .None || head.memory_size > max(u64) - KERNEL_MEMORY_RAISE {
+		fmt.eprintfln("modustool: the kernel module has no header whose memory size can grow (%v)", error)
+		return nil, false
+	}
+	raised = make([]u8, len(kernel), context.temp_allocator)
+	copy(raised, kernel)
+	head.memory_size += KERNEL_MEMORY_RAISE
+	copy(raised[:size_of(module.Header)], mem.ptr_to_bytes(&head))
+	if module.validate(raised) != .None {
+		fmt.eprintln("modustool: the kernel module with its memory raised is not valid")
+		return nil, false
+	}
+	return raised, true
 }
 
 // system_key_write writes the public key of the signing key of the build,
