@@ -42,7 +42,7 @@ The compositor measures all three, with `system.nanoseconds()`, the clock of the
 
 | Measure | From | To | Its line |
 |---|---|---|---|
-| The time of a frame | The read of the first record (of the root service, of the input service or of a window) in the turn that draws the frame; the start of the draw when that turn read none | The end of the copy into the screen page and of its page flip | Each 64 frames, and with each line of the keys; over the last 64 frames |
+| The time of a frame | The read of the first record (of the root service, of the input service or of a window) in the turn that draws the frame; the start of the draw when that turn read none | The end of the copy into the screen page and of its page flip | Each 4096 frames, about once a minute, so that the measure does not fill the log of the system; and with each line of the keys; over the last 64 frames |
 | The time of a key to the screen | The read of the byte of the key by the input service, which writes the time in its record (not the interrupt: the input service reads the byte just after it) | The flip of the frame that draws the Present that names the key | Each 16 keys that a window named |
 | The start of a window | The call of `system.program_start` by the root service, which loads the module and makes `Program_Start` | The flip of the first frame that draws the first Present of the window | One line for each window, when both times are known |
 
@@ -65,7 +65,7 @@ compositor: measure: the start of the window <name>, from Program_Start to its f
 So the key is measured to the frame that shows its character, not to a frame that only came after it. A key that does not change the edit line stays sent, and the next edit of the line ties it late; its time is then too long, never too short. The cases:
 
 - a key that the terminal drops because the queue of its program is full, or that the console drops while a line runs and its keys that wait are full;
-- a key that the completion list takes, which moves the list and not the line;
+- a key that the completion list takes, which moves the list and not the line: Tab, Enter or Escape while a list is open (`completion_key` in `src/modules/system/console/completion.odin`); the arrows and Control+R or Control+S have no measure, because the compositor gives a serial only to a key with a character and no Control;
 - a character of the history search, which changes the search and not the line.
 
 A window that names no serial ties none. A Present that names a serial past the newest key that its window got is refused and counted, as an `Edit` record whose serial is past the newest key that the terminal forwarded: a program cannot name the key of another window, nor hold the measure with the largest serial. When the table is full, a new key takes the place of the oldest key that is not shown, and of the oldest shown key only when all are shown; each such key is a lost measure, and counted. The counts of the lost keys and of the refused serials come in one line after a line of the keys, when they changed: the table holds measures, not records of input.

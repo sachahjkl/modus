@@ -14,9 +14,11 @@ import "modus:support/system"
 // The keys of a line of the key to the screen. The line of the frames
 // comes with it, so a machine test that types more characters than this
 // into the console sees both; it also comes alone after FRAMES_OF_A_LINE
-// frames, with no key.
+// frames, with no key. That count is large, about one line a minute at
+// 60 frames a second: the log of the system keeps 2047 records for every
+// program, and a line each second would push the records of the others out.
 KEYS_OF_A_LINE :: 16
-FRAMES_OF_A_LINE :: 64
+FRAMES_OF_A_LINE :: 4096
 
 frame_samples: quality.Samples // The last frames.
 key_samples: quality.Samples // The keys since the last line.
