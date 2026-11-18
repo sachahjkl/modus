@@ -2355,6 +2355,58 @@ a_refused_record_damages_its_box :: proc(t: ^testing.T) {
 	testing.expect_value(t, damage.rectangles[0], Rectangle{50, 50, 60, 60})
 }
 
+// The difference compares a text with the place of its bytes in the text
+// table masked: the same text at another place damages nothing, and a text
+// whose bytes, color or count changed damages its box. The interface text
+// and the plain text take the same path.
+@(test)
+a_text_at_another_place_in_the_text_table_damages_nothing :: proc(t: ^testing.T) {
+	before_memory, now_memory: Tables
+	before := table_of(&before_memory)
+	now := table_of(&now_memory)
+	draw_text(&before, 0, 0, "ab", 0xFFFFFF)
+	draw_text(&before, 0, 40, "same", 0xFFFFFF)
+	draw_text(&now, 0, 0, "abcdef", 0xFFFFFF)
+	draw_text(&now, 0, 40, "same", 0xFFFFFF)
+	testing.expect(t, record_view(before.records[1]).first != record_view(now.records[1]).first, "the second text is at another place")
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], damage_bounds_of_two(record_rectangle(before.records[0]), record_rectangle(now.records[0])))
+	// The same place and count, other bytes: damaged.
+	other_memory: Tables
+	other := table_of(&other_memory)
+	draw_text(&other, 0, 0, "abcdef", 0xFFFFFF)
+	draw_text(&other, 0, 40, "sane", 0xFFFFFF)
+	damage = {}
+	damage_by_difference(&now, &other, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(other.records[1]))
+	// Another color at another place: damaged.
+	colored_memory: Tables
+	colored := table_of(&colored_memory)
+	draw_text(&colored, 0, 0, "ab", 0xFFFFFF)
+	draw_text(&colored, 0, 40, "same", 0x00FF00)
+	damage = {}
+	damage_by_difference(&now, &colored, &damage)
+	testing.expect(t, damage.count >= 1, "a text of another color is damaged")
+	found := false
+	for index in 0 ..< damage.count {
+		found ||= contains(damage.rectangles[index], record_rectangle(colored.records[1]))
+	}
+	testing.expect(t, found, "the box of the text of another color is in the damage")
+}
+
+@(private = "file")
+damage_bounds_of_two :: proc(first, second: Rectangle) -> Rectangle {
+	return {min(first.left, second.left), min(first.top, second.top), max(first.right, second.right), max(first.bottom, second.bottom)}
+}
+
+@(private = "file")
+contains :: proc(outer, inner: Rectangle) -> bool {
+	return outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
+}
+
 // A line that becomes refused: its box is damaged, where version 10 of the
 // record damaged nothing for a refused line, and it draws nothing.
 @(test)

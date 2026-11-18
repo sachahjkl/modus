@@ -1,6 +1,5 @@
 package interface
 
-import "base:intrinsics"
 import "modus:contract/draw_record"
 import "modus:contract/text_encoding"
 import "modus:support/graphics"
@@ -48,7 +47,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		// One copy of each record, read through the border: a table can be
 		// in memory that another program writes during the call, and each
 		// check and each draw reads this copy.
-		record := intrinsics.volatile_load(&table.records[index])
+		record := draw_record.copy_once(&table.records[index])
 		primitive, problem := draw_record.read(record)
 		if problem != .None {
 			continue

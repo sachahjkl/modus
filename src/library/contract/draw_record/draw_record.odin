@@ -23,6 +23,7 @@
 // See [draw record](term:draw-record) and [draw table](term:draw-table).
 package draw_record
 
+import "base:intrinsics"
 import "modus:contract/enum_word"
 
 // The version of the form of the record. A change of a kind, of a field,
@@ -288,6 +289,21 @@ draw_kind_of_word :: proc "contextless" (word: u8) -> (kind: Draw_Kind, ok: bool
 // font_weight_of_word reads the word of the weight of a text.
 font_weight_of_word :: proc "contextless" (word: u8) -> (weight: Font_Weight, ok: bool) {
 	return enum_word.member_of_word(Font_Weight, u64(word))
+}
+
+// The record as words of 64 bits: the unit of the one copy.
+RECORD_WORDS :: RECORD_SIZE / size_of(u64)
+
+#assert(RECORD_SIZE % size_of(u64) == 0)
+
+// copy_once takes the one copy of a record that a reader then checks: a
+// table can be in memory that another program writes during the read, so
+// each byte is loaded once and never again. The copy is six loads of 64
+// bits: a volatile load of the whole struct is compiled field by field and
+// byte by byte for the arrays, which made the difference of two frames
+// twice as slow.
+copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Record {
+	return transmute(Draw_Record)intrinsics.volatile_load((^[RECORD_WORDS]u64)(record))
 }
 
 // read is the border of a draw record. It takes the one copy of a record

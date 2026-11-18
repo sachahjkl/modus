@@ -1,6 +1,5 @@
 package interface
 
-import "base:intrinsics"
 import "modus:contract/draw_record"
 import "modus:support/graphics"
 
@@ -61,52 +60,78 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // equal case is one comparison of 48 bytes, with no read through the
 // border: two records with the same bytes draw the same thing, also two
 // records that the border refuses, which draw nothing in both frames. Only
-// a text compares its bytes too. Two records whose bytes differ are read
-// through the border: a refused record is then equal to no record, and its
-// box is damaged; two records that it reads are equal only when they differ
-// in the first byte of a range, as the border keeps each other byte
-// canonical (each unused byte and the high byte of each color are 0).
+// a text compares its bytes too. The border keeps each byte of a record
+// that it reads canonical (each unused byte and the high byte of each color
+// are 0), so two records whose bytes differ draw different things, or one
+// of them draws nothing: they are not equal, and no read through the border
+// is needed to know it. The one exception is the first byte of the range of
+// a Text, an Interface_Text or a Text_Grid, which can move in the text table
+// with no change of what is drawn: those records are compared with that
+// word masked. Two refused records that are equal under the mask draw
+// nothing in both frames, or are damaged by the comparison of their texts
+// or by the grid; the damage can be too large, never too small.
 records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now: ^Draw_Table, new: Draw_Record) -> bool {
-	if old == new {
-		kind, known := draw_record.draw_kind_of_word(new.kind)
+	old_words := transmute([draw_record.RECORD_WORDS]u64)old
+	new_words := transmute([draw_record.RECORD_WORDS]u64)new
+	kind, known := draw_record.draw_kind_of_word(new.kind)
+	if old_words == new_words {
 		if !known {
 			return true
 		}
 		switch kind {
-		case .Text:
-			fields := transmute(draw_record.Text_Fields)new.fields
-			return texts_equal(before, fields.first, now, fields.first, fields.count)
-		case .Interface_Text:
-			fields := transmute(draw_record.Interface_Text_Fields)new.fields
-			return texts_equal(before, fields.first, now, fields.first, fields.count)
+		case .Text, .Interface_Text:
+			range := transmute(Range_Fields)new.fields
+			return texts_equal(before, range.first, now, range.first, range.count)
 		case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Point_Grid, .Folded_Gap, .Picture, .Text_Grid, .Line:
 			return true
 		}
 		return true
 	}
-	old_primitive, old_problem := draw_record.read(old)
-	new_primitive, new_problem := draw_record.read(new)
-	if old_problem != .None || new_problem != .None {
+	if old.kind != new.kind || !known {
 		return false
 	}
-	// A text and a grid have a place in the text table that can change
-	// with no change of what is drawn: both records are compared with the
-	// first byte of their range at 0. The record of a primitive that the
-	// border read is its bytes, as the border refuses each other byte.
-	old_first, _, old_has_range := draw_record.byte_range_of(old_primitive)
-	new_first, new_count, new_has_range := draw_record.byte_range_of(new_primitive)
-	old_without_place := draw_record.record_of(draw_record.with_byte_place(old_primitive, 0), old.element, old.left, old.top, old.right, old.bottom)
-	new_without_place := draw_record.record_of(draw_record.with_byte_place(new_primitive, 0), new.element, new.left, new.top, new.right, new.bottom)
-	if old_without_place != new_without_place {
+	switch kind {
+	case .Text, .Interface_Text, .Text_Grid:
+		old_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
+		new_words[RANGE_FIRST_WORD] &= ~RANGE_FIRST_MASK
+		if old_words != new_words {
+			return false
+		}
+		if kind == .Text_Grid {
+			return true
+		}
+		old_range := transmute(Range_Fields)old.fields
+		new_range := transmute(Range_Fields)new.fields
+		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
+	case .None, .Rectangle, .Vertical_Gradient, .Horizontal_Gradient, .Clip, .Point_Grid, .Folded_Gap, .Picture, .Line:
 		return false
 	}
-	// The two records are equal but the first bytes of their ranges, so the
-	// two counts are one count.
-	if _, is_grid := new_primitive.(draw_record.Draw_Text_Grid); is_grid || !old_has_range || !new_has_range {
-		return true
-	}
-	return texts_equal(before, old_first, now, new_first, new_count)
+	return false
 }
+
+// The first two fields of a Text, an Interface_Text and a Text_Grid: the
+// place of the range in the text table, and its count of bytes.
+@(private)
+Range_Fields :: struct {
+	first:    u32,
+	count:    u32,
+	reserved: [draw_record.FIELDS_SIZE - 8]u8,
+}
+
+// The word of the record that holds the field first of a range, and the
+// bits of that field in it: the fields start at the byte HEADER_SIZE, a
+// multiple of 8, and first is their first 4 bytes, the low half of the
+// word on this little-endian machine.
+@(private)
+RANGE_FIRST_WORD :: draw_record.HEADER_SIZE / size_of(u64)
+@(private)
+RANGE_FIRST_MASK :: u64(0xFFFF_FFFF)
+
+#assert(draw_record.HEADER_SIZE % size_of(u64) == 0)
+#assert(size_of(Range_Fields) == draw_record.FIELDS_SIZE)
+#assert(offset_of(draw_record.Text_Fields, first) == 0 && offset_of(draw_record.Text_Fields, count) == 4)
+#assert(offset_of(draw_record.Interface_Text_Fields, first) == 0 && offset_of(draw_record.Interface_Text_Fields, count) == 4)
+#assert(offset_of(draw_record.Text_Grid_Fields, first) == 0 && offset_of(draw_record.Text_Grid_Fields, count) == 4)
 
 // texts_equal says if two ranges of count bytes, in the text tables of two
 // frames, hold the same bytes. A range outside its text table is equal to
@@ -138,8 +163,8 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 	for index in 0 ..< shared {
 		// One copy of each record: a table can be in memory that another
 		// program writes during the call (the interface as a module).
-		old := intrinsics.volatile_load(&before.records[index])
-		new := intrinsics.volatile_load(&now.records[index])
+		old := draw_record.copy_once(&before.records[index])
+		new := draw_record.copy_once(&now.records[index])
 		if records_equal(before, old, now, new) {
 			grid_damage(before, old, now, new, damage)
 			continue
@@ -153,10 +178,10 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 		damage_add(damage, record_rectangle(new))
 	}
 	for index in shared ..< before.record_count {
-		damage_add(damage, record_rectangle(intrinsics.volatile_load(&before.records[index])))
+		damage_add(damage, record_rectangle(draw_record.copy_once(&before.records[index])))
 	}
 	for index in shared ..< now.record_count {
-		damage_add(damage, record_rectangle(intrinsics.volatile_load(&now.records[index])))
+		damage_add(damage, record_rectangle(draw_record.copy_once(&now.records[index])))
 	}
 }
 
@@ -167,7 +192,7 @@ damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage:
 	tables := [2]^Draw_Table{before, now}
 	for table in tables {
 		for index in first ..< table.record_count {
-			record := intrinsics.volatile_load(&table.records[index])
+			record := draw_record.copy_once(&table.records[index])
 			if !is_clip_record(record) {
 				damage_add(damage, record_rectangle(record))
 			}
