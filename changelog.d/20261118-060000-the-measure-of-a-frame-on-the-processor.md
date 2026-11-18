@@ -1,3 +1,0 @@
-type: Added
-
-**The measure of a frame at 1920 × 1080 on the processor.** The measure run of `modustool measure` now starts the process `processor_frame`, which draws in memory at the reference screen, with no GPU, three parts of a frame: a clear and a present, a frame of the compositor with 4 windows in full and in its damage, and the execution of a draw table of a desktop with texts in both fonts, pictures and alpha. Each part gives one line with the least and the median of 21 frames in microseconds and the frames in one second at the median; the measure record and its history keep the four lines. The tool checks the form of the lines only, and the process checks a pixel of each part.

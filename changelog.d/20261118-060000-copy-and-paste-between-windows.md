@@ -1,3 +1,0 @@
-type: Added
-
-**Copy and paste between windows.** Control+C copies the text of the field that has the focus in the window in front, and Control+V pastes it into the field of another window, or into the line of the console as typed characters. The compositor takes both keys, so no process sees them or sends them. A copy is memory of the process that copies, paid by its budget; a paste lends the window in front a handle with Read for that paste only, and the reader copies the text, then checks that it is UTF-8 with no control character and no character that a reader does not see or that changes the order of the text. A text holds 1 to 4096 bytes and ends with the process that copied it.

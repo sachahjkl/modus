@@ -1,3 +1,0 @@
-type: Changed
-
-**A process in place of a program.** What runs is a process, and the file of code is a module. The kernel operations keep their numbers and change their names: `Process_Create`, `Process_Start`, `Process_Stop`, `Process_State` and `Process_Module`, and the kind `Process_Mappings` of `Inspect`. The contract, the guides, the glossary and the lines of the log say process for what runs and module for the file, so a reader never takes one for the other. A process of the host that the tool starts is a host process, and the argument of `build`, `fuzz` and `repeat` that counts them is `host_processes`. The boot program keeps its name, because it is no process of the kernel.
