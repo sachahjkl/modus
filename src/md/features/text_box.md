@@ -69,7 +69,7 @@ A row is never drawn in part: a row that does not fit whole is one of the rows t
 - **A page of `errors` is not a fixed count of cases.** The scenario of the test presses Tab and waits for the page 2, then for the page 1: it holds while the cases take two pages. A much longer sentence can make a third page.
 - **The stack trace of `errors` is on the second page.** With each sentence whole, the first page has room for 18 cases; the case of the fault is the 19th.
 - **`Text_Builder` drops the bytes that do not fit in its 128 bytes**, as its comment says. A caller that builds a sentence in it must know that the sentence is shorter. This place does not follow the rule of the system yet.
-- **A window has a largest size.** The screen has 1024 by 768 pixels; a window with its borders, under the bar and its title, has at most 1000 by 708. A window that was as wide as the screen lost its right border and the edge of its cards.
+- **A window has a largest size.** The [window bound](../../../docs/glossary/desktop.md) is 1024 by 768 pixels; a window with its borders, under the bar and its title, has at most 1000 by 708. A window that was as wide as the screen lost its right border and the edge of its cards.
 - **The boot display has a fixed height**, and its card of the machine has room for one fact of two lines: the name of the processor. Two long facts on one machine would pass the card.
 - **The joined text of `log` has at most four records**, the length of a text of `system.log`. A longer text starts a second row at a record edge.
 

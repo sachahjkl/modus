@@ -12,7 +12,7 @@ The module `hall_of_fame` shows the people whose work inspired modus: one card f
 
 - The module follows the design rules ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "10. Elements"): the background with its grid of points, cards with a border of 1 pixel, the interface font for the names and the lines, no rounded form, no shadow.
 - No cut text and no text over text: each text is measured in the font that draws it, and wraps inside its card ([text_box.md](text_box.md)).
-- The window fits the screen of 1024 x 768 with the bar and a title bar.
+- The window fits the [window bound](../../../docs/glossary/desktop.md) of 1024 x 768 with the bar and a title bar.
 - A picture of a real person is a fact with an author and a license. The repository holds it only when the license allows it, and the credit is visible wherever the picture is.
 
 ## The chosen form
