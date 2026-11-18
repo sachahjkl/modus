@@ -92,7 +92,7 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		case .Path:
 			range := transmute(Range_Fields)new.fields
 			return points_places_agree(before, range.first, now, range.first) && texts_equal(before, range.first, now, range.first, range.count)
-		case .None, .Rectangle, .Gradient, .Clip, .Picture, .Text_Grid:
+		case .None, .Rectangle, .Gradient, .Clip_Push, .Clip_Pop, .Picture, .Text_Grid:
 			return true
 		}
 		return true
@@ -116,7 +116,7 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 			return false
 		}
 		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
-	case .None, .Rectangle, .Gradient, .Clip, .Picture:
+	case .None, .Rectangle, .Gradient, .Clip_Push, .Clip_Pop, .Picture:
 		return false
 	}
 	return false
@@ -172,12 +172,26 @@ texts_equal :: proc "contextless" (before: ^Draw_Table, old_first: u32, now: ^Dr
 	return string(before.text[old_first:][:count]) == string(now.text[new_first:][:count])
 }
 
-// is_clip_record says if a record is a Clip: a clip that changes changes
-// what each record after it draws.
+// Clip_Word: what the kind word of a record is to the order of the clips.
+// The word alone decides, also for a record that the border refuses, as in
+// draw_record.clip_order_check.
 @(private)
-is_clip_record :: proc "contextless" (record: Draw_Record) -> bool {
+Clip_Word :: enum u8 {
+	Not_A_Clip, // Any other word, also a word that names no kind.
+	Push,
+	Pop,
+}
+
+@(private)
+clip_word_of :: proc "contextless" (record: Draw_Record) -> Clip_Word {
 	kind, known := draw_record.draw_kind_of_word(record.kind)
-	return known && kind == .Clip
+	switch {
+	case known && kind == .Clip_Push:
+		return .Push
+	case known && kind == .Clip_Pop:
+		return .Pop
+	}
+	return .Not_A_Clip
 }
 
 // damage_by_difference finds what changed from the table before to the
@@ -186,6 +200,12 @@ is_clip_record :: proc "contextless" (record: Draw_Record) -> bool {
 // the records after the end of the shorter table are damaged. A record added
 // in the middle damages each record after it: the damage can be too large,
 // never too small (docs/INTERFACE.md, section 2.2).
+//
+// Two pushes of a clip at one index keep the order of the clips: their two
+// boxes are damaged when they differ, as two other records, since each
+// record under them draws inside them only. A push or a pop against
+// another kind at one index changes the depth of each record after it:
+// each record from there is damaged.
 damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^Damage) {
 	shared := min(before.record_count, now.record_count)
 	for index in 0 ..< shared {
@@ -197,8 +217,7 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 			grid_damage(before, old, now, new, damage)
 			continue
 		}
-		// A clip that changes changes what the next records draw.
-		if is_clip_record(old) || is_clip_record(new) {
+		if clip_word_of(old) != clip_word_of(new) {
 			damage_rest(before, now, index, damage)
 			return
 		}
@@ -221,7 +240,7 @@ damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage:
 	for table in tables {
 		for index in first ..< table.record_count {
 			record := draw_record.copy_once(&table.records[index])
-			if !is_clip_record(record) {
+			if clip_word_of(record) == .Not_A_Clip {
 				damage_add(damage, record_rectangle(record))
 			}
 		}

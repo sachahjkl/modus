@@ -284,7 +284,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each process that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_16` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_16` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 16 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
+It is the first library module. A window calls `damage_of_draw_table_17` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_17` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 17 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each process, the drawing in a module".
 
@@ -339,6 +339,16 @@ The part is the product of the parts on each axis, in 1/64 of a pixel, so an edg
 The design: `docs/INTERFACE.md`, "2.1 Draw record".
 
 Do not use: antialiasing value, edge alpha, opacity.
+
+### Clip stack
+
+The clip stack is the nesting of the clips of a draw table: a push cuts the records after it to its box and to each clip open before it, until its pop.
+
+A clip inside a clip keeps the outer one, so an element that clips inside a clipped card needs no intersection by hand: `draw_clip_push` and `draw_clip_pop` write the two draw records `Clip_Push` and `Clip_Pop`. At most 16 clips are open; the drawing module refuses a table whose pops and pushes do not match. A clip is a rectangle of whole pixels. It cuts what the records draw, not where the pointer acts, and it is not a mask.
+
+The design: `src/md/api/draw_table.md`, "The kinds".
+
+Do not use: clip region, clip mask, clip list.
 
 ### Draw table
 
@@ -786,11 +796,21 @@ Do not use: device-independent pixel, virtual pixel.
 
 The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
 
-It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps the grid of 8 on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. It is not built: the desktop draws at scale 1.
+It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps each multiple of 8 logical pixels, as the grid of 8 and each spacing token, on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. It is not built: the desktop draws at scale 1.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
 Do not use: interface zoom, DPI setting, scaling percentage.
+
+### Spacing token
+
+A spacing token is a named length of the design rules, in logical pixels, that the elements of the desktop use for the spaces between them: `gap` 8, `margin` 16 and `title` 40.
+
+It is the design of the coming steps, in place of the grid of 8: today each place and size of the desktop is a multiple of 8. A space between two elements is a token or a sum of tokens; a size that a content gives stays that size, with no round up. At a scale factor in eighths each token is a whole count of pixels of the screen. It is not a grid, and not the fixed height of an element.
+
+The design: `src/md/features/spacing_tokens.md`.
+
+Do not use: grid unit, spacing unit.
 
 ### Window bound
 
