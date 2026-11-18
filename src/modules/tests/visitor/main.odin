@@ -1,5 +1,5 @@
 // A process that is not in the boot image: the test of a disk process
-// (docs/MODULE_CONTRACT.md, "A process from a disk").
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // **What it is for.** The root service starts a process from a module file
 // that the storage service holds, when the hash of the bytes is the hash

@@ -11,7 +11,7 @@
 // The role of the sender is the set of start grants that the root service
 // gave the process at its start. The name of the process is not read: a
 // disk process has a nickname that it chose, and the nickname gives it no
-// command (docs/MODULE_CONTRACT.md, "A process from a disk").
+// command (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // The design: (src/md/api/root_ring.md).
 package root_ring
@@ -163,7 +163,7 @@ Root_Command :: enum u32 {
 	// Start_From_Disk starts a disk process: a process whose module file is
 	// an object of the store `module_files` of the storage service, and not a
 	// file of the boot image
-	// (docs/MODULE_CONTRACT.md, "A process from a disk").
+	// (docs/MODULE_CONTRACT.md, "A module from a disk").
 	// This command does not carry its name as the others do:
 	// values[0..3] is the hash of the module file (BLAKE3, 32 bytes), and
 	// values[4..6] the name of the process and of its entry in the store, 1

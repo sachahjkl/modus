@@ -18,21 +18,21 @@ The terms of this document are in `glossary/desktop.md`: interface package, draw
 
 Before the package, each process drew its window by hand with `src/library/support/graphics`, and repeated the same cards, bars and tables. This section counts that repetition: it is the reason for the package. The counts are those of the day before the package; section 12 gives the state after the conversions.
 
-Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over the folders of the processes (then one folder, now in the module groups of `src/modules/`) and `src/library/support/`:
+Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over the folders of the modules (then one folder, now in the module groups of `src/modules/`) and `src/library/support/`:
 
 | Fact | Count |
 |---|---|
-| Processes that draw with `src/library/support/graphics` | 34, with 13 995 lines in all |
+| Modules that draw with `src/library/support/graphics` | 34, with 13 995 lines in all |
 | Lines that call a drawing function (`fill`, `text`, `block`, `unsigned`, `character`, ...) | 591 |
-| Processes that draw a card or a band of a card by hand | 21 |
+| Modules that draw a card or a band of a card by hand | 21 |
 | Private copies of the procedure `card` (frame, accent bar, title, caption) | 5: the boot display, the compositor, `remote`, `scheduler`, `server` |
 | Private copies of large text (each pixel of the font as a square) | 5: `large` in `remote`, `scheduler`, `terminal`; `write_large` in the boot display and `server` |
-| Processes that draw a bar on a track | 15 |
-| Processes that draw a table (a header, columns, bands) | 8 |
+| Modules that draw a bar on a track | 15 |
+| Modules that draw a table (a header, columns, bands) | 8 |
 | Lists with a choice | 3: the menus and the palette of the compositor, `manual`, `errors` |
 | Text inputs with a caret | 2: the palette, `terminal` (`console` draws through the terminal) |
-| Processes that react to the pointer | 7; to the keys: 9. Each one tests rectangles by hand |
-| Processes that track damage | 1: the compositor. Each other process draws its whole surface for each change, and `Present` damages the whole surface |
+| Modules that react to the pointer | 7; to the keys: 9. Each one tests rectangles by hand |
+| Modules that track damage | 1: the compositor. Each other process draws its whole surface for each change, and `Present` damages the whole surface |
 
 The developer tool `inspect` is not in this count. It drew a list with a filter and a choice, a band, tables and a hex view, all by hand (section 12 has its conversion).
 
@@ -432,16 +432,16 @@ The draw table is the whole output of a frame. Execution turns it into pixels in
 
 ## 7. Where it lives: the elements in each process, the drawing in a module
 
-Shared code in this system is a module, loaded once and named by its hash. The interface package is cut in two parts. The part that a window calls a few times for each frame, the difference and the draw of each damage rectangle, is the drawing module, which the processes import. The part that a window calls 30 to 200 times for each frame, the elements, the layout and the input, stays compiled into each process. This section weighs the two forms, gives the reason of the cut, and states the border of the drawing module.
+Shared code in this system is a module, loaded once and named by its hash. The interface package is cut in two parts. The part that a window calls a few times for each frame, the difference and the draw of each damage rectangle, is the drawing module, which the modules import. The part that a window calls 30 to 200 times for each frame, the elements, the layout and the input, stays compiled into each module. This section weighs the two forms, gives the reason of the cut, and states the border of the drawing module.
 
 Two forms were weighed:
 
 | | A module with exports (P10) | A package of `support` |
 |---|---|---|
-| Code pages | One copy, shared by hash by each process that imports it (P11) | One copy in each process; the hash of each process changes with the package |
+| Code pages | One copy, shared by hash by each module that imports it (P11) | One copy in each module; the hash of each module changes with the package |
 | The cost of a call | 3.9 ns through an import slot (measured by the process `imports`); about 200 element calls for one frame: under 1 us | 0: a direct call, often inlined |
 | What the call passes | Must be described by the module contract (section 5 of `MODULE_CONTRACT.md`) | Any Odin type |
-| A replacement of the module | Each process takes a new version with no new build (Replacement of an import) | Each process is built again |
+| A replacement of the module | Each importer takes a new version with no new build (Replacement of an import) | Each module is built again |
 
 The module is the right form: the interface is shared code, as P10 and P11 say. The calls of the interface pass tables of the caller (the draw table, the rows of a list, the columns of a row), so the description of an export must describe a table as a parameter (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"). Passing an address as an Integer works in a direct call and means nothing in an isolated call: it breaks the contract.
 
@@ -450,7 +450,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 | Part | Calls for one frame | Where it is | Why |
 |---|---|---|---|
 | The difference of two draw tables, the execution of a draw table, the pictures, the text of the cells and of the interface font, the blends | 1 for the difference, then 1 for the draw of all the damage rectangles: 2 | The drawing module, `src/modules/libraries/drawing` | Three procedures hold most of the bytes (the execution with the blends and the glyphs inlined in it, the draw of a glyph, the difference): about 20 KiB in each process. A border crossed 2 times for a frame costs nothing that a frame can show |
-| The elements, the layout, the input, the measure of a text, the draw table | 30 to 200 | Each process, compiled in | They take a `^Frame` (three addresses) and slices, which a description cannot carry, and they are small and often inlined. One element call through an adapter costs about 100 ns more (below) |
+| The elements, the layout, the input, the measure of a text, the draw table | 30 to 200 | Each module, compiled in | They take a `^Frame` (three addresses) and slices, which a description cannot carry, and they are small and often inlined. One element call through an adapter costs about 100 ns more (below) |
 
 **The drawing module** (`glossary/desktop.md`, "Drawing module"; `MODULE_CONTRACT.md`, "A library as a module"). Two exports, each with an error record:
 
@@ -474,13 +474,13 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 - **Grids.** A Text_Grid record names its cells by values in the text table, so the two exports read them in the text that they take already: no new parameter (section 2.4; the design: `src/md/api/text_grid.md`). A full terminal is 3,328 cells and up to 3,328 runs of one color in one frame; through the text table it crosses the border 2 times for a frame, whatever the count of runs.
 - **One picture memory for each call.** A Picture record of another memory than 0 draws nothing. The window layer refuses a frame with more than one picture memory in a process that draws through the module.
 
-**The window layer** (`src/library/support/interface/window_drawing.odin`). `window_frame_end` has one path. It calls `frame_difference`, then `frame_draw`, which are the package or the two exports: the build setting `DRAWING_THROUGH_MODULE` chooses, and the module table of the modus tool sets it for each process that imports the module. A whole frame and a frame with damage draw the same way: each rectangle is painted with the background, then the records that touch it are drawn. `Window_Drawing.module_calls` counts the calls of an export: for a frame with damage, 1 for the difference and 1 for the draw of all the rectangles that the picture draws; 1 for a whole frame or a frame with no change. With the setting, the package has two procedures over the exports for a process with no window layer: `difference_through_module`, one call for the damage of two tables, and `draw_part_through_module`, one call that draws a run of records of a table in up to 8 rectangles, with one picture memory, with or without the fill of the background.
+**The window layer** (`src/library/support/interface/window_drawing.odin`). `window_frame_end` has one path. It calls `frame_difference`, then `frame_draw`, which are the package or the two exports: the build setting `DRAWING_THROUGH_MODULE` chooses, and the module table of the modus tool sets it for each module that imports the module. A whole frame and a frame with damage draw the same way: each rectangle is painted with the background, then the records that touch it are drawn. `Window_Drawing.module_calls` counts the calls of an export: for a frame with damage, 1 for the difference and 1 for the draw of all the rectangles that the picture draws; 1 for a whole frame or a frame with no change. With the setting, the package has two procedures over the exports for a process with no window layer: `difference_through_module`, one call for the damage of two tables, and `draw_part_through_module`, one call that draws a run of records of a table in up to 8 rectangles, with one picture memory, with or without the fill of the background.
 
 **The compositor.** Each surface is a memory object of another process, mapped at its own address: a picture memory of its own. The screen table is in parts: one for each window (its frame, then its surface), then one for the bar and its menus (with the heron). A Picture record of a part names memory 0 of the list of its part. A frame is one call of `draw_part_through_module` for each window whose outer rectangle meets a damage rectangle, from the back to the front, with the damage rectangles that it meets, then one for the bar and one for the palette when it is open. The compositor copies its background into each rectangle first, so the calls do not fill it; it draws the pointer after the last call, then copies each rectangle, with the debt of the hidden screen page, into the screen page that the display does not show, and flips (`src/md/infrastructure/whole_frame.md`, "The screen: two screen pages and a page flip"). The damage rectangles of the compositor never touch, so these phases give the pixels of one rectangle after the other. The canvas of each call is the whole frame, so the records stay in the coordinates of the screen. With 17 windows, a frame of 8 damage rectangles makes at most 18 calls, where one call for each rectangle made 144. The difference of the palette is `difference_through_module`. The design: `src/md/api/picture.md`, "The compositor: one call for each part".
 
-**Which processes import it.** 34 processes with the setting: `budget`, `clock`, `compositor`, `crowd`, `cryptography_vectors`, `debugger_window`, `disk`, `extended_state`, `flow`, `frames`, `hall_of_fame`, `heron`, `inspect`, `life`, `limits`, `locks`, `manual`, `monitor`, `net`, `notes`, `origin`, `paint`, `plasma`, `processors`, `quic_echo`, `randomness`, `remote`, `rights`, `rings`, `scheduler`, `terminal`, `threads`, `unlock` and `workers`. `interface_through_module` imports it too, and calls the exports itself. The processes that keep the package compiled in, and why:
+**Which modules import it.** 34 modules with the setting: `budget`, `clock`, `compositor`, `crowd`, `cryptography_vectors`, `debugger_window`, `disk`, `extended_state`, `flow`, `frames`, `hall_of_fame`, `heron`, `inspect`, `life`, `limits`, `locks`, `manual`, `monitor`, `net`, `notes`, `origin`, `paint`, `plasma`, `processors`, `quic_echo`, `randomness`, `remote`, `rights`, `rings`, `scheduler`, `terminal`, `threads`, `unlock` and `workers`. `interface_through_module` imports it too, and calls the exports itself. The modules that keep the package compiled in, and why:
 
-| Processes | Why |
+| Modules | Why |
 |---|---|
 | `interface_elements`, `pointers` | They call the execution of the package themselves |
 | `interface_font`, `settings`, `vector_glyphs` | They draw text with `src/library/support/graphics` themselves: they keep the text code and its state |
@@ -488,7 +488,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 | `imports`, `tally` | `imports` is the test of the loader and counts its own imports; other processes load `tally` as a library |
 | `root`, the boot program, `host` | They import nothing: the kernel starts the root service with no loader for imports, the boot program is not a module, and the call host loads the module of a call |
 
-**The proof of the same pixels.** A picture of the whole screen cannot prove it: the hash of each converted process changes, and the screen shows hashes and times. The proof compares the bytes of a canvas:
+**The proof of the same pixels.** A picture of the whole screen cannot prove it: the hash of each converted module changes, and the screen shows hashes and times. The proof compares the bytes of a canvas:
 
 - The host test `the_exports_draw_the_same_bytes_as_the_package` (`src/modules/libraries/drawing`) builds 24 pairs of frames with a record of each kind that the module draws, two pictures of one picture memory among them, in 7 font states (Spleen, the vector font and the interface font, each order of the stripes). It draws each frame with the package as a window drew it before the module (the clear and the execution of the whole frame, then the difference and the draw of the damage) and through the two exports with the argument forms of a caller. The damage rectangles are equal, and the two canvases are the same bytes after the whole frame and after the damage. In a host test the two ways share one text state: the test proves the border, the fill and the rectangles.
 - The host test `the_exports_draw_a_text_grid_as_the_package` builds 24 pairs of frames of a terminal of 40 x 12 cells, in the font of the cells and in the vector font: runs of one color, empty cells at the end of a line, reverse cells, a completion list of filled cells with its border drawn after the grid. The frame now changes some cells, and a status of another length moves the cells in the text table. The damage rectangles and the bytes are equal, as above.
@@ -507,7 +507,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 | `clock`, one picture, the mean of 10 | 29.1 us | 34.1 us |
 | `clock`, the draw of 34 records in 1 damage rectangle | 16.3 us | 17.7 us |
 
-Two runs of the same code differed by 30 % on the draw time (12.6 and 16.3 us): the difference between the two columns is inside that spread. The sizes of this build are a line of the modus tool at each build ("the library module drawing has ... bytes; the files of the ... modules that import it have ... bytes in all"), with the size of each importer. The window of `clock` prints its build, difference and draw times, and `heron` writes the mean draw time of a picture of an asked animation on its log: each is a measure, and no test asserts them. The files of seven processes that show a picture, with the package compiled in: `heron` 147 456 bytes, `life` 100 924, `paint` 106 496, `plasma` 77 824, `processors` 90 112, `threads` 81 920, `workers` 86 016; the drawing module had 49 152 bytes.
+Two runs of the same code differed by 30 % on the draw time (12.6 and 16.3 us): the difference between the two columns is inside that spread. The sizes of this build are a line of the modus tool at each build ("the library module drawing has ... bytes; the files of the ... modules that import it have ... bytes in all"), with the size of each importer. The window of `clock` prints its build, difference and draw times, and `heron` writes the mean draw time of a picture of an asked animation on its log: each is a measure, and no test asserts them. The files of seven modules that show a picture, with the package compiled in: `heron` 147 456 bytes, `life` 100 924, `paint` 106 496, `plasma` 77 824, `processors` 90 112, `threads` 81 920, `workers` 86 016; the drawing module had 49 152 bytes.
 
 ## 8. Property 20 and the compositor
 
@@ -525,7 +525,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 ### Its state today (verified on 2026-11-11)
 
 - **Patent**: US 10,373,352 (granted 2019, to 2038). On 2026-03-17 its author filed USPTO form SB/43 and paid the fee to disclaim the rest of its term, "permanently and irrevocably dedicating the Slug patent to the public domain" (<https://terathon.com/blog/decade-slug.html>, "Patent Announcement"; also <https://blog.adafruit.com/2026/03/22/slugs-out-the-algorithm-that-made-text-look-perfect-is-now-free-or-how-to-give-away-a-patent/>). Google Patents still shows the patent as "Active": that site does not show the disclaimer of 2026; this is the state of an aggregator, not a contrary fact. The USPTO record itself was not read.
-- **Reference code**: <https://github.com/EricLengyel/Slug>, shaders "freely used by anyone for any purpose"; a distributed process must give credit. One reader names the license MIT or Apache-2.0 (<https://luv.swa.sh/slug-bezier.html>); GitHub shows "Other". The system copies no code: the ideas are free to use.
+- **Reference code**: <https://github.com/EricLengyel/Slug>, shaders "freely used by anyone for any purpose"; a distributed program must give credit. One reader names the license MIT or Apache-2.0 (<https://luv.swa.sh/slug-bezier.html>); GitHub shows "Other". The system copies no code: the ideas are free to use.
 - `gui_toolkit` has a Slug path on the GPU (`docs/text.md`, "Slug"), with stem darkening, hinting for small sizes and coverage per color stripe; its note `slug-small-text.md` says that Slug text at 11 to 16 pixels looks softer than hinted bitmaps, and that closer to the reference is not the same as sharper.
 
 ### What it means for this system
@@ -534,7 +534,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 - **The prototype** (`src/library/support/vector_font`, the process `vector_glyphs`): a parser of a subset of TrueType (`head`, `hhea`, `maxp`, `cmap` format 4, `hmtx`, `loca`, `glyf` with simple glyphs) that checks each offset and each count against the length of the file (a font is hostile input); a rasterizer with exact area coverage, a horizontal position in 1/64 of a pixel, and an option of coverage per color stripe (three samples per pixel, then the 5-tap filter 8, 77, 86, 77, 8 / 256 against color fringes).
 - **The measures**: one glyph of Spleen 8x16, 32 ns; one glyph of 13 pixels from its outline, 2939 ns in grayscale, 2396 ns on a whole pixel, 5502 ns with color stripes: about 90 times more, with no cache of the coverage of a glyph. The process `vector_glyphs` showed the same text in the two fonts, and one glyph enlarged 8 times in grayscale and with color stripes; it draws the candidate fonts now (the picture `font_candidates`).
 - **What the picture shows**: at 13 pixels the outline font has the shapes of its design and even spaces (an advance of 7.8 pixels), and its stems are softer than the stems of Spleen, which sit on whole pixels; the color stripes give sharper sides with faint colors at the edges. Spleen is sharper at its one size.
-- **The font**: a font needs a license that allows embedding in a process of the system. Candidates: DejaVu Sans Mono (Bitstream Vera license, DejaVu changes in the public domain; TrueType outlines), Noto Sans and Noto Sans Mono, Inter, IBM Plex, JetBrains Mono, Source Code Pro (SIL Open Font License 1.1: embedding allowed, no sale of the font alone). The prototype uses DejaVu Sans Mono, a monospace font like Spleen, with its license beside it.
+- **The font**: a font needs a license that allows embedding in a module of the system. Candidates: DejaVu Sans Mono (Bitstream Vera license, DejaVu changes in the public domain; TrueType outlines), Noto Sans and Noto Sans Mono, Inter, IBM Plex, JetBrains Mono, Source Code Pro (SIL Open Font License 1.1: embedding allowed, no sale of the font alone). The prototype uses DejaVu Sans Mono, a monospace font like Spleen, with its license beside it.
 - **The rules**: a vector font keeps the grid: one size for the text of the interface (a cap height that is a whole number of pixels, as the reference of Slug advises), a large size for the one number of a card; the line height stays 16 or 24.
 
 ## 10. The decisions of this design
@@ -567,7 +567,7 @@ Refused:
 
 ## 12. State of the conversions
 
-Most processes now draw their window with the package. This section lists the invariants that the host tests hold, each converted process with its counts before and after, what the pictures showed, and the processes that are not converted.
+Most modules now draw their window with the package. This section lists the invariants that the host tests hold, each converted module with its counts before and after, what the pictures showed, and the modules that are not converted.
 
 ### Invariants and what holds them
 
@@ -593,9 +593,9 @@ The package has 49 host tests (45 in `src/library/support/interface/interface_te
 
 ### The converted windows
 
-"Calls" are the direct drawing calls of `src/library/support/graphics` (`fill`, `text`, `block`, `unsigned`, `character`, `clear`, `line`, `outline`) in the process before the conversion (`859f078`) and after. "Module" is the size of the module file, in bytes, on `master` `c909390` and after the conversions: the package is compiled in each process.
+"Calls" are the direct drawing calls of `src/library/support/graphics` (`fill`, `text`, `block`, `unsigned`, `character`, `clear`, `line`, `outline`) in the module before the conversion (`859f078`) and after. "Module" is the size of the module file, in bytes, on `master` `c909390` and after the conversions: the package is compiled in each module.
 
-| Process | Calls before | Calls after | Module before | Module after |
+| Module | Calls before | Calls after | Module before | Module after |
 |---|---|---|---|---|
 | inspect | 58 | 0 | 81 920 | 90 112 |
 | scheduler | 50 | 0 | 61 440 | 73 728 |
@@ -617,12 +617,12 @@ The package has 49 host tests (45 in `src/library/support/interface/interface_te
 | manual | 10 | 0 | 114 688 | 126 976 |
 | life | 2 | 2 (its own board picture, by design: the Picture record) | 32 768 | 51 148 |
 | clock, remote, the palette | 32, 31, 48 lines | 0 | | |
-| Sum of the 19 processes above | 346 | 2 | | |
+| Sum of the 19 modules above | 346 | 2 | | |
 
-- Each converted module grows by 8 to 16 KiB (2 to 4 pages): the package is in each one. `processors`, which is not converted, grows by 4 KiB from the measure of pictures of `display`. This is the measured argument for the package as one shared module (section 7): about 230 KiB in all for these processes, today paid once for each.
+- Each converted module grows by 8 to 16 KiB (2 to 4 pages): the package is in each one. `processors`, which is not converted, grows by 4 KiB from the measure of pictures of `display`. This is the measured argument for the package as one shared module (section 7): about 230 KiB in all for these modules, today paid once for each.
 - The boot image: 3 284 753 bytes on `master` `c909390`, 3 566 097 bytes with the conversions (+281 344).
-- Lines: in the 19 processes, 865 lines added and 494 removed (+371), against 1 242 lines of the package (and 537 of its host tests). A conversion replaces each drawing call by one record and adds the tables of the process and the frame: it does not make the processes shorter. It removes the five private copies of `card` and of large text in the converted processes, it gives each window the damage by difference and the keyboard, and one change of the rules now changes every converted window.
-- The times of the pictures are not published: the host had a load of 17 to 62 during each run of the conversions, and a measure above a load of 8 is not valid. `modustool measure windows` (in the form of `modustool measure scheduler N`) starts each converted window alone in a measure build and prints one table of the time of the first picture and of the mean of 3 and of 10, with the load of the host. It needs a quiet host. To measure "before", run the same command on the commit "display measures the time of a picture" (the processes before the conversion with the marks of the measure).
+- Lines: in the 19 modules, 865 lines added and 494 removed (+371), against 1 242 lines of the package (and 537 of its host tests). A conversion replaces each drawing call by one record and adds the tables of the process and the frame: it does not make the modules shorter. It removes the five private copies of `card` and of large text in the converted modules, it gives each window the damage by difference and the keyboard, and one change of the rules now changes every converted window.
+- The times of the pictures are not published: the host had a load of 17 to 62 during each run of the conversions, and a measure above a load of 8 is not valid. `modustool measure windows` (in the form of `modustool measure scheduler N`) starts each converted window alone in a measure build and prints one table of the time of the first picture and of the mean of 3 and of 10, with the load of the host. It needs a quiet host. To measure "before", run the same command on the commit "display measures the time of a picture" (the modules before the conversion with the marks of the measure).
 
 ### What the pictures of the conversions show
 

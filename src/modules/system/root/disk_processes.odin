@@ -2,7 +2,7 @@ package root
 
 // A disk process: a process whose module file is an object of the store
 // `module_files` of the storage service, and not a file of the boot image
-// (docs/MODULE_CONTRACT.md, "A process from a disk").
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // The command Start_From_Disk names the process and the hash of its file.
 // This service reads the object through a connection of its own to the

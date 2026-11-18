@@ -533,7 +533,7 @@ The log says each step: "root: read the disk grant table of principal 1 from the
 
 ## 6. The store of a principal
 
-One process run for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
+One module that runs for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
 
 The storage service names a store by the name that the root service gives to the connection. The root service builds that name in one procedure, `principals.store_name_write`, from the principal and the name of the process:
 
@@ -547,7 +547,7 @@ The storage service names a store by the name that the root service gives to the
 | 1 | The disk process of the nickname `visitor`, with the grant `store` | `disk-visitor.principal.1` |
 | 1 | The module files of its disk processes, and its disk grant table | `module_files.principal.1` |
 
-So two principals that run one process have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
+So two principals that run one module have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 
 **Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "4.2 No way up"), from bits 48 to 62 of the grant of each connection:
 

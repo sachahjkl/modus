@@ -4,7 +4,7 @@
 
 A developer adds a process to a machine with no new boot image. The module file of the process is an object in a store of the storage service. The root service reads it, checks it, and starts it. Such a process is a disk process ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Disk process").
 
-The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A process from a disk".
+The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A module from a disk".
 
 ## Constraints
 

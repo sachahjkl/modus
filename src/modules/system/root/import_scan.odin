@@ -2,7 +2,7 @@ package root
 
 // The import scan of a disk process: the imports that the boot image does
 // not hold are found in the store `module_files` of the principal by the hash
-// of their bytes (docs/MODULE_CONTRACT.md, "A process from a disk").
+// of their bytes (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // The scan runs in the load of the process, after the check of its file
 // and before its start, with the same connection, the same deadline and

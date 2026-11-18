@@ -18,7 +18,7 @@ Sources. The EEVDF and `sched_ext` paragraphs were checked against the kernel do
 
 ## 1. What Linux does
 
-Linux has had three answers to the question "which thread runs next": CFS shares the processor by weight, EEVDF adds a deadline so that a thread can ask for a short delay, and `sched_ext` lets a loaded process be the strategy. This system takes ideas from each; this section says what each one does.
+Linux has had three answers to the question "which thread runs next": CFS shares the processor by weight, EEVDF adds a deadline so that a thread can ask for a short delay, and `sched_ext` lets a loaded program be the strategy. This system takes ideas from each; this section says what each one does.
 
 ### CFS: virtual run time and weights
 
@@ -48,9 +48,9 @@ The lag of a task is kept when it sleeps, within a bound (Linux clamps it to abo
 
 Linux keeps the tree ordered by virtual run time, with the least deadline of each subtree in the node: a pick is `O(log n)`.
 
-### `sched_ext`: a strategy as a replaceable process
+### `sched_ext`: a strategy as a replaceable program
 
-`sched_ext` (Linux 6.12, 2024) is a scheduler class whose behavior is a set of BPF processes: a `struct sched_ext_ops` with callbacks. The main ones: `select_cpu` (where a waking task goes), `enqueue` (a task becomes runnable), `dequeue`, `dispatch` (a processor has nothing in its local queue), `runnable`, `running`, `tick`, `stopping`, `quiescent` (the task waits), `set_weight`, `init_task`, `exit_task`, `init`, `exit`. All callbacks are optional.
+`sched_ext` (Linux 6.12, 2024) is a scheduler class whose behavior is a set of BPF programs: a `struct sched_ext_ops` with callbacks. The main ones: `select_cpu` (where a waking task goes), `enqueue` (a task becomes runnable), `dequeue`, `dispatch` (a processor has nothing in its local queue), `runnable`, `running`, `tick`, `stopping`, `quiescent` (the task waits), `set_weight`, `init_task`, `exit_task`, `init`, `exit`. All callbacks are optional.
 
 The tasks wait in dispatch queues (DSQs): one global FIFO, one local queue for each processor, and queues that the BPF scheduler makes. A queue is a FIFO or ordered by a virtual time. A processor always runs from its local queue; it moves a task from the global queue, or calls `dispatch`, when its local queue is empty.
 

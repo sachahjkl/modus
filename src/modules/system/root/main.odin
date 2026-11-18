@@ -41,7 +41,7 @@
 // - `Start_From_Disk`: a disk process, by its name and the hash of its
 //   module file, which this service reads from the store `module_files` of the
 //   storage service. Its completion comes when the load ends
-//   (disk_processes.odin; docs/MODULE_CONTRACT.md, "A process from a disk").
+//   (disk_processes.odin; docs/MODULE_CONTRACT.md, "A module from a disk").
 // - `Disk_Grant`, `Nickname_Move`, `Disk_Grant_Persistence`: the disk
 //   grant table of the principal of the caller: a grant to the file that a
 //   nickname names, the move of a nickname to another file, and how long a

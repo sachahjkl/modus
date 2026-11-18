@@ -6,7 +6,7 @@ package modustool
 // (docs/TOOLS.md, "The disk of the disk processes").
 // The root service starts a process from it when a principal names the
 // process and the hash of its file
-// (docs/MODULE_CONTRACT.md, "A process from a disk").
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // The writer makes one commit of a new disk: the blocks of data and the
 // object nodes of each file, one leaf with the entries, the store block,
