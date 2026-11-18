@@ -347,7 +347,13 @@ function :: proc "contextless" (file: []u8, export_index: u32) -> (value: Functi
 		return {}, false
 	}
 	export := record(file, .Exports, export_index, Export) or_return
-	return record(file, .Functions, export.function, Function)
+	value = record(file, .Functions, export.function, Function) or_return
+	// The count comes from the file, and each reader indexes the arrays of
+	// names with it: a count past their capacity is a damaged description.
+	if int(value.parameter_count) > PARAMETER_CAPACITY {
+		return {}, false
+	}
+	return value, true
 }
 
 // record_type gives the description of a record, by its index in the
