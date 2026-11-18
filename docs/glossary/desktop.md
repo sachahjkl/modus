@@ -786,11 +786,21 @@ Do not use: device-independent pixel, virtual pixel.
 
 The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
 
-It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps the grid of 8 on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. It is not built: the desktop draws at scale 1.
+It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps each multiple of 8 logical pixels, as the grid of 8 and each spacing token, on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. It is not built: the desktop draws at scale 1.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
 Do not use: interface zoom, DPI setting, scaling percentage.
+
+### Spacing token
+
+A spacing token is a named length of the design rules, in logical pixels, that the elements of the desktop use for the spaces between them: `gap` 8, `margin` 16 and `title` 40.
+
+It is the design of the coming steps, in place of the grid of 8: today each place and size of the desktop is a multiple of 8. A space between two elements is a token or a sum of tokens; a size that a content gives stays that size, with no round up. At a scale factor in eighths each token is a whole count of pixels of the screen. It is not a grid, and not the fixed height of an element.
+
+The design: `src/md/features/spacing_tokens.md`.
+
+Do not use: grid unit, spacing unit.
 
 ### Window bound
 
