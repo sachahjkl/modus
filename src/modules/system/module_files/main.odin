@@ -2,7 +2,7 @@
 // gives in the store `module_files` of its principal, and lists the files of
 // that store with the hash of their bytes. A developer then adds a module
 // to a machine that runs, with no disk from the tool
-// (docs/MODULE_CONTRACT.md, "A process from a disk").
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // **What it is for.** The root service starts a disk process from the
 // store `module_files` when the hash of its bytes is the hash that the

@@ -1,4 +1,4 @@
-// A library module that no boot image holds: the test of an import of a disk process from the store `module_files` (docs/MODULE_CONTRACT.md, "A process from a disk").
+// A library module that no boot image holds: the test of an import of a disk process from the store `module_files` (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // **What it is for.** The module `store_importer` imports it by its hash. The modus tool writes both files in the store `module_files` of the disk of the test part `disk_processes`; the root service finds this file by the hash of its bytes, with no name, and gives it to the loader beside the boot image.
 //

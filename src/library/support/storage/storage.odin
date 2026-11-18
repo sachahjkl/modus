@@ -202,7 +202,7 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 // A call that was sent and whose answer did not come yet: what call_answer
 // needs to read the answer. The root service keeps one while it reads a
 // file, because it never waits for the storage service
-// (docs/MODULE_CONTRACT.md, "A process from a disk").
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 Sent_Call :: struct {
 	function:    module.Function, // The description of the export.
 	offset:      u64, // The argument record in the call region.

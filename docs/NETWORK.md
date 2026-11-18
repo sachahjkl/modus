@@ -31,7 +31,7 @@ Each part of the network is a process or a library of user space. The table name
 | Protocol library | `src/library/support/network` | For the network service: Ethernet, ARP, IPv4, ICMP echo, and the checks of the header of UDP and TCP (`parse`). For a process with a datagram endpoint: the UDP header and its checksum (`udp_header_write`, `udp_data_read`) |
 | Server | `src/modules/demonstrations/server` | A process with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `src/modules/demonstrations/fetch` | A process with a segment grant of one remote. It fetches pages and measures |
-| Module file service | `src/modules/system/module_files` | A client with the same grant: it fetches a module file and stores it in the store `module_files` of its principal (`MODULE_CONTRACT.md`, "A process from a disk") |
+| Module file service | `src/modules/system/module_files` | A client with the same grant: it fetches a module file and stores it in the store `module_files` of its principal (`MODULE_CONTRACT.md`, "A module from a disk") |
 | QUIC server | `src/modules/demonstrations/quic_echo` | A process with a listen grant of UDP on the port 4433: QUIC in the process (`docs/QUIC.md`, section 6) |
 | Remote service | `src/modules/system/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
 | Peer | `tools/modustool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
@@ -145,7 +145,7 @@ The root service names the grant by the name of the process, as for UDP (`endpoi
 | UDP client grant | One UDP port that the network service gives (`Info`); the process writes it as the source port of each datagram | One remote address and one remote UDP port | A process that talks to one remote over datagrams |
 | UDP listen grant | One UDP port that the root service names | Each remote that sent a first datagram of 1200 bytes at least, and with a named address, that address only | A QUIC server: `quic_echo` on the port 4433, `remote` on the port 7100 (section "The listen grant of UDP") |
 
-The grant crosses the control ring and the completion of `Info` as one word (`datagram.grant_pack`): the port in bits 0 to 15, the address in bits 16 to 47, and the flags `inspect`, `tcp` and `listen` in bits 48, 49 and 50. `datagram.grant_unpack` is the one border of that word. It refuses a word with a bit from 51 to 63: it gives no grant and `false`. The network service then refuses `Endpoint_Add` and `Endpoint_Grant` with `Bad_Command` and the record `Bad_Value` of the grant argument, whose value is the unknown bits shifted down by `datagram.GRANT_KNOWN_BIT_COUNT`. It maps no region, opens no ring, and makes or changes no endpoint (`network.endpoint_add_grant`, `network.endpoint_grant_change`). A process whose `Info` gives such a word stops at its start, or, for the test processes `net` and `fetch`, fails its first case. The design: `src/md/data/network_grant_word.md`.
+The grant crosses the control ring and the completion of `Info` as one word (`datagram.grant_pack`): the port in bits 0 to 15, the address in bits 16 to 47, and the flags `inspect`, `tcp` and `listen` in bits 48, 49 and 50. `datagram.grant_unpack` is the one border of that word. It refuses a word with a bit from 51 to 63: it gives no grant and `false`. The network service then refuses `Endpoint_Add` and `Endpoint_Grant` with `Bad_Command` and the record `Bad_Value` of the grant argument, whose value is the unknown bits shifted down by `datagram.GRANT_KNOWN_BIT_COUNT`. It maps no region, opens no ring, and makes or changes no endpoint (`network.endpoint_add_grant`, `network.endpoint_grant_change`). A process whose `Info` gives such a word stops at its start, or, for the test modules `net` and `fetch`, fails its first case. The design: `src/md/data/network_grant_word.md`.
 
 The form and the local ports of an endpoint come from its creation, and stay until the endpoint is removed. A revocation sets the grant to none and keeps them:
 
@@ -188,7 +188,7 @@ Property 5 says that the kernel is off the data path, and that the network stack
 - IPv4, ARP and ICMP echo stay in the network service: they are the shared identity of the machine.
 - The network service keeps only the ports and, for a listen grant, the remotes that came to it: no sequence number, no window and no key.
 
-One change takes the network service further off the data path. It needs a device with a receive queue for each endpoint and an exact filter by destination port that only the frame service processes; then the copy on receive leaves too. It is not built.
+One change takes the network service further off the data path. It needs a device with a receive queue for each endpoint and an exact filter by destination port that only the frame service programs; then the copy on receive leaves too. It is not built.
 
 ## The TCP library
 

@@ -1,7 +1,7 @@
 // What the root service, the console and the modus tool agree on for a
 // disk process: a process whose module file is an object of the store
 // `module_files` of the storage service, and not a file of the boot image
-// (docs/MODULE_CONTRACT.md, "A process from a disk").
+// (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // No allocator and no kernel operation: the host tests run each procedure
 // (disk_process_test.odin).

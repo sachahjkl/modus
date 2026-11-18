@@ -13,7 +13,7 @@ The root ring is the border between the root service and each process that asks 
 ## Constraints
 
 - The kind of a record and each word in it come from another process, which can be hostile ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "No ambient access: the other holes to close").
-- A disk process has a nickname that its principal chose. A name gives no authority ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A process from a disk").
+- A disk process has a nickname that its principal chose. A name gives no authority ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A module from a disk").
 - A process is not built for a host test: each decision that a test must break lives in a package.
 - A contract package imports no support package. The site reads the table of the context slots and the recorded grants from `src/library/support/system/grants.odin`, and the role of each process from the table `process_roles` of `src/modules/system/root/roles.odin`.
 - A process is no package: the tool, the site and a host test read the source of the table, not the compiled table.

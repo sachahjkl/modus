@@ -441,7 +441,7 @@ commands_start :: proc "contextless" () {
 	// their hash is `hash`: the storage service does not choose what runs.
 	// The process receives the log and a window, and the grants of its
 	// nickname in the disk grant table only, whatever its name
-	// (docs/MODULE_CONTRACT.md, "A process from a disk").
+	// (docs/MODULE_CONTRACT.md, "A module from a disk").
 	//
 	// ```
 	// > start_from_disk("visitor", "5f0c...")

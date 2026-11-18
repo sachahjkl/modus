@@ -216,4 +216,4 @@ nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:m
 - The row of colors of a gradient across or at an angle (a division and a mix for each pixel) and the outline renderer (`src/library/support/vector_font`, at build time) stay scalar.
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
 - The cryptography of the system has no vector form: it keeps the portable implementations of its origin (`docs/CRYPTOGRAPHY.md`).
-- No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test processes `extended_state` and `return_fault`.
+- No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test modules `extended_state` and `return_fault`.

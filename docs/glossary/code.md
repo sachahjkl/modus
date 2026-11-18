@@ -168,7 +168,7 @@ A disk process is a process whose module file is an object of the store `module_
 
 A disk process adds a process to a machine with no new boot image. The principal names its file by a nickname and by its hash: `start_from_disk("visitor", "5f0c…")`. The root service starts the bytes only when their BLAKE3 hash is that hash: the storage service carries the bytes and does not choose them. Its name gives it no grant: it receives the grants of its nickname in the disk grant table. A disk process is not a package: it has no signer and no version, and nothing is installed.
 
-The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
+The design: `docs/MODULE_CONTRACT.md`, "A module from a disk".
 
 Do not use: installed program, side-loaded program.
 
@@ -178,7 +178,7 @@ The module file service is the module `module_files`: it stores a module file th
 
 A developer adds a process to a machine that runs, with no disk from the modus tool. In the console, `module_files.receive(nickname, path)` gives the hash of the bytes that came, then `start_from_disk(nickname, hash)` starts them. `module_files.list()` gives each file with the hash that the service computes again. The service starts no process and proves nothing: the root service checks the bytes against the hash. It is not a package manager: it reads no signature, version or dependency.
 
-The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
+The design: `docs/MODULE_CONTRACT.md`, "A module from a disk".
 
 Do not use: package manager, installer, downloader.
 
@@ -188,7 +188,7 @@ An import scan is the read of the store `module_files` of a principal by the roo
 
 A developer puts a process and its library modules in the store `module_files`, under any nicknames. At the start, the root service reads each entry, keeps the bytes whose hash an import names, and gives them to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
 
-The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
+The design: `docs/MODULE_CONTRACT.md`, "A module from a disk".
 
 Do not use: dependency resolution, library lookup, search of an import.
 
