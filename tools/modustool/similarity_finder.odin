@@ -9,6 +9,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The similarity finder (src/md/infrastructure/similarity_finder.md): the
 // analysis of a set of sources, from the parse to the ranked families and
@@ -382,7 +383,7 @@ similarity_read_sources :: proc(analysis: ^Similarity_Analysis, sources: []Simil
 					name, path := similarity_import_name(declaration)
 					builder.imports[name] = path
 					// A private part is compiled in as a support package is.
-					if strings.has_prefix(path, SUPPORT_IMPORT_START) || strings.has_prefix(path, PRIVATE_IMPORT_START) {
+					if strings.has_prefix(path, foundation.SUPPORT_IMPORT_START) || strings.has_prefix(path, foundation.PRIVATE_IMPORT_START) {
 						append(&support, path)
 					}
 				}
@@ -919,7 +920,7 @@ similarity_template_needs_the_host :: proc(analysis: ^Similarity_Analysis, templ
 	nodes := analysis.nodes
 	first := analysis.pieces[template.members[0]]
 	low, high := similarity_piece_range(nodes, first)
-	calls := ALLOCATOR_CALLS
+	calls := foundation.ALLOCATOR_CALLS
 	for node := low; node < high; node += 1 {
 		if !template.in_template[node - low] {
 			continue
@@ -959,7 +960,7 @@ similarity_family_home :: proc(analysis: ^Similarity_Analysis, family: ^Similari
 	under_tools := false
 	for member in family.template.members {
 		path := analysis.files[analysis.nodes[analysis.pieces[member].first].file].path
-		if strings.has_prefix(path, SOURCE_FOLDER_KERNEL + "/") || strings.has_prefix(path, SOURCE_FOLDER_CONTRACT + "/") {
+		if strings.has_prefix(path, foundation.SOURCE_FOLDER_KERNEL + "/") || strings.has_prefix(path, foundation.SOURCE_FOLDER_CONTRACT + "/") {
 			return "a contract package, by a decision", true
 		}
 		under_source = under_source || strings.has_prefix(path, "src/")

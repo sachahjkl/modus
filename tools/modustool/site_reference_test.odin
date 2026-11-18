@@ -9,10 +9,11 @@ import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
+import "modustool:foundation"
 
 @(private = "file")
 read_text :: proc(t: ^testing.T, path: string) -> string {
-	text, ok := site_read_quiet(path)
+	text, ok := foundation.site_read_quiet(path)
 	testing.expectf(t, ok, "cannot read %s", path)
 	return text
 }
@@ -20,7 +21,7 @@ read_text :: proc(t: ^testing.T, path: string) -> string {
 // The members that the reader finds are those that the compiler knows, with
 // the same names and values, in the same order.
 @(private = "file")
-expect_members_of :: proc(t: ^testing.T, members: []Site_Enumeration_Member, type: typeid) {
+expect_members_of :: proc(t: ^testing.T, members: []foundation.Site_Enumeration_Member, type: typeid) {
 	names := reflect.enum_field_names(type)
 	values := reflect.enum_field_values(type)
 	testing.expectf(t, len(members) == len(names), "the reader found %d members of %v, the compiler knows %d", len(members), type, len(names))
@@ -35,18 +36,18 @@ expect_members_of :: proc(t: ^testing.T, members: []Site_Enumeration_Member, typ
 @(test)
 site_operations_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_OPERATION_FILE)
-	members, problem := site_enumeration_read(text, SITE_OPERATION_FILE, "Operation")
+	members, problem := foundation.site_enumeration_read(text, SITE_OPERATION_FILE, "Operation")
 	testing.expect_value(t, problem, "")
 	expect_members_of(t, members, op.Operation)
 	for member in members {
 		if member.name != "Memory_Map" {
 			continue
 		}
-		operation := site_operation_parts(member)
+		operation := foundation.site_operation_parts(member)
 		testing.expect(t, strings.has_prefix(operation.parameters, "memory, process, address"))
 		testing.expect_value(t, operation.result, "address")
 	}
-	statuses, status_problem := site_enumeration_read(text, SITE_OPERATION_FILE, "Status")
+	statuses, status_problem := foundation.site_enumeration_read(text, SITE_OPERATION_FILE, "Status")
 	testing.expect_value(t, status_problem, "")
 	expect_members_of(t, statuses, op.Status)
 }
@@ -54,13 +55,13 @@ site_operations_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_errors_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_ERRORS_FILE)
-	kinds, kinds_problem := site_enumeration_read(text, SITE_ERRORS_FILE, "Kind")
+	kinds, kinds_problem := foundation.site_enumeration_read(text, SITE_ERRORS_FILE, "Kind")
 	testing.expect_value(t, kinds_problem, "")
 	expect_members_of(t, kinds, errors.Kind)
-	units, units_problem := site_enumeration_read(text, SITE_ERRORS_FILE, "Unit")
+	units, units_problem := foundation.site_enumeration_read(text, SITE_ERRORS_FILE, "Unit")
 	testing.expect_value(t, units_problem, "")
 	expect_members_of(t, units, errors.Unit)
-	names, names_problem := site_names_read(text, SITE_ERRORS_FILE, "UNIT_NAMES")
+	names, names_problem := foundation.site_names_read(text, SITE_ERRORS_FILE, "UNIT_NAMES")
 	testing.expect_value(t, names_problem, "")
 	testing.expect_value(t, len(names), len(units))
 	testing.expect_value(t, names["Pages"], "pages")
@@ -69,7 +70,7 @@ site_errors_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_fixed_ranges_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_FIXED_ADDRESSES_FILE)
-	ranges, problem := site_enumeration_read(text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
+	ranges, problem := foundation.site_enumeration_read(text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
 	testing.expect_value(t, problem, "")
 	expect_members_of(t, ranges, fixed_addresses.Fixed_Range)
 }
@@ -77,7 +78,7 @@ site_fixed_ranges_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_context_of_the_repository :: proc(t: ^testing.T) {
 	text := read_text(t, SITE_OPERATION_FILE)
-	roles, problem := site_constants_read(text, SITE_OPERATION_FILE, "CONTEXT_HANDLES ::", {"CONTEXT_", "ROOT_"})
+	roles, problem := foundation.site_constants_read(text, SITE_OPERATION_FILE, "CONTEXT_HANDLES ::", {"CONTEXT_", "ROOT_"})
 	testing.expect_value(t, problem, "")
 	found_log, found_machine := false, false
 	for role in roles {
@@ -94,17 +95,17 @@ site_context_of_the_repository :: proc(t: ^testing.T) {
 
 @(test)
 site_grants_of_the_repository :: proc(t: ^testing.T) {
-	grants_text := read_text(t, SITE_SYSTEM_GRANTS_FILE)
-	recorded, recorded_problem := site_enumeration_read(grants_text, SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
+	grants_text := read_text(t, foundation.SITE_SYSTEM_GRANTS_FILE)
+	recorded, recorded_problem := foundation.site_enumeration_read(grants_text, foundation.SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
 	testing.expect_value(t, recorded_problem, "")
-	names, names_problem := site_names_read(grants_text, SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
+	names, names_problem := foundation.site_names_read(grants_text, foundation.SITE_SYSTEM_GRANTS_FILE, "root_grant_names")
 	testing.expect_value(t, names_problem, "")
 	for grant in recorded {
 		testing.expectf(t, names[grant.name] != "", "the grant %s has no name in root_grant_names", grant.name)
 	}
-	roles_text := read_text(t, SITE_ROOT_ROLES_FILE)
+	roles_text := read_text(t, foundation.SITE_ROOT_ROLES_FILE)
 	start_grant_text := read_text(t, SITE_START_GRANT_FILE)
-	at_start, start_problem := site_enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
+	at_start, start_problem := foundation.site_enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
 	testing.expect_value(t, start_problem, "")
 	testing.expect(t, len(at_start) > 0 && at_start[0].name == "Root_Ring")
 	// The number of a start grant is in an error record: the site shows the
@@ -114,7 +115,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, known && name == grant.name, "the start grant %s has the number %d, which grant_name names %q", grant.name, grant.number, name)
 	}
 	testing.expect_value(t, len(at_start), len(start_grant.Grant))
-	rows, rows_problem := site_role_table_read(roles_text, SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
+	rows, rows_problem := foundation.site_role_table_read(roles_text, foundation.SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
 	testing.expect_value(t, rows_problem, "")
 	console, named := site_role_row_of(rows, "console")
 	testing.expect(t, named && len(console.grants) > 1 && console.grants[0] == "Root_Ring", "a set is read as its members, with no period")
@@ -127,61 +128,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, plasma_named && len(plasma.grants) == 0)
 	_, system_parts, parts_problem := process_roles_read(roles_text)
 	testing.expect_value(t, parts_problem, "")
-	testing.expect_value(t, len(process_roles_problems(rows, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
-}
-
-// The reader of the table of the roles reads the tree of the parser: each
-// form that a page cannot show as values stops it, with the line. The
-// forms that it accepts come last: a row on several lines, a comment above
-// a row and after it, a row with no grant and no terms.
-@(test)
-site_role_table_refuses_another_form :: proc(t: ^testing.T) {
-	head :: "package root\n\nGrant :: enum {A, B}\nRow :: struct {name: string, grants: bit_set[Grant], terms: struct {a: int}}\n\n"
-	forms := [?]string {
-		// A row from a constant: the page cannot name its parts.
-		head + "ROW :: Row{name = \"one\"}\nprocess_roles := [?]Row {\n\tROW,\n}\n",
-		// A row with its type.
-		head + "process_roles := [?]Row {\n\tRow{name = \"one\"},\n}\n",
-		// A row with no name, and a row with an empty name.
-		head + "process_roles := [?]Row {\n\t{grants = {.A}},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"\"},\n}\n",
-		// A set of grants from a constant, with its type, or a union.
-		head + "SET :: bit_set[Grant]{.A}\nprocess_roles := [?]Row {\n\t{name = \"one\", grants = SET},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"one\", grants = bit_set[Grant]{.A}},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"one\", grants = {.A} + {.B}},\n}\n",
-		// A field that a row does not have, and a field written twice.
-		head + "process_roles := [?]Row {\n\t{name = \"one\", budget = 3},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"one\", name = \"two\"},\n}\n",
-		// A value in place of a field.
-		head + "process_roles := [?]Row {\n\t{\"one\"},\n}\n",
-		// A comment inside the terms.
-		head + "process_roles := [?]Row {\n\t{name = \"one\", terms = {\n\t\ta = 1, // The reason.\n\t}},\n}\n",
-		// A table with no row.
-		head + "process_roles := [?]Row {\n}\n",
-	}
-	for form, index in forms {
-		_, refused := site_role_table_read(form, "file.odin", "process_roles")
-		testing.expectf(t, strings.has_prefix(refused, "file.odin, line "), "form %d: the reader accepts it, or gives no line: %q", index, refused)
-	}
-	_, absent := site_role_table_read(head, "file.odin", "process_roles")
-	testing.expect(t, strings.contains(absent, "no table"), absent)
-	_, broken := site_role_table_read(head + "process_roles := [?]Row {\n", "file.odin", "process_roles")
-	testing.expect(t, strings.contains(broken, "the parser of Odin refuses the file"), broken)
-	good := head + "process_roles := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\"},\n}\n"
-	rows, problem := site_role_table_read(good, "file.odin", "process_roles")
-	testing.expect_value(t, problem, "")
-	testing.expect_value(t, len(rows), 2)
-	if len(rows) == 2 {
-		testing.expect_value(t, rows[0].name, "one")
-		testing.expect_value(t, len(rows[0].grants), 2)
-		testing.expect_value(t, rows[0].terms, "a = 1")
-		testing.expect_value(t, rows[0].line, 9)
-		testing.expect_value(t, rows[0].comment, "The first line,\nand the second.\nIts own.")
-		testing.expect_value(t, rows[1].name, "two")
-		testing.expect_value(t, len(rows[1].grants), 0)
-		testing.expect_value(t, rows[1].terms, "")
-		testing.expect_value(t, rows[1].comment, "")
-	}
+	testing.expect_value(t, len(process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)), 0)
 }
 
 // A set of grants is a list of values: each grant one link to its row in
@@ -204,17 +151,17 @@ site_grant_set_is_a_list_of_values :: proc(t: ^testing.T) {
 
 @(test)
 site_console_commands_of_the_repository :: proc(t: ^testing.T) {
-	all := make([dynamic]Site_Console_Command, context.temp_allocator)
+	all := make([dynamic]foundation.Site_Console_Command, context.temp_allocator)
 	files := SITE_CONSOLE_COMMAND_FILES
 	for file in files {
-		commands, problem := site_console_commands_read(read_text(t, file), file)
+		commands, problem := foundation.site_console_commands_read(read_text(t, file), file)
 		testing.expect_value(t, problem, "")
 		append(&all, ..commands)
 	}
 	signatures := make(map[string]string, context.temp_allocator)
 	for command in all {
 		testing.expectf(t, command.about != "", "the command %s has no help", command.name)
-		signatures[command.name] = site_console_signature(command)
+		signatures[command.name] = foundation.site_console_signature(command)
 	}
 	testing.expect_value(t, signatures["help"], "help() -> Table")
 	testing.expect_value(t, signatures["repeat"], "repeat(Text, Integer) -> Text")
@@ -224,56 +171,6 @@ site_console_commands_of_the_repository :: proc(t: ^testing.T) {
 	for command in all {
 		testing.expectf(t, command.documentation != "", "the command %s has no comment above its line", command.name)
 	}
-}
-
-@(test)
-site_readers_refuse_a_damaged_file :: proc(t: ^testing.T) {
-	_, no_end := site_enumeration_read("Thing :: enum u8 {\n\tA = 0,\n", "file.odin", "Thing")
-	testing.expect(t, strings.contains(no_end, "no line \"}\""), no_end)
-	_, hexadecimal := site_enumeration_read("Thing :: enum u8 {\n\tA = 0x10,\n}\n", "file.odin", "Thing")
-	testing.expect(t, strings.has_prefix(hexadecimal, "file.odin, line 2:"), hexadecimal)
-	_, absent := site_enumeration_read("Other :: enum u8 {\n\tA,\n}\n", "file.odin", "Thing")
-	testing.expect(t, absent != "")
-	_, constant := site_constants_read("ROLE_A :: 1\nROLE_B :: 1 << 3\n", "file.odin", "", {"ROLE_"})
-	testing.expect(t, strings.has_prefix(constant, "file.odin, line 2:"), constant)
-	_, name := site_names_read("NAMES := [Thing]string {\n\t.A = 7,\n}\n", "file.odin", "NAMES")
-	testing.expect(t, strings.has_prefix(name, "file.odin, line 2:"), name)
-	_, command := site_console_commands_read("\tcommand(\"help\", {}, .None, help)\n", "file.odin")
-	testing.expect(t, strings.has_prefix(command, "file.odin, line 1:"), command)
-	// The row on line 3 has no name: the reader names its line.
-	_, no_name := site_role_table_read("package root\nprocess_roles := [?]Row {\n\t{grants = {}},\n}\n", "file.odin", "process_roles")
-	testing.expect(t, strings.has_prefix(no_name, "file.odin, line 3:"), no_name)
-}
-
-@(test)
-site_readers_of_small_files :: proc(t: ^testing.T) {
-	members, problem := site_enumeration_read("Thing :: enum u8 {\n\tA = 4, // The first\n\t// and its second line.\n\tB, // \"//\" in a comment.\n}\n", "file.odin", "Thing")
-	testing.expect_value(t, problem, "")
-	testing.expect_value(t, len(members), 2)
-	if len(members) == 2 {
-		testing.expect_value(t, members[0].comment, "The first\nand its second line.")
-		testing.expect_value(t, members[1].number, 1)
-		testing.expect_value(t, members[1].line, 4)
-	}
-	constants, constants_problem := site_constants_read("// Above,\n// two lines.\nROLE_A :: 3 // Its own.\nOTHER :: 0x10\n", "file.odin", "", {"ROLE_"})
-	testing.expect_value(t, constants_problem, "")
-	testing.expect(t, len(constants) == 1 && constants[0].comment == "Above,\ntwo lines.\nIts own." && constants[0].value == 3)
-	commands, commands_problem := site_console_commands_read("\tcommand(\"say\", {.Text, .None}, .Text, \"a \\\"quoted\\\" help\", say)\n\n\t// Its first line.\n\t//\n\t// - `item`: a list.\n\tcommand(\"hear\", {}, .None, \"help\", hear)\n", "file.odin")
-	testing.expect_value(t, commands_problem, "")
-	testing.expect_value(t, len(commands), 2)
-	if len(commands) == 2 {
-		testing.expect_value(t, commands[0].about, "a \"quoted\" help")
-		testing.expect_value(t, site_console_signature(commands[0]), "say(Text, Value) -> Text")
-		testing.expect_value(t, commands[0].documentation, "")
-		testing.expect_value(t, commands[1].documentation, "Its first line.\n\n- `item`: a list.")
-	}
-	operation := site_operation_parts(Site_Enumeration_Member{name = "Do", comment = "(a, b (or 0)) -> the count. More text."})
-	testing.expect_value(t, operation.parameters, "a, b (or 0)")
-	testing.expect_value(t, operation.result, "the count")
-	testing.expect_value(t, operation.text, "More text.")
-	no_result := site_operation_parts(Site_Enumeration_Member{name = "Go", comment = "(process, entry): the first thread."})
-	testing.expect_value(t, no_result.result, "")
-	testing.expect_value(t, no_result.text, "the first thread.")
 }
 
 @(test)
@@ -300,7 +197,7 @@ site_type_text_as_the_console :: proc(t: ^testing.T) {
 site_reference_of_the_repository :: proc(t: ^testing.T) {
 	site: Site
 	testing.expect(t, site_reference_read(&site))
-	testing.expect_value(t, len(site.reference.modules), len(module_builds))
+	testing.expect_value(t, len(site.reference.modules), len(foundation.module_builds))
 	pages := make(map[string]bool, context.temp_allocator)
 	for item in site.reference.modules {
 		testing.expectf(t, item.page == site_module_page(item.build.name) && item.page not_in pages, "the module %s has no page of its own", item.build.name)

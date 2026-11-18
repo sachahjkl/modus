@@ -5,6 +5,7 @@ import "core:image/png"
 import "core:strings"
 import "core:testing"
 import "modus:support/mark"
+import "modustool:foundation"
 
 @(private = "file")
 TEST_ADDRESS :: "https://example.invalid/modus"
@@ -229,7 +230,7 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_copyright_holder("Copyright (c) 2026"), "")
 	testing.expect_value(t, site_copyright_holder(""), "")
 	// The line of LICENSE of the repository gives a name, not a year.
-	if text, read := site_read_quiet(SITE_LICENSE_FILE); read {
+	if text, read := foundation.site_read_quiet(SITE_LICENSE_FILE); read {
 		holder := site_copyright_holder(site_line_after(text, "Copyright "))
 		testing.expect(t, holder != "")
 		testing.expect(t, len(holder) > 0 && (holder[0] < '0' || holder[0] > '9') && holder[0] != '(')
@@ -489,7 +490,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 		testing.expect_value(t, picture.opaque, icon.opaque)
 		testing.expect_value(t, picture.on_light, !icon.opaque)
 		data := files[strings.concatenate({SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator)]
-		width, height, _ := site_png_size(data)
+		width, height, _ := foundation.site_png_size(data)
 		testing.expect_value(t, width, icon.size)
 		testing.expect_value(t, height, icon.size)
 		testing.expect_value(t, site_png_is_opaque(data), icon.opaque)
@@ -683,7 +684,7 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 		}
 		data, encoded := mark_picture_png(picture)
 		testing.expect(t, encoded)
-		card_width, card_height, _ := site_png_size(data)
+		card_width, card_height, _ := foundation.site_png_size(data)
 		testing.expect_value(t, card_width, SITE_CARD_WIDTH)
 		testing.expect_value(t, card_height, SITE_CARD_HEIGHT)
 		testing.expect(t, site_png_is_opaque(data))

@@ -7,6 +7,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "modustool:foundation"
 
 // The boot volumes of the build: what each one is, how one is built, when
 // one is kept, and which ones a command needs
@@ -71,7 +72,7 @@ boot_volumes :: proc() -> []Boot_Volume {
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SHORTAGE, image = BOOT_IMAGE_SHORTAGE, kernel = "kernel"})
 	// The operation sequences on the kernel that ships: the image that
 	// holds the module operation_fuzzing and its runner.
-	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_SEQUENCES, image = BOOT_IMAGE_OPERATION_SEQUENCES, kernel = "kernel"})
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_SEQUENCES, image = foundation.BOOT_IMAGE_OPERATION_SEQUENCES, kernel = "kernel"})
 	// A measure run: the modules of the test, and the resource that tells
 	// the root service that the machine runs for a measure.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_MEASURE, image = BOOT_IMAGE_MEASURE, kernel = "kernel"})
@@ -120,30 +121,30 @@ boot_volume_name :: proc(path: string) -> string {
 
 // The object folder of a volume: no other volume writes in it.
 boot_volume_folder :: proc(volume: Boot_Volume) -> string {
-	return join(BOOT_OBJECT_FOLDER, "/", boot_volume_name(volume.path))
+	return foundation.join(BOOT_OBJECT_FOLDER, "/", boot_volume_name(volume.path))
 }
 
 boot_volume_program_path :: proc(volume: Boot_Volume) -> string {
-	return join(boot_volume_folder(volume), "/", BOOT_PROGRAM_FILE_NAME)
+	return foundation.join(boot_volume_folder(volume), "/", BOOT_PROGRAM_FILE_NAME)
 }
 
 boot_volume_signed_program_path :: proc(volume: Boot_Volume) -> string {
-	return join(boot_volume_folder(volume), "/", BOOT_PROGRAM_SIGNED_FILE_NAME)
+	return foundation.join(boot_volume_folder(volume), "/", BOOT_PROGRAM_SIGNED_FILE_NAME)
 }
 
 boot_volume_object_path :: proc(volume: Boot_Volume) -> string {
-	return join(boot_volume_folder(volume), "/", BOOT_PROGRAM_OBJECT_FILE_NAME)
+	return foundation.join(boot_volume_folder(volume), "/", BOOT_PROGRAM_OBJECT_FILE_NAME)
 }
 
 // The list of the files that the compiler of the boot program read.
 boot_volume_dependency_file :: proc(volume: Boot_Volume) -> string {
-	return join(boot_volume_folder(volume), "/", DEPENDENCY_FILE_NAME)
+	return foundation.join(boot_volume_folder(volume), "/", DEPENDENCY_FILE_NAME)
 }
 
 // The build record is beside the object folder, not in it: the build of
 // the volume empties the folder.
 boot_volume_record_path :: proc(volume: Boot_Volume) -> string {
-	return join(boot_volume_folder(volume), BUILD_RECORD_SUFFIX)
+	return foundation.join(boot_volume_folder(volume), BUILD_RECORD_SUFFIX)
 }
 
 // boot_volume_kernel_module_path gives the kernel module that the boot
@@ -151,9 +152,9 @@ boot_volume_record_path :: proc(volume: Boot_Volume) -> string {
 // byte changed that boot_image_signed_write writes beside the volume.
 boot_volume_kernel_module_path :: proc(volume: Boot_Volume) -> string {
 	if volume.change.kernel_changed_after_description {
-		return join(strings.trim_suffix(signed_image_path(volume.path), ".image"), "_kernel.module")
+		return foundation.join(strings.trim_suffix(signed_image_path(volume.path), ".image"), "_kernel.module")
 	}
-	return module_path(volume.kernel)
+	return foundation.module_path(volume.kernel)
 }
 
 // boot_volume_system_key_path gives the key file that the boot program of a
@@ -164,7 +165,7 @@ boot_volume_system_key_path :: proc(volume: Boot_Volume) -> string {
 	if volume.key_number_raised == 0 {
 		return SYSTEM_KEY_FILE
 	}
-	return join(boot_volume_folder(volume), "_system_key.bin")
+	return foundation.join(boot_volume_folder(volume), "_system_key.bin")
 }
 
 // boot_volume_system_key_write writes the key file of a volume whose key
@@ -174,7 +175,7 @@ boot_volume_system_key_write :: proc(volume: Boot_Volume) -> bool {
 	if volume.key_number_raised == 0 {
 		return true
 	}
-	key := read_file(SYSTEM_KEY_FILE) or_return
+	key := foundation.read_file(SYSTEM_KEY_FILE) or_return
 	if len(key) != system_description.PUBLIC_KEY_SIZE + 8 {
 		fmt.eprintfln("modustool: %s is not a public key with its key number", SYSTEM_KEY_FILE)
 		return false
@@ -219,12 +220,12 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
 	// The compiler reads the file of a `#load` from the folder of the boot
 	// program; the tool names each file from the root of the repository.
-	to_root := path_from_folder_to_root(SOURCE_FOLDER_BOOT)
+	to_root := foundation.path_from_folder_to_root(foundation.SOURCE_FOLDER_BOOT)
 	append(
 		&command,
 		"odin",
 		"build",
-		SOURCE_FOLDER_BOOT,
+		foundation.SOURCE_FOLDER_BOOT,
 		"-target:freestanding_amd64_win64",
 		"-build-mode:obj",
 		"-no-entry-point",
@@ -236,30 +237,30 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		// The list of the files that the compiler read: the inputs of the
 		// build key of the volume.
 		"-export-dependencies:json",
-		join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
-		SOURCE_LIBRARY_FLAG,
-		join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
-		join("-define:SYSTEM_KEY=", to_root, boot_volume_system_key_path(volume)),
+		foundation.join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
+		foundation.SOURCE_LIBRARY_FLAG,
+		foundation.join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
+		foundation.join("-define:SYSTEM_KEY=", to_root, boot_volume_system_key_path(volume)),
 		fmt.tprintf("-define:SELF_TEST=%d", volume.self_test),
-		join("-define:KERNEL_MODULE=", to_root, boot_volume_kernel_module_path(volume)),
-		join("-out:", boot_volume_object_path(volume)),
+		foundation.join("-define:KERNEL_MODULE=", to_root, boot_volume_kernel_module_path(volume)),
+		foundation.join("-out:", boot_volume_object_path(volume)),
 	)
 	return command[:]
 }
 
 // The assembly file of the boot program: the jump to the kernel.
-BOOT_PROGRAM_JUMP_SOURCE :: SOURCE_FOLDER_BOOT + "/jump.asm"
+BOOT_PROGRAM_JUMP_SOURCE :: foundation.SOURCE_FOLDER_BOOT + "/jump.asm"
 
 // The two assembly files of the boot program, and the object of each.
 boot_program_jump_command :: proc(volume: Boot_Volume) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, "nasm", "-f", "win64", "-o", join(boot_volume_folder(volume), "/jump.obj"), BOOT_PROGRAM_JUMP_SOURCE)
+	append(&command, "nasm", "-f", "win64", "-o", foundation.join(boot_volume_folder(volume), "/jump.obj"), BOOT_PROGRAM_JUMP_SOURCE)
 	return command[:]
 }
 
 boot_program_memory_command :: proc(volume: Boot_Volume) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, "nasm", "-f", "win64", "-DWIN64", "-o", join(boot_volume_folder(volume), "/memory.obj"), RUNTIME_MEMORY)
+	append(&command, "nasm", "-f", "win64", "-DWIN64", "-o", foundation.join(boot_volume_folder(volume), "/memory.obj"), RUNTIME_MEMORY)
 	return command[:]
 }
 
@@ -267,7 +268,7 @@ boot_program_memory_command :: proc(volume: Boot_Volume) -> []string {
 // object: the build adds the objects of the folder.
 boot_program_link_command :: proc(volume: Boot_Volume) -> [dynamic]string {
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", join("/out:", boot_volume_program_path(volume)))
+	append(&command, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", foundation.join("/out:", boot_volume_program_path(volume)))
 	return command
 }
 
@@ -335,17 +336,17 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 	}
 	signed_image_time := time.tick_since(step_started)
 	step_started = time.tick_now()
-	reset_folder(folder) or_return
+	foundation.reset_folder(folder) or_return
 	boot_volume_system_key_write(volume) or_return
-	run(boot_program_compile_command(volume)) or_return
+	foundation.run(boot_program_compile_command(volume)) or_return
 	compile_time := time.tick_since(step_started)
 	step_started = time.tick_now()
-	run(boot_program_jump_command(volume)) or_return
-	run(boot_program_memory_command(volume)) or_return
-	objects := files_with_suffix(folder, ".obj") or_return
+	foundation.run(boot_program_jump_command(volume)) or_return
+	foundation.run(boot_program_memory_command(volume)) or_return
+	objects := foundation.files_with_suffix(folder, ".obj") or_return
 	link := boot_program_link_command(volume)
 	append(&link, ..objects)
-	run(link[:]) or_return
+	foundation.run(link[:]) or_return
 	process_path := boot_volume_program_path(volume)
 	if volume.firmware_signature != .None {
 		boot_program_sign(volume.firmware_signature, process_path, boot_volume_signed_program_path(volume)) or_return
@@ -356,10 +357,10 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 	}
 	link_time := time.tick_since(step_started)
 	step_started = time.tick_now()
-	process := read_file(process_path) or_return
+	process := foundation.read_file(process_path) or_return
 	// The debug image is a file of its own beside the boot program: the boot
 	// program and the boot image are the same bytes with and without it.
-	debug_image := read_file(DEBUG_IMAGE) or_return
+	debug_image := foundation.read_file(DEBUG_IMAGE) or_return
 	files := make([]Volume_File, 2, context.temp_allocator)
 	files[0] = {
 		path = BOOT_PROGRAM_PATH,
@@ -391,7 +392,7 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 // no build record read: the checks that compare two builds run the compiler
 // of the boot program again (repeat.odin).
 main_boot_volume_build :: proc() -> bool {
-	make_folder(BOOT_OBJECT_FOLDER) or_return
+	foundation.make_folder(BOOT_OBJECT_FOLDER) or_return
 	system_key_write() or_return
 	for volume in boot_volumes() {
 		if volume.path == BOOT_VOLUME {
@@ -411,7 +412,7 @@ run_volume :: proc(args: []string) -> int {
 			if boot_volume_name(volume.path) == args[0] {
 				// The process that leads the build said which key signs.
 				signing_key_said = true
-				return boot_volume_build(volume) ? 0 : EXIT_FAILURE
+				return boot_volume_build(volume) ? 0 : foundation.EXIT_FAILURE
 			}
 		}
 	}
@@ -420,7 +421,7 @@ run_volume :: proc(args: []string) -> int {
 		fmt.sbprintf(&names, "%s%s", index > 0 ? ", " : "", boot_volume_name(volume.path))
 	}
 	fmt.eprintfln("modustool: volume <name>; the names: %s", strings.to_string(names))
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 // What the build keys of all the volumes of one build share: read one time,
@@ -443,7 +444,7 @@ boot_volume_shared_inputs_read :: proc(volumes: []Boot_Volume) -> Boot_Volume_Sh
 	paths := make([dynamic]string, context.temp_allocator)
 	append(&paths, DEBUG_IMAGE, SYSTEM_KEY_FILE)
 	for volume in volumes {
-		for path in ([]string{volume.image, module_path(volume.kernel)}) {
+		for path in ([]string{volume.image, foundation.module_path(volume.kernel)}) {
 			known := false
 			for earlier in paths {
 				known = known || earlier == path
@@ -462,7 +463,7 @@ boot_volume_shared_inputs_read :: proc(volumes: []Boot_Volume) -> Boot_Volume_Sh
 	}
 	settings := make([dynamic]string, context.temp_allocator)
 	append(&settings, ..build_inputs.volume_programs[:])
-	append(&settings, join("OVMF_FULL_VARS=", os.get_env("OVMF_FULL_VARS", context.temp_allocator)))
+	append(&settings, foundation.join("OVMF_FULL_VARS=", os.get_env("OVMF_FULL_VARS", context.temp_allocator)))
 	return {tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:]}
 }
 
@@ -496,7 +497,7 @@ boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_I
 		append(&fixed_files, TEST_FIRMWARE_SIGNING_KEY_FILE, TEST_FIRMWARE_CERTIFICATE_FILE)
 	}
 	built_files := make([dynamic]Record_Output, context.temp_allocator)
-	for path in ([]string{volume.image, module_path(volume.kernel), DEBUG_IMAGE, SYSTEM_KEY_FILE}) {
+	for path in ([]string{volume.image, foundation.module_path(volume.kernel), DEBUG_IMAGE, SYSTEM_KEY_FILE}) {
 		found := false
 		for file in shared.built_files {
 			if file.path == path {
@@ -510,7 +511,7 @@ boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_I
 		}
 	}
 	inputs = {
-		subject            = join("boot volume ", boot_volume_name(volume.path)),
+		subject            = foundation.join("boot volume ", boot_volume_name(volume.path)),
 		tool_identity      = shared.tool_identity,
 		settings           = settings[:],
 		fixed_files        = fixed_files[:],
@@ -689,7 +690,7 @@ BUILT_VOLUME_NAMES_MOST :: 19
 // others are built at the same time, each in its own process.
 boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	boot_volumes_ready_forget()
-	make_folder(BOOT_OBJECT_FOLDER) or_return
+	foundation.make_folder(BOOT_OBJECT_FOLDER) or_return
 	// Every boot program loads this file: it is written before the first
 	// volume process starts, and no volume process writes it.
 	system_key_write() or_return
@@ -761,7 +762,7 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	}
 	host_processes := boot_volume_host_processes(len(to_build), module_build_host_processes, os.get_processor_core_count())
 	build_measure.volume_host_processes = host_processes
-	outcomes := build_host_processes_run(commands, host_processes, context.temp_allocator)
+	outcomes := foundation.build_host_processes_run(commands, host_processes, context.temp_allocator)
 	defer {
 		for outcome in outcomes {
 			delete(outcome.output)

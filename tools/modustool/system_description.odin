@@ -12,6 +12,7 @@ import "core:sys/linux"
 import crypto "modus:support/cryptography/compatibility_crypto"
 import "modus:support/cryptography/ed25519"
 import "modus:support/cryptography/sha2"
+import "modustool:foundation"
 
 // The system description and its signature (docs/TRUSTED_BOOT.md).
 //
@@ -31,16 +32,16 @@ import "modus:support/cryptography/sha2"
 // only the public key and the signature do.
 
 SIGNING_KEY_VARIABLE :: "SYSTEM_SIGNING_KEY"
-TEST_SIGNING_KEY_FILE :: RESOURCE_FOLDER + "/keys/test_signing_key"
+TEST_SIGNING_KEY_FILE :: foundation.RESOURCE_FOLDER + "/keys/test_signing_key"
 // The key of the build, for the boot program (#load): the public key, 32
 // bytes, then its key number as a little-endian u64.
-SYSTEM_KEY_FILE :: BUILD_FOLDER + "/system_key.bin"
+SYSTEM_KEY_FILE :: foundation.BUILD_FOLDER + "/system_key.bin"
 // The key number of each public key of the publisher of the system, one
 // line for each: the number, one space, the 64 hexadecimal digits of the
 // public key (src/md/features/rollback_floors.md). A new key after a theft
 // gets the next number: the key floor of the TPM then revokes each key
 // before it.
-KEY_NUMBERS_FILE :: RESOURCE_FOLDER + "/keys/key_numbers"
+KEY_NUMBERS_FILE :: foundation.RESOURCE_FOLDER + "/keys/key_numbers"
 SIGNING_KEY_FILE_NAME :: "signing_key"
 SIGNING_KEY_PUBLIC_SUFFIX :: ".public"
 SIGNING_KEY_SIZE :: 32
@@ -128,7 +129,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 	ed25519.private_key_public_bytes(&key.private_key, key.public_key[:])
 	key.is_test = key.public_key == system_description.TEST_PUBLIC_KEY
 	if path == TEST_SIGNING_KEY_FILE && !key.is_test {
-		fmt.eprintfln("modustool: %s does not give the public key of the test signing key (" + SOURCE_FOLDER_CONTRACT + "/system_description)", path)
+		fmt.eprintfln("modustool: %s does not give the public key of the test signing key (" + foundation.SOURCE_FOLDER_CONTRACT + "/system_description)", path)
 		return
 	}
 	if !signing_key_said {
@@ -146,7 +147,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 // signing_key_file_read reads a key file: 64 hexadecimal digits, then an
 // end of line.
 signing_key_file_read :: proc(path: string) -> (bytes: [SIGNING_KEY_SIZE]u8, ok: bool) {
-	data := read_file(path) or_return
+	data := foundation.read_file(path) or_return
 	defer crypto.zero_explicit(raw_data(data), len(data))
 	problem: string
 	bytes, problem = signing_key_text_decode(string(data))
@@ -199,7 +200,7 @@ repository_root :: proc() -> (root: string, found: bool) {
 	}
 	folder := working
 	for {
-		if os.exists(strings.concatenate({folder, "/", ROOT_MARK}, context.temp_allocator)) {
+		if os.exists(strings.concatenate({folder, "/", foundation.ROOT_MARK}, context.temp_allocator)) {
 			resolved, resolve_error := os.get_absolute_path(folder, context.temp_allocator)
 			return resolved, resolve_error == nil
 		}
@@ -287,7 +288,7 @@ file_create_new :: proc(path: string, data: []u8, mode: int) -> bool {
 // description signature. The tool checks the result with the code of the
 // boot program before it writes it.
 boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, change: Image_Change) -> (signed: Signed_Image, ok: bool) {
-	base := read_file(base_path) or_return
+	base := foundation.read_file(base_path) or_return
 	modules, resources, valid := info.image_tables(base)
 	if !valid {
 		fmt.eprintfln("modustool: %s is not a boot image", base_path)
@@ -314,7 +315,7 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	if change.module_changed_before_description != "" {
 		image_file_change(files[:module_count], change.module_changed_before_description) or_return
 	}
-	kernel := read_file(module_path(kernel_name)) or_return
+	kernel := foundation.read_file(foundation.module_path(kernel_name)) or_return
 
 	key := signing_key_read() or_return
 	// The private key leaves the memory of the tool after its uses: the
@@ -366,7 +367,7 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	if change.stated_hash_changed_module != "" {
 		image_stated_hash_change(image, change.stated_hash_changed_module) or_return
 	}
-	signed.kernel_module_path = module_path(kernel_name)
+	signed.kernel_module_path = foundation.module_path(kernel_name)
 	kernel_held := kernel
 	if change.kernel_changed_after_description {
 		kernel_held = make([]u8, len(kernel), context.temp_allocator)
@@ -432,7 +433,7 @@ system_key_write :: proc() -> bool {
 // A key with no line is refused: its boot program would have no number for
 // the key floor of the TPM.
 key_number_read :: proc(public_key: [system_description.PUBLIC_KEY_SIZE]u8) -> (key_number: u64, ok: bool) {
-	data := read_file(KEY_NUMBERS_FILE) or_return
+	data := foundation.read_file(KEY_NUMBERS_FILE) or_return
 	problem: string
 	key_number, problem = key_number_of(string(data), public_key)
 	if problem != "" {
@@ -539,7 +540,7 @@ image_file_change :: proc(files: []Image_File, name: string) -> bool {
 // image_description_read gives the system description of the boot image
 // of a boot volume.
 image_description_read :: proc(volume_path: string) -> (description: []u8, ok: bool) {
-	image := read_file(signed_image_path(volume_path)) or_return
+	image := foundation.read_file(signed_image_path(volume_path)) or_return
 	found: bool
 	description, _, found = system_description.trust_resources(image)
 	if !found {
@@ -579,13 +580,13 @@ run_key :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "show" {
 		key, ok := signing_key_read()
 		if !ok {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		digits := system_description.hexadecimal(key.public_key)
 		fmt.printfln("%s%s", string(digits[:]), key.is_test ? " (the test signing key: not trusted)" : "")
 		key_number, ok_number := key_number_read(key.public_key)
 		if !ok_number {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		fmt.printfln("key number %d", key_number)
 		return 0
@@ -593,19 +594,19 @@ run_key :: proc(args: []string) -> int {
 	// The test firmware signing key of the repository: made once, then
 	// committed beside the test signing key. Its private key is published.
 	if len(args) == 1 && args[0] == "test-firmware-new" {
-		return firmware_signing_key_new(RESOURCE_FOLDER + "/keys", true) ? 0 : EXIT_FAILURE
+		return firmware_signing_key_new(foundation.RESOURCE_FOLDER + "/keys", true) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) == 2 && args[0] == "write" {
-		return key_folder_write(args[1]) ? 0 : EXIT_FAILURE
+		return key_folder_write(args[1]) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) != 2 || args[0] != "new" {
 		fmt.eprintln("modustool: key new <folder outside the repository> | key write <folder outside the repository> | key show | key test-firmware-new")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	folder := args[1]
 	if path_inside_repository(folder) {
 		fmt.eprintfln("modustool: %s is inside the repository: a private key stays outside it", folder)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	private_path := strings.concatenate({folder, "/", SIGNING_KEY_FILE_NAME}, context.temp_allocator)
 	public_path := strings.concatenate({private_path, SIGNING_KEY_PUBLIC_SUFFIX}, context.temp_allocator)
@@ -615,17 +616,17 @@ run_key :: proc(args: []string) -> int {
 	release_public_path := strings.concatenate({release_key_path, SIGNING_KEY_PUBLIC_SUFFIX}, context.temp_allocator)
 	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) || os.exists(release_key_path) || os.exists(release_public_path) {
 		fmt.eprintfln("modustool: %s already holds a signing key: a new key does not replace one", folder)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !os.exists(folder) {
 		if err := os.make_directory(folder, os.perm(0o700)); err != nil {
 			fmt.eprintfln("modustool: cannot create %s: %v", folder, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 	}
 	if err := os.change_mode(folder, os.perm(0o700)); err != nil {
 		fmt.eprintfln("modustool: cannot make %s private: %v", folder, err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The seed of the key comes from the generator of the host. The
 	// cryptography of the system has no source of its own: in the system the
@@ -635,18 +636,18 @@ run_key :: proc(args: []string) -> int {
 	random_file, open_error := os.open("/dev/urandom")
 	if open_error != nil {
 		fmt.eprintfln("modustool: this host gives no random bytes: %v", open_error)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	read_count, read_error := os.read(random_file, seed[:])
 	os.close(random_file)
 	if read_error != nil || read_count != len(seed) {
 		fmt.eprintln("modustool: this host gives no random bytes")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	private_key: ed25519.Private_Key
 	if !ed25519.private_key_set_bytes(&private_key, seed[:]) {
 		fmt.eprintln("modustool: cannot make a key")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	defer ed25519.private_key_clear(&private_key)
 	public: [system_description.PUBLIC_KEY_SIZE]u8
@@ -657,21 +658,21 @@ run_key :: proc(args: []string) -> int {
 	private_text := strings.concatenate({string(seed_digits[:]), "\n"}, context.temp_allocator)
 	defer crypto.zero_explicit(raw_data(private_text), len(private_text))
 	if !file_create_new(private_path, transmute([]u8)private_text, 0o600) || !private_key_file_check(private_path) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !file_create_new(public_path, transmute([]u8)strings.concatenate({string(public_digits[:]), "\n"}, context.temp_allocator), 0o644) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: wrote %s and %s; public key %s", private_path, public_path, string(public_digits[:]))
 	fmt.printfln("modustool: add the line \"<the next key number> %s\" to %s before a build with this key: the key floor of the TPM then refuses each key with a lower number (docs/TRUSTED_BOOT.md, \"10. The TPM floors\")", string(public_digits[:]), KEY_NUMBERS_FILE)
 	// The firmware signing key, for Secure Boot, in the same folder.
 	if !firmware_signing_key_new(folder, false) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	// The release signing key, for the files of a release, in the same
 	// folder.
 	if !release_signing_key_new(folder) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: keep a copy of %s on a second medium, offline; then set %s=%s for each build (docs/TRUSTED_BOOT.md, \"The signing key\")", private_path, SIGNING_KEY_VARIABLE, private_path)
 	return 0

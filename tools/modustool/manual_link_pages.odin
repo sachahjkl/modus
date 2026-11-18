@@ -12,8 +12,9 @@ import "core:slice"
 import "core:strings"
 import "modus:contract/manual_pages"
 import module "modus:contract/module"
+import "modustool:foundation"
 
-MANUAL_PAGES_FILE :: BUILD_FOLDER + "/manual_pages.resource"
+MANUAL_PAGES_FILE :: foundation.BUILD_FOLDER + "/manual_pages.resource"
 
 // A reader of a document of the repository, by its path from the root: the
 // build reads the files, a host test gives texts.
@@ -31,7 +32,7 @@ Manual_Page_Readers :: struct {
 
 // The readers of the build: the files of the repository.
 manual_page_readers_of_the_build :: proc() -> Manual_Page_Readers {
-	return {documents = site_read_quiet, declarations = manual_declarations_read}
+	return {documents = foundation.site_read_quiet, declarations = manual_declarations_read}
 }
 
 // manual_declarations_read gives the declarations of the sources of the
@@ -53,9 +54,9 @@ Manual_Module_File :: struct {
 // files of the boot image and the documents and sources of the repository.
 build_manual_pages :: proc() -> (resource: Resource_File, ok: bool) {
 	modules := make([dynamic]Manual_Module_File, context.temp_allocator)
-	for build in module_builds {
-		if module_in_boot_image(build) {
-			file := read_file(module_path(build.name)) or_return
+	for build in foundation.module_builds {
+		if foundation.module_in_boot_image(build) {
+			file := foundation.read_file(foundation.module_path(build.name)) or_return
 			append(&modules, Manual_Module_File{name = build.name, file = file})
 		}
 	}
@@ -236,15 +237,15 @@ manual_link_pages_of_targets :: proc(targets: []string, readers: Manual_Page_Rea
 // the term, then its short definition and its explanation. The name
 // matches with no regard to case, as on the site.
 manual_term_page :: proc(glossary: Glossary, target: string) -> (page: manual_pages.Page_Source, found: bool) {
-	wanted := site_slug(target[len(manual_pages.TERM_PREFIX):])
+	wanted := foundation.site_slug(target[len(manual_pages.TERM_PREFIX):])
 	for group in glossary.groups {
 		for term in group.terms {
-			if site_slug(term.name) != wanted {
+			if foundation.site_slug(term.name) != wanted {
 				continue
 			}
 			text := term.definition
 			if term.explanation != "" {
-				explanation := manual_markdown_of_guide(site_lines(term.explanation), term.file)
+				explanation := manual_markdown_of_guide(foundation.site_lines(term.explanation), term.file)
 				text = strings.concatenate({text, "\n\n", explanation}, context.temp_allocator)
 			}
 			return {target = target, title = manual_title_of(term.name), text = text}, true
@@ -312,7 +313,7 @@ manual_guide_headings :: proc(lines: []string) -> []Manual_Guide_Heading {
 		if level == 0 {
 			continue
 		}
-		slug := site_slug(text)
+		slug := foundation.site_slug(text)
 		seen[slug] += 1
 		id := seen[slug] == 1 ? slug : fmt.tprintf("%s-%d", slug, seen[slug])
 		append(&headings, Manual_Guide_Heading{level = level, text = text, id = id, line = index})
@@ -334,7 +335,7 @@ manual_guide_page :: proc(target: string, read: Manual_Document_Reader) -> (page
 	if !read_ok || !strings.has_suffix(path, ".md") {
 		return {}, nil, false
 	}
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	headings := manual_guide_headings(lines)
 	place := -1
 	if anchor == "" {

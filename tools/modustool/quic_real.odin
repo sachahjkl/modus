@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sync"
+import "modustool:foundation"
 
 // QUIC against a stack that this project did not write (docs/QUIC.md,
 // section 6): the QUIC client of OpenSSL (`openssl s_client -quic`, OpenSSL
@@ -34,7 +35,7 @@ import "core:sync"
 //    with colons, on indented lines (the step reads 64 hexadecimal digits
 //    after "pub:", whatever their separators).
 
-TEST_OUTPUT_QUIC_REAL :: BUILD_FOLDER + "/test_output_quic_real.txt"
+TEST_OUTPUT_QUIC_REAL :: foundation.BUILD_FOLDER + "/test_output_quic_real.txt"
 OPENSSL_WAIT_SECONDS :: 20
 
 scenario_quic_real := [?]Step {
@@ -169,6 +170,6 @@ openssl_quic_run :: proc(machine: ^Machine, line: string) -> bool {
 		print_output(output, machine, line)
 		return false
 	}
-	test_passed_print("openssl s_client -quic connected to quic_echo with the raw public key of the log, and its line came back")
+	foundation.test_passed_print("openssl s_client -quic connected to quic_echo with the raw public key of the log, and its line came back")
 	return true
 }

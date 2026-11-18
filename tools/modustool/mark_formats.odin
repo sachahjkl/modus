@@ -16,6 +16,7 @@ import "core:fmt"
 import "core:hash"
 import "core:strings"
 import "modus:support/mark"
+import "modustool:foundation"
 
 // The format of the file of a request.
 Mark_Format :: enum {
@@ -119,7 +120,7 @@ mark_ico_encode :: proc(pictures: [][]u8) -> (file: []u8, ok: bool) {
 	little_16(&output, len(pictures))
 	offset := MARK_ICO_HEADER_SIZE + MARK_ICO_ENTRY_SIZE * len(pictures)
 	for picture in pictures {
-		width, height, is_png := site_png_size(picture)
+		width, height, is_png := foundation.site_png_size(picture)
 		if !is_png || width < 1 || width > MARK_ICON_FILE_SIDE_MOST || height < 1 || height > MARK_ICON_FILE_SIDE_MOST {
 			return nil, false
 		}
@@ -165,7 +166,7 @@ mark_ico_read :: proc(file: []u8) -> (entries: []Mark_Icon_File_Entry, problem: 
 		if entry.offset < 0 || entry.bytes <= 0 || entry.offset > len(file) || entry.bytes > len(file) - entry.offset {
 			return nil, fmt.tprintf("the entry %d lies outside the file", index)
 		}
-		width, height, is_png := site_png_size(file[entry.offset:][:entry.bytes])
+		width, height, is_png := foundation.site_png_size(file[entry.offset:][:entry.bytes])
 		if !is_png || width != entry.width || height != entry.height {
 			return nil, fmt.tprintf("the entry %d is not a PNG file of %d by %d", index, entry.width, entry.height)
 		}

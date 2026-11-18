@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The host tests of `modustool check` (src/md/infrastructure/full_check.md,
 // "The host tests at once"): the `odin test` of each folder of
@@ -23,7 +24,7 @@ import "core:time"
 // of the memory procedures link the object by its path: a library found
 // through `-L/` is refused by the linker of the Nix sandbox.
 
-HOST_TEST_OUTPUT_FOLDER :: BUILD_FOLDER + "/host_tests"
+HOST_TEST_OUTPUT_FOLDER :: foundation.BUILD_FOLDER + "/host_tests"
 
 // The lines of the end of the log of a folder whose tests failed that the
 // check prints: the summary of the test runner is there. The whole log
@@ -40,7 +41,7 @@ host_test_name :: proc(folder: string) -> string {
 // host_test_log_file gives the file that holds the output of the host
 // tests of a folder.
 host_test_log_file :: proc(folder: string) -> string {
-	return join(HOST_TEST_OUTPUT_FOLDER, "/", host_test_name(folder), ".txt")
+	return foundation.join(HOST_TEST_OUTPUT_FOLDER, "/", host_test_name(folder), ".txt")
 }
 
 // host_test_command gives the command of the host tests of a folder, with
@@ -50,13 +51,18 @@ host_test_log_file :: proc(folder: string) -> string {
 host_test_command :: proc(folder, temporary_folder: string) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
 	if temporary_folder != "" {
-		append(&command, "env", join("TMPDIR=", temporary_folder))
+		append(&command, "env", foundation.join("TMPDIR=", temporary_folder))
 	}
-	append(&command, "odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG)
-	if source_folder_takes_kernel_library(folder) {
-		append(&command, KERNEL_LIBRARY_FLAG)
+	append(&command, "odin", "test", folder, "-vet", foundation.SOURCE_LIBRARY_FLAG)
+	if foundation.source_folder_takes_kernel_library(folder) {
+		append(&command, foundation.KERNEL_LIBRARY_FLAG)
 	}
-	append(&command, join("-out:", BUILD_FOLDER, "/test_", host_test_name(folder)))
+	// A package of the tool imports another one through the source library
+	// of the tool.
+	if foundation.source_folder_is_of_the_tool(folder) {
+		append(&command, foundation.TOOL_LIBRARY_FLAG)
+	}
+	append(&command, foundation.join("-out:", foundation.BUILD_FOLDER, "/test_", host_test_name(folder)))
 	return command[:]
 }
 
@@ -114,7 +120,7 @@ host_tests_run :: proc(folders: []string) -> bool {
 		return false
 	}
 	// The logs of an earlier check are not the logs of this one.
-	reset_folder(HOST_TEST_OUTPUT_FOLDER) or_return
+	foundation.reset_folder(HOST_TEST_OUTPUT_FOLDER) or_return
 	// A temporary folder of its own is a new private folder in the
 	// temporary folder of the check.
 	commands := make([][]string, len(folders), context.temp_allocator)
@@ -128,7 +134,7 @@ host_tests_run :: proc(folders: []string) -> bool {
 		// Only the folders of the runtime assemble the file of one name;
 		// every other folder keeps the temporary folder of the check, so
 		// the paths of its tests do not grow.
-		if !strings.has_prefix(folder, SOURCE_FOLDER_RUNTIME) {
+		if !strings.has_prefix(folder, foundation.SOURCE_FOLDER_RUNTIME) {
 			commands[place] = host_test_command(folder, "")
 			continue
 		}
@@ -140,11 +146,11 @@ host_tests_run :: proc(folders: []string) -> bool {
 		temporary_folders[place] = temporary_folder
 		commands[place] = host_test_command(folder, temporary_folder)
 	}
-	processors := test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
+	processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
 	at_once := host_tests_at_once(len(folders), processors)
 	fmt.printfln("modustool: the host tests of %d folders, at most %d at once: %d processors", len(folders), at_once, processors)
 	started := time.tick_now()
-	outcomes := build_host_processes_run(commands, at_once, context.temp_allocator)
+	outcomes := foundation.build_host_processes_run(commands, at_once, context.temp_allocator)
 	whole := time.tick_since(started)
 	passed := true
 	not_started := 0

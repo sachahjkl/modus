@@ -28,6 +28,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 NEWS_FOLDER :: "news"
 // The one file of the news folder that is not an entry.
@@ -83,13 +84,13 @@ News_Entry :: struct {
 run_news :: proc(args: []string) -> int {
 	usage_text :: "modustool news new <subject> | check"
 	if len(args) == 2 && args[0] == "new" {
-		return news_new(args[1]) ? 0 : EXIT_FAILURE
+		return news_new(args[1]) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "check" {
-		return news_check() ? 0 : EXIT_FAILURE
+		return news_check() ? 0 : foundation.EXIT_FAILURE
 	}
 	fmt.eprintln(usage_text)
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 news_kind_parse :: proc(name: string) -> (kind: News_Kind, ok: bool) {
@@ -369,7 +370,7 @@ news_files_problems :: proc(entries: []News_Entry, changelog: Changelog, problem
 		}
 		if entry.picture != "" && entry.picture != NEWS_NONE && news_picture_problem(entry.picture) == "" {
 			data, err := os.read_entire_file(entry.picture, context.temp_allocator)
-			if _, _, is_png := site_png_size(data); err != nil || !is_png {
+			if _, _, is_png := foundation.site_png_size(data); err != nil || !is_png {
 				append(problems, fmt.tprintf("%s: the picture %s is not a PNG file of the repository", place, entry.picture))
 			}
 		}
@@ -411,7 +412,7 @@ news_check :: proc() -> bool {
 		fmt.eprintfln("modustool: test failed: the news has %d problems", len(problems))
 		return false
 	}
-	test_passed_print("%s has %d news entries, all well formed, each picture, release, guide and film present", NEWS_FOLDER, len(entries))
+	foundation.test_passed_print("%s has %d news entries, all well formed, each picture, release, guide and film present", NEWS_FOLDER, len(entries))
 	return true
 }
 
@@ -429,7 +430,7 @@ news_new :: proc(subject: string) -> bool {
 		return false
 	}
 	if !os.exists(NEWS_FOLDER) {
-		make_folder(NEWS_FOLDER) or_return
+		foundation.make_folder(NEWS_FOLDER) or_return
 	}
 	if err := os.write_entire_file(path, transmute([]u8)news_text(date)); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", path, err)

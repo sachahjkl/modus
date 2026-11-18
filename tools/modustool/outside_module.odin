@@ -19,6 +19,7 @@ import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import module "modus:contract/module"
 import "modus:support/disk_process"
+import "modustool:foundation"
 
 // The name of the module build file, in the folder of the module.
 MODULE_BUILD_FILE_NAME :: "module.txt"
@@ -160,7 +161,7 @@ module_build_file_parse :: proc(text: string) -> (file: Module_Build_File, probl
 // that folder and no folder above it. is_outside is false for a path that
 // is not under the folder.
 outside_source_path :: proc(path, outside_folder: string) -> (recorded: string, is_outside: bool) {
-	if outside_folder == "" || !strings.has_prefix(path, join(outside_folder, "/")) {
+	if outside_folder == "" || !strings.has_prefix(path, foundation.join(outside_folder, "/")) {
 		return "", false
 	}
 	return path[strings.last_index_byte(outside_folder, '/') + 1:], true
@@ -174,11 +175,11 @@ outside_source_path :: proc(path, outside_folder: string) -> (recorded: string, 
 // its libraries are: the layout of the installation of the flake then
 // names them.
 outside_module_source_has_a_place :: proc(path, module_folder, library_folder, compiler_folder: string) -> bool {
-	if strings.has_prefix(path, join(module_folder, "/")) || strings.has_prefix(path, join(library_folder, "/")) {
+	if strings.has_prefix(path, foundation.join(module_folder, "/")) || strings.has_prefix(path, foundation.join(library_folder, "/")) {
 		return true
 	}
 	if compiler_folder != "" {
-		return strings.has_prefix(path, join(compiler_folder, "/"))
+		return strings.has_prefix(path, foundation.join(compiler_folder, "/"))
 	}
 	return strings.contains(path, "/share/base/") || strings.contains(path, "/share/core/")
 }
@@ -189,7 +190,7 @@ outside_module_source_has_a_place :: proc(path, module_folder, library_folder, c
 // import of a folder of the system that is not its library, and a source
 // library of another name each put such a file in the list. It runs
 // between the two steps: no module file is written from such a source.
-outside_module_sources_hold :: proc(build: Module_Build) -> bool {
+outside_module_sources_hold :: proc(build: foundation.Module_Build) -> bool {
 	source_files, _, listed := dependency_list_read(module_dependency_file(build.name))
 	if !listed {
 		fmt.eprintfln("modustool: module-build: the list of the sources of the compiler cannot be read: the places of the sources of %s are not checked", build.name)
@@ -202,9 +203,9 @@ outside_module_sources_hold :: proc(build: Module_Build) -> bool {
 	}
 	// The compiler names a file where it is after each link; the folder
 	// as the tool names it is a second form of the same folder.
-	library_by_name := join(root, "/", SOURCE_FOLDER_LIBRARY)
+	library_by_name := foundation.join(root, "/", foundation.SOURCE_FOLDER_LIBRARY)
 	library_by_link := library_by_name
-	if resolved, resolve_error := os.get_absolute_path(SOURCE_FOLDER_LIBRARY, context.temp_allocator); resolve_error == nil {
+	if resolved, resolve_error := os.get_absolute_path(foundation.SOURCE_FOLDER_LIBRARY, context.temp_allocator); resolve_error == nil {
 		library_by_link = resolved
 	}
 	compiler_folder := odin_root()
@@ -212,12 +213,12 @@ outside_module_sources_hold :: proc(build: Module_Build) -> bool {
 	for listed_path in source_files {
 		path := listed_path
 		if !strings.has_prefix(path, "/") {
-			path = join(root, "/", path)
+			path = foundation.join(root, "/", path)
 		}
 		if outside_module_source_has_a_place(path, build.source, library_by_link, compiler_folder) || outside_module_source_has_a_place(path, build.source, library_by_name, compiler_folder) {
 			continue
 		}
-		fmt.eprintfln("modustool: module-build: %s: the source %s is refused: a source of a module is in the folder of the module (%s) or under it, in the source library %s (%s), or in the libraries of the compiler. Remove the import that names its package", build.name, path, build.source, SOURCE_LIBRARY_NAME, SOURCE_FOLDER_LIBRARY)
+		fmt.eprintfln("modustool: module-build: %s: the source %s is refused: a source of a module is in the folder of the module (%s) or under it, in the source library %s (%s), or in the libraries of the compiler. Remove the import that names its package", build.name, path, build.source, foundation.SOURCE_LIBRARY_NAME, foundation.SOURCE_FOLDER_LIBRARY)
 		hold = false
 	}
 	return hold
@@ -228,7 +229,7 @@ outside_module_sources_hold :: proc(build: Module_Build) -> bool {
 // system. folder and out are absolute paths with their links resolved.
 // It sets the settings of the build for the rest of the process.
 outside_module_build :: proc(folder, out: string) -> bool {
-	build_file_path := join(folder, "/", MODULE_BUILD_FILE_NAME)
+	build_file_path := foundation.join(folder, "/", MODULE_BUILD_FILE_NAME)
 	text, read_error := os.read_entire_file(build_file_path, context.temp_allocator)
 	if read_error != nil {
 		fmt.eprintfln("modustool: module-build: cannot read %s: %v. The folder of a module holds a file %s with the line `name: <name of the module>`, and the lines imports, defines and library when the module needs them", build_file_path, read_error, MODULE_BUILD_FILE_NAME)
@@ -241,7 +242,7 @@ outside_module_build :: proc(folder, out: string) -> bool {
 	}
 	for name in described.imports {
 		of_the_system := false
-		for row in module_builds {
+		for row in foundation.module_builds {
 			if row.name == name && !row.kernel {
 				of_the_system = true
 			}
@@ -250,7 +251,7 @@ outside_module_build :: proc(folder, out: string) -> bool {
 			fmt.eprintfln("modustool: module-build: %s: the import %s is not a module of the system", build_file_path, name)
 			return false
 		}
-		if imported := join(MODULE_BUILD_FOLDER, "/", name, ".module"); !os.exists(imported) {
+		if imported := foundation.join(foundation.MODULE_BUILD_FOLDER, "/", name, ".module"); !os.exists(imported) {
 			fmt.eprintfln("modustool: module-build: %s: the import %s has no file %s in the folder of the system: build the system first, with `modustool build` in its folder", build_file_path, name, imported)
 			return false
 		}
@@ -258,7 +259,7 @@ outside_module_build :: proc(folder, out: string) -> bool {
 	// One row, as a row of the module table. It is a module that links the
 	// assembly files of the system library, as each module of the boot
 	// image: the link drops the procedures that the module does not call.
-	build := Module_Build {
+	build := foundation.Module_Build {
 		name    = described.name,
 		source  = folder,
 		imports = described.imports,
@@ -266,8 +267,8 @@ outside_module_build :: proc(folder, out: string) -> bool {
 		image   = true,
 		library = described.library,
 	}
-	module_build_folder = out
-	module_import_folder = MODULE_BUILD_FOLDER
+	foundation.module_build_folder = out
+	foundation.module_import_folder = foundation.MODULE_BUILD_FOLDER
 	outside_source_folder = folder
 	debug_information = true
 	if !module_compile(build) || !outside_module_sources_hold(build) || !module_convert(build) {
@@ -279,10 +280,10 @@ outside_module_build :: proc(folder, out: string) -> bool {
 // outside_module_report prints what the build wrote: the module file with
 // its hash, which is its identity, the debug object, the hash of each
 // import, and the names of the exports.
-outside_module_report :: proc(build: Module_Build) -> bool {
-	file := read_file(module_path(build.name)) or_return
-	object := read_file(debug_object_path(build.name)) or_return
-	fmt.printfln("modustool: the module %s: %s, %d bytes, hash %s", build.name, module_path(build.name), len(file), hash_as_hexadecimal(blake3.hash(file)))
+outside_module_report :: proc(build: foundation.Module_Build) -> bool {
+	file := foundation.read_file(foundation.module_path(build.name)) or_return
+	object := foundation.read_file(debug_object_path(build.name)) or_return
+	fmt.printfln("modustool: the module %s: %s, %d bytes, hash %s", build.name, foundation.module_path(build.name), len(file), hash_as_hexadecimal(blake3.hash(file)))
 	fmt.printfln("modustool: the debug object of %s: %s, %d bytes", build.name, debug_object_path(build.name), len(object))
 	for name, index in build.imports {
 		imported, _ := module.record(file, .Imports, u32(index + 1), module.Import)
@@ -314,7 +315,7 @@ run_module_build :: proc(args: []string) -> int {
 		case argument == "--system" || argument == "--out":
 			if index + 1 >= len(args) {
 				fmt.eprintln(MODULE_BUILD_USAGE)
-				return EXIT_USAGE
+				return foundation.EXIT_USAGE
 			}
 			if argument == "--system" {
 				system_argument = args[index + 1]
@@ -324,46 +325,46 @@ run_module_build :: proc(args: []string) -> int {
 			index += 1
 		case strings.has_prefix(argument, "--") || folder_argument != "":
 			fmt.eprintln(MODULE_BUILD_USAGE)
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		case:
 			folder_argument = argument
 		}
 	}
 	if folder_argument == "" {
 		fmt.eprintln(MODULE_BUILD_USAGE)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	// With each link resolved: the compiler names a source where it is
 	// after each link, and the tool compares its paths with this one.
 	folder, folder_error := os.get_absolute_path(folder_argument, context.temp_allocator)
 	if folder_error != nil || !os.is_dir(folder) {
 		fmt.eprintfln("modustool: module-build: %s is not a folder", folder_argument)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	out_typed := out_argument
 	if out_typed == "" {
-		out_typed = join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER)
+		out_typed = foundation.join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER)
 	}
-	if !make_folder(out_typed) {
-		return EXIT_FAILURE
+	if !foundation.make_folder(out_typed) {
+		return foundation.EXIT_FAILURE
 	}
 	out, out_error := os.get_absolute_path(out_typed, context.temp_allocator)
 	if out_error != nil {
 		fmt.eprintfln("modustool: module-build: cannot find the folder of the outputs %s: %v", out_typed, out_error)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if system_argument != "" {
 		if move_error := os.set_working_directory(system_argument); move_error != nil {
 			fmt.eprintfln("modustool: module-build: cannot enter the folder of the system %s: %v", system_argument, move_error)
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
 	}
-	if !os.is_dir(SOURCE_FOLDER_LIBRARY) || !os.exists(RUNTIME_MEMORY) {
+	if !os.is_dir(foundation.SOURCE_FOLDER_LIBRARY) || !os.exists(RUNTIME_MEMORY) {
 		system_folder, _ := os.get_working_directory(context.temp_allocator)
-		fmt.eprintfln("modustool: module-build: %s is not the folder of the system: it has no %s or no %s. Name the folder of the system with --system, or with the environment variable %s", system_folder, SOURCE_FOLDER_LIBRARY, RUNTIME_MEMORY, SYSTEM_FOLDER_VARIABLE)
-		return EXIT_USAGE
+		fmt.eprintfln("modustool: module-build: %s is not the folder of the system: it has no %s or no %s. Name the folder of the system with --system, or with the environment variable %s", system_folder, foundation.SOURCE_FOLDER_LIBRARY, RUNTIME_MEMORY, SYSTEM_FOLDER_VARIABLE)
+		return foundation.EXIT_USAGE
 	}
-	return outside_module_build(folder, out) ? 0 : EXIT_FAILURE
+	return outside_module_build(folder, out) ? 0 : foundation.EXIT_FAILURE
 }
 
 // The proof of the build of an outside module in `modustool check`
@@ -378,14 +379,14 @@ Outside_Module_Example :: struct {
 	build_file: string, // The text of the module build file of the copy.
 }
 
-THIRD_PARTY_EXAMPLE_FOLDER :: BUILD_FOLDER + "/third_party_example"
+THIRD_PARTY_EXAMPLE_FOLDER :: foundation.BUILD_FOLDER + "/third_party_example"
 
 // A module with an entry and no import, and a module with an import: the second
 // needs the file of its import from the folder of the system while its
 // own file goes to the folder of the copy.
 OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
-	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", build_file = "name: tally\n"},
-	{name = "agenda", source = DEMONSTRATION_MODULE_SOURCES + "agenda", build_file = "name: agenda\nimports: calendar\nlibrary: no\n"},
+	{name = "tally", source = foundation.DEMONSTRATION_MODULE_SOURCES + "tally", build_file = "name: tally\n"},
+	{name = "agenda", source = foundation.DEMONSTRATION_MODULE_SOURCES + "agenda", build_file = "name: agenda\nimports: calendar\nlibrary: no\n"},
 }
 
 outside_module_examples_check :: proc() -> bool {
@@ -413,24 +414,24 @@ outside_module_examples_check :: proc() -> bool {
 // as a developer does: the tool, started in that folder, with the folder
 // of the system as an argument. It gives the folder.
 outside_module_example_build :: proc(tool_path, system_folder: string, example: Outside_Module_Example) -> (folder: string, ok: bool) {
-	folder = join(THIRD_PARTY_EXAMPLE_FOLDER, "/", example.name)
-	reset_folder(folder) or_return
-	sources := files_with_suffix(example.source, ".odin") or_return
-	assembly := files_with_suffix(example.source, ".asm") or_return
+	folder = foundation.join(THIRD_PARTY_EXAMPLE_FOLDER, "/", example.name)
+	foundation.reset_folder(folder) or_return
+	sources := foundation.files_with_suffix(example.source, ".odin") or_return
+	assembly := foundation.files_with_suffix(example.source, ".asm") or_return
 	if len(sources) == 0 {
 		fmt.eprintfln("modustool: test failed: %s has no source file", example.source)
 		return "", false
 	}
 	for list in ([2][]string{sources, assembly}) {
 		for source in list {
-			copied_file := join(folder, source[strings.last_index_byte(source, '/'):])
+			copied_file := foundation.join(folder, source[strings.last_index_byte(source, '/'):])
 			if copy_error := os.copy_file(copied_file, source); copy_error != nil {
 				fmt.eprintfln("modustool: test failed: cannot copy %s to %s: %v", source, copied_file, copy_error)
 				return "", false
 			}
 		}
 	}
-	build_file_path := join(folder, "/", MODULE_BUILD_FILE_NAME)
+	build_file_path := foundation.join(folder, "/", MODULE_BUILD_FILE_NAME)
 	if write_error := os.write_entire_file(build_file_path, example.build_file); write_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot write %s: %v", build_file_path, write_error)
 		return "", false
@@ -451,16 +452,16 @@ outside_module_example_build :: proc(tool_path, system_folder: string, example: 
 @(private = "file")
 outside_module_example_check :: proc(tool_path, system_folder: string, example: Outside_Module_Example) -> bool {
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
-	sources := files_with_suffix(example.source, ".odin") or_return
-	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER)
-	built := read_file(join(out, "/", example.name, ".module")) or_return
+	sources := foundation.files_with_suffix(example.source, ".odin") or_return
+	out := foundation.join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER)
+	built := foundation.read_file(foundation.join(out, "/", example.name, ".module")) or_return
 	if load_error := module.validate(built); load_error != .None {
 		fmt.eprintfln("modustool: test failed: the loader refuses the module %s that was built from %s: %v", example.name, folder, load_error)
 		return false
 	}
 	// The module of the system from the same sources: the same exports
 	// with the same call forms, and the same line of documentation.
-	of_the_system := read_file(module_path(example.name)) or_return
+	of_the_system := foundation.read_file(foundation.module_path(example.name)) or_return
 	export_count := module.count(built, .Exports)
 	if export_count != module.count(of_the_system, .Exports) {
 		fmt.eprintfln("modustool: test failed: the module %s that was built from %s has %d exports, the module of the system has %d", example.name, folder, int(export_count) - 1, int(module.count(of_the_system, .Exports)) - 1)
@@ -483,7 +484,7 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	// The import table names the file of each import of the build of the
 	// system, in the order of the row of the module table.
 	imports: []string
-	for row in module_builds {
+	for row in foundation.module_builds {
 		if row.name == example.name {
 			imports = row.imports
 		}
@@ -494,15 +495,15 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	}
 	for name, index in imports {
 		imported, _ := module.record(built, .Imports, u32(index + 1), module.Import)
-		import_file := read_file(module_path(name)) or_return
+		import_file := foundation.read_file(foundation.module_path(name)) or_return
 		if imported.hash != blake3.hash(import_file) {
-			fmt.eprintfln("modustool: test failed: import %d of the module %s that was built from %s does not name the hash of %s", index + 1, example.name, folder, module_path(name))
+			fmt.eprintfln("modustool: test failed: import %d of the module %s that was built from %s does not name the hash of %s", index + 1, example.name, folder, foundation.module_path(name))
 			return false
 		}
 	}
 	// The debug object: no path of the host, and the sources of the copy
 	// by the name of its folder.
-	object := read_file(join(out, "/", example.name, ".debug")) or_return
+	object := foundation.read_file(foundation.join(out, "/", example.name, ".debug")) or_return
 	parts, fault := debug_object.tables(object)
 	if fault != .None {
 		fmt.eprintfln("modustool: test failed: the debug object of the module %s that was built from %s is refused: %s", example.name, folder, debug_object.fault_sentences[fault])
@@ -515,7 +516,7 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 			fmt.eprintfln("modustool: test failed: the debug object of the module %s that was built from %s names the source %s by a path of the host", example.name, folder, path)
 			return false
 		}
-		if strings.has_prefix(path, join(example.name, "/")) {
+		if strings.has_prefix(path, foundation.join(example.name, "/")) {
 			named_sources += 1
 		}
 	}
@@ -528,7 +529,7 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	// procedures (src/md/infrastructure/third_party_module.md).
 	built_hash := blake3.hash(built)
 	system_hash := blake3.hash(of_the_system)
-	test_passed_print(
+	foundation.test_passed_print(
 		"the module %s, built by `module-build` from a copy of the %d source files of %s in %s: the loader accepts it, its %d exports have the names and the call forms of the module of the system, its import table names the hash of each of its %d imports, and its debug object names %d of its sources from the folder %s; its hash is %s, the hash of the module of the system is %s: %s",
 		example.name,
 		len(sources),
@@ -574,11 +575,11 @@ outside_module_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: [
 	}
 	module_name := faults ? OUTSIDE_FAULT_MODULE : OUTSIDE_DISK_MODULE
 	build_file := faults ? "name: " + OUTSIDE_FAULT_MODULE + "\ndefines: BUILT_OUTSIDE=true FAULTS_AFTER_THE_START=true\n" : "name: " + OUTSIDE_DISK_MODULE + "\ndefines: BUILT_OUTSIDE=true\n"
-	example := Outside_Module_Example{name = OUTSIDE_DISK_MODULE, source = TEST_MODULE_SOURCES + DISK_MODULE_NAME, build_file = build_file}
+	example := Outside_Module_Example{name = OUTSIDE_DISK_MODULE, source = foundation.TEST_MODULE_SOURCES + foundation.DISK_MODULE_NAME, build_file = build_file}
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
-	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", module_name)
-	file = read_file(join(out, ".module")) or_return
-	debug_file = read_file(join(out, ".debug")) or_return
+	out := foundation.join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", module_name)
+	file = foundation.read_file(foundation.join(out, ".module")) or_return
+	debug_file = foundation.read_file(foundation.join(out, ".debug")) or_return
 	return file, debug_file, true
 }
 
@@ -592,22 +593,22 @@ outside_module_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: [
 run_module_disk :: proc(args: []string) -> int {
 	if len(args) < 2 {
 		fmt.eprintln("modustool: module-disk <disk file to write> <module file> [<module file> ...]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	disk := args[0]
 	if os.exists(disk) {
 		fmt.eprintfln("modustool: module-disk: %s exists, and a data disk holds the stores of a principal: remove it, or name another file", disk)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	files := make([dynamic]Module_File, context.temp_allocator)
 	for path in args[1:] {
-		bytes, read := read_file(path)
+		bytes, read := foundation.read_file(path)
 		if !read {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		if load_error := module.validate(bytes); load_error != .None {
 			fmt.eprintfln("modustool: module-disk: %s is not a module file that the loader takes: %v", path, load_error)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		name := path
 		if slash := strings.last_index_byte(name, '/'); slash >= 0 {
@@ -617,23 +618,23 @@ run_module_disk :: proc(args: []string) -> int {
 		append(&files, Module_File{name = name, bytes = bytes})
 		// The debug object that module-build wrote beside the module file
 		// goes beside it in the store, named by the hash of the module.
-		debug_path := join(strings.trim_suffix(path, ".module"), ".debug")
+		debug_path := foundation.join(strings.trim_suffix(path, ".module"), ".debug")
 		if !os.exists(debug_path) {
 			fmt.printfln("modustool: module-disk: %s has no debug object beside it: the debugger names no procedure of %s", path, name)
 			continue
 		}
-		object, object_read := read_file(debug_path)
+		object, object_read := foundation.read_file(debug_path)
 		if !object_read {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		debug_file, accepted := module_debug_object_file(name, bytes, object)
 		if !accepted {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		append(&files, debug_file)
 	}
 	if !module_disk_write(disk, files[:]) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	for file in files {
 		if disk_process.debug_object_name_is(file.name) {

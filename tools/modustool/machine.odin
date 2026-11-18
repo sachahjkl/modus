@@ -12,23 +12,16 @@ import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "modustool:foundation"
 
 // The machine test: the tool starts the machine under QEMU, and it acts as
 // the input. It presses keys and moves the mouse through the QEMU monitor,
 // it reads the log of the kernel, and it saves pictures of the screen.
 
-SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
+SCREENSHOT_FOLDER :: foundation.BUILD_FOLDER + "/screenshots"
 // The picture of the screen that QEMU writes for the tool, beside the log of
 // its machine: two machines that run at the same time write two files.
 SCREEN_DUMP_SUFFIX :: "_screen.ppm"
-// The one role of a time in a test of the tool: it ends a test that hangs.
-// A test checks a condition (a line, a value, a state), never a speed, so
-// this bound is generous and the same for each wait of the tool that has no
-// reason of its own: a loaded host runs the machine many times slower, and
-// that says nothing about the system. It is larger than the bound of a hang
-// in the checks of a process (TEST_HANG_BOUND_MILLISECONDS in
-// src/library/support/system, 60 s), so that the process writes its own report first.
-HANG_BOUND :: 120 * time.Second
 // The bound of a Wait for the line of a case that writes a count of its
 // progress, which the process reads: the process bounds a stall of the
 // count and the whole case (TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS in
@@ -222,7 +215,7 @@ date_check :: proc(index: int, machine_seconds: i64, what: string, earliest: i64
 		fmt.eprintfln("modustool: test failed: step %d: the date of the machine (%s) is %d, %d on the clock of the host, not between %d and %d, the dates of the host before it was written and now", index + 1, what, machine_seconds, on_the_host, earliest, host)
 		return false
 	}
-	test_passed_print("the date of the machine (%s) is %d s since 1970, %d on the clock of the host, between %d and %d", what, machine_seconds, on_the_host, earliest, host)
+	foundation.test_passed_print("the date of the machine (%s) is %d s since 1970, %d on the clock of the host, between %d and %d", what, machine_seconds, on_the_host, earliest, host)
 	return true
 }
 
@@ -484,7 +477,7 @@ scenario_persist_cut := [?]Step {
 // case, then the measures. The scenario revokes the grant of the network:
 // the next datagram is refused. Then the endpoint ends with its process,
 // and each page is free or paid.
-TEST_OUTPUT_NETWORK :: BUILD_FOLDER + "/test_output_network.txt"
+TEST_OUTPUT_NETWORK :: foundation.BUILD_FOLDER + "/test_output_network.txt"
 
 scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
@@ -3703,7 +3696,7 @@ key_name :: proc(character: u8) -> string {
 	case 'a' ..= 'z', '0' ..= '9':
 		return strings.clone_from_bytes({character}, context.temp_allocator)
 	case 'A' ..= 'Z':
-		return join("shift-", strings.clone_from_bytes({character + 32}, context.temp_allocator))
+		return foundation.join("shift-", strings.clone_from_bytes({character + 32}, context.temp_allocator))
 	case ' ':
 		return "spc"
 	case '(':
@@ -3918,7 +3911,7 @@ log_read :: proc(machine: ^Machine) -> string {
 // log before the menu opened.
 windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int, ok: bool) {
 	MARK :: "compositor: windows: "
-	for start := time.now(); time.since(start) < HANG_BOUND; {
+	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
 		at := len(text) > from ? strings.index(text[from:], MARK) : -1
 		if at < 0 {
@@ -3992,7 +3985,7 @@ common_failure_check :: proc(machine: ^Machine, log: string) -> bool {
 	return true
 }
 
-log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := HANG_BOUND) -> bool {
+log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := foundation.HANG_BOUND) -> bool {
 	wait_started := time.tick_now()
 	defer test_times_wait_note(machine, wait_started)
 	start := time.now()
@@ -4069,7 +4062,7 @@ MACHINE_START_TRIES :: 3
 // or ended (then the process is reaped). A QEMU that ends before it makes
 // the socket fails its start at once, not at the bound of a hang.
 qmp_socket_wait :: proc(host_process: os.Process, path: string) -> (made: bool, ended: bool) {
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		if os.exists(path) {
 			return true, false
 		}
@@ -4131,9 +4124,9 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	forward: Forward
 	// The port of hostfwd goes back to the free ports after QEMU ended: the
 	// defers run in the reverse order.
-	defer loopback_port_take_back(forward.host_port)
+	defer loopback_port_take_back(&given_loopback_ports, forward.host_port)
 	if options.user_network {
-		port, free := free_port()
+		port, free := free_port(&given_loopback_ports)
 		if free {
 			forward.host_port = port
 		}
@@ -4194,7 +4187,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		}
 		// QEMU closed the protocol before its greeting: it ends.
 		if !ended && qmp.ended {
-			state, wait_error := os.process_wait(host_process, HANG_BOUND)
+			state, wait_error := os.process_wait(host_process, foundation.HANG_BOUND)
 			ended = wait_error == nil && state.exited
 		}
 		// A QEMU that runs and gave no greeting is a failure of the machine,
@@ -4209,8 +4202,8 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		qmp = {}
 		os.close(monitor_write)
 		os.close(monitor_read)
-		loopback_port_take_back(forward.host_port)
-		port, free := free_port()
+		loopback_port_take_back(&given_loopback_ports, forward.host_port)
+		port, free := free_port(&given_loopback_ports)
 		forward.host_port = free ? port : 0
 		if !free {
 			fmt.eprintln("modustool: no port of the loopback for the TCP of QEMU")
@@ -4253,24 +4246,24 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		passed = false
 	}
 	if machine.pictures_settled_by_calls + machine.pictures_settled_by_pictures > 0 {
-		test_passed_print("the tool took %d pictures when the processes were in a wait and the compositor had drawn each picture that it received, and %d when two pictures in a row were the same", machine.pictures_settled_by_calls, machine.pictures_settled_by_pictures)
+		foundation.test_passed_print("the tool took %d pictures when the processes were in a wait and the compositor had drawn each picture that it received, and %d when two pictures in a row were the same", machine.pictures_settled_by_calls, machine.pictures_settled_by_pictures)
 	}
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
-		test_passed_print("the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
+		foundation.test_passed_print("the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
 	}
 	if machine.keys_confirmed > 0 {
-		test_passed_print("the tool sent %d keys in %d sends, and went on after each send only when the compositor had received each record of its keys", machine.keys_confirmed, machine.key_batches_confirmed)
+		foundation.test_passed_print("the tool sent %d keys in %d sends, and went on after each send only when the compositor had received each record of its keys", machine.keys_confirmed, machine.key_batches_confirmed)
 	}
 	if machine.client_open {
 		call_client_close(&machine.client)
 	}
 	state: os.Process_State
 	if passed && machine.powered_off {
-		state, _ = os.process_wait(host_process, HANG_BOUND)
+		state, _ = os.process_wait(host_process, foundation.HANG_BOUND)
 	} else if passed {
 		wait_err: os.Error
-		state, wait_err = os.process_wait(host_process, HANG_BOUND)
+		state, wait_err = os.process_wait(host_process, foundation.HANG_BOUND)
 		if wait_err != nil || !state.exited {
 			fmt.eprintln("modustool: test failed: the machine did not stop")
 			passed = false
@@ -4425,7 +4418,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		}
 		switch step.kind {
 		case .Wait:
-			limit := first_wait ? BOOT_HANG_BOUND : HANG_BOUND
+			limit := first_wait ? BOOT_HANG_BOUND : foundation.HANG_BOUND
 			if step.seconds > 0 {
 				limit = time.Duration(step.seconds) * time.Second
 			}
@@ -4447,9 +4440,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			if was_first_wait {
-				test_passed_print("the machine printed \"%s\", %.1f s after the start of QEMU", step.text, time.duration_seconds(time.tick_since(machine.started_at)))
+				foundation.test_passed_print("the machine printed \"%s\", %.1f s after the start of QEMU", step.text, time.duration_seconds(time.tick_since(machine.started_at)))
 			} else {
-				test_passed_print("the machine printed \"%s\"", step.text)
+				foundation.test_passed_print("the machine printed \"%s\"", step.text)
 			}
 		case .Date:
 			seen_before := machine.seen
@@ -4495,7 +4488,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the stack trace names %s, not %s", index + 1, found, step.names)
 				return false
 			}
-			test_passed_print("the stack trace after \"%s\" names the functions %s", step.text, found)
+			foundation.test_passed_print("the stack trace after \"%s\" names the functions %s", step.text, found)
 		case .Type, .Keys:
 			// The keys of the line, and its Enter, go as one list.
 			names, unknown := key_names_of_a_text(step.text)
@@ -4549,7 +4542,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// The compositor chooses the shape after the input record and after
 			// a request of a process: read it until it is the expected one.
 			shape: string
-			for start := time.now(); time.since(start) < HANG_BOUND; {
+			for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 				read, ok := record_text_field(&machine.client, "compositor.pointer()", "shape")
 				if ok {
 					shape = read
@@ -4564,12 +4557,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			if step.form == "" {
-				test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
+				foundation.test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
 			} else {
 				// The form follows the appearance in force at the next frame
 				// of the compositor: read it until it is the expected one.
 				form: string
-				for start := time.now(); time.since(start) < HANG_BOUND; {
+				for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 					read, ok := record_text_field(&machine.client, "compositor.pointer()", "form")
 					if ok {
 						form = read
@@ -4583,7 +4576,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("modustool: test failed: step %d: the pointer at %d,%d has the pointer form \"%s\", not \"%s\"", index + 1, x, y, form, step.form)
 					return false
 				}
-				test_passed_print("the pointer at %d,%d has the shape %s in the pointer form %s", x, y, step.text, step.form)
+				foundation.test_passed_print("the pointer at %d,%d has the shape %s in the pointer form %s", x, y, step.text, step.form)
 			}
 		case .Front:
 			window_front_bring(machine, step.text, index) or_return
@@ -4635,7 +4628,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// takes the title bar.
 				x, y: int
 				found: bool
-				for start := time.now(); !found && time.since(start) < HANG_BOUND; {
+				for start := time.now(); !found && time.since(start) < foundation.HANG_BOUND; {
 					if x, y, found = window_place(machine, step.text); !found {
 						log_change_wait(machine)
 					}
@@ -4681,7 +4674,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// the machine did not receive is a failure of this step, with
 				// its cause, and not of a later one.
 				open := false
-				for start := time.now(); !open && time.since(start) < HANG_BOUND; {
+				for start := time.now(); !open && time.since(start) < foundation.HANG_BOUND; {
 					text := log_read(machine)
 					if open = len(text) > before && strings.contains(text[before:], "compositor: the start menu is open"); !open {
 						log_change_wait(machine)
@@ -4703,7 +4696,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if moved_title != "" {
 				// The compositor writes the new place: the window did move.
 				arrived := false
-				for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
+				for start := time.now(); !arrived && time.since(start) < foundation.HANG_BOUND; {
 					x, y, found := window_place(machine, moved_title)
 					if arrived = found && x == moved_x && y == moved_y; !arrived {
 						log_change_wait(machine)
@@ -4727,7 +4720,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			last_rows, last_total := 0, i64(0)
 			last_ok := false
 			last_table: Call_Table
-			for start := time.now(); !found && time.since(start) < HANG_BOUND; {
+			for start := time.now(); !found && time.since(start) < foundation.HANG_BOUND; {
 				table, ok := table_call(&machine.client, fmt.tprintf("log.records(%d)", from))
 				reads += 1
 				rows := ok ? len(table.rows) / table.size : 0
@@ -4757,7 +4750,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 						if !step.any_order {
 							machine.record_next = last_number + 1
 						}
-						test_passed_print("the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.process, step.channel, step.level, step.text, reads, last - row + 1)
+						foundation.test_passed_print("the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.process, step.channel, step.level, step.text, reads, last - row + 1)
 						break
 					}
 					from = last_number + 1
@@ -4806,7 +4799,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 						pages += value
 					}
 				}
-				if (has_monitor && has_mappings && has_threads && mapped >= 0 && pages == mapped && int(threads.total) == threads_count) || time.since(agree_started) > HANG_BOUND {
+				if (has_monitor && has_mappings && has_threads && mapped >= 0 && pages == mapped && int(threads.total) == threads_count) || time.since(agree_started) > foundation.HANG_BOUND {
 					break
 				}
 				time.sleep(CONDITION_POLL_PERIOD)
@@ -4815,7 +4808,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: %s: monitor.processes() gives %d mapped pages and %d threads, inspect gives %d pages in %d mappings and %d threads", index + 1, step.text, mapped, threads_count, pages, mappings.total, threads.total)
 				return false
 			}
-			test_passed_print("%s: inspect gives %d pages in %d mappings and %d threads, as monitor.processes() gives", step.text, pages, mappings.total, threads.total)
+			foundation.test_passed_print("%s: inspect gives %d pages in %d mappings and %d threads, as monitor.processes() gives", step.text, pages, mappings.total, threads.total)
 		case .Call:
 			call_started_unix := time.time_to_unix(time.now()) // No date in the answer is before it.
 			if !machine.client_open {
@@ -4842,7 +4835,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// refusal (the grant `acts_for_principal` was revoked): the blind way
 				// again.
 				machine.confirm = result.outcome == .Result
-				test_passed_print("the tool %s the place of the pointer through compositor.pointer() from now on", machine.confirm ? "reads" : "no longer reads")
+				foundation.test_passed_print("the tool %s the place of the pointer through compositor.pointer() from now on", machine.confirm ? "reads" : "no longer reads")
 			}
 			printed := strings.join(result.lines[:], "\n", context.temp_allocator)
 			for line in result.lines {
@@ -4856,7 +4849,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the answer of %s has %d bytes, not %d or more", index + 1, step.text, result.answer_bytes, step.least_answer_bytes)
 				return false
 			}
-			test_passed_print("the call %s printed \"%s\", an answer of %d bytes on one stream, %d datagrams of remote during the call%s", step.text, step.expected, result.answer_bytes, result.datagrams, result.new_connection ? ", on a new connection" : "")
+			foundation.test_passed_print("the call %s printed \"%s\", an answer of %d bytes on one stream, %d datagrams of remote during the call%s", step.text, step.expected, result.answer_bytes, result.datagrams, result.new_connection ? ", on a new connection" : "")
 			if step.date_after != "" {
 				milliseconds, found := number_after(printed, step.date_after)
 				if !found {
@@ -4875,7 +4868,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("modustool: test failed: step %d: the peer dropped %d datagrams of remote (%d asked), and the monitor ran %d calls, not 2", index + 1, lost, step.lose, after - served_before)
 					return false
 				}
-				test_passed_print("the peer dropped %d datagrams of remote during %s; QUIC sent them again, and the monitor ran the call one time", lost, step.text)
+				foundation.test_passed_print("the peer dropped %d datagrams of remote during %s; QUIC sent them again, and the monitor ran the call one time", lost, step.text)
 			}
 			if step.rows_call != "" {
 				// Another call gives the count of the rows.
@@ -4884,7 +4877,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("modustool: test failed: step %d: the call gave %d rows, %s gives %d", index + 1, result.rows, step.rows_call, counted.value)
 					return false
 				}
-				test_passed_print("the call gave %d rows, and %s gives %d", result.rows, step.rows_call, counted.value)
+				foundation.test_passed_print("the call gave %d rows, and %s gives %d", result.rows, step.rows_call, counted.value)
 			}
 			if step.repeat > 0 {
 				least, middle, per_second, measured := call_measure(&machine.client, step.text, step.repeat)
@@ -4892,7 +4885,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("modustool: test failed: step %d: the measure of %s had a call with no answer", index + 1, step.text)
 					return false
 				}
-				test_passed_print("the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
+				foundation.test_passed_print("the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
 			}
 		case .Remember:
 			if !log_wait(machine, step.text, false) {
@@ -4914,7 +4907,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					}
 				}
 			}
-			test_passed_print("%s: %d values, each different", step.text, len(remembered))
+			foundation.test_passed_print("%s: %d values, each different", step.text, len(remembered))
 		case .Quic_Key:
 			if !log_wait(machine, step.text, false) {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
@@ -4953,7 +4946,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the case \"%s\" of remote: %s", index + 1, step.text, result)
 				return false
 			}
-			test_passed_print("the case \"%s\" of remote: %s", step.text, result)
+			foundation.test_passed_print("the case \"%s\" of remote: %s", step.text, result)
 		case .Openssl_Quic:
 			if !openssl_quic_run(machine, step.text) {
 				fmt.eprintfln("modustool: test failed: step %d: the QUIC client of OpenSSL", index + 1)
@@ -4973,7 +4966,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the QUIC case \"%s\" of the peer: %s; the last counts of the server in the log: %s", index + 1, step.text, result, counts)
 				return false
 			}
-			test_passed_print("the QUIC case \"%s\" of the peer: %s; the last counts of the server in the log: %s", step.text, result, counts)
+			foundation.test_passed_print("the QUIC case \"%s\" of the peer: %s; the last counts of the server in the log: %s", step.text, result, counts)
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("modustool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
@@ -4986,14 +4979,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the TCP case \"%s\" of the peer: %s", index + 1, step.text, result)
 				return false
 			}
-			test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
+			foundation.test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Peer:
 			passed, result := peer_case(machine.peer, step.text)
 			if !passed {
 				fmt.eprintfln("modustool: test failed: step %d: the TCP case \"%s\" of the peer: %s", index + 1, step.text, result)
 				return false
 			}
-			test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
+			foundation.test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Fetch:
 			if !forward_fetch(machine.forward, step.text, machine.clock_offset_seconds) {
 				return false
@@ -5042,7 +5035,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// root of the cut.
 			last_writes := -1
 			last_progress := time.now()
-			for !sync.atomic_load(&server.powered_off) && time.since(last_progress) < HANG_BOUND {
+			for !sync.atomic_load(&server.powered_off) && time.since(last_progress) < foundation.HANG_BOUND {
 				sync.mutex_lock(&server.lock)
 				writes := server.writes
 				sync.mutex_unlock(&server.lock)
@@ -5131,7 +5124,7 @@ measured_windows := [?]struct {
 	{"interface_elements", true},
 }
 
-TEST_OUTPUT_MEASURE_WINDOWS :: BUILD_FOLDER + "/test_output_measure_windows.txt"
+TEST_OUTPUT_MEASURE_WINDOWS :: foundation.BUILD_FOLDER + "/test_output_measure_windows.txt"
 
 // measure_windows starts each window of measured_windows alone, waits for
 // the time of its pictures, closes it, then prints one table. A measure is

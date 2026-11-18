@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The measure runs of the processes
 // (docs/TOOLS.md, "A check by count, a measure by time").
@@ -32,15 +33,15 @@ measure_processes := [?]Measure_Process {
 }
 
 // The logs of the measure runs whose lines the measure record holds.
-TEST_OUTPUT_MEASURE_CLOCK :: BUILD_FOLDER + "/test_output_measure_clock.txt"
-TEST_OUTPUT_MEASURE_DISK :: BUILD_FOLDER + "/test_output_measure_disk.txt"
-TEST_OUTPUT_MEASURE_SCHEDULER :: BUILD_FOLDER + "/test_output_scheduler_1.txt"
+TEST_OUTPUT_MEASURE_CLOCK :: foundation.BUILD_FOLDER + "/test_output_measure_clock.txt"
+TEST_OUTPUT_MEASURE_DISK :: foundation.BUILD_FOLDER + "/test_output_measure_disk.txt"
+TEST_OUTPUT_MEASURE_SCHEDULER :: foundation.BUILD_FOLDER + "/test_output_scheduler_1.txt"
 
 // measure_process_output gives the log of the measure run of a process.
 // The text is in memory of its own: a scenario frees the temporary memory
 // after each step.
 measure_process_output :: proc(name: string) -> string {
-	return fmt.aprintf("%s/test_output_measure_%s.txt", BUILD_FOLDER, name)
+	return fmt.aprintf("%s/test_output_measure_%s.txt", foundation.BUILD_FOLDER, name)
 }
 
 // measure_process_find gives the process of the table with a name.

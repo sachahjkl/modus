@@ -6,9 +6,9 @@ package modustool
 
 import "modus:contract/value_kinds"
 import "core:fmt"
-import "core:os"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 SITE_BOOT_STAGE_PREFIX :: "kernel: boot: "
 // The file of the table of the commands of the tool.
@@ -102,7 +102,7 @@ site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: value_kind
 site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column, values: []value_kinds.Value_Kind = nil) -> Site_Table {
 	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator), classes = make([]string, len(columns), context.temp_allocator), headers = make([]string, len(columns), context.temp_allocator)}
 	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
-	site_escape(b, name)
+	foundation.site_escape(b, name)
 	strings.write_string(b, "\"><table>\n<thead><tr>")
 	for column, index in columns {
 		table.kinds[index] = column.kind
@@ -117,7 +117,7 @@ site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Colu
 			head_class = strings.concatenate({site_column_classes[column.kind], " value-head value-icon value-", value_name}, context.temp_allocator)
 		}
 		fmt.sbprintf(b, "<th scope=\"col\" class=\"%s\">", head_class)
-		site_escape(b, column.header)
+		foundation.site_escape(b, column.header)
 		strings.write_string(b, "</th>")
 	}
 	strings.write_string(b, "</tr></thead>\n<tbody>\n")
@@ -161,7 +161,7 @@ site_table_cells_with_classes :: proc(body: string, classes: []string, headers: 
 				strings.write_string(&out, rest[:3])
 				if label != "" {
 					strings.write_string(&out, " data-label=\"")
-					site_escape(&out, label)
+					foundation.site_escape(&out, label)
 					strings.write_byte(&out, '"')
 				}
 				after := rest[3:]
@@ -232,7 +232,7 @@ site_is_date :: proc(text: string) -> bool {
 // written as it is.
 site_time :: proc(b: ^strings.Builder, text: string) {
 	if site_cell_kind(text) != .Date || len(text) < 10 {
-		site_escape(b, text)
+		foundation.site_escape(b, text)
 		return
 	}
 	machine := text[:10]
@@ -240,7 +240,7 @@ site_time :: proc(b: ^strings.Builder, text: string) {
 		machine = strings.concatenate({text[:10], "T", text[11:16], "Z"}, context.temp_allocator)
 	}
 	fmt.sbprintf(b, "<time datetime=\"%s\">", machine)
-	site_escape(b, text)
+	foundation.site_escape(b, text)
 	strings.write_string(b, "</time>")
 }
 
@@ -264,9 +264,9 @@ site_source_line :: proc(site: ^Site, b: ^strings.Builder, sources: ..string) {
 			strings.write_string(b, index == len(sources) - 1 ? " and " : ", ")
 		}
 		strings.write_string(b, "<a href=\"")
-		site_escape(b, site_repository_file(site, source))
+		foundation.site_escape(b, site_repository_file(site, source))
 		strings.write_string(b, "\"><code>")
-		site_escape(b, source)
+		foundation.site_escape(b, source)
 		strings.write_string(b, "</code></a>")
 	}
 	strings.write_string(b, ".</p>\n")
@@ -274,7 +274,7 @@ site_source_line :: proc(site: ^Site, b: ^strings.Builder, sources: ..string) {
 
 // site_document_title gives the text of the first heading "# " of a file.
 site_document_title :: proc(content: string) -> string {
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		if strings.has_prefix(line, "# ") {
 			return strings.trim_space(line[2:])
 		}
@@ -285,7 +285,7 @@ site_document_title :: proc(content: string) -> string {
 // site_document_description gives the first sentence of the first
 // paragraph of a document that is not its line "Status: ...".
 site_document_description :: proc(content: string) -> string {
-	for paragraph in site_paragraphs(site_lines(content)) {
+	for paragraph in site_paragraphs(foundation.site_lines(content)) {
 		if !strings.has_prefix(paragraph, "Status:") {
 			return site_description_cut(site_first_sentence(paragraph))
 		}
@@ -297,7 +297,7 @@ site_document_description :: proc(content: string) -> string {
 // README.md: "| `docs/<name>.md` | <what it holds> |".
 site_readme_documents :: proc(content: string) -> map[string]string {
 	about := make(map[string]string, context.temp_allocator)
-	section, _ := site_section_lines(site_lines(content), "## Documents")
+	section, _ := site_section_lines(foundation.site_lines(content), "## Documents")
 	for line in section {
 		if !strings.has_prefix(line, "| `docs/") {
 			continue
@@ -311,11 +311,11 @@ site_readme_documents :: proc(content: string) -> map[string]string {
 }
 
 site_guides_add :: proc(site: ^Site) -> bool {
-	readme_text := site_read(SITE_README_FILE) or_return
+	readme_text := foundation.site_read(SITE_README_FILE) or_return
 	about := site_readme_documents(readme_text)
 	sources := make([dynamic]string, context.temp_allocator)
 	// First the documents in the order of the table of README.md, then the others.
-	section, _ := site_section_lines(site_lines(readme_text), "## Documents")
+	section, _ := site_section_lines(foundation.site_lines(readme_text), "## Documents")
 	for line in section {
 		cells := site_table_row_cells(line)
 		if len(cells) >= 2 && strings.has_prefix(cells[0], "`docs/") {
@@ -342,7 +342,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	slice.sort(others[:])
 	append(&sources, ..others[:])
 	for source in sources {
-		content := site_read(source) or_return
+		content := foundation.site_read(source) or_return
 		title := site_document_title(content)
 		if title == "" {
 			fmt.eprintfln("modustool: site: %s has no title \"# <title>\"", source)
@@ -365,7 +365,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	declaration_spans := site.declaration_spans
 	site.document_headings_pending = true
 	for guide, index in site.guides {
-		content := site_read(guide.source) or_return
+		content := foundation.site_read(guide.source) or_return
 		heading_renderer := site_renderer_make(site, guide.path, guide.source)
 		site_render_markdown(&heading_renderer, content)
 		site.guides[index].headings = heading_renderer.headings[:]
@@ -379,7 +379,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	site.code_blocks_not_colored, site.first_code_block_not_colored = blocks_not_colored, first_block_not_colored
 	site.declaration_spans = declaration_spans
 	for guide, index in site.guides {
-		content := site_read(guide.source) or_return
+		content := foundation.site_read(guide.source) or_return
 		renderer := site_renderer_make(site, guide.path, guide.source)
 		site_render_markdown(&renderer, content)
 		site.guides[index].headings = renderer.headings[:]
@@ -392,13 +392,13 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		if index > 0 {
 			previous := site.guides[index - 1]
 			fmt.sbprintf(&b, "<a rel=\"prev\" href=\"%s\">Previous: ", site_page_link(site, guide.path, previous.path))
-			site_escape(&b, previous.title)
+			foundation.site_escape(&b, previous.title)
 			strings.write_string(&b, "</a>\n")
 		}
 		if index + 1 < len(site.guides) {
 			next := site.guides[index + 1]
 			fmt.sbprintf(&b, "<a rel=\"next\" href=\"%s\">Next: ", site_page_link(site, guide.path, next.path))
-			site_escape(&b, next.title)
+			foundation.site_escape(&b, next.title)
 			strings.write_string(&b, "</a>\n")
 		}
 		strings.write_string(&b, "</nav>\n")
@@ -416,7 +416,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	guides_table := site_table_start(&b, "Guides", {{"Guide", .Prose}, {"What it holds", .Prose}, {"File", .Name}}, {.None, .None, .File})
 	for guide in site.guides {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, guides_page, guide.path))
-		site_escape(&b, guide.title)
+		foundation.site_escape(&b, guide.title)
 		strings.write_string(&b, "</a></td>")
 		site_cell(&b, guide.about)
 		site_cell(&b, strings.concatenate({"`", guide.source, "`"}, context.temp_allocator), "code")
@@ -461,10 +461,10 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		path := site_page_file(SITE_COMMANDS_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
 		commands := COMMANDS
-		main_text, _ := site_read_quiet(SITE_TOOL_MAIN_FILE)
-		main_lines := site_lines(main_text)
+		main_text, _ := foundation.site_read_quiet(SITE_TOOL_MAIN_FILE)
+		main_lines := foundation.site_lines(main_text)
 		fmt.sbprintf(&b, "<h1>Commands of modustool</h1>\n<p>All the automation of the project is one program of the host, <code>modustool</code>. Run a command with <code>nix develop -c modustool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
-		site_about_paragraph(site, &b, path, site_comment_above(main_text, "COMMANDS ::"), SITE_TOOL_MAIN_FILE, "COMMANDS")
+		site_about_paragraph(site, &b, path, foundation.site_comment_above(main_text, "COMMANDS ::"), SITE_TOOL_MAIN_FILE, "COMMANDS")
 		strings.write_string(&b, "<p>The table names each command; under it, each command has its documentation, the help that <code>modustool help</code> prints, and a link to its line.</p>\n")
 		site_source_line(site, &b, SITE_TOOL_MAIN_FILE)
 		// The line of each command in the table COMMANDS, and the comment
@@ -482,18 +482,18 @@ site_reference_add :: proc(site: ^Site) -> bool {
 					}
 					comment := ""
 					for comment_line in main_lines[above:index] {
-						_, comment_text, _ := markdown_comment_line(comment_line)
-						comment = markdown_comment_add(comment, comment_text)
+						_, comment_text, _ := foundation.markdown_comment_line(comment_line)
+						comment = foundation.markdown_comment_add(comment, comment_text)
 					}
-					documentation[number] = markdown_comment_end(comment)
+					documentation[number] = foundation.markdown_comment_end(comment)
 					break
 				}
 			}
 		}
 		commands_table := site_table_start(&b, "Commands of modustool", {{"Command", .Name}, {"What it does", .Prose}}, {.Command, .None})
 		for command, number in commands {
-			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#tool-command-%s\"><code>", site_slug(command.name))
-			site_escape(&b, command.name)
+			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#tool-command-%s\"><code>", foundation.site_slug(command.name))
+			foundation.site_escape(&b, command.name)
 			strings.write_string(&b, "</code></a></td>")
 			// A summary: the first sentence of the documentation, or the help.
 			// The first sentence keeps its code and its links: a name of a
@@ -513,11 +513,11 @@ site_reference_add :: proc(site: ^Site) -> bool {
 			help_html := strings.builder_make(context.temp_allocator)
 			// The line is what the tool prints: code, as it is.
 			strings.write_string(&help_html, "<code>")
-			site_escape(&help_html, command.about)
+			foundation.site_escape(&help_html, command.about)
 			strings.write_string(&help_html, "</code>")
 			facts := []Site_Symbol_Fact{{label = "What modustool help prints", kind = .None, html = strings.to_string(help_html)}}
 			description := documentation[number] != "" ? documentation[number] : command.about
-			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c modustool ", command.name}, context.temp_allocator), description = description, facts = facts, page = path, source = SITE_TOOL_MAIN_FILE, line = lines[number]})
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", foundation.site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c modustool ", command.name}, context.temp_allocator), description = description, facts = facts, page = path, source = SITE_TOOL_MAIN_FILE, line = lines[number]})
 		}
 		site_page_add(site, Site_Page{path = path, title = "Commands of modustool", description = site_description_cut(fmt.tprintf("The %d commands of modustool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_TOOL_MAIN_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Commands of modustool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE, count = len(commands), kind = .Command})
@@ -539,7 +539,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
-		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
+		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}
@@ -554,7 +554,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	reference_table := site_table_start(&b, "Reference tables", {{"Table", .Prose}, {"What it holds", .Prose}, {"Generated from", .Name}}, {.None, .None, .File})
 	for entry in entries {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, reference_page, entry.path))
-		site_escape(&b, entry.title)
+		foundation.site_escape(&b, entry.title)
 		strings.write_string(&b, "</a></td>")
 		site_cell(&b, entry.what)
 		site_cell(&b, strings.concatenate({"`", entry.source, "`"}, context.temp_allocator), "code")
@@ -579,7 +579,7 @@ site_numbers_run :: proc(site: ^Site, b: ^strings.Builder) {
 		from_build += number.source == .Build ? 1 : 0
 	}
 	if !site.measure_record.present {
-		fmt.sbprintf(b, "<p class=\"missing\">The repository holds no measure record (<code>%s</code>): only the logs in <code>%s/</code> of this work tree give numbers.</p>\n", MEASURE_RECORD_FILE, BUILD_FOLDER)
+		fmt.sbprintf(b, "<p class=\"missing\">The repository holds no measure record (<code>%s</code>): only the logs in <code>%s/</code> of this work tree give numbers.</p>\n", MEASURE_RECORD_FILE, foundation.BUILD_FOLDER)
 	} else {
 		record := site.measure_record.record
 		strings.write_string(b, "<p>The full check of ")
@@ -587,28 +587,28 @@ site_numbers_run :: proc(site: ^Site, b: ^strings.Builder) {
 		strings.write_string(b, ", on the tree of ")
 		if record.commit != "" {
 			fmt.sbprintf(b, "<a href=\"%s/commit/%s\"><code>", SITE_REPOSITORY_ADDRESS, record.commit)
-			site_escape(b, site_short_commit(record.commit))
+			foundation.site_escape(b, site_short_commit(record.commit))
 			strings.write_string(b, "</code></a>")
 		} else {
-			site_escape(b, site_short_commit(record.commit))
+			foundation.site_escape(b, site_short_commit(record.commit))
 		}
 		strings.write_string(b, " ")
-		site_escape(b, site_tree_words(record.tree))
+		foundation.site_escape(b, site_tree_words(record.tree))
 		strings.write_string(b, ", the release ")
-		site_escape(b, record.release)
+		foundation.site_escape(b, record.release)
 		strings.write_string(b, ". The host: ")
-		site_escape(b, record.host)
+		foundation.site_escape(b, record.host)
 		fmt.sbprintf(b, ". %d checks passed. The record is <code>%s</code>.</p>\n", record.checks_passed, MEASURE_RECORD_FILE)
 		if record.release != site.release {
 			strings.write_string(b, "<p class=\"missing\">The measure record is of the release ")
-			site_escape(b, record.release)
+			foundation.site_escape(b, record.release)
 			strings.write_string(b, ". This site shows the release ")
-			site_escape(b, site.release)
+			foundation.site_escape(b, site.release)
 			strings.write_string(b, ": the numbers were measured before this release.</p>\n")
 		}
 	}
 	if from_build > 0 {
-		fmt.sbprintf(b, "<p>%d numbers come from the logs in <code>%s/</code> of this work tree, which are newer than the measure record.</p>\n", from_build, BUILD_FOLDER)
+		fmt.sbprintf(b, "<p>%d numbers come from the logs in <code>%s/</code> of this work tree, which are newer than the measure record.</p>\n", from_build, foundation.BUILD_FOLDER)
 	}
 }
 
@@ -626,7 +626,7 @@ site_numbers_body :: proc(site: ^Site) -> string {
 	number_ids := make(map[string]bool, context.temp_allocator)
 	for number in site.measured {
 		// Each row is a link target, and a symbol of "On this page".
-		wanted := strings.concatenate({"number-", site_slug(number.measure.sentence)}, context.temp_allocator)
+		wanted := strings.concatenate({"number-", foundation.site_slug(number.measure.sentence)}, context.temp_allocator)
 		id := wanted
 		for suffix := 2; (id in number_ids); suffix += 1 {
 			id = fmt.tprintf("%s-%d", wanted, suffix)
@@ -638,14 +638,14 @@ site_numbers_body :: proc(site: ^Site) -> string {
 		site_cell(&b, number.measure.sentence)
 		if !number.found {
 			strings.write_string(&b, "<td class=\"missing\">" + SITE_NOT_MEASURED + "</td><td class=\"missing\">")
-			site_escape(&b, number.missing)
+			foundation.site_escape(&b, number.missing)
 			strings.write_string(&b, "</td><td></td></tr>\n")
 			continue
 		}
 		strings.write_string(&b, "<td class=\"code\"><code>")
-		site_escape(&b, number.text)
+		foundation.site_escape(&b, number.text)
 		strings.write_string(&b, "</code></td><td><code>")
-		site_escape(&b, number.path)
+		foundation.site_escape(&b, number.path)
 		fmt.sbprintf(&b, "</code>, line %d", number.line_number)
 		if number.matching_lines > 1 {
 			which: string = number.measure.choice == .Last ? "last" : "first"
@@ -670,15 +670,15 @@ site_numbers_body :: proc(site: ^Site) -> string {
 		if number.measure.reading == "" {
 			continue
 		}
-		fmt.sbprintf(&b, "<section class=\"symbol\">\n<h3 id=\"reading-%s\">", site_slug(number.measure.sentence))
+		fmt.sbprintf(&b, "<section class=\"symbol\">\n<h3 id=\"reading-%s\">", foundation.site_slug(number.measure.sentence))
 		site_inline(&b, number.measure.sentence)
 		strings.write_string(&b, "</h3>\n<p>")
 		site_inline(&b, number.measure.reading)
 		strings.write_string(&b, "</p>\n</section>\n")
 	}
-	fmt.sbprintf(&b, "<p class=\"source\">The lines come from the measure record <code>%s</code>, which <code>modustool screenshots</code> writes after a full check that passed, or from the logs in <code>%s/</code> that a later <code>modustool test</code> or <code>modustool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ", MEASURE_RECORD_FILE, BUILD_FOLDER)
+	fmt.sbprintf(&b, "<p class=\"source\">The lines come from the measure record <code>%s</code>, which <code>modustool screenshots</code> writes after a full check that passed, or from the logs in <code>%s/</code> that a later <code>modustool test</code> or <code>modustool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ", MEASURE_RECORD_FILE, foundation.BUILD_FOLDER)
 	strings.write_string(&b, "<a href=\"")
-	site_escape(&b, site_repository_file(site, "tools/modustool/site.odin"))
+	foundation.site_escape(&b, site_repository_file(site, "tools/modustool/site.odin"))
 	strings.write_string(&b, "\"><code>tools/modustool/site.odin</code></a>.</p>\n")
 	return strings.to_string(b)
 }
@@ -692,7 +692,7 @@ site_license_row_ids :: proc(licenses: Site_Licenses) -> (system_ids: []string, 
 	ids_of :: proc(rows: []Site_License_Row, used: ^map[string]bool) -> []string {
 		ids := make([]string, len(rows), context.temp_allocator)
 		for row, index in rows {
-			wanted := strings.concatenate({"license-", site_slug(row.what)}, context.temp_allocator)
+			wanted := strings.concatenate({"license-", foundation.site_slug(row.what)}, context.temp_allocator)
 			id := wanted
 			for number := 2; (id in used^); number += 1 {
 				id = fmt.tprintf("%s-%d", wanted, number)
@@ -715,21 +715,21 @@ site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows:
 		site_cell(b, row.what)
 		if row.place != "" {
 			strings.write_string(b, "<td class=\"code name\"><a href=\"")
-			site_escape(b, site_repository_file(site, row.place))
+			foundation.site_escape(b, site_repository_file(site, row.place))
 			strings.write_string(b, "\"><code>")
-			site_escape(b, row.place)
+			foundation.site_escape(b, row.place)
 			strings.write_string(b, "</code></a></td>")
 		} else {
 			strings.write_string(b, "<td></td>")
 		}
 		site_cell(b, row.license, row.license == SITE_NOT_RECORDED ? "missing" : "code")
 		strings.write_string(b, "<td>")
-		site_escape(b, row.author)
+		foundation.site_escape(b, row.author)
 		if row.author_address != "" {
 			strings.write_string(b, " <a href=\"")
-			site_escape(b, row.author_address)
+			foundation.site_escape(b, row.author_address)
 			strings.write_string(b, "\">")
-			site_escape(b, row.author_address)
+			foundation.site_escape(b, row.author_address)
 			strings.write_string(b, "</a>")
 		}
 		strings.write_string(b, "</td>")
@@ -794,7 +794,7 @@ Site_Boot_Stage :: struct {
 // "kernel: boot: firmware: <n> us" for the firmware.
 site_boot_stages :: proc(content: string) -> []Site_Boot_Stage {
 	stages := make([dynamic]Site_Boot_Stage, context.temp_allocator)
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		if !strings.has_prefix(line, SITE_BOOT_STAGE_PREFIX) || !strings.has_suffix(line, " us") {
 			continue
 		}
@@ -803,7 +803,7 @@ site_boot_stages :: proc(content: string) -> []Site_Boot_Stage {
 		if last < 0 {
 			continue
 		}
-		value := site_digits_value(rest[last + 2:])
+		value := foundation.site_digits_value(rest[last + 2:])
 		if value < 0 {
 			continue
 		}
@@ -907,10 +907,4 @@ site_home_add :: proc(site: ^Site) {
 	// The files of the newest release, and how to verify them.
 	site_download_write(site, &b, home)
 	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE, SITE_GALLERY_SOURCE_FILE), script = SITE_CAROUSEL_SCRIPT})
-}
-
-// site_read_quiet reads a file that can be absent, with no message.
-site_read_quiet :: proc(path: string) -> (text: string, ok: bool) {
-	data, err := os.read_entire_file(path, context.temp_allocator)
-	return string(data), err == nil
 }

@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The tool built once (src/md/infrastructure/repository_layout.md, "The
 // tool built once"). The command `modustool` of the development shell
@@ -23,14 +24,14 @@ import "core:time"
 // The binary of the development shell, and the files of its build, from
 // the root of the repository. The command of the flake makes the first
 // binary when TOOL_BINARY is absent: the command modustool of flake.nix.
-TOOL_BUILD_FOLDER :: BUILD_FOLDER + "/tool"
+TOOL_BUILD_FOLDER :: foundation.BUILD_FOLDER + "/tool"
 TOOL_BINARY :: TOOL_BUILD_FOLDER + "/modustool"
 TOOL_BUILD_RECORD :: TOOL_BINARY + BUILD_RECORD_SUFFIX
 
 // The compile of the tool, with no output. flake.nix writes the same
 // words for its first binary and for the derivation of the check; a host
 // test reads them there.
-TOOL_COMPILE_COMMAND :: [?]string{"odin", "build", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG, KERNEL_LIBRARY_FLAG}
+TOOL_COMPILE_COMMAND :: [?]string{"odin", "build", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG}
 
 // False in the binary of the store, whose sources are the inputs of its
 // derivation, and in the instrumented child of the fuzzing, a build of
@@ -62,7 +63,7 @@ tool_compile_command_of :: proc(output, dependency_file: string) -> []string {
 	base := TOOL_COMPILE_COMMAND
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, ..base[:])
-	append(&command, join("-out:", output), "-export-dependencies:json", join("-export-dependencies-file:", dependency_file))
+	append(&command, foundation.join("-out:", output), "-export-dependencies:json", foundation.join("-export-dependencies-file:", dependency_file))
 	return command[:]
 }
 
@@ -113,20 +114,20 @@ tool_build_current :: proc() {
 	executable, path_error := os.get_executable_path(context.temp_allocator)
 	if path_error != nil {
 		fmt.eprintfln("modustool: cannot find the file of the tool: %v", path_error)
-		os.exit(EXIT_FAILURE)
+		os.exit(foundation.EXIT_FAILURE)
 	}
 	root, found := tool_root_of_binary(executable)
 	if !found {
 		fmt.eprintfln("modustool: the tool is %s, and not %s in the folder of a repository: it cannot find its sources", executable, TOOL_BINARY)
-		os.exit(EXIT_FAILURE)
+		os.exit(foundation.EXIT_FAILURE)
 	}
 	_ = os.set_env(TOOL_SOURCES_CHECKED_VARIABLE, "yes")
 	// The table holds the time of the start: a source that changes during
 	// the compile then gives no record, and the next command compiles again.
 	table := input_file_table_make(root, nil)
 	inputs := tool_build_key_inputs()
-	binary := join(root, "/", TOOL_BINARY)
-	record_path := join(root, "/", TOOL_BUILD_RECORD)
+	binary := foundation.join(root, "/", TOOL_BINARY)
+	record_path := foundation.join(root, "/", TOOL_BUILD_RECORD)
 	current, reason := tool_binary_is_current(record_path, binary, inputs, table)
 	if current {
 		input_file_table_destroy(table)
@@ -138,7 +139,7 @@ tool_build_current :: proc() {
 	built := tool_build(root, binary, record_path, inputs, table)
 	input_file_table_destroy(table)
 	if !built {
-		os.exit(EXIT_FAILURE)
+		os.exit(foundation.EXIT_FAILURE)
 	}
 	os.exit(tool_run_again(binary))
 }
@@ -147,13 +148,13 @@ tool_build_current :: proc() {
 // at binary, and writes its build record. The record of the binary before
 // is removed first: it must not stay beside a new binary.
 tool_build :: proc(root, binary, record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table) -> bool {
-	make_folder(join(root, "/", TOOL_BUILD_FOLDER)) or_return
+	foundation.make_folder(foundation.join(root, "/", TOOL_BUILD_FOLDER)) or_return
 	_ = os.remove(record_path)
 	host_process_number := os.get_pid()
 	output := fmt.tprintf("%s.%d.next", TOOL_BINARY, host_process_number)
 	dependency_file := fmt.tprintf("%s.%d.%s", TOOL_BINARY, host_process_number, DEPENDENCY_FILE_NAME)
-	output_path := join(root, "/", output)
-	dependency_path := join(root, "/", dependency_file)
+	output_path := foundation.join(root, "/", output)
+	dependency_path := foundation.join(root, "/", dependency_file)
 	defer {
 		_ = os.remove(dependency_path)
 	}
@@ -192,11 +193,11 @@ tool_run_again :: proc(binary: string) -> int {
 	host_process, start_error := os.process_start({command = command[:], stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start %s: %v", binary, start_error)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	state, wait_error := os.process_wait(host_process)
 	if wait_error != nil || !state.exited {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	return state.exit_code
 }

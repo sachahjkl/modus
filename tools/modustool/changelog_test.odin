@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "modustool:foundation"
 
 @(private = "file")
 GOOD_CHANGELOG :: `# Changelog
@@ -338,9 +339,9 @@ released_fragment_is_refused :: proc(t: ^testing.T) {
 
 @(test)
 fragment_folder_is_read :: proc(t: ^testing.T) {
-	folder :: BUILD_FOLDER + "/test_changelog_fragments"
+	folder :: foundation.BUILD_FOLDER + "/test_changelog_fragments"
 	_ = os.remove_all(folder)
-	testing.expect(t, make_folder(folder))
+	testing.expect(t, foundation.make_folder(folder))
 	defer os.remove_all(folder)
 	problems := make([dynamic]string, context.temp_allocator)
 	// An empty folder: no fragment, no problem.

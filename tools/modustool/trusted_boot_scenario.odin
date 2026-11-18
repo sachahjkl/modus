@@ -8,6 +8,7 @@ import info "modus:contract/boot_info"
 import "modus:contract/release"
 import "modus:contract/system_description"
 import "modus:support/tpm2"
+import "modustool:foundation"
 
 // The machines of the trusted boot (docs/TRUSTED_BOOT.md), `modustool test
 // trusted_boot`. With the usual firmware, the boot program must refuse:
@@ -67,16 +68,16 @@ CHANGED_MODULE :: "console"
 // machine loads it.
 OTHER_SYSTEM_MODULE :: "lonely"
 
-TEST_OUTPUT_CHANGED_MODULE :: BUILD_FOLDER + "/test_output_changed_module.txt"
-TEST_OUTPUT_WRONG_SIGNATURE :: BUILD_FOLDER + "/test_output_wrong_signature.txt"
-TEST_OUTPUT_CHANGED_KERNEL :: BUILD_FOLDER + "/test_output_changed_kernel.txt"
-TEST_OUTPUT_WITHOUT_DESCRIPTION :: BUILD_FOLDER + "/test_output_without_description.txt"
-TEST_OUTPUT_STATED_HASH :: BUILD_FOLDER + "/test_output_stated_hash.txt"
-TEST_OUTPUT_MEASURED :: BUILD_FOLDER + "/test_output_measured.txt"
-TEST_OUTPUT_OTHER_SYSTEM :: BUILD_FOLDER + "/test_output_other_system.txt"
-TEST_OUTPUT_SECURE_BOOT :: BUILD_FOLDER + "/test_output_secure_boot.txt"
-TEST_OUTPUT_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/test_output_secure_boot_changed.txt"
-TEST_OUTPUT_SECURE_BOOT_UNSIGNED :: BUILD_FOLDER + "/test_output_secure_boot_unsigned.txt"
+TEST_OUTPUT_CHANGED_MODULE :: foundation.BUILD_FOLDER + "/test_output_changed_module.txt"
+TEST_OUTPUT_WRONG_SIGNATURE :: foundation.BUILD_FOLDER + "/test_output_wrong_signature.txt"
+TEST_OUTPUT_CHANGED_KERNEL :: foundation.BUILD_FOLDER + "/test_output_changed_kernel.txt"
+TEST_OUTPUT_WITHOUT_DESCRIPTION :: foundation.BUILD_FOLDER + "/test_output_without_description.txt"
+TEST_OUTPUT_STATED_HASH :: foundation.BUILD_FOLDER + "/test_output_stated_hash.txt"
+TEST_OUTPUT_MEASURED :: foundation.BUILD_FOLDER + "/test_output_measured.txt"
+TEST_OUTPUT_OTHER_SYSTEM :: foundation.BUILD_FOLDER + "/test_output_other_system.txt"
+TEST_OUTPUT_SECURE_BOOT :: foundation.BUILD_FOLDER + "/test_output_secure_boot.txt"
+TEST_OUTPUT_SECURE_BOOT_CHANGED :: foundation.BUILD_FOLDER + "/test_output_secure_boot_changed.txt"
+TEST_OUTPUT_SECURE_BOOT_UNSIGNED :: foundation.BUILD_FOLDER + "/test_output_secure_boot_unsigned.txt"
 
 // The firmware of a test machine. The TPM device is another option of the
 // machine (machine_test, tpm_device): a firmware with a TPM driver and no
@@ -127,7 +128,7 @@ machine_file :: proc(output, suffix: string) -> string {
 // The software TPM of one machine: a folder of its own for each machine,
 // with a new state, so that each starts with a TPM with no history and no
 // file of another machine.
-TPM_START_TIMEOUT :: HANG_BOUND // It only ends a start of swtpm that hangs.
+TPM_START_TIMEOUT :: foundation.HANG_BOUND // It only ends a start of swtpm that hangs.
 
 tpm_folder_of :: proc(output: string) -> string {
 	return machine_file(output, "_tpm")
@@ -152,7 +153,7 @@ Tpm_Host_Process :: struct {
 tpm_start :: proc(tpm: ^Tpm_Host_Process, output: string, state: string = "") -> bool {
 	folder := tpm_folder_of(output)
 	socket := tpm_socket_of(output)
-	reset_folder(folder) or_return
+	foundation.reset_folder(folder) or_return
 	state_folder := state != "" ? state : folder
 	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
 	host_process, err := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--ctrl", strings.concatenate({"type=unixio,path=", socket}, context.temp_allocator), "--log", log, "--terminate"}, stdout = os.stderr, stderr = os.stderr})
@@ -351,10 +352,10 @@ trusted_boot_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.eprintln("modustool: test failed: a system with one byte of one module changed has the same measure")
 		return false
 	}
-	test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
+	foundation.test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
 	// The tool ends QEMU: status 0.
 	machine_test(part, scenario_secure_boot[:], {volume = BOOT_VOLUME_SECURE_BOOT, output = TEST_OUTPUT_SECURE_BOOT, exit_status = 0, firmware = .With_Secure_Boot}) or_return
-	test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
+	foundation.test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
 	refused_machine_run(part, scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
 	refused_machine_run(part, scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
 	release_image_machine_run(part) or_return
@@ -363,8 +364,8 @@ trusted_boot_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 // The state of the software TPM that the six machines of the floors share.
-FLOOR_TPM_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_floor_state"
-TEST_OUTPUT_FLOOR :: BUILD_FOLDER + "/test_output_floor_%d.txt"
+FLOOR_TPM_STATE_FOLDER :: foundation.BUILD_FOLDER + "/test_tpm_floor_state"
+TEST_OUTPUT_FLOOR :: foundation.BUILD_FOLDER + "/test_output_floor_%d.txt"
 // The number of the output of the plant, which runs swtpm alone between
 // machines 12 and 13.
 FLOOR_PLANT_NUMBER :: 0
@@ -393,7 +394,7 @@ Floor_Numbers :: struct {
 // floor_numbers_read reads the key number of the build from the key file
 // that every boot program holds (system_key_write).
 floor_numbers_read :: proc() -> (numbers: Floor_Numbers, ok: bool) {
-	bytes := read_file(SYSTEM_KEY_FILE) or_return
+	bytes := foundation.read_file(SYSTEM_KEY_FILE) or_return
 	if len(bytes) != system_description.PUBLIC_KEY_SIZE + 8 {
 		fmt.eprintfln("modustool: test failed: %s has %d bytes, not a public key and a key number", SYSTEM_KEY_FILE, len(bytes))
 		return {}, false
@@ -472,7 +473,7 @@ floor_machine_run :: proc(part: ^Test_Part_Run, machine: ^Floor_Machine, volume:
 		return false
 	}
 	if refused {
-		log_bytes := read_file(output) or_return
+		log_bytes := foundation.read_file(output) or_return
 		if strings.contains(string(log_bytes), "kernel: ") {
 			fmt.eprintfln("modustool: test failed: the kernel of %s started after the boot program refused it for a TPM floor", volume)
 			return false
@@ -545,7 +546,7 @@ floor_plant :: proc(key_number: u64) -> bool {
 // and 13.
 floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	numbers := floor_numbers_read() or_return
-	reset_folder(FLOOR_TPM_STATE_FOLDER) or_return
+	foundation.reset_folder(FLOOR_TPM_STATE_FOLDER) or_return
 	machine: Floor_Machine
 	machine.steps = make([dynamic]Step)
 	machine.texts = make([dynamic]string)
@@ -572,7 +573,7 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
 	floor_started_steps(&machine)
 	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 12, false) or_return
-	test_passed_print("a newer system defined the TPM floors and raised them before its measure: the key floor to %d, the version floor of its key to %d", numbers.key_number, newer_version)
+	foundation.test_passed_print("a newer system defined the TPM floors and raised them before its measure: the key floor to %d, the version floor of its key to %d", numbers.key_number, newer_version)
 
 	// Another system plants an index with an authorization value, and a
 	// foreign one.
@@ -587,7 +588,7 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
 	floor_started_steps(&machine)
 	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 13, false) or_return
-	test_passed_print("%s", "the boot program removed a planted index with an authorization value and a foreign index, and put the floors of this system back")
+	foundation.test_passed_print("%s", "the boot program removed a planted index with an authorization value and a foreign index, and put the floors of this system back")
 
 	// 14. The system of the repository: below the version floor that
 	// machine 13 put back.
@@ -595,7 +596,7 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_start_steps(&machine, .With_Secure_Boot, held, numbers.key_number, numbers.security_version)
 	floor_refused_steps(&machine, fmt.aprintf("boot program: the security version %d of the system description is below the version floor %d of the TPM: an older system", numbers.security_version, newer_version))
 	floor_machine_run(part, &machine, BOOT_VOLUME_SECURE_BOOT, 14, true) or_return
-	test_passed_print("the boot program refused the system of %s after a newer one started: its security version %d is below the version floor %d", BOOT_VOLUME_SECURE_BOOT, numbers.security_version, newer_version)
+	foundation.test_passed_print("the boot program refused the system of %s after a newer one started: its security version %d is below the version floor %d", BOOT_VOLUME_SECURE_BOOT, numbers.security_version, newer_version)
 
 	// 15. A newer key raises the key floor, and starts the version floor of
 	// its own key number.
@@ -605,13 +606,13 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, newer_version_name, 0, newer_version))
 	floor_started_steps(&machine)
 	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_KEY, 15, false) or_return
-	test_passed_print("a boot program with the key number %d raised the key floor from %d to %d", newer_key, numbers.key_number, newer_key)
+	foundation.test_passed_print("a boot program with the key number %d raised the key floor from %d to %d", newer_key, numbers.key_number, newer_key)
 
 	// 16. The boot program of machine 12: its key is revoked.
 	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, newer_key, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS), numbers.key_number, newer_version)
 	floor_refused_steps(&machine, fmt.aprintf("boot program: the key number %d of this boot program is below the key floor %d of the TPM: its key is revoked", numbers.key_number, newer_key))
 	floor_machine_run(part, &machine, BOOT_VOLUME_NEWER_SYSTEM, 16, true) or_return
-	test_passed_print("the boot program with the key number %d refused to start after a boot program with the key number %d raised the key floor: its signing key is revoked", numbers.key_number, newer_key)
+	foundation.test_passed_print("the boot program with the key number %d refused to start after a boot program with the key number %d raised the key floor: its signing key is revoked", numbers.key_number, newer_key)
 
 	// 17. Another PCR 7: the system of the repository, whose boot program
 	// machine 14 refused, on the firmware with Secure Boot off. Each floor
@@ -621,16 +622,16 @@ floor_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&machine.steps, Step{kind = .Wait, text = FLOOR_STAY_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
 	floor_started_steps(&machine)
 	floor_machine_run(part, &machine, BOOT_VOLUME_SECURE_BOOT, 17, false, .With_Tpm_Driver) or_return
-	test_passed_print("%s", "with another PCR 7 (Secure Boot off), each floor is foreign: the older system started, and its boot program changed no floor")
+	foundation.test_passed_print("%s", "with another PCR 7 (Secure Boot off), each floor is foreign: the older system started, and its boot program changed no floor")
 	fmt.println("modustool: the TPM floors: 6 machines passed")
 	return true
 }
 
 // The machine of the release image: the files of a release, made from the
 // volume of Secure Boot of the tests, verified, decompressed, and started.
-RELEASE_TEST_FOLDER :: BUILD_FOLDER + "/release_test"
+RELEASE_TEST_FOLDER :: foundation.BUILD_FOLDER + "/release_test"
 RELEASE_TEST_DISK :: RELEASE_TEST_FOLDER + "/decompressed.img"
-TEST_OUTPUT_RELEASE_IMAGE :: BUILD_FOLDER + "/test_output_release_image.txt"
+TEST_OUTPUT_RELEASE_IMAGE :: foundation.BUILD_FOLDER + "/test_output_release_image.txt"
 // The seed of the release signing key of this test only. It is published
 // here, so its public key is never the key of the repository, and the
 // release command refuses it.
@@ -659,14 +660,14 @@ release_image_machine_run :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.eprintfln("modustool: test failed: the files of the release image do not verify: %s", problem)
 		return false
 	}
-	test_passed_print("the release signature of %s verifies, and %s has its SHA-256 %s", files.checksum_path, files.image_path, digits)
+	foundation.test_passed_print("the release signature of %s verifies, and %s has its SHA-256 %s", files.checksum_path, files.image_path, digits)
 	_ = os.remove(RELEASE_TEST_DISK)
-	run([]string{"zstd", "-d", "-q", "-o", RELEASE_TEST_DISK, files.image_path}) or_return
+	foundation.run([]string{"zstd", "-d", "-q", "-o", RELEASE_TEST_DISK, files.image_path}) or_return
 	// The disk is the output of this build: the machine starts from it.
 	boot_volume_ready_note(RELEASE_TEST_DISK)
 	// The tool ends QEMU: status 0.
 	machine_test(part, scenario_release_image[:], {volume = RELEASE_TEST_DISK, output = TEST_OUTPUT_RELEASE_IMAGE, exit_status = 0}) or_return
-	test_passed_print("the decompressed release image %s, a GPT disk, starts the system", RELEASE_TEST_DISK)
+	foundation.test_passed_print("the decompressed release image %s, a GPT disk, starts the system", RELEASE_TEST_DISK)
 	return true
 }
 
@@ -676,7 +677,7 @@ release_image_machine_run :: proc(part: ^Test_Part_Run) -> bool {
 refused_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output: string, firmware: Machine_Firmware = .Usual) -> bool {
 	// The tool ends QEMU: status 0.
 	machine_test(part, steps, {volume = volume, output = output, exit_status = 0, firmware = firmware}) or_return
-	log_bytes := read_file(output) or_return
+	log_bytes := foundation.read_file(output) or_return
 	log := string(log_bytes)
 	if strings.contains(log, "kernel: ") {
 		fmt.eprintfln("modustool: test failed: the kernel of %s started after a refused check", volume)
@@ -687,10 +688,10 @@ refused_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 			fmt.eprintfln("modustool: test failed: the firmware with Secure Boot started the boot program of %s", volume)
 			return false
 		}
-		test_passed_print("the firmware with Secure Boot refused the boot program of %s, which never started", volume)
+		foundation.test_passed_print("the firmware with Secure Boot refused the boot program of %s, which never started", volume)
 		return true
 	}
-	test_passed_print("the boot program refused %s, and the kernel did not start", volume)
+	foundation.test_passed_print("the boot program refused %s, and the kernel did not start", volume)
 	return true
 }
 
@@ -706,7 +707,7 @@ measure_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 	}
 	description := image_description_read(volume) or_return
 	expected := system_description.hexadecimal(measure_expected(description))
-	log_bytes := read_file(output) or_return
+	log_bytes := foundation.read_file(output) or_return
 	log := string(log_bytes)
 	at := strings.index(log, MEASURE_LINE)
 	if at < 0 || len(log) < at + len(MEASURE_LINE) + 64 {
@@ -718,6 +719,6 @@ measure_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 		fmt.eprintfln("modustool: test failed: the TPM of %s holds %s in PCR 11; the system description gives %s", volume, found, string(expected[:]))
 		return
 	}
-	test_passed_print("PCR 11 of %s is %s, the value that the tool computes from its system description", volume, found)
+	foundation.test_passed_print("PCR 11 of %s is %s, the value that the tool computes from its system description", volume, found)
 	return measure_expected(description), true
 }

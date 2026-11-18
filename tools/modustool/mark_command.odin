@@ -10,6 +10,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "modus:support/mark"
+import "modustool:foundation"
 
 MARK_COMMAND_USAGE :: "modustool mark still | frame | animation | tile_map | table | uses | developer" +
 	" [--variant smooth|cells] [--cell <pixels>] [--scheme dark|light] [--background none|scheme]" +
@@ -189,7 +190,7 @@ mark_command_request :: proc(args: []string) -> (request: Mark_Request, out: str
 		}
 	}
 	if out == "" {
-		out = strings.concatenate({BUILD_FOLDER, "/mark_", args[0], mark_format_extensions[mark_request_format(request)]}, context.temp_allocator)
+		out = strings.concatenate({foundation.BUILD_FOLDER, "/mark_", args[0], mark_format_extensions[mark_request_format(request)]}, context.temp_allocator)
 	}
 	request.picture.file_name = out
 	for &entry in entries {
@@ -239,25 +240,25 @@ run_mark :: proc(args: []string) -> int {
 		return 0
 	}
 	if len(args) == 1 && args[0] == "developer" {
-		return 0 if mark_animations_picture_write() else EXIT_FAILURE
+		return 0 if mark_animations_picture_write() else foundation.EXIT_FAILURE
 	}
 	request, out, problem := mark_command_request(args)
 	if problem != "" {
 		fmt.eprintfln("modustool: mark: %s", problem)
 		fmt.eprintln(MARK_COMMAND_USAGE)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	file, refusal := mark_generate(request)
 	if refusal != "" {
 		fmt.eprintfln("modustool: mark: refused: %s", refusal)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
-	if strings.has_prefix(out, BUILD_FOLDER + "/") && !make_folder(BUILD_FOLDER) {
-		return EXIT_FAILURE
+	if strings.has_prefix(out, foundation.BUILD_FOLDER + "/") && !foundation.make_folder(foundation.BUILD_FOLDER) {
+		return foundation.EXIT_FAILURE
 	}
 	if err := os.write_entire_file(out, file); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", out, err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	scheme: string = "light" if request.picture.on_light else "dark"
 	fmt.printfln("modustool: wrote %s (%s, %s, %s, %d pixels for a cell, the %s scheme, %d bytes)", out, mark_what_names[request.what], mark_format_names[mark_request_format(request)], mark.variant_names[request.picture.variant], request.picture.heron_cell, scheme, len(file))

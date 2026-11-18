@@ -9,8 +9,9 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "modus:support/graphics"
+import "modustool:foundation"
 
-SITE_FOLDER :: BUILD_FOLDER + "/site"
+SITE_FOLDER :: foundation.BUILD_FOLDER + "/site"
 SITE_PAGE :: "index.html"
 SITE_STYLE_SHEET :: "style.css"
 SITE_PICTURE_FOLDER :: "pictures"
@@ -22,7 +23,7 @@ SITE_RELEASE_COUNT :: 5
 SITE_LICENSE_FILE :: "LICENSE"
 SITE_NOT_MEASURED :: "Not measured."
 // `modustool check` writes here the line of its comparison of two builds.
-REPRODUCIBLE_BUILD_RECORD :: BUILD_FOLDER + "/reproducible_build.txt"
+REPRODUCIBLE_BUILD_RECORD :: foundation.BUILD_FOLDER + "/reproducible_build.txt"
 
 // Which line a number takes when the log has several lines with its text.
 Site_Line_Choice :: enum {
@@ -73,7 +74,7 @@ site_measures := [?]Site_Measure {
 	{sentence = "The time of a key to the screen, through the console", files = {TEST_OUTPUT_MEASURE, ""}, pattern = QUALITY_KEY, choice = .Last, accent = graphics.DARK_PROCESS, place = .Numbers, required = true, reading = "A measure of the standard of quality: from the read of the key by the input service to the page flip of the frame that shows its character in the line of the console. The console names the key with its line, its terminal names it with the picture, and the compositor ties the two. The least and the median of 16 keys that the machine test typed, at the last line of the run."},
 	{sentence = "The start of a window, from Process_Start to its first frame", files = {TEST_OUTPUT_MEASURE, ""}, pattern = QUALITY_WINDOW_START_LOCKS, choice = .First, accent = graphics.DARK_PROCESS, place = .Numbers, required = true, reading = "A measure of the standard of quality: from the call of the start by the root service (the load of the module, its hash and Process_Start) to the page flip of the first frame of the window of `locks`, which draws its window before its measures."},
 	{sentence = "Blocks read in one second from a virtio disk, through the block service in user space", files = {TEST_OUTPUT_MEASURE_DISK, ""}, pattern = "disk: read, 1 block in each request, 32 in flight", choice = .First, accent = graphics.DARK_MEMORY, place = .Numbers, required = true, reading = "One block in each request, 32 requests in flight, through the block service, which is a process. The kernel entries for 100 requests show that the blocks do not pass through the kernel. The disk is a file of the host under virtio: the number is not the speed of a real disk."},
-	{sentence = "1000 commits of a process to its private store, one commit for each step", files = {BUILD_FOLDER + "/test_output_persist_1.txt", ""}, pattern = "notes: count 1000, stopped", choice = .First, accent = graphics.DARK_MEMORY, place = .Numbers, required = true, reading = "The process `notes` commits 1000 times in a row to its private store; each commit is durable on the data disk before the next one starts. The time of one commit is the total divided by 1000. The disk is a file of the host: the number is not the speed of a real disk."},
+	{sentence = "1000 commits of a process to its private store, one commit for each step", files = {foundation.BUILD_FOLDER + "/test_output_persist_1.txt", ""}, pattern = "notes: count 1000, stopped", choice = .First, accent = graphics.DARK_MEMORY, place = .Numbers, required = true, reading = "The process `notes` commits 1000 times in a row to its private store; each commit is durable on the data disk before the next one starts. The time of one commit is the total divided by 1000. The disk is a file of the host: the number is not the speed of a real disk."},
 	{sentence = "The header and the checksum of one UDP datagram, in the process that sends it", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: the header and the checksum of a datagram", choice = .First, accent = graphics.DARK_MACHINE, place = .Numbers, required = true, reading = "The time that the process `net` takes to write the UDP header of one datagram of 1472 bytes and to compute its checksum, with no help of the device. The process that sends a datagram does this work: the network service copies the datagram and computes no checksum of it."},
 	{sentence = "The round trip of one UDP datagram", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: the round trip of one datagram", choice = .First, accent = graphics.DARK_MACHINE, place = .Numbers, required = true, reading = "A datagram of 64 bytes goes to the peer of the tool and back, over the loopback of the host: the least and the middle of 1000 trips. Each trip passes the frame service, the network service and QEMU."},
 	{sentence = "UDP datagrams in one second, with 64 in flight", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: a burst with 64 datagrams in flight", choice = .First, accent = graphics.DARK_MACHINE, place = .Numbers, required = true, reading = "The process keeps 64 datagrams in flight, and the peer answers each one: the count of answered datagrams in one second, and the count lost."},
@@ -98,7 +99,7 @@ site_output_files := [?]Site_Output_File {
 	{TEST_OUTPUT_NETWORK, "The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host"},
 	{TEST_OUTPUT_TCP_REAL, "The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp"},
 	{TEST_OUTPUT_CRYPTOGRAPHY, "The machine of `modustool test crypto`"},
-	{BUILD_FOLDER + "/test_output_persist_1.txt", "The first machine of the test of persistence of `modustool test`, on a new data disk"},
+	{foundation.BUILD_FOLDER + "/test_output_persist_1.txt", "The first machine of the test of persistence of `modustool test`, on a new data disk"},
 	{REPRODUCIBLE_BUILD_RECORD, "Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes"},
 }
 
@@ -158,36 +159,9 @@ site_accent_graphic_color :: proc(accent: Site_Accent, light: bool) -> graphics.
 	return light ? graphics.shade(accent.color, accent.light_graphic_percent) : accent.color
 }
 
-// site_read reads one text file of the repository.
-site_read :: proc(path: string) -> (text: string, ok: bool) {
-	data := read_file(path) or_return
-	return string(data), true
-}
-
 // site_file_name gives the name of a file after the last "/" of its path.
 site_file_name :: proc(path: string) -> string {
 	return path[strings.last_index_byte(path, '/') + 1:]
-}
-
-// site_png_size reads the width and the height of a PNG file from its
-// header chunk, which the format puts first.
-site_png_size :: proc(data: []u8) -> (width, height: int, ok: bool) {
-	signature := [8]u8{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'}
-	if len(data) < 24 {
-		return 0, 0, false
-	}
-	for index in 0 ..< len(signature) {
-		if data[index] != signature[index] {
-			return 0, 0, false
-		}
-	}
-	if string(data[12:16]) != "IHDR" {
-		return 0, 0, false
-	}
-	big_endian :: proc(bytes: []u8) -> int {
-		return int(bytes[0]) << 24 | int(bytes[1]) << 16 | int(bytes[2]) << 8 | int(bytes[3])
-	}
-	return big_endian(data[16:20]), big_endian(data[20:24]), true
 }
 
 // site_without_process_label takes the label "[process] " or
@@ -204,7 +178,7 @@ site_without_process_label :: proc(line: string) -> string {
 // log_line_choose finds the lines of a log that contain the pattern, and
 // gives the first or the last one whole, with its label.
 log_line_choose :: proc(content, pattern: string, choice: Site_Line_Choice) -> (line: string, line_number, matching_lines: int) {
-	for candidate, index in site_lines(content) {
+	for candidate, index in foundation.site_lines(content) {
 		if !strings.contains(candidate, pattern) {
 			continue
 		}
@@ -376,7 +350,7 @@ site_boot_log_choose :: proc(record: Site_Measure_Record) -> (log: string, sourc
 	}
 	switch site_measure_source_choose(build_found, build_time, record, len(record.record.boot_lines) > 0) {
 	case .Build:
-		content, _ := site_read_quiet(TEST_OUTPUT)
+		content, _ := foundation.site_read_quiet(TEST_OUTPUT)
 		return content, .Build
 	case .Record:
 		return strings.join(record.record.boot_lines, "\n", context.temp_allocator), .Record
@@ -414,31 +388,10 @@ site_origin_words :: proc(source: Site_Measure_Source, record: Site_Measure_Reco
 		day := record.record.time[:min(10, len(record.record.time))]
 		return fmt.tprintf("Measured in the full check of %s, on the tree of `%s`, %s", day, site_short_commit(record.record.commit), site_tree_words(record.record.tree))
 	case .Build:
-		return "Measured in this work tree: the log in `" + BUILD_FOLDER + "/` is newer than `" + MEASURE_RECORD_FILE + "`"
+		return "Measured in this work tree: the log in `" + foundation.BUILD_FOLDER + "/` is newer than `" + MEASURE_RECORD_FILE + "`"
 	case .None:
 	}
 	return ""
-}
-
-// site_escape writes a text of a file as HTML text: each character that
-// HTML reads as markup becomes its reference.
-site_escape :: proc(builder: ^strings.Builder, text: string) {
-	for index in 0 ..< len(text) {
-		switch text[index] {
-		case '&':
-			strings.write_string(builder, "&amp;")
-		case '<':
-			strings.write_string(builder, "&lt;")
-		case '>':
-			strings.write_string(builder, "&gt;")
-		case '"':
-			strings.write_string(builder, "&quot;")
-		case '\'':
-			strings.write_string(builder, "&#39;")
-		case:
-			strings.write_byte(builder, text[index])
-		}
-	}
 }
 
 // site_inline writes a line of Markdown as HTML: `code`, **bold**, and the
@@ -454,7 +407,7 @@ site_inline :: proc(builder: ^strings.Builder, text: string) {
 			end := strings.index_byte(text[index + 1:], '`')
 			if end >= 0 {
 				strings.write_string(builder, "<code>")
-				site_escape(builder, text[index + 1:index + 1 + end])
+				foundation.site_escape(builder, text[index + 1:index + 1 + end])
 				strings.write_string(builder, "</code>")
 				index += end + 2
 				continue
@@ -480,7 +433,7 @@ site_inline :: proc(builder: ^strings.Builder, text: string) {
 				}
 			}
 		}
-		site_escape(builder, text[index:index + 1])
+		foundation.site_escape(builder, text[index:index + 1])
 		index += 1
 	}
 	if bold_open {
@@ -500,7 +453,7 @@ site_inline_text :: proc(text: string) -> string {
 site_plain :: proc(builder: ^strings.Builder, text: string) {
 	without_code, _ := strings.remove_all(text, "`", context.temp_allocator)
 	without_bold, _ := strings.remove_all(without_code, "**", context.temp_allocator)
-	site_escape(builder, without_bold)
+	foundation.site_escape(builder, without_bold)
 }
 
 site_accent_class :: proc(color: graphics.Color) -> string {
@@ -511,4 +464,3 @@ site_accent_class :: proc(color: graphics.Color) -> string {
 	}
 	return site_accents[0].class_name
 }
-

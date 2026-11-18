@@ -5,6 +5,7 @@ import "core:os"
 import "core:strconv"
 import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // How the machine test sends input and saves pictures
 // (docs/TOOLS.md, "How the tool sends input and waits").
@@ -59,7 +60,7 @@ controller_status_read :: proc(machine: ^Machine) -> (status: u8, ok: bool) {
 // keyboard and the virtual mouse hold: the keyboard controller then says
 // that it holds no byte.
 input_read_wait :: proc(machine: ^Machine) -> bool {
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		status := controller_status_read(machine) or_return
 		if status & CONTROLLER_OUTPUT_FULL == 0 {
 			machine.device_bytes = 0
@@ -67,7 +68,7 @@ input_read_wait :: proc(machine: ^Machine) -> bool {
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
-	fmt.eprintfln("modustool: test failed: the system did not read the bytes of the keyboard controller within %v: the tool sent %d bytes of keys and of moves that wait there", HANG_BOUND, machine.device_bytes)
+	fmt.eprintfln("modustool: test failed: the system did not read the bytes of the keyboard controller within %v: the tool sent %d bytes of keys and of moves that wait there", foundation.HANG_BOUND, machine.device_bytes)
 	return false
 }
 
@@ -124,7 +125,7 @@ keys_send :: proc(machine: ^Machine, names: []string, what: string) -> bool {
 	}
 	wanted := before + key_record_count(names)
 	received := before
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		now, refused, read := key_records_read(machine)
 		if !read {
 			return input_read_wait(machine)
@@ -143,7 +144,7 @@ keys_send :: proc(machine: ^Machine, names: []string, what: string) -> bool {
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
-	fmt.eprintfln("modustool: test failed: the compositor received %d of the %d key records of %s within %v (a press and a release are one record each)", received - before, wanted - before, what, HANG_BOUND)
+	fmt.eprintfln("modustool: test failed: the compositor received %d of the %d key records of %s within %v (a press and a release are one record each)", received - before, wanted - before, what, foundation.HANG_BOUND)
 	return false
 }
 
@@ -229,7 +230,7 @@ pointer_confirm :: proc(machine: ^Machine, x, y: int) -> bool {
 		pointer_move_blind(machine, x, y) or_return
 		wanted := before.moves + i64(machine.pointer_packets - packets_before)
 		arrived := false
-		for start := time.tick_now(); !arrived && time.tick_since(start) < HANG_BOUND; {
+		for start := time.tick_now(); !arrived && time.tick_since(start) < foundation.HANG_BOUND; {
 			now, now_read := pointer_read(machine)
 			if !now_read {
 				return input_read_wait(machine)
@@ -243,7 +244,7 @@ pointer_confirm :: proc(machine: ^Machine, x, y: int) -> bool {
 			}
 		}
 		if !arrived {
-			fmt.eprintfln("modustool: test failed: the compositor received %d of the %d pointer records of a move to %d,%d within %v", found.moves - before.moves, wanted - before.moves, x, y, HANG_BOUND)
+			fmt.eprintfln("modustool: test failed: the compositor received %d of the %d pointer records of a move to %d,%d within %v", found.moves - before.moves, wanted - before.moves, x, y, foundation.HANG_BOUND)
 			return false
 		}
 	}
@@ -269,7 +270,7 @@ pointer_button :: proc(machine: ^Machine, down: bool) -> bool {
 	if !machine.confirm {
 		return input_read_wait(machine)
 	}
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		values, read := record_fields(&machine.client, "compositor.pointer()", {"buttons"})
 		if !read {
 			// The press ended remote or its grant: the other condition.
@@ -280,7 +281,7 @@ pointer_button :: proc(machine: ^Machine, down: bool) -> bool {
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
-	fmt.eprintfln("modustool: test failed: the compositor did not see the left button %s within %v", down ? "down" : "up", HANG_BOUND)
+	fmt.eprintfln("modustool: test failed: the compositor did not see the left button %s within %v", down ? "down" : "up", foundation.HANG_BOUND)
 	return false
 }
 
@@ -410,7 +411,7 @@ screen_dump_settled :: proc(machine: ^Machine, name: string) -> (dump: Screen_Du
 	left_out := windows_left_out(machine)
 	before := screen_dump_read(machine) or_return
 	x, y: int
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		after, read := screen_dump_read(machine)
 		if !read {
 			delete(before.file)
@@ -428,7 +429,7 @@ screen_dump_settled :: proc(machine: ^Machine, name: string) -> (dump: Screen_Du
 		before = after
 	}
 	delete(before.file)
-	fmt.eprintfln("modustool: test failed: the screen did not settle within %v before the picture %s: two pictures in a row still differ, the last time at %d,%d, outside the windows that draw with no end", HANG_BOUND, name, x, y)
+	fmt.eprintfln("modustool: test failed: the screen did not settle within %v before the picture %s: two pictures in a row still differ, the last time at %d,%d, outside the windows that draw with no end", foundation.HANG_BOUND, name, x, y)
 	return {}, false
 }
 
@@ -436,7 +437,7 @@ screen_dump_settled :: proc(machine: ^Machine, name: string) -> (dump: Screen_Du
 // screen is settled (screen_dump_settled). A worker thread makes the PNG
 // file, and pictures_join gives its result.
 screen_save :: proc(machine: ^Machine, name: string) -> bool {
-	if owner, claimed := picture_name_claim(machine.part.name, name); !claimed {
+	if owner, claimed := picture_name_claim(&picture_names, machine.part.name, name); !claimed {
 		fmt.eprintfln("modustool: test failed: the picture %s is a picture of the part %s too: two parts that run at once would write one file; give one of them another name", name, owner)
 		return false
 	}

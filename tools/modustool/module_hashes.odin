@@ -11,6 +11,7 @@ import "modus:contract/blake3"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 MODULE_FILE_SUFFIX :: ".module"
 MODULE_HASHES_FIRST_LINE :: "module hashes, form 1"
@@ -43,7 +44,7 @@ Module_Hashes_Comparison :: struct {
 module_hashes_of_folder :: proc(folder: string, names: []string) -> (hashes: []Module_Hash, ok: bool) {
 	list := make([dynamic]Module_Hash, context.temp_allocator)
 	for name in names {
-		file := read_file(join(folder, "/", name, MODULE_FILE_SUFFIX)) or_return
+		file := foundation.read_file(foundation.join(folder, "/", name, MODULE_FILE_SUFFIX)) or_return
 		append(&list, Module_Hash{name = name, hash = blake3.hash(file)})
 	}
 	return list[:], true
@@ -65,7 +66,7 @@ module_hashes_record_text :: proc(hashes: []Module_Hash) -> string {
 module_hashes_record_parse :: proc(text: string) -> (hashes: []Module_Hash, problem: string) {
 	list := make([dynamic]Module_Hash, context.temp_allocator)
 	first_line_read := false
-	for line, line_index in site_lines(text) {
+	for line, line_index in foundation.site_lines(text) {
 		if !first_line_read {
 			if line != MODULE_HASHES_FIRST_LINE {
 				return nil, fmt.tprintf("line 1 is not \"%s\"", MODULE_HASHES_FIRST_LINE)
@@ -148,46 +149,46 @@ module_hashes_comparison_is_equal :: proc(comparison: Module_Hashes_Comparison) 
 // it reads the build that is there.
 module_hashes_of_the_build :: proc() -> (hashes: []Module_Hash, ok: bool) {
 	names := make([dynamic]string, context.temp_allocator)
-	for build in module_builds {
-		if !os.exists(module_path(build.name)) {
-			fmt.eprintfln("modustool: %s is not there: run `modustool build` first", module_path(build.name))
+	for build in foundation.module_builds {
+		if !os.exists(foundation.module_path(build.name)) {
+			fmt.eprintfln("modustool: %s is not there: run `modustool build` first", foundation.module_path(build.name))
 			return nil, false
 		}
 		append(&names, build.name)
 	}
-	return module_hashes_of_folder(MODULE_BUILD_FOLDER, names[:])
+	return module_hashes_of_folder(foundation.MODULE_BUILD_FOLDER, names[:])
 }
 
 run_module_hashes :: proc(args: []string) -> int {
 	if len(args) != 2 || (args[0] != "write" && args[0] != "compare") {
 		fmt.eprintln(MODULE_HASHES_USAGE)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	file := args[1]
 	now, hashed := module_hashes_of_the_build()
 	if !hashed {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if args[0] == "write" {
 		if err := os.write_entire_file(file, module_hashes_record_text(now)); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", file, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
-		fmt.printfln("modustool: wrote %s: the hashes of the %d modules of %s", file, len(now), MODULE_BUILD_FOLDER)
+		fmt.printfln("modustool: wrote %s: the hashes of the %d modules of %s", file, len(now), foundation.MODULE_BUILD_FOLDER)
 		return 0
 	}
-	record, readable := read_file(file)
+	record, readable := foundation.read_file(file)
 	if !readable {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	before, problem := module_hashes_record_parse(string(record))
 	if problem != "" {
 		fmt.eprintfln("modustool: %s is not a record of the hashes of the modules: %s", file, problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	comparison := module_hashes_compare(before, now)
 	for difference in comparison.different {
-		fmt.printfln("modustool: the module %s has another hash: %s in %s, %s in %s", difference.name, hash_as_hexadecimal(difference.before), file, hash_as_hexadecimal(difference.now), MODULE_BUILD_FOLDER)
+		fmt.printfln("modustool: the module %s has another hash: %s in %s, %s in %s", difference.name, hash_as_hexadecimal(difference.before), file, hash_as_hexadecimal(difference.now), foundation.MODULE_BUILD_FOLDER)
 	}
 	for name in comparison.only_before {
 		fmt.printfln("modustool: the module %s is in %s, and the build does not have it", name, file)
@@ -195,6 +196,6 @@ run_module_hashes :: proc(args: []string) -> int {
 	for name in comparison.only_now {
 		fmt.printfln("modustool: the module %s is in the build, and %s does not have it", name, file)
 	}
-	fmt.printfln("modustool: %d modules of %s have the hash of %s; %d have another hash; %d are in one of the two only", comparison.equal_count, MODULE_BUILD_FOLDER, file, len(comparison.different), len(comparison.only_before) + len(comparison.only_now))
-	return module_hashes_comparison_is_equal(comparison) ? 0 : EXIT_FAILURE
+	fmt.printfln("modustool: %d modules of %s have the hash of %s; %d have another hash; %d are in one of the two only", comparison.equal_count, foundation.MODULE_BUILD_FOLDER, file, len(comparison.different), len(comparison.only_before) + len(comparison.only_now))
+	return module_hashes_comparison_is_equal(comparison) ? 0 : foundation.EXIT_FAILURE
 }

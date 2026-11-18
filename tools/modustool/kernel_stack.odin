@@ -6,6 +6,7 @@ import op "modus:contract/operation"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The measure of the deepest stack of the kernel (src/md/infrastructure/kernel_stack_depth.md;
 // docs/TOOLS.md, "The deepest stack of the kernel"). The frames come from
@@ -315,16 +316,16 @@ Kernel_Stack_Measure :: struct {
 // The name of the file of the measure lines of a kernel module: an output
 // of its compile step.
 kernel_stack_measure_file :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, "/kernel_stack.measure")
+	return foundation.join(foundation.module_build_folder, "/", name, "/kernel_stack.measure")
 }
 
 // kernel_stack_check measures the kernel stack of a linked kernel, prints
 // each problem, and writes the measure lines when there is none.
-kernel_stack_check :: proc(build: Module_Build, linked, listing: string) -> bool {
+kernel_stack_check :: proc(build: foundation.Module_Build, linked, listing: string) -> bool {
 	path := kernel_stack_measure_file(build.name)
 	// A failed check must not leave the lines of an earlier build.
 	_ = os.remove(path)
-	elf := read_file(linked) or_return
+	elf := foundation.read_file(linked) or_return
 	frames, problem := kernel_stack_frames_read(elf)
 	if problem != "" {
 		fmt.eprintfln("modustool: the measure of the kernel stack of %s fails: %s", build.name, problem)
@@ -349,7 +350,7 @@ kernel_stack_check :: proc(build: Module_Build, linked, listing: string) -> bool
 // module, a kept one too. A module that this command did not build has no
 // file: it prints nothing.
 kernel_stack_measure_print :: proc() {
-	for build in module_builds {
+	for build in foundation.module_builds {
 		if !build.kernel {
 			continue
 		}

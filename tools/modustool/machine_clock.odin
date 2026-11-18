@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The real-time clock of a test machine (src/md/features/appearance.md,
 // "Subtle points"). The setting `appearance` is `auto` on a new disk, and
@@ -100,7 +101,7 @@ bar_local_time_check :: proc(machine: ^Machine, index: int, step: Step) -> bool 
 		fmt.eprintfln("modustool: test failed: step %d: the bar shows \"%s\", and %d s since 1970 in the zone %s is \"%s\"", index + 1, shown, seconds, zone_text, wanted)
 		return false
 	}
-	test_passed_print("the bar shows the local time %s, %d s since 1970 in the zone %s", shown, seconds, zone_text)
+	foundation.test_passed_print("the bar shows the local time %s, %d s since 1970 in the zone %s", shown, seconds, zone_text)
 	return true
 }
 
@@ -133,6 +134,6 @@ appearance_auto_check :: proc(machine: ^Machine, index: int, step: Step) -> bool
 		fmt.eprintfln("modustool: test failed: step %d: the line \"%s\" does not say \"%s\", which the rule of the day gives at %d s since 1970 with a zone of %d s", index + 1, line, wanted, seconds, zone)
 		return false
 	}
-	test_passed_print("the appearance in force of auto is %s, the rule of the day at %d s since 1970", settings.appearance_in_force_names[in_force], seconds)
+	foundation.test_passed_print("the appearance in force of auto is %s, the rule of the day at %d s since 1970", settings.appearance_in_force_names[in_force], seconds)
 	return true
 }

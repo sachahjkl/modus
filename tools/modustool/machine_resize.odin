@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The step Resize: the pointer drags the bottom left corner of a window,
 // as the principal does (src/md/features/window_resize.md). The window
@@ -70,14 +71,14 @@ window_resize_step :: proc(machine: ^Machine, step: Step, index: int) -> bool {
 	}
 	pointer_button(machine, false) or_return
 	wanted := fmt.tprintf("compositor: window %s resized from %dx%d to %dx%d", step.text, width, height, step.to_x, step.to_y)
-	for start := time.now(); time.since(start) < HANG_BOUND; {
+	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
 		if len(text) > before && strings.contains(text[before:], wanted) {
-			test_passed_print("the window %s is %dx%d: its process drew the new size", step.text, step.to_x, step.to_y)
+			foundation.test_passed_print("the window %s is %dx%d: its process drew the new size", step.text, step.to_x, step.to_y)
 			return true
 		}
 		log_change_wait(machine)
 	}
-	fmt.eprintfln("modustool: test failed: step %d: the log does not have \"%s\" within %v", index + 1, wanted, HANG_BOUND)
+	fmt.eprintfln("modustool: test failed: step %d: the log does not have \"%s\" within %v", index + 1, wanted, foundation.HANG_BOUND)
 	return false
 }

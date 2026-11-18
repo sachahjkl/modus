@@ -5,6 +5,7 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 // Each export that fails gives an error record (src/md/api/export_error_records.md).
 // A negative result is not always a failure: math.number("-5") is -5. So
@@ -12,7 +13,7 @@ import "core:strings"
 // `return` that give a failure with no record: a negative constant, a
 // negated status, or a helper of the same package that gives one.
 
-EXPORT_ERROR_RECORD_FOLDERS :: [?]string{SOURCE_FOLDER_MODULES}
+EXPORT_ERROR_RECORD_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_MODULES}
 
 // The name of the last parameter of an export that has an error record.
 EXPORT_ERROR_RECORD_PARAMETER :: "error"
@@ -274,7 +275,7 @@ exports_without_error_record_of_tree :: proc(root: string) -> (found: []Export_W
 	files := make([dynamic]string, context.temp_allocator)
 	folders := EXPORT_ERROR_RECORD_FOLDERS
 	for folder in folders {
-		source_files_of_a_folder(root == "" ? folder : join(root, "/", folder), &files) or_return
+		foundation.source_files_of_a_folder(root == "" ? folder : foundation.join(root, "/", folder), &files) or_return
 	}
 	slice.sort(files[:])
 	// One package is the files of one folder: the files of a folder under it
@@ -284,7 +285,7 @@ exports_without_error_record_of_tree :: proc(root: string) -> (found: []Export_W
 		if source_is_a_test(file) {
 			continue
 		}
-		text, read_ok := site_read_quiet(file)
+		text, read_ok := foundation.site_read_quiet(file)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return nil, 0, 0, false
@@ -326,6 +327,6 @@ export_error_record_check :: proc() -> bool {
 		fmt.eprintfln("modustool: test failed: %d returns of exports give a negative number with no error record", len(found))
 		return false
 	}
-	test_passed_print("each export that fails gives an error record (%d exports with an integer result and no error record read in %d packages)", export_count, package_count)
+	foundation.test_passed_print("each export that fails gives an error record (%d exports with an integer result and no error record read in %d packages)", export_count, package_count)
 	return true
 }

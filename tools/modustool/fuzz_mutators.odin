@@ -1,6 +1,7 @@
 package modustool
 
 import "base:runtime"
+import "modustool:foundation"
 
 // The mutators of the engine (src/md/infrastructure/fuzzing.md, "The
 // mutators"): each one changes the input of the next execution,
@@ -32,7 +33,7 @@ FUZZ_LEAF_CAPACITY :: 256
 // inserts bytes instead, so each call changes the input.
 fuzz_mutate :: proc(engine: ^Fuzz_Engine) {
 	random := &engine.random
-	mutation := enum_member_at(Fuzz_Mutation, fuzz_random_below(random, len(Fuzz_Mutation)))
+	mutation := foundation.enum_member_at(Fuzz_Mutation, fuzz_random_below(random, len(Fuzz_Mutation)))
 	done := false
 	switch mutation {
 	case .Flip_Bit:

@@ -9,6 +9,7 @@
 package modustool
 
 import "core:strings"
+import "modustool:foundation"
 
 // markdown_link_at reads a link "[label](target)" that starts at an index
 // of a text: its label, its target and the byte after it. A "[" with no
@@ -45,7 +46,7 @@ markdown_italic_opens :: proc(text: string, at: int) -> bool {
 	if at + 1 >= len(text) || text[at] != '*' || text[at + 1] == '*' || text[at + 1] == ' ' || text[at + 1] == '\n' {
 		return false
 	}
-	if at > 0 && (site_is_word_byte(text[at - 1]) || text[at - 1] == '*') {
+	if at > 0 && (foundation.site_is_word_byte(text[at - 1]) || text[at - 1] == '*') {
 		return false
 	}
 	return markdown_italic_close(text, at + 1) >= 0
@@ -70,7 +71,7 @@ markdown_italic_close :: proc(text: string, from: int) -> int {
 		if text[index - 1] == ' ' || text[index - 1] == '*' || text[index - 1] == '\n' {
 			continue
 		}
-		if index + 1 < len(text) && site_is_word_byte(text[index + 1]) {
+		if index + 1 < len(text) && foundation.site_is_word_byte(text[index + 1]) {
 			continue
 		}
 		return index
@@ -162,7 +163,7 @@ documentation_text_of_markdown :: proc(markdown: string) -> string {
 		empty_before^ = false
 		append(blocks, block)
 	}
-	for line in site_lines(markdown) {
+	for line in foundation.site_lines(markdown) {
 		trimmed := strings.trim_space(line)
 		if strings.has_prefix(trimmed, "```") {
 			fenced = !fenced
@@ -227,51 +228,4 @@ documentation_text_of_markdown :: proc(markdown: string) -> string {
 // the text that a module carries.
 markdown_first_sentence :: proc(markdown: string) -> string {
 	return about_of(documentation_text_of_markdown(markdown), "")
-}
-
-// markdown_comment_line splits a line of an Odin source into its code and
-// its comment, as a part of the Markdown of the comment: the marker "//"
-// and one space go, the indentation after them stays, so that a nested list
-// item and a line of an example keep their form. is_comment is true for a
-// line "//" with no text: an empty line of the comment.
-markdown_comment_line :: proc(line: string) -> (code: string, comment: string, is_comment: bool) {
-	syntax, _ := comment_syntax_of(".odin")
-	quote: u8 = 0
-	for index := 0; index < len(line); index += 1 {
-		character := line[index]
-		switch {
-		case quote != 0:
-			if character == '\\' && strings.index_byte(syntax.escaped_quotes, quote) >= 0 {
-				index += 1
-			} else if character == quote {
-				quote = 0
-			}
-		case strings.index_byte(syntax.escaped_quotes, character) >= 0 || strings.index_byte(syntax.raw_quotes, character) >= 0:
-			quote = character
-		case strings.has_prefix(line[index:], syntax.marker):
-			text := strings.trim_right_space(line[index + len(syntax.marker):])
-			text = strings.trim_prefix(text, " ")
-			text, _ = strings.replace_all(text, "\t", "    ", context.temp_allocator)
-			return strings.trim_space(line[:index]), text, true
-		}
-	}
-	return strings.trim_space(line), "", false
-}
-
-// markdown_comment_add adds a line to the Markdown of a comment. An empty
-// line stays: it separates two paragraphs.
-markdown_comment_add :: proc(comment, line: string) -> string {
-	if comment == "" && strings.trim_space(line) == "" {
-		return ""
-	}
-	if comment == "" {
-		return line
-	}
-	return strings.concatenate({comment, "\n", line}, context.temp_allocator)
-}
-
-// markdown_comment_end gives the Markdown of a comment with no empty line
-// at its end.
-markdown_comment_end :: proc(comment: string) -> string {
-	return strings.trim_right(comment, " \n")
 }

@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The machines of the principals (docs/PRINCIPALS.md): two machines with
 // one data disk.
 //
@@ -18,8 +20,8 @@ package modustool
 // The second one starts on the same disk: `unlock` finds the file, the
 // passphrase starts the session, and the note of alice is there again.
 
-TEST_PRINCIPALS_DISK :: BUILD_FOLDER + "/test_principals_disk.img"
-TEST_OUTPUT_PRINCIPALS :: BUILD_FOLDER + "/test_output_principals_%d.txt"
+TEST_PRINCIPALS_DISK :: foundation.BUILD_FOLDER + "/test_principals_disk.img"
+TEST_OUTPUT_PRINCIPALS :: foundation.BUILD_FOLDER + "/test_output_principals_%d.txt"
 
 PRINCIPAL_PASSPHRASE :: "correct horse battery"
 

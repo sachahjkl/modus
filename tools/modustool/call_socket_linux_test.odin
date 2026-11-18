@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:sys/linux"
 import "core:testing"
+import "modustool:foundation"
 
 // The socket of the calls is in a folder of this user with no right for
 // the group and the others; a folder that gives such a right is refused;
@@ -44,12 +45,12 @@ the_socket_of_the_calls_is_private :: proc(t: ^testing.T) {
 	testing.expect(t, call_socket_send_all(client, transmute([]u8)message))
 	call_socket_end_sending(client)
 	buffer: [64]u8
-	count, ended := call_socket_receive_all(served, buffer[:], HANG_BOUND)
+	count, ended := call_socket_receive_all(served, buffer[:], foundation.HANG_BOUND)
 	testing.expect(t, ended && string(buffer[:count]) == message)
 	answer := "an answer"
 	testing.expect(t, call_socket_send_all(served, transmute([]u8)answer))
 	call_socket_close(served)
-	count, ended = call_socket_receive_all(client, buffer[:], HANG_BOUND)
+	count, ended = call_socket_receive_all(client, buffer[:], foundation.HANG_BOUND)
 	testing.expect(t, ended && string(buffer[:count]) == answer)
 	call_socket_close(client)
 	call_socket_remove(listener, path)

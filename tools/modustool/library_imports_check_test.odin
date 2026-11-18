@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // A small tree with a kernel, two contract packages, one support package and
 // the manifest of the cryptography of Odin, at the folders of the tool: the
@@ -15,20 +16,20 @@ import "core:testing"
 library_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "library_imports_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	folders := SOURCE_FOLDERS
+	folders := foundation.SOURCE_FOLDERS
 	for name in folders {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
 	_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, LIBRARY_IMPORTS_TOOL_FOLDER))
-	for name in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_CONTRACT + "/record/inner", SOURCE_FOLDER_SUPPORT + "/sentence", SOURCE_FOLDER_SUPPORT + "/cryptography"}) {
+	for name in ([]string{foundation.SOURCE_FOLDER_CONTRACT + "/ring", foundation.SOURCE_FOLDER_CONTRACT + "/record/inner", foundation.SOURCE_FOLDER_SUPPORT + "/sentence", foundation.SOURCE_FOLDER_SUPPORT + "/cryptography"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
-	library_tree_file_write(folder, SOURCE_FOLDER_KERNEL + "/enter.odin", "package kernel\n\nimport \"base:intrinsics\"\nimport ring \"" + CONTRACT_IMPORT_START + "ring\"\nimport \"" + CONTRACT_IMPORT_START + "record/inner\"\n")
-	library_tree_file_write(folder, SOURCE_FOLDER_CONTRACT + "/ring/ring.odin", "package ring\n\nimport \"" + CONTRACT_IMPORT_START + "record/inner\"\n")
-	library_tree_file_write(folder, SOURCE_FOLDER_CONTRACT + "/ring/ring_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\nimport \"core:math/rand\"\n")
-	library_tree_file_write(folder, SOURCE_FOLDER_CONTRACT + "/record/inner/inner.odin", "package inner\n")
-	library_tree_file_write(folder, SOURCE_FOLDER_SUPPORT + "/sentence/sentence.odin", "package sentence\n\nimport \"base:intrinsics\"\nimport ring \"" + CONTRACT_IMPORT_START + "ring\"\n")
-	library_tree_file_write(folder, CRYPTOGRAPHY_MANIFEST, "# The cryptography of Odin: this tree has no copy.\n")
+	library_tree_file_write(folder, foundation.SOURCE_FOLDER_KERNEL + "/enter.odin", "package kernel\n\nimport \"base:intrinsics\"\nimport ring \"" + foundation.CONTRACT_IMPORT_START + "ring\"\nimport \"" + foundation.CONTRACT_IMPORT_START + "record/inner\"\n")
+	library_tree_file_write(folder, foundation.SOURCE_FOLDER_CONTRACT + "/ring/ring.odin", "package ring\n\nimport \"" + foundation.CONTRACT_IMPORT_START + "record/inner\"\n")
+	library_tree_file_write(folder, foundation.SOURCE_FOLDER_CONTRACT + "/ring/ring_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\nimport \"core:math/rand\"\n")
+	library_tree_file_write(folder, foundation.SOURCE_FOLDER_CONTRACT + "/record/inner/inner.odin", "package inner\n")
+	library_tree_file_write(folder, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/sentence.odin", "package sentence\n\nimport \"base:intrinsics\"\nimport ring \"" + foundation.CONTRACT_IMPORT_START + "ring\"\n")
+	library_tree_file_write(folder, foundation.CRYPTOGRAPHY_MANIFEST, "# The cryptography of Odin: this tree has no copy.\n")
 	return folder
 }
 
@@ -85,7 +86,7 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 			"vendor:glfw",
 			"contract:ring",
 			"support:sentence",
-			CONTRACT_IMPORT_START + "../support/sentence",
+			foundation.CONTRACT_IMPORT_START + "../support/sentence",
 			"core:",
 			"modus:",
 			"",
@@ -113,7 +114,7 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 	// A source that is not a test: the base library and the library, and no
 	// package of the core library, which reaches the host.
 	for form in ([]Library_Source_Form{system_source, copied_source}) {
-		for path in ([]string{"base:intrinsics", "base:runtime", SOURCE_LIBRARY_IMPORT_START + "support/sentence", CONTRACT_IMPORT_START + "ring"}) {
+		for path in ([]string{"base:intrinsics", "base:runtime", foundation.SOURCE_LIBRARY_IMPORT_START + "support/sentence", foundation.CONTRACT_IMPORT_START + "ring"}) {
 			testing.expectf(t, library_import_is_allowed(path, form), "%q is an import of %v", path, form)
 		}
 	}
@@ -124,25 +125,25 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 
 	// A test runs on the host: the whole core library is open to it, with its
 	// build line.
-	for path in ([]string{"base:intrinsics", "core:testing", "core:math/rand", "core:os", SOURCE_LIBRARY_IMPORT_START + "support/sentence", CONTRACT_IMPORT_START + "ring"}) {
+	for path in ([]string{"base:intrinsics", "core:testing", "core:math/rand", "core:os", foundation.SOURCE_LIBRARY_IMPORT_START + "support/sentence", foundation.CONTRACT_IMPORT_START + "ring"}) {
 		testing.expectf(t, library_import_is_allowed(path, system_test), "%q is an import of a test", path)
 	}
 
 	// The kernel and a contract package import the contract packages only,
 	// and a test of them adds the core library.
 	for form in ([]Library_Source_Form{kernel_source, contract_source}) {
-		for path in ([]string{"base:intrinsics", CONTRACT_IMPORT_START + "ring", CONTRACT_IMPORT_START + "record/inner"}) {
+		for path in ([]string{"base:intrinsics", foundation.CONTRACT_IMPORT_START + "ring", foundation.CONTRACT_IMPORT_START + "record/inner"}) {
 			testing.expectf(t, library_import_is_allowed(path, form), "%q is an import of %v", path, form)
 		}
-		for path in ([]string{SUPPORT_IMPORT_START + "sentence", SOURCE_LIBRARY_IMPORT_START + "contract", "core:testing", "core:os"}) {
+		for path in ([]string{foundation.SUPPORT_IMPORT_START + "sentence", foundation.SOURCE_LIBRARY_IMPORT_START + "contract", "core:testing", "core:os"}) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is not an import of %v", path, form)
 		}
 	}
 	for form in ([]Library_Source_Form{kernel_test, contract_test}) {
-		for path in ([]string{"base:intrinsics", "core:testing", "core:os", CONTRACT_IMPORT_START + "ring"}) {
+		for path in ([]string{"base:intrinsics", "core:testing", "core:os", foundation.CONTRACT_IMPORT_START + "ring"}) {
 			testing.expectf(t, library_import_is_allowed(path, form), "%q is an import of %v", path, form)
 		}
-		for path in ([]string{SUPPORT_IMPORT_START + "sentence", SOURCE_LIBRARY_IMPORT_START + "contract"}) {
+		for path in ([]string{foundation.SUPPORT_IMPORT_START + "sentence", foundation.SOURCE_LIBRARY_IMPORT_START + "contract"}) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is not an import of %v", path, form)
 		}
 	}
@@ -150,16 +151,16 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 	// A kernel part: the kernel itself ("kernel:" alone, "kernel:."), a path
 	// with a part "." or ".." are refused in each form, a kernel part in each form outside the
 	// kernel, and the last case, a kernel part in the kernel and its tests.
-	for path in ([]string{KERNEL_IMPORT_START, KERNEL_IMPORT_START + ".", KERNEL_IMPORT_START + "./iommu", KERNEL_IMPORT_START + "iommu/.", CONTRACT_IMPORT_START + "./ring", KERNEL_IMPORT_START + "../processes/clock", KERNEL_IMPORT_START + "iommu/../../processes"}) {
+	for path in ([]string{foundation.KERNEL_IMPORT_START, foundation.KERNEL_IMPORT_START + ".", foundation.KERNEL_IMPORT_START + "./iommu", foundation.KERNEL_IMPORT_START + "iommu/.", foundation.CONTRACT_IMPORT_START + "./ring", foundation.KERNEL_IMPORT_START + "../processes/clock", foundation.KERNEL_IMPORT_START + "iommu/../../processes"}) {
 		for form in ([]Library_Source_Form{kernel_source, kernel_test, contract_source, contract_test, system_source, system_test, copied_source}) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is refused in %v", path, form)
 		}
 	}
 	for form in ([]Library_Source_Form{contract_source, contract_test, system_source, system_test, copied_source}) {
-		testing.expectf(t, !library_import_is_allowed(KERNEL_IMPORT_START + "iommu", form), "a kernel part is not an import of %v", form)
+		testing.expectf(t, !library_import_is_allowed(foundation.KERNEL_IMPORT_START + "iommu", form), "a kernel part is not an import of %v", form)
 	}
 	for form in ([]Library_Source_Form{kernel_source, kernel_test}) {
-		testing.expectf(t, library_import_is_allowed(KERNEL_IMPORT_START + "iommu", form), "a kernel part is an import of %v", form)
+		testing.expectf(t, library_import_is_allowed(foundation.KERNEL_IMPORT_START + "iommu", form), "a kernel part is an import of %v", form)
 	}
 }
 
@@ -199,21 +200,21 @@ library_imports_of_an_allowed_tree :: proc(t: ^testing.T) {
 library_import_of_a_support_package_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/report.odin", "package kernel\n\nimport \"base:intrinsics\"\n// A comment.\nimport sentence \"" + SUPPORT_IMPORT_START + "sentence\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/write.odin", "package ring\n\nimport \"../../support/sentence\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/report.odin", "package kernel\n\nimport \"base:intrinsics\"\n// A comment.\nimport sentence \"" + foundation.SUPPORT_IMPORT_START + "sentence\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_CONTRACT + "/ring/write.odin", "package ring\n\nimport \"../../support/sentence\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	if !testing.expect_value(t, len(reading.breaches[:]), 2) {
 		return
 	}
-	in_kernel, kernel_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_KERNEL + "/report.odin")
+	in_kernel, kernel_found := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_KERNEL + "/report.odin")
 	testing.expect(t, kernel_found, "the file of the kernel is not named")
 	testing.expect_value(t, in_kernel.line, 5)
-	testing.expect_value(t, in_kernel.text, "\"" + SUPPORT_IMPORT_START + "sentence\"")
+	testing.expect_value(t, in_kernel.text, "\"" + foundation.SUPPORT_IMPORT_START + "sentence\"")
 	sentence := library_import_breach_sentence(in_kernel)
-	testing.expect(t, strings.contains(sentence, SOURCE_FOLDER_KERNEL + "/report.odin:5: the import \"" + SUPPORT_IMPORT_START + "sentence\" is refused"), sentence)
+	testing.expect(t, strings.contains(sentence, foundation.SOURCE_FOLDER_KERNEL + "/report.odin:5: the import \"" + foundation.SUPPORT_IMPORT_START + "sentence\" is refused"), sentence)
 	testing.expect(t, strings.contains(sentence, "the kernel imports no support package"), sentence)
-	in_contract, contract_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_CONTRACT + "/ring/write.odin")
+	in_contract, contract_found := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_CONTRACT + "/ring/write.odin")
 	testing.expect(t, contract_found, "the file of the contract package is not named")
 	testing.expect_value(t, in_contract.line, 3)
 	testing.expect_value(t, in_contract.text, "\"../../support/sentence\"")
@@ -228,36 +229,36 @@ library_import_of_a_support_package_is_refused :: proc(t: ^testing.T) {
 library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	part :: KERNEL_IMPORT_START + "iommu"
-	library_tree_folder_make(root, DEMONSTRATION_MODULE_SOURCES + "clock")
-	library_tree_file_write(root, DEMONSTRATION_MODULE_SOURCES + "clock/main.odin", "package clock\n\nimport \"base:intrinsics\"\nimport iommu \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", "package sentence\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/device.odin", "package ring\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/itself.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/around.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "../processes/clock\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/here.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + ".\"\n")
+	part :: foundation.KERNEL_IMPORT_START + "iommu"
+	library_tree_folder_make(root, foundation.DEMONSTRATION_MODULE_SOURCES + "clock")
+	library_tree_file_write(root, foundation.DEMONSTRATION_MODULE_SOURCES + "clock/main.odin", "package clock\n\nimport \"base:intrinsics\"\nimport iommu \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", "package sentence\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_CONTRACT + "/ring/device.odin", "package ring\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/itself.odin", "package kernel\n\nimport \"" + foundation.KERNEL_IMPORT_START + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/around.odin", "package kernel\n\nimport \"" + foundation.KERNEL_IMPORT_START + "../processes/clock\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/here.odin", "package kernel\n\nimport \"" + foundation.KERNEL_IMPORT_START + ".\"\n")
 	// A host test outside the kernel reaches a kernel part by a relative
 	// path, which the compiler accepts there: once to a part, once to the
 	// folder of the kernel itself.
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/reach_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"../../../kernel/iommu\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../kernel\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/reach_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"../../../kernel/iommu\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../kernel\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	testing.expectf(t, len(reading.breaches[:]) == 9, "%v", reading.breaches[:])
-	relative, relative_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_SUPPORT + "/sentence/reach_test.odin")
+	relative, relative_found := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_SUPPORT + "/sentence/reach_test.odin")
 	testing.expect(t, relative_found, "the test that reaches a kernel part by a relative path is not named")
 	testing.expect_value(t, relative.line, 5)
 	testing.expect_value(t, relative.text, "\"../../../kernel/iommu\"")
-	module, module_found := breach_of_file(reading.breaches[:], DEMONSTRATION_MODULE_SOURCES + "clock/main.odin")
+	module, module_found := breach_of_file(reading.breaches[:], foundation.DEMONSTRATION_MODULE_SOURCES + "clock/main.odin")
 	testing.expect(t, module_found, "the module that imports a kernel part is not named")
 	testing.expect_value(t, module.line, 4)
 	testing.expect_value(t, module.text, "\"" + part + "\"")
 	testing.expect_value(t, module.reason, Library_Import_Breach_Reason.Refused_Import)
 	sentence := library_import_breach_sentence(module)
-	testing.expect(t, strings.contains(sentence, DEMONSTRATION_MODULE_SOURCES + "clock/main.odin:4: the import \"" + part + "\" is refused"), sentence)
-	testing.expect(t, strings.contains(sentence, "is imported from " + SOURCE_FOLDER_KERNEL + " only"), sentence)
-	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", SOURCE_FOLDER_CONTRACT + "/ring/device.odin", SOURCE_FOLDER_KERNEL + "/itself.odin", SOURCE_FOLDER_KERNEL + "/around.odin", SOURCE_FOLDER_KERNEL + "/here.odin", SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin"}) {
+	testing.expect(t, strings.contains(sentence, foundation.DEMONSTRATION_MODULE_SOURCES + "clock/main.odin:4: the import \"" + part + "\" is refused"), sentence)
+	testing.expect(t, strings.contains(sentence, "is imported from " + foundation.SOURCE_FOLDER_KERNEL + " only"), sentence)
+	for file in ([]string{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", foundation.SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", foundation.SOURCE_FOLDER_CONTRACT + "/ring/device.odin", foundation.SOURCE_FOLDER_KERNEL + "/itself.odin", foundation.SOURCE_FOLDER_KERNEL + "/around.odin", foundation.SOURCE_FOLDER_KERNEL + "/here.odin", foundation.SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin"}) {
 		testing.expectf(t, breach_count_of_file(reading.breaches[:], file) == 1, "%s: the import is not refused one time", file)
 	}
 
@@ -266,13 +267,13 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	// whose relative path lands beside the kernel, not in it.
 	clean := library_tree_make(t)
 	defer os.remove_all(clean)
-	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/beside_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../runtime\"\nimport \"../../../kernel_notes\"\n")
-	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/iommu")
-	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors")
-	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/devices.odin", "package kernel\n\nimport iommu \"" + part + "\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/iommu/iommu.odin", "package iommu\n\nimport \"" + KERNEL_IMPORT_START + "acpi_processors\"\nimport ring \"" + CONTRACT_IMPORT_START + "ring\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/iommu/iommu_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage iommu\n\nimport \"core:testing\"\nimport \"" + KERNEL_IMPORT_START + "acpi_processors\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors/acpi_processors.odin", "package acpi_processors\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/beside_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../runtime\"\nimport \"../../../kernel_notes\"\n")
+	library_tree_folder_make(clean, foundation.SOURCE_FOLDER_KERNEL + "/iommu")
+	library_tree_folder_make(clean, foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_KERNEL + "/devices.odin", "package kernel\n\nimport iommu \"" + part + "\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_KERNEL + "/iommu/iommu.odin", "package iommu\n\nimport \"" + foundation.KERNEL_IMPORT_START + "acpi_processors\"\nimport ring \"" + foundation.CONTRACT_IMPORT_START + "ring\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_KERNEL + "/iommu/iommu_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage iommu\n\nimport \"core:testing\"\nimport \"" + foundation.KERNEL_IMPORT_START + "acpi_processors\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors/acpi_processors.odin", "package acpi_processors\n")
 	accepted, accepted_ok := library_import_breaches_of_tree(clean)
 	testing.expect(t, accepted_ok)
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
@@ -291,19 +292,19 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 library_relative_import_into_a_module_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	library_tree_folder_make(root, SYSTEM_MODULE_SOURCES + "console")
+	library_tree_folder_make(root, foundation.SYSTEM_MODULE_SOURCES + "console")
 	library_tree_folder_make(root, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool")
 	refused := []struct {
 		file:   string,
 		source: string,
 		text:   string,
 	} {
-		{SOURCE_FOLDER_SUPPORT + "/sentence/peer_test.odin", "", "\"../../../modules/libraries/cryptography\""},
-		{SOURCE_FOLDER_SUPPORT + "/sentence/inner_test.odin", "", "\"../../../modules/libraries/cryptography/inner\""},
-		{SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin", "", "\"../../../modules\""},
-		{SOURCE_FOLDER_SUPPORT + "/sentence/group_test.odin", "", "\"../../../modules/libraries\""},
-		{SOURCE_FOLDER_SUPPORT + "/sentence/dot_test.odin", "", "\"./../../../modules/libraries/cryptography\""},
-		{SYSTEM_MODULE_SOURCES + "console/main_test.odin", "", "\"../../libraries/cryptography\""},
+		{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/peer_test.odin", "", "\"../../../modules/libraries/cryptography\""},
+		{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/inner_test.odin", "", "\"../../../modules/libraries/cryptography/inner\""},
+		{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin", "", "\"../../../modules\""},
+		{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/group_test.odin", "", "\"../../../modules/libraries\""},
+		{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/dot_test.odin", "", "\"./../../../modules/libraries/cryptography\""},
+		{foundation.SYSTEM_MODULE_SOURCES + "console/main_test.odin", "", "\"../../libraries/cryptography\""},
 		{LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin", "package modustool\n\nimport \"core:fmt\"\nimport cryptography_module \"../../src/modules/libraries/cryptography\"\n", "\"../../src/modules/libraries/cryptography\""},
 		{LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/inside_when.odin", "package modustool\n\nimport \"core:fmt\"\n\nwhen false {\n\timport \"../../src/modules/system/console\"\n}\n", "\"../../src/modules/system/console\""},
 	}
@@ -332,7 +333,7 @@ library_relative_import_into_a_module_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, peer.line, 4)
 		sentence := library_import_breach_sentence(peer)
 		testing.expect(t, strings.contains(sentence, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin:4: the import \"../../src/modules/libraries/cryptography\" is refused"), sentence)
-		testing.expect(t, strings.contains(sentence, PRIVATE_IMPORT_START + "<module>/<part>"), sentence)
+		testing.expect(t, strings.contains(sentence, foundation.PRIVATE_IMPORT_START + "<module>/<part>"), sentence)
 	}
 	inside_when, when_found := breach_of_file(reading.breaches[:], LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/inside_when.odin")
 	testing.expect(t, when_found && inside_when.line == 6, "the import of the tool inside a `when` is not read")
@@ -340,11 +341,11 @@ library_relative_import_into_a_module_is_refused :: proc(t: ^testing.T) {
 	// The last case.
 	clean := library_tree_make(t)
 	defer os.remove_all(clean)
-	library_tree_folder_make(clean, SYSTEM_MODULE_SOURCES + "console")
+	library_tree_folder_make(clean, foundation.SYSTEM_MODULE_SOURCES + "console")
 	library_tree_folder_make(clean, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool")
-	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/memory_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"../../../runtime\"\nimport \"../../../modules_notes\"\n\nforeign import memory \"../../../runtime/memory_for_host_tests.asm\"\n")
-	library_tree_file_write(clean, SYSTEM_MODULE_SOURCES + "console/main_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage console\n\nimport \"core:testing\"\nimport \"./history\"\nimport \"../console/lines\"\n")
-	library_tree_file_write(clean, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin", "package modustool\n\nimport \"core:fmt\"\nimport \"" + PRIVATE_IMPORT_START + "cryptography/cryptography_primitives\"\n\nforeign import memory \"../../src/runtime/memory_for_host_tests.asm\"\n\nFIXTURE :: `\nimport \"../../src/modules/libraries/cryptography\"\n`\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/memory_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"../../../runtime\"\nimport \"../../../modules_notes\"\n\nforeign import memory \"../../../runtime/memory_for_host_tests.asm\"\n")
+	library_tree_file_write(clean, foundation.SYSTEM_MODULE_SOURCES + "console/main_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage console\n\nimport \"core:testing\"\nimport \"./history\"\nimport \"../console/lines\"\n")
+	library_tree_file_write(clean, LIBRARY_IMPORTS_TOOL_FOLDER + "/modustool/peer.odin", "package modustool\n\nimport \"core:fmt\"\nimport \"" + foundation.PRIVATE_IMPORT_START + "cryptography/cryptography_primitives\"\n\nforeign import memory \"../../src/runtime/memory_for_host_tests.asm\"\n\nFIXTURE :: `\nimport \"../../src/modules/libraries/cryptography\"\n`\n")
 	accepted, accepted_ok := library_import_breaches_of_tree(clean)
 	testing.expect(t, accepted_ok)
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
@@ -364,51 +365,51 @@ library_relative_import_into_a_module_is_refused :: proc(t: ^testing.T) {
 library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	part :: PRIVATE_IMPORT_START + "console/line_cutter"
-	library_part :: PRIVATE_IMPORT_START + "cryptography/cryptography_primitives"
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/seal.odin", "package sentence\n\nimport \"" + library_part + "\"\n")
-	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
-	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/compositor/panel")
-	library_tree_folder_make(root, SYSTEM_MODULE_SOURCES + "compositor")
-	library_tree_folder_make(root, SYSTEM_MODULE_SOURCES + "console")
-	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/console/line_cutter/cutter.odin", "package line_cutter\n")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "compositor/main.odin", "package compositor\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", "package sentence\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", "package panel\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "console/unknown.odin", "package console\n\nimport \"" + PRIVATE_IMPORT_START + "no_such_module/part\"\n")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "console/short.odin", "package console\n\nimport \"" + PRIVATE_IMPORT_START + "console\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/cut.odin", "package ring\n\nimport \"" + part + "\"\n")
+	part :: foundation.PRIVATE_IMPORT_START + "console/line_cutter"
+	library_part :: foundation.PRIVATE_IMPORT_START + "cryptography/cryptography_primitives"
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/seal.odin", "package sentence\n\nimport \"" + library_part + "\"\n")
+	library_tree_folder_make(root, foundation.SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
+	library_tree_folder_make(root, foundation.SOURCE_FOLDER_PRIVATE + "/compositor/panel")
+	library_tree_folder_make(root, foundation.SYSTEM_MODULE_SOURCES + "compositor")
+	library_tree_folder_make(root, foundation.SYSTEM_MODULE_SOURCES + "console")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_PRIVATE + "/console/line_cutter/cutter.odin", "package line_cutter\n")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "compositor/main.odin", "package compositor\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", "package sentence\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", "package panel\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/unknown.odin", "package console\n\nimport \"" + foundation.PRIVATE_IMPORT_START + "no_such_module/part\"\n")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/short.odin", "package console\n\nimport \"" + foundation.PRIVATE_IMPORT_START + "console\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_CONTRACT + "/ring/cut.odin", "package ring\n\nimport \"" + part + "\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	testing.expectf(t, len(reading.breaches[:]) == 8, "%v", reading.breaches[:])
-	other, other_found := breach_of_file(reading.breaches[:], SYSTEM_MODULE_SOURCES + "compositor/main.odin")
+	other, other_found := breach_of_file(reading.breaches[:], foundation.SYSTEM_MODULE_SOURCES + "compositor/main.odin")
 	testing.expect(t, other_found, "the module that imports a private part of another module is not named")
 	testing.expect_value(t, other.line, 3)
 	testing.expect_value(t, other.text, "\"" + part + "\"")
 	testing.expect_value(t, other.reason, Library_Import_Breach_Reason.Private_Part_Of_Another_Module)
 	sentence := library_import_breach_sentence(other)
-	testing.expect(t, strings.contains(sentence, SYSTEM_MODULE_SOURCES + "compositor/main.odin:3: the import \"" + part + "\" is refused"), sentence)
-	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/seal.odin", SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", SYSTEM_MODULE_SOURCES + "console/unknown.odin", SYSTEM_MODULE_SOURCES + "console/short.odin"}) {
+	testing.expect(t, strings.contains(sentence, foundation.SYSTEM_MODULE_SOURCES + "compositor/main.odin:3: the import \"" + part + "\" is refused"), sentence)
+	for file in ([]string{foundation.SOURCE_FOLDER_SUPPORT + "/sentence/seal.odin", foundation.SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", foundation.SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", foundation.SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", foundation.SYSTEM_MODULE_SOURCES + "console/unknown.odin", foundation.SYSTEM_MODULE_SOURCES + "console/short.odin"}) {
 		breach, found := breach_of_file(reading.breaches[:], file)
 		testing.expectf(t, found && breach.reason == .Private_Part_Of_Another_Module && breach_count_of_file(reading.breaches[:], file) == 1, "%s: the import is not refused one time as a private part of another module", file)
 	}
 	// A contract package imports no private part, by the rule of its folder.
-	in_contract, contract_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_CONTRACT + "/ring/cut.odin")
+	in_contract, contract_found := breach_of_file(reading.breaches[:], foundation.SOURCE_FOLDER_CONTRACT + "/ring/cut.odin")
 	testing.expect(t, contract_found && in_contract.reason == .Refused_Import, "the contract package that imports a private part is not refused")
 
 	// The last case: the module, a private part of the same module, and the
 	// host test of that part.
 	clean := library_tree_make(t)
 	defer os.remove_all(clean)
-	library_tree_folder_make(clean, SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
-	library_tree_folder_make(clean, SOURCE_FOLDER_PRIVATE + "/console/history")
-	library_tree_folder_make(clean, SYSTEM_MODULE_SOURCES + "console")
-	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/line_cutter/cutter.odin", "package line_cutter\n")
-	library_tree_file_write(clean, SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + part + "\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage history\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/seal_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + library_part + "\"\n")
+	library_tree_folder_make(clean, foundation.SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
+	library_tree_folder_make(clean, foundation.SOURCE_FOLDER_PRIVATE + "/console/history")
+	library_tree_folder_make(clean, foundation.SYSTEM_MODULE_SOURCES + "console")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_PRIVATE + "/console/line_cutter/cutter.odin", "package line_cutter\n")
+	library_tree_file_write(clean, foundation.SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_PRIVATE + "/console/history/history_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage history\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/seal_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + library_part + "\"\n")
 	accepted, accepted_ok := library_import_breaches_of_tree(clean)
 	testing.expect(t, accepted_ok)
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
@@ -425,42 +426,42 @@ library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^test
 library_support_package_with_one_owner_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	for folder in ([]string{SOURCE_FOLDER_SUPPORT + "/alone", SOURCE_FOLDER_SUPPORT + "/twice", SOURCE_FOLDER_PRIVATE + "/console/history", SOURCE_FOLDER_PRIVATE + "/console/unused", SYSTEM_MODULE_SOURCES + "console", SYSTEM_MODULE_SOURCES + "compositor"}) {
+	for folder in ([]string{foundation.SOURCE_FOLDER_SUPPORT + "/alone", foundation.SOURCE_FOLDER_SUPPORT + "/twice", foundation.SOURCE_FOLDER_PRIVATE + "/console/history", foundation.SOURCE_FOLDER_PRIVATE + "/console/unused", foundation.SYSTEM_MODULE_SOURCES + "console", foundation.SYSTEM_MODULE_SOURCES + "compositor"}) {
 		library_tree_folder_make(root, folder)
 	}
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/alone/alone.odin", "package alone\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/twice/twice.odin", "package twice\n")
-	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + SUPPORT_IMPORT_START + "twice\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/console/unused/unused.odin", "package unused\n")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + SUPPORT_IMPORT_START + "alone\"\nimport \"" + SUPPORT_IMPORT_START + "twice\"\nimport \"" + PRIVATE_IMPORT_START + "console/history\"\n")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "compositor/main_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage compositor\n\nimport \"core:testing\"\nimport \"" + SUPPORT_IMPORT_START + "alone\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/alone/alone.odin", "package alone\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/twice/twice.odin", "package twice\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + foundation.SUPPORT_IMPORT_START + "twice\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_PRIVATE + "/console/unused/unused.odin", "package unused\n")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + foundation.SUPPORT_IMPORT_START + "alone\"\nimport \"" + foundation.SUPPORT_IMPORT_START + "twice\"\nimport \"" + foundation.PRIVATE_IMPORT_START + "console/history\"\n")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "compositor/main_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage compositor\n\nimport \"core:testing\"\nimport \"" + foundation.SUPPORT_IMPORT_START + "alone\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	testing.expectf(t, len(reading.breaches[:]) == 0, "%v", reading.breaches[:])
 	owners := library_owner_breaches(reading)
 	testing.expectf(t, len(owners) == 4, "%v", owners)
-	nobody, nobody_found := breach_of_file(owners, SOURCE_FOLDER_SUPPORT + "/sentence")
+	nobody, nobody_found := breach_of_file(owners, foundation.SOURCE_FOLDER_SUPPORT + "/sentence")
 	testing.expect(t, nobody_found && nobody.reason == .Support_Package_With_One_Owner && nobody.text == "", "the support package that no body reaches is not refused")
 	testing.expect(t, strings.contains(library_import_breach_sentence(nobody), "no body of code reaches this support package"), library_import_breach_sentence(nobody))
-	for folder in ([]string{SOURCE_FOLDER_SUPPORT + "/alone", SOURCE_FOLDER_SUPPORT + "/twice"}) {
+	for folder in ([]string{foundation.SOURCE_FOLDER_SUPPORT + "/alone", foundation.SOURCE_FOLDER_SUPPORT + "/twice"}) {
 		breach, found := breach_of_file(owners, folder)
 		testing.expectf(t, found && breach.reason == .Support_Package_With_One_Owner && breach.text == "console", "%s: %v", folder, breach)
 		sentence := library_import_breach_sentence(breach)
-		testing.expect(t, strings.contains(sentence, join(folder, ": only console reaches this support package")) && strings.contains(sentence, SOURCE_FOLDER_PRIVATE + "/<module>/"), sentence)
+		testing.expect(t, strings.contains(sentence, foundation.join(folder, ": only console reaches this support package")) && strings.contains(sentence, foundation.SOURCE_FOLDER_PRIVATE + "/<module>/"), sentence)
 	}
-	unused, unused_found := breach_of_file(owners, SOURCE_FOLDER_PRIVATE + "/console/unused")
+	unused, unused_found := breach_of_file(owners, foundation.SOURCE_FOLDER_PRIVATE + "/console/unused")
 	testing.expect(t, unused_found && unused.reason == .Private_Part_Without_Its_Module && unused.text == "", "the private part that its module does not reach is not refused")
 
 	// The last case.
 	clean := library_tree_make(t)
 	defer os.remove_all(clean)
-	for folder in ([]string{SOURCE_FOLDER_SUPPORT + "/twice", SOURCE_FOLDER_PRIVATE + "/console/history", SYSTEM_MODULE_SOURCES + "console", SYSTEM_MODULE_SOURCES + "compositor"}) {
+	for folder in ([]string{foundation.SOURCE_FOLDER_SUPPORT + "/twice", foundation.SOURCE_FOLDER_PRIVATE + "/console/history", foundation.SYSTEM_MODULE_SOURCES + "console", foundation.SYSTEM_MODULE_SOURCES + "compositor"}) {
 		library_tree_folder_make(clean, folder)
 	}
-	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/twice/twice.odin", "package twice\n\nimport \"" + SUPPORT_IMPORT_START + "sentence\"\n")
-	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + SUPPORT_IMPORT_START + "twice\"\n")
-	library_tree_file_write(clean, SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + PRIVATE_IMPORT_START + "console/history\"\n")
-	library_tree_file_write(clean, SYSTEM_MODULE_SOURCES + "compositor/main.odin", "package compositor\n\nimport \"" + SUPPORT_IMPORT_START + "twice\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_SUPPORT + "/twice/twice.odin", "package twice\n\nimport \"" + foundation.SUPPORT_IMPORT_START + "sentence\"\n")
+	library_tree_file_write(clean, foundation.SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + foundation.SUPPORT_IMPORT_START + "twice\"\n")
+	library_tree_file_write(clean, foundation.SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"" + foundation.PRIVATE_IMPORT_START + "console/history\"\n")
+	library_tree_file_write(clean, foundation.SYSTEM_MODULE_SOURCES + "compositor/main.odin", "package compositor\n\nimport \"" + foundation.SUPPORT_IMPORT_START + "twice\"\n")
 	accepted, accepted_ok := library_import_breaches_of_tree(clean)
 	testing.expect(t, accepted_ok)
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
@@ -480,7 +481,7 @@ library_support_package_with_one_owner_is_refused :: proc(t: ^testing.T) {
 library_kernel_part_that_is_not_pure_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	part :: SOURCE_FOLDER_KERNEL + "/iommu"
+	part :: foundation.SOURCE_FOLDER_KERNEL + "/iommu"
 	library_tree_folder_make(root, part)
 	library_tree_file_write(root, part + "/state.odin", "package iommu\n\ncount := 0\n")
 	library_tree_file_write(root, part + "/static.odin", "package iommu\n\nnext :: proc \"contextless\" () -> int {\n\t@(static) calls: int\n\tcalls += 1\n\treturn calls\n}\n")
@@ -491,7 +492,7 @@ library_kernel_part_that_is_not_pure_is_refused :: proc(t: ^testing.T) {
 	library_tree_file_write(root, part + "/renamed.odin", "package iommu\n\nimport processor \"base:intrinsics\"\n\nidentify :: proc \"contextless\" () -> u32 {\n\teax, _, _, _ := processor.x86_cpuid(0, 0)\n\treturn eax\n}\n")
 	// Not a kernel part: the package of the kernel holds its state, and a
 	// host test of the part runs on the host.
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/state.odin", "package kernel\n\ncount := 0\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/state.odin", "package kernel\n\ncount := 0\n")
 	library_tree_file_write(root, part + "/state_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage iommu\n\nimport \"core:testing\"\n\nruns := 0\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
@@ -541,9 +542,9 @@ library_kernel_part_that_is_not_pure_is_refused :: proc(t: ^testing.T) {
 library_import_that_the_compiler_leaves_out_is_read :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/inside_when.odin", "package kernel\n\nwhen false {\n\timport \"" + SUPPORT_IMPORT_START + "sentence\"\n} else {\n\timport \"../beside\"\n}\n")
-	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/other_system.odin", "#+build windows\npackage kernel\n\nimport \"" + SUPPORT_IMPORT_START + "sentence\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/write_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\nimport \"" + SUPPORT_IMPORT_START + "sentence\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/inside_when.odin", "package kernel\n\nwhen false {\n\timport \"" + foundation.SUPPORT_IMPORT_START + "sentence\"\n} else {\n\timport \"../beside\"\n}\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_KERNEL + "/other_system.odin", "#+build windows\npackage kernel\n\nimport \"" + foundation.SUPPORT_IMPORT_START + "sentence\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_CONTRACT + "/ring/write_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\nimport \"" + foundation.SUPPORT_IMPORT_START + "sentence\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	testing.expect_value(t, len(reading.breaches[:]), 4)
@@ -570,10 +571,10 @@ library_import_that_the_compiler_leaves_out_is_read :: proc(t: ^testing.T) {
 library_source_that_imports_core_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	library_tree_folder_make(root, SYSTEM_MODULE_SOURCES + "console")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"core:os\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_BOOT + "/inside_when.odin", "package boot\n\nwhen false {\n\timport \"core:fmt\"\n}\n")
-	library_tree_file_write(root, SYSTEM_MODULE_SOURCES + "console/on_the_host.odin", LIBRARY_HOST_BUILD_LINE + "\npackage console\n\nimport \"core:fmt\"\n")
+	library_tree_folder_make(root, foundation.SYSTEM_MODULE_SOURCES + "console")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/main.odin", "package console\n\nimport \"core:os\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_BOOT + "/inside_when.odin", "package boot\n\nwhen false {\n\timport \"core:fmt\"\n}\n")
+	library_tree_file_write(root, foundation.SYSTEM_MODULE_SOURCES + "console/on_the_host.odin", LIBRARY_HOST_BUILD_LINE + "\npackage console\n\nimport \"core:fmt\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	if !testing.expect_value(t, len(reading.breaches[:]), 3) {
@@ -590,7 +591,7 @@ library_source_that_imports_core_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, on_the_host.line, 4)
 	for breach in reading.breaches {
 		testing.expect_value(t, breach.reason, Library_Import_Breach_Reason.Refused_Import)
-		testing.expect(t, strings.contains(library_import_breach_sentence(breach), "a source of src/ that is not a test imports a package of base: or of " + SOURCE_LIBRARY_IMPORT_START), library_import_breach_sentence(breach))
+		testing.expect(t, strings.contains(library_import_breach_sentence(breach), "a source of src/ that is not a test imports a package of base: or of " + foundation.SOURCE_LIBRARY_IMPORT_START), library_import_breach_sentence(breach))
 	}
 	testing.expect_value(t, reading.source_count, 7)
 }
@@ -604,11 +605,11 @@ library_source_that_imports_core_is_refused :: proc(t: ^testing.T) {
 library_test_without_build_line_is_refused :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/sentence_test.odin", "package sentence\n\nimport \"core:testing\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/other_test.odin", "#+build linux\npackage sentence\n\nimport \"core:testing\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/comma_test.odin", "#+build !freestanding, linux\npackage sentence\n\nimport \"core:testing\"\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/small_test.odin", "package sentence\n")
-	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/fast_test_amd64.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/sentence_test.odin", "package sentence\n\nimport \"core:testing\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/other_test.odin", "#+build linux\npackage sentence\n\nimport \"core:testing\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/comma_test.odin", "#+build !freestanding, linux\npackage sentence\n\nimport \"core:testing\"\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/small_test.odin", "package sentence\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_CONTRACT + "/ring/fast_test_amd64.odin", LIBRARY_HOST_BUILD_LINE + "\npackage ring\n\nimport \"core:testing\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	if !testing.expect_value(t, len(reading.breaches[:]), 3) {
@@ -643,10 +644,10 @@ library_test_without_build_line_is_refused :: proc(t: ^testing.T) {
 library_copy_of_the_cryptography_is_exempt :: proc(t: ^testing.T) {
 	root := library_tree_make(t)
 	defer os.remove_all(root)
-	library_tree_folder_make(root, SOURCE_FOLDER_SUPPORT + "/cryptography/aes")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/cryptography/aes/aes_impl.odin", "package aes\n\nimport \"core:reflect\"\nimport \"../_subtle\"\n")
-	library_tree_file_write(root, CRYPTOGRAPHY_MANIFEST, "# The cryptography of Odin.\n" + SOURCE_FOLDER_SUPPORT + "/cryptography/aes/aes_impl.odin core/crypto/aes/aes_impl.odin a-hash\n")
-	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/reflect.odin", "package sentence\n\nimport \"core:reflect\"\n")
+	library_tree_folder_make(root, foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/aes")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/aes/aes_impl.odin", "package aes\n\nimport \"core:reflect\"\nimport \"../_subtle\"\n")
+	library_tree_file_write(root, foundation.CRYPTOGRAPHY_MANIFEST, "# The cryptography of Odin.\n" + foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/aes/aes_impl.odin core/crypto/aes/aes_impl.odin a-hash\n")
+	library_tree_file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/sentence/reflect.odin", "package sentence\n\nimport \"core:reflect\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
 	if !testing.expect_value(t, len(reading.breaches[:]), 1) {
@@ -664,7 +665,7 @@ library_copy_of_the_cryptography_is_exempt :: proc(t: ^testing.T) {
 // core library in a source that is not a test.
 @(test)
 library_import_of_another_form_is_refused :: proc(t: ^testing.T) {
-	breaches, import_count := library_import_breaches_of_source("src/kernel/forms.odin", "package kernel\n\nimport \"" + CONTRACT_IMPORT_START + "../support/sentence\"\nimport \"vendor:glfw\"\nimport \"support:sentence\"\nimport \"core:testing\"\n", Library_Source_Form{kind = .Kernel})
+	breaches, import_count := library_import_breaches_of_source("src/kernel/forms.odin", "package kernel\n\nimport \"" + foundation.CONTRACT_IMPORT_START + "../support/sentence\"\nimport \"vendor:glfw\"\nimport \"support:sentence\"\nimport \"core:testing\"\n", Library_Source_Form{kind = .Kernel})
 	testing.expect_value(t, import_count, 4)
 	if testing.expect_value(t, len(breaches), 4) {
 		testing.expect_value(t, breaches[0].line, 3)
@@ -687,7 +688,7 @@ library_import_file_that_the_parser_refuses :: proc(t: ^testing.T) {
 		testing.expect_value(t, broken[0].line, 0)
 		testing.expect(t, strings.contains(library_import_breach_sentence(broken[0]), "src/kernel/broken.odin: the parser cannot read the file whole"))
 	}
-	inside_procedure, _ := library_import_breaches_of_source("src/kernel/inside.odin", "package kernel\n\nwork :: proc() {\n\timport \"" + SUPPORT_IMPORT_START + "sentence\"\n}\n", form)
+	inside_procedure, _ := library_import_breaches_of_source("src/kernel/inside.odin", "package kernel\n\nwork :: proc() {\n\timport \"" + foundation.SUPPORT_IMPORT_START + "sentence\"\n}\n", form)
 	testing.expect_value(t, len(inside_procedure), 1)
 }
 

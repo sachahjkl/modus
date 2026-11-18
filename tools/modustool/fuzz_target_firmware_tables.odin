@@ -3,6 +3,7 @@ package modustool
 import "core:slice"
 import "kernel:acpi_processors"
 import iommu "kernel:iommu"
+import "modustool:foundation"
 
 // The fuzz targets of the tables of the firmware
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
@@ -37,7 +38,7 @@ fuzz_firmware_tables_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return FUZZ_PASSED
 	}
 	table := input[1:]
-	switch enum_member_at(Fuzz_Firmware_Table, int(input[0]) % len(Fuzz_Firmware_Table)) {
+	switch foundation.enum_member_at(Fuzz_Firmware_Table, int(input[0]) % len(Fuzz_Firmware_Table)) {
 	case .Dmar:
 		return fuzz_dmar_check(table)
 	case .Ivrs:

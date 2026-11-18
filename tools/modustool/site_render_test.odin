@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:support/mark"
+import "modustool:foundation"
 
 test_site :: proc() -> Site {
 	site: Site
@@ -79,7 +80,7 @@ site_render_links_the_first_use_of_a_term :: proc(t: ^testing.T) {
 @(test)
 site_render_the_documents_of_the_repository :: proc(t: ^testing.T) {
 	site := test_site()
-	paths, ok := files_with_suffix("docs", ".md")
+	paths, ok := foundation.files_with_suffix("docs", ".md")
 	testing.expect(t, ok)
 	for path in paths {
 		data, err := os.read_entire_file(path, context.temp_allocator)
@@ -111,7 +112,7 @@ site_relative_paths :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_relative("docs/guides/A/index.html", "#part"), "#part")
 	testing.expect_value(t, site_path_join("docs/guides", "../../pictures/a.png"), "pictures/a.png")
 	testing.expect_value(t, site_path_join("docs", "./NETWORK.md"), "docs/NETWORK.md")
-	testing.expect_value(t, site_slug("The kernel: 32 operations!"), "the-kernel-32-operations")
+	testing.expect_value(t, foundation.site_slug("The kernel: 32 operations!"), "the-kernel-32-operations")
 	testing.expect_value(t, site_description_cut("`a` **b**"), "a b")
 	long := strings.repeat("word ", 60, context.temp_allocator)
 	testing.expect(t, len(site_description_cut(long)) <= SITE_DESCRIPTION_LIMIT)

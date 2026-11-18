@@ -10,7 +10,7 @@
 // of the parser of Odin, and the comments from the lines that the tree
 // names: its rows are literals that a reader of lines cannot tell apart
 // from other code.
-package modustool
+package foundation
 
 import "core:fmt"
 import "core:mem/virtual"

@@ -8,6 +8,7 @@ import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // The machine of the operation sequences (src/md/infrastructure/kernel_fuzzing.md,
 // "The machine", "The oracles"): the tool writes each sequence in the
@@ -22,9 +23,9 @@ import "modus:contract/operation_sequence"
 OPERATION_MAILBOX_LINE :: "operation_fuzzing: mailbox at "
 // The memory files of the machine of the test part and of a replay: the
 // tool reads them in a step after other steps, so their paths are fixed.
-OPERATION_SEQUENCES_MEMORY_FILE :: BUILD_FOLDER + "/test_output_operation_sequences_memory.raw"
-OPERATION_REPLAY_MEMORY_FILE :: BUILD_FOLDER + "/test_output_operation_replay_memory.raw"
-TEST_OUTPUT_OPERATION_REPLAY :: BUILD_FOLDER + "/test_output_operation_replay.txt"
+OPERATION_SEQUENCES_MEMORY_FILE :: foundation.BUILD_FOLDER + "/test_output_operation_sequences_memory.raw"
+OPERATION_REPLAY_MEMORY_FILE :: foundation.BUILD_FOLDER + "/test_output_operation_replay_memory.raw"
+TEST_OUTPUT_OPERATION_REPLAY :: foundation.BUILD_FOLDER + "/test_output_operation_replay.txt"
 // The command `fuzz replay operations`, as the table of the volumes of the
 // commands names it.
 OPERATION_REPLAY_COMMAND :: "operation_replay"
@@ -100,7 +101,7 @@ operation_statuses_of_comment :: proc(comment: string) -> (statuses: bit_set[ope
 // operation_statuses_read reads the statuses of each operation from the
 // reference comments. The member None is no operation and has none.
 operation_statuses_read :: proc(reference: string) -> (statuses: Operation_Statuses, problem: string) {
-	members, read_problem := site_enumeration_read(reference, OPERATION_SOURCE, "Operation")
+	members, read_problem := foundation.site_enumeration_read(reference, foundation.OPERATION_SOURCE, "Operation")
 	if read_problem != "" {
 		return {}, read_problem
 	}
@@ -116,14 +117,14 @@ operation_statuses_read :: proc(reference: string) -> (statuses: Operation_Statu
 			}
 			listed, listed_problem := operation_statuses_of_comment(member.comment)
 			if listed_problem != "" {
-				return {}, fmt.tprintf("%s, the operation %s: %s", OPERATION_SOURCE, member.name, listed_problem)
+				return {}, fmt.tprintf("%s, the operation %s: %s", foundation.OPERATION_SOURCE, member.name, listed_problem)
 			}
 			statuses[candidate] = listed
 		}
 	}
 	for candidate in operation.Operation {
 		if !found[candidate] {
-			return {}, fmt.tprintf("%s: no member %s in the enumeration Operation", OPERATION_SOURCE, operation.OPERATIONS[candidate].name)
+			return {}, fmt.tprintf("%s: no member %s in the enumeration Operation", foundation.OPERATION_SOURCE, operation.OPERATIONS[candidate].name)
 		}
 	}
 	return statuses, ""
@@ -713,8 +714,8 @@ operation_execute_watched :: proc(mailbox: ^Operation_Mailbox, bytes: []u8, head
 				return .Machine_Ended, state, fmt.tprintf("QEMU ended with the status %d before the service counted the sequence", state.exit_code)
 			}
 		}
-		if time.since(started) > HANG_BOUND {
-			return .Stalled, {}, fmt.tprintf("a stall: the service took no sequence within %v; the runner had started its step %d", HANG_BOUND, operation_runner_step_started(mailbox))
+		if time.since(started) > foundation.HANG_BOUND {
+			return .Stalled, {}, fmt.tprintf("a stall: the service took no sequence within %v; the runner had started its step %d", foundation.HANG_BOUND, operation_runner_step_started(mailbox))
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
@@ -772,7 +773,7 @@ operation_sequences_step :: proc(machine: ^Machine, index: int, replay: string) 
 			return false
 		}
 	} else {
-		bytes, read := read_file(replay)
+		bytes, read := foundation.read_file(replay)
 		if !read {
 			return false
 		}
@@ -812,7 +813,7 @@ operation_sequences_step :: proc(machine: ^Machine, index: int, replay: string) 
 	if findings_total > 0 {
 		return false
 	}
-	test_passed_print("the machine ran %d operation sequences and %d regression inputs, %d steps, through the mailbox: each status is in the reference of its operation, each table of error details agrees with the forms, each budget came back whole, the %d answers of the seed cases came, and the %d steps of the last sequences of the regression inputs got their answers", len(inputs), len(regressions), steps, len(expectations), expected_steps)
+	foundation.test_passed_print("the machine ran %d operation sequences and %d regression inputs, %d steps, through the mailbox: each status is in the reference of its operation, each table of error details agrees with the forms, each budget came back whole, the %d answers of the seed cases came, and the %d steps of the last sequences of the regression inputs got their answers", len(inputs), len(regressions), steps, len(expectations), expected_steps)
 	return true
 }
 
@@ -856,14 +857,14 @@ operation_sequences_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 // operation_sequences_replay is `fuzz replay operations <file>`: one
 // sequence on a new machine of the kernel that ships, with every oracle.
 operation_sequences_replay :: proc(path: string) -> int {
-	bytes, read := read_file(path)
+	bytes, read := foundation.read_file(path)
 	if !read {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	sequence: operation_sequence.Sequence
 	if refusal := operation_sequence.check(bytes, &sequence); refusal.problem != .None {
 		fmt.eprintfln("modustool: %s is not an operation sequence: %v", path, refusal)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	if code := build_system(boot_volumes_of_command(OPERATION_REPLAY_COMMAND)); code != 0 {
 		return code
@@ -881,7 +882,7 @@ operation_sequences_replay :: proc(path: string) -> int {
 	}
 	if !test_part_run_start(&part) || !machine_test(&part, steps[:], {volume = BOOT_VOLUME_OPERATION_SEQUENCES, output = TEST_OUTPUT_OPERATION_REPLAY, exit_status = 0, memory_file = OPERATION_REPLAY_MEMORY_FILE}) {
 		fmt.eprintfln("modustool: fuzz replay operations: %s breaks an oracle on the kernel that ships, or the machine failed", path)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: fuzz replay operations: %s breaks no oracle on the kernel that ships", path)
 	return 0

@@ -3,6 +3,7 @@ package modustool
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 @(private = "file")
 SMALL_README :: "<p align=\"center\"><img src=\"resources/logo/modus_transparent.png\" width=\"256\" alt=\"The mark\"></p>\n\n# Title\n\nThe lead.\nIts second line.\n\n![A <b>bold</b> & \"quoted\" caption](docs/screenshots/x.png)\n\n| | |\n|---|---|\n| ![Left](docs/screenshots/left.png) | ![Right](docs/screenshots/right.png) |\n\n## Use\n\nThe flake.\n\n## Licences\n\nMIT.\n"
@@ -199,25 +200,9 @@ site_lines_of_a_log :: proc(t: ^testing.T) {
 	testing.expect_value(t, count, 3)
 	_, _, count = site_line_choose(log, "absent", .First)
 	testing.expect_value(t, count, 0)
-	absent := site_measure_read(Site_Measure{sentence = "absent", files = {BUILD_FOLDER + "/no_log_of_the_site_test.txt", ""}, pattern = "x"})
+	absent := site_measure_read(Site_Measure{sentence = "absent", files = {foundation.BUILD_FOLDER + "/no_log_of_the_site_test.txt", ""}, pattern = "x"})
 	testing.expect(t, !absent.found)
 	testing.expect(t, strings.contains(absent.missing, "no file"))
-}
-
-@(test)
-site_size_of_a_png_file :: proc(t: ^testing.T) {
-	header := []u8{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 0, 0, 0, 13, 'I', 'H', 'D', 'R', 0, 0, 4, 0, 0, 0, 3, 0}
-	width, height, ok := site_png_size(header)
-	testing.expect(t, ok)
-	testing.expect_value(t, width, 1024)
-	testing.expect_value(t, height, 768)
-	_, _, short_ok := site_png_size(header[:20])
-	testing.expect(t, !short_ok)
-	not_png := make([]u8, len(header), context.temp_allocator)
-	copy(not_png, header)
-	not_png[1] = 'X'
-	_, _, not_png_ok := site_png_size(not_png)
-	testing.expect(t, !not_png_ok)
 }
 
 // The head of the home holds the tagline, the first sentence of the lead of

@@ -9,6 +9,7 @@ import "modus:private/cryptography/cryptography_primitives"
 import "modus:support/quic"
 import "modus:support/random"
 import "modus:support/web"
+import "modustool:foundation"
 
 // The peer as QUIC clients of the process `quic_echo` (docs/QUIC.md,
 // section 6). The tool asks for one case at a time (step Peer_Quic); the
@@ -28,7 +29,7 @@ QUIC_SERVER_PORT :: 4433
 PEER_QUIC_CAPACITY :: 8
 PEER_QUIC_STREAMS :: 4 // The streams of one client at most: the limit that quic_echo gives.
 PEER_QUIC_PORT_FIRST :: 41000
-PEER_QUIC_TIME_LIMIT :: HANG_BOUND // On the clock of the host: it only ends a case that hangs.
+PEER_QUIC_TIME_LIMIT :: foundation.HANG_BOUND // On the clock of the host: it only ends a case that hangs.
 PEER_QUIC_FLOOD :: 1000 // The datagrams of the flood that no key opens.
 // The datagrams of the flood in one tick of the peer (1 ms or more): 1000 in
 // 200 ms. Faster, the 64 admitted remotes of the network service can be

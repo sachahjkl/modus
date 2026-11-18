@@ -16,6 +16,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 ROADMAP_FILE :: "ROADMAP.md"
 ROADMAP_TITLE :: "# Roadmap"
@@ -65,13 +66,13 @@ Roadmap :: struct {
 run_roadmap :: proc(args: []string) -> int {
 	usage_text :: "modustool roadmap check"
 	if len(args) == 1 && args[0] == "check" {
-		return roadmap_check() ? 0 : EXIT_FAILURE
+		return roadmap_check() ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) > 0 {
 		fmt.eprintfln("modustool: roadmap has no command %s", args[0])
 	}
 	fmt.eprintln(usage_text)
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 // The parts of the text, the same for the tool and its tests.
@@ -228,7 +229,7 @@ roadmap_sentence_count :: proc(text: string) -> (count: int, ends_whole: bool) {
 // characters. It is also what gives an entry its address on the page of the
 // site, so two entries with one key are one entry for a reader.
 roadmap_summary_key :: proc(summary: string) -> string {
-	return site_slug(summary)
+	return foundation.site_slug(summary)
 }
 
 // roadmap_entry_parse reads the text of one entry, on one line. Each
@@ -407,10 +408,10 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 			}
 			expected := ""
 			if sections_seen < len(Roadmap_Section) {
-				expected = strings.concatenate({"## ", roadmap_section_names[enum_member_at(Roadmap_Section, sections_seen)]}, context.temp_allocator)
+				expected = strings.concatenate({"## ", roadmap_section_names[foundation.enum_member_at(Roadmap_Section, sections_seen)]}, context.temp_allocator)
 			}
 			if expected != "" && line == expected {
-				section = enum_member_at(Roadmap_Section, sections_seen)
+				section = foundation.enum_member_at(Roadmap_Section, sections_seen)
 				sections_seen += 1
 			} else {
 				at(&problems, number, fmt.tprintf("the heading %q is not expected here; %s", line, sections_expected))
@@ -466,7 +467,7 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 		roadmap_entry_finish(&entries, &entry_lines, section, entry_line, &problems)
 	}
 	if sections_seen < ROADMAP_REQUIRED_SECTION_COUNT {
-		at(&problems, len(lines), fmt.tprintf("the section \"## %s\" is not in the file; %s", roadmap_section_names[enum_member_at(Roadmap_Section, sections_seen)], sections_expected))
+		at(&problems, len(lines), fmt.tprintf("the section \"## %s\" is not in the file; %s", roadmap_section_names[foundation.enum_member_at(Roadmap_Section, sections_seen)], sections_expected))
 	}
 	// No entry twice: two entries with one summary are one work.
 	first_lines := make(map[string]int, context.temp_allocator)
@@ -593,6 +594,6 @@ roadmap_check :: proc() -> bool {
 		fmt.eprintfln("modustool: test failed: the roadmap has %d problems", len(problems))
 		return false
 	}
-	test_passed_print("%s has %d entries (%d now, %d next, %d later, %d maybe), all well formed, and none has the summary of an entry of the changelog", ROADMAP_FILE, len(roadmap.entries), roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later), roadmap_section_count(roadmap, .Maybe))
+	foundation.test_passed_print("%s has %d entries (%d now, %d next, %d later, %d maybe), all well formed, and none has the summary of an entry of the changelog", ROADMAP_FILE, len(roadmap.entries), roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later), roadmap_section_count(roadmap, .Maybe))
 	return true
 }

@@ -9,6 +9,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // The incremental build: a module is built again only when one of its
 // inputs changed (docs/TOOLS.md, "The incremental build").
@@ -46,13 +47,12 @@ build_whole := false
 BUILD_RECORD_FIRST_LINE :: "build record, form 1"
 BUILD_RECORD_SUFFIX :: ".build_record"
 DEPENDENCY_FILE_NAME :: "dependencies.json"
-TOOL_SOURCE_FOLDER :: "tools/modustool"
 
 // The folders of the repository that hold sources of a build. The tool
 // hashes each of their files once, before the first compiler starts. A
 // file outside them (the libraries of the compiler) is hashed at its first
 // use.
-INPUT_FOLDERS :: [?]string{SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, RESOURCE_FOLDER, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, TOOL_SOURCE_FOLDER}
+INPUT_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_MODULES, foundation.RESOURCE_FOLDER, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.TOOL_SOURCE_FOLDER}
 
 // The threads that read and hash files at once. A thread holds one whole
 // file in memory, and a boot volume is 64 MiB.
@@ -185,7 +185,7 @@ input_file_table_make :: proc(root: string, folders: []string) -> ^Input_File_Ta
 	paths := make([dynamic]string)
 	defer delete(paths)
 	for folder in folders {
-		folder_files_collect(join(root, "/", folder), &paths)
+		folder_files_collect(foundation.join(root, "/", folder), &paths)
 	}
 	contents := file_contents_read_in_parallel(paths[:])
 	defer delete(contents)
@@ -219,7 +219,7 @@ input_path :: proc(table: ^Input_File_Table, path: string) -> string {
 	if strings.has_prefix(path, "/") {
 		return path
 	}
-	return join(table.root, "/", path)
+	return foundation.join(table.root, "/", path)
 }
 
 // input_file gives the content of a file, from the table. A file that the
@@ -418,7 +418,7 @@ build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_mus
 			continue
 		}
 		for name in names {
-			path := join(folder, "/", name)
+			path := foundation.join(folder, "/", name)
 			key_add(&text, "file of the folder", name)
 			file := input_file(table, path)
 			if !file.readable {
@@ -782,12 +782,12 @@ imported_folders_of_source :: proc(source: string, folder: string, folders: ^[dy
 		}
 		path := line[first + 1:][:length]
 		colon := strings.index_byte(path, ':')
-		if package_folder, in_source_library := source_library_package_folder(path); in_source_library {
+		if package_folder, in_source_library := foundation.source_library_package_folder(path); in_source_library {
 			append(folders, package_folder)
-		} else if tool_folder, in_tool_library := tool_library_package_folder(path); in_tool_library {
+		} else if tool_folder, in_tool_library := foundation.tool_library_package_folder(path); in_tool_library {
 			append(folders, tool_folder)
 		} else if colon < 0 {
-			append(folders, path_without_dots(join(folder, "/", path)))
+			append(folders, path_without_dots(foundation.join(folder, "/", path)))
 		}
 	}
 }
@@ -816,7 +816,7 @@ tool_identity_of :: proc(table: ^Input_File_Table, tool_folder: string) -> (iden
 		}
 		key_add(&text, "folder", folder)
 		for name in names {
-			path := join(folder, "/", name)
+			path := foundation.join(folder, "/", name)
 			if !key_add_input_file(&text, table, "file of the tool", path, false) {
 				complete = false
 				continue
@@ -850,7 +850,7 @@ host_program_identity :: proc(name: string) -> string {
 		if folder == "" {
 			continue
 		}
-		candidate := join(folder, "/", name)
+		candidate := foundation.join(folder, "/", name)
 		information, error := os.stat(candidate, context.temp_allocator)
 		if error != nil || information.type != .Regular {
 			continue
@@ -898,7 +898,7 @@ build_inputs_prepare :: proc() {
 	}
 	folders := INPUT_FOLDERS
 	build_inputs.table = input_file_table_make(root, folders[:])
-	build_inputs.tool_identity, build_inputs.usable = tool_identity_of(build_inputs.table, TOOL_SOURCE_FOLDER)
+	build_inputs.tool_identity, build_inputs.usable = tool_identity_of(build_inputs.table, foundation.TOOL_SOURCE_FOLDER)
 	for name, index in ([4]string{"odin", "llc", "nasm", "ld.lld"}) {
 		build_inputs.module_programs[index] = strings.clone(host_program_identity(name))
 	}
@@ -914,7 +914,7 @@ build_inputs_prepare :: proc() {
 }
 
 module_dependency_file :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, "/", DEPENDENCY_FILE_NAME)
+	return foundation.join(foundation.module_build_folder, "/", name, "/", DEPENDENCY_FILE_NAME)
 }
 
 // The build of a module has two steps, each with its own build key and
@@ -1069,17 +1069,17 @@ module_step_records_write :: proc(steps: Module_Steps, table: ^Input_File_Table,
 }
 
 module_compile_record_path :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, COMPILE_RECORD_SUFFIX)
+	return foundation.join(foundation.module_build_folder, "/", name, COMPILE_RECORD_SUFFIX)
 }
 
 module_convert_record_path :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, CONVERT_RECORD_SUFFIX)
+	return foundation.join(foundation.module_build_folder, "/", name, CONVERT_RECORD_SUFFIX)
 }
 
 // module_compile_key_inputs gives the inputs of the build key of the
 // compile step of a module, without the list of the compiler. It names no
 // import: the compile step reads none (modules.odin, module_compile).
-module_compile_key_inputs :: proc(build: Module_Build) -> (inputs: Build_Key_Inputs, ok: bool) {
+module_compile_key_inputs :: proc(build: foundation.Module_Build) -> (inputs: Build_Key_Inputs, ok: bool) {
 	settings := make([dynamic]string, context.temp_allocator)
 	append(&settings, ..build_inputs.module_programs[:])
 	append(&settings, "the compiler")
@@ -1089,7 +1089,7 @@ module_compile_key_inputs :: proc(build: Module_Build) -> (inputs: Build_Key_Inp
 	append(&settings, build.source, build.kernel ? "runs in kernel mode" : "runs in user mode", build.image ? "with the system library" : "with no system library")
 	assembly_files := module_assembly_files(build) or_return
 	inputs = {
-		subject       = join("the compile step of the module ", build.name),
+		subject       = foundation.join("the compile step of the module ", build.name),
 		tool_identity = build_inputs.tool_identity,
 		settings      = settings[:],
 		fixed_files   = assembly_files,
@@ -1101,20 +1101,20 @@ module_compile_key_inputs :: proc(build: Module_Build) -> (inputs: Build_Key_Inp
 // conversion of a module that are its own: the imports in the order of
 // the module table, which is the order of the import table of the module
 // file, and the module file of each one, hashed at the time of the key.
-module_convert_key_inputs :: proc(build: Module_Build) -> Build_Key_Inputs {
+module_convert_key_inputs :: proc(build: foundation.Module_Build) -> Build_Key_Inputs {
 	settings := make([dynamic]string, context.temp_allocator)
 	append(&settings, debug_information ? "with a debug object" : "with no debug object")
 	built_files := make([dynamic]string, context.temp_allocator)
 	for name in build.imports {
 		append(&settings, "imports", name)
-		append(&built_files, module_import_path(name))
+		append(&built_files, foundation.module_import_path(name))
 	}
-	return {subject = join("the conversion of the module ", build.name), tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:]}
+	return {subject = foundation.join("the conversion of the module ", build.name), tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:]}
 }
 
 // module_steps_of gives the two steps of a module of the table, in the
 // folder of this build.
-module_steps_of :: proc(build: Module_Build) -> (steps: Module_Steps, ok: bool) {
+module_steps_of :: proc(build: foundation.Module_Build) -> (steps: Module_Steps, ok: bool) {
 	compile_outputs := make([dynamic]string, context.temp_allocator)
 	// The test of the stack trace reads the symbols of the linked file.
 	append(&compile_outputs, module_linked_file(build.name))
@@ -1124,7 +1124,7 @@ module_steps_of :: proc(build: Module_Build) -> (steps: Module_Steps, ok: bool) 
 		append(&compile_outputs, kernel_stack_measure_file(build.name))
 	}
 	convert_outputs := make([dynamic]string, context.temp_allocator)
-	append(&convert_outputs, module_path(build.name))
+	append(&convert_outputs, foundation.module_path(build.name))
 	if debug_information {
 		append(&convert_outputs, debug_object_path(build.name))
 	}
@@ -1145,7 +1145,7 @@ module_steps_of :: proc(build: Module_Build) -> (steps: Module_Steps, ok: bool) 
 // and the object of a module that is not built stay from the build that
 // made its linked file: only the checks that compare two whole builds
 // read them.
-module_step_of_build :: proc(build: Module_Build) -> (step: Module_Step, reason: string) {
+module_step_of_build :: proc(build: foundation.Module_Build) -> (step: Module_Step, reason: string) {
 	if build_whole {
 		return .Built, "a whole build"
 	}
@@ -1163,7 +1163,7 @@ module_step_of_build :: proc(build: Module_Build) -> (step: Module_Step, reason:
 // after its steps ran: step is what the build did with it. With no list
 // of the compiler, or with an input that changed during the build, no
 // record of the conversion stays: the next build runs a step again.
-module_records_write :: proc(build: Module_Build, step: Module_Step) -> bool {
+module_records_write :: proc(build: foundation.Module_Build, step: Module_Step) -> bool {
 	compile_record_path := module_compile_record_path(build.name)
 	convert_record_path := module_convert_record_path(build.name)
 	steps, readable := module_steps_of(build)
@@ -1190,12 +1190,12 @@ module_records_write :: proc(build: Module_Build, step: Module_Step) -> bool {
 // folder: an output of this build is hashed as a built file, never
 // through the table of the sources.
 paths_outside_the_build_folder :: proc(paths: []string) -> []string {
-	inside_by_name := join(build_inputs.table.root, "/", BUILD_FOLDER, "/")
+	inside_by_name := foundation.join(build_inputs.table.root, "/", foundation.BUILD_FOLDER, "/")
 	inside_by_link := inside_by_name
 	// The build folder can be a link to another disk: the compiler names
 	// a file where it is after the link.
-	if resolved, error := os.get_absolute_path(BUILD_FOLDER, context.temp_allocator); error == nil {
-		inside_by_link = join(resolved, "/")
+	if resolved, error := os.get_absolute_path(foundation.BUILD_FOLDER, context.temp_allocator); error == nil {
+		inside_by_link = foundation.join(resolved, "/")
 	}
 	outside := make([dynamic]string, context.temp_allocator)
 	for path in paths {
@@ -1251,10 +1251,10 @@ Build_Budget_Request :: struct {
 // table from its file, after the step of the modules: a kept module too.
 build_measure_budget_requests :: proc() {
 	clear(&build_measure.budget_requests)
-	for build in module_builds {
+	for build in foundation.module_builds {
 		// A module that this command did not build has no file: it asks for
 		// nothing in this build.
-		file, read_error := os.read_entire_file(module_path(build.name), context.temp_allocator)
+		file, read_error := os.read_entire_file(foundation.module_path(build.name), context.temp_allocator)
 		if read_error != nil {
 			continue
 		}

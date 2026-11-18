@@ -21,6 +21,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modus:support/mark"
+import "modustool:foundation"
 
 // The file in the repository, beside the pictures of the mark.
 MARK_FONT_FILE_NAME :: "modus_mark.ttf"
@@ -639,7 +640,7 @@ mark_font_build :: proc(license_text: string) -> (file: []u8, ok: bool) {
 // repository: the bytes that MARK_FONT_FILE must have, and that the site
 // serves.
 mark_font_of_the_repository :: proc() -> (file: []u8, ok: bool) {
-	license_text := read_file(MARK_FONT_LICENSE_FILE) or_return
+	license_text := foundation.read_file(MARK_FONT_LICENSE_FILE) or_return
 	file, ok = mark_font_build(string(license_text))
 	if !ok {
 		fmt.eprintln("modustool: cannot build the font of the name of the mark from the letters of " + MARK_SOURCE_FOLDER)
@@ -672,6 +673,6 @@ mark_font_check :: proc() -> bool {
 		fmt.eprintfln("modustool: test failed: %s is not the font of the letters of " + MARK_SOURCE_FOLDER + " and of %s: run modustool logo", MARK_FONT_FILE, MARK_FONT_LICENSE_FILE)
 		return false
 	}
-	test_passed_print("%s is the font of the letters of " + MARK_SOURCE_FOLDER, MARK_FONT_FILE)
+	foundation.test_passed_print("%s is the font of the letters of " + MARK_SOURCE_FOLDER, MARK_FONT_FILE)
 	return true
 }

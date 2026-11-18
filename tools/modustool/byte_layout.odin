@@ -18,6 +18,7 @@ import "core:os"
 import "core:strings"
 import "modus:contract/draw_record"
 import module "modus:contract/module"
+import "modustool:foundation"
 
 // A row of a diagram: 8 bytes, so that a 64-bit field of the format is one
 // rectangle and never crosses two rows.
@@ -25,8 +26,8 @@ BYTE_LAYOUT_ROW_BYTES :: 8
 // The language of a fenced block of a guide that marks the place of
 // layouts; the names of the layouts follow it on the same line.
 BYTE_LAYOUT_FENCE_LANGUAGE :: "byte-layout"
-BYTE_LAYOUT_FORMAT_FILE :: SOURCE_FOLDER_CONTRACT + "/module/format.odin"
-BYTE_LAYOUT_DRAW_RECORD_FILE :: SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
+BYTE_LAYOUT_FORMAT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.odin"
+BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
 // The folder whose Markdown files the check and the command read: the
 // guides that the site shows.
 BYTE_LAYOUT_DOCUMENT_FOLDER :: "docs"
@@ -172,7 +173,7 @@ byte_layout_comment :: proc(before, line: ^ast.Comment_Group) -> string {
 // their type as the source writes it and their comment, and the comment of
 // each other constant.
 byte_layout_declarations_read :: proc(path: string) -> (declarations: map[string]Byte_Layout_Declaration, problem: string) {
-	source, read_ok := site_read(path)
+	source, read_ok := foundation.site_read(path)
 	if !read_ok {
 		return nil, fmt.tprintf("cannot read %s", path)
 	}
@@ -422,7 +423,7 @@ byte_layout_key_list :: proc() -> string {
 // A fence of layouts starts at the start of its line, so that its body is
 // the text with no indentation.
 byte_layout_document_rewrite :: proc(content, path: string, layouts: map[string]Byte_Layout) -> (rewritten: string, fences: int, problems: []string) {
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	list := make([dynamic]string, context.temp_allocator)
 	found_problems := make([dynamic]string, context.temp_allocator)
 	index := 0
@@ -473,7 +474,7 @@ byte_layout_documents_rewrite :: proc(write: bool) -> bool {
 	if !layouts_ok {
 		return false
 	}
-	paths, paths_ok := files_with_suffix(BYTE_LAYOUT_DOCUMENT_FOLDER, ".md")
+	paths, paths_ok := foundation.files_with_suffix(BYTE_LAYOUT_DOCUMENT_FOLDER, ".md")
 	if !paths_ok {
 		fmt.eprintfln("modustool: byte layouts: cannot list %s", BYTE_LAYOUT_DOCUMENT_FOLDER)
 		return false
@@ -481,7 +482,7 @@ byte_layout_documents_rewrite :: proc(write: bool) -> bool {
 	problems := make([dynamic]string, context.temp_allocator)
 	fences, written := 0, 0
 	for path in paths {
-		content, read_ok := site_read(path)
+		content, read_ok := foundation.site_read(path)
 		if !read_ok {
 			append(&problems, fmt.tprintf("cannot read %s", path))
 			continue
@@ -512,7 +513,7 @@ byte_layout_documents_rewrite :: proc(write: bool) -> bool {
 		fmt.printfln("modustool: byte layouts: %d layouts, %d fences, %d files written", len(layouts), fences, written)
 		return true
 	}
-	test_passed_print("%d byte layouts; the %d fences %s of the guides hold the text that the code gives", len(layouts), fences, BYTE_LAYOUT_FENCE_LANGUAGE)
+	foundation.test_passed_print("%d byte layouts; the %d fences %s of the guides hold the text that the code gives", len(layouts), fences, BYTE_LAYOUT_FENCE_LANGUAGE)
 	return true
 }
 
@@ -525,16 +526,16 @@ byte_layouts_check :: proc() -> bool {
 run_byte_layouts :: proc(args: []string) -> int {
 	usage_text :: "modustool byte-layouts write | check"
 	if len(args) == 1 && args[0] == "write" {
-		return byte_layout_documents_rewrite(true) ? 0 : EXIT_FAILURE
+		return byte_layout_documents_rewrite(true) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "check" {
-		return byte_layouts_check() ? 0 : EXIT_FAILURE
+		return byte_layouts_check() ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) > 0 {
 		fmt.eprintfln("modustool: byte-layouts has no command %s", args[0])
 	}
 	fmt.eprintln(usage_text)
-	return EXIT_USAGE
+	return foundation.EXIT_USAGE
 }
 
 // byte_layout_name_html writes a name with a place to break after each
@@ -545,7 +546,7 @@ byte_layout_name_html :: proc(b: ^strings.Builder, name: string) {
 		if index > 0 {
 			strings.write_string(b, "_<wbr>")
 		}
-		site_escape(b, part)
+		foundation.site_escape(b, part)
 	}
 }
 
@@ -576,15 +577,15 @@ byte_layout_html :: proc(site: ^Site, b: ^strings.Builder, id: string, layout: B
 		site_type_reference(site, b, layout.key, layout.key, false)
 	} else {
 		strings.write_string(b, "<code>")
-		site_escape(b, layout.key)
+		foundation.site_escape(b, layout.key)
 		strings.write_string(b, "</code>")
 	}
 	strings.write_string(b, ", ")
-	site_escape(b, site_type_size_text(layout.size))
+	foundation.site_escape(b, site_type_size_text(layout.size))
 	strings.write_string(b, ": ")
-	site_escape(b, layout.what)
+	foundation.site_escape(b, layout.what)
 	strings.write_string(b, "</figcaption>\n<div class=\"byte-layout-box\" role=\"region\" tabindex=\"0\" aria-label=\"The bytes of ")
-	site_escape(b, layout.key)
+	foundation.site_escape(b, layout.key)
 	strings.write_string(b, "\"><div class=\"byte-layout-grid\">\n")
 	// The rulers: the byte of the row, then its bits.
 	strings.write_string(b, "<span class=\"byte-ruler byte-ruler-corner\">byte</span>")
@@ -608,12 +609,12 @@ byte_layout_html :: proc(site: ^Site, b: ^strings.Builder, id: string, layout: B
 			class = "byte-cell byte-cell-continued"
 		}
 		fmt.sbprintf(b, "<div class=\"%s byte-column-%d byte-span-%d byte-row-%d byte-rows-%d\" title=\"", class, piece.column + 1, piece.span, piece.row + 1, piece.rows)
-		site_escape(b, byte_layout_title(site, field))
+		foundation.site_escape(b, byte_layout_title(site, field))
 		strings.write_string(b, "\"><code>")
 		byte_layout_name_html(b, field.name)
 		strings.write_string(b, "</code><span class=\"byte-cell-size\">")
 		if piece.first {
-			site_escape(b, site_type_size_text(field.size))
+			foundation.site_escape(b, site_type_size_text(field.size))
 		} else {
 			strings.write_string(b, "continued")
 		}
@@ -638,7 +639,7 @@ byte_layout_fence_write :: proc(renderer: ^Site_Renderer, keys: []string, body: 
 		append(&site.byte_layout_problems, fmt.tprintf("%s: %s", place, problem))
 	}
 	for layout in found {
-		id := site_unique_id(renderer, strings.concatenate({"byte-layout-", site_slug(layout.key)}, context.temp_allocator))
+		id := site_unique_id(renderer, strings.concatenate({"byte-layout-", foundation.site_slug(layout.key)}, context.temp_allocator))
 		byte_layout_html(site, &renderer.builder, id, layout)
 	}
 }

@@ -19,6 +19,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 SHIP_REMOTE :: "origin"
 SHIP_BRANCH :: "master"
@@ -144,8 +145,8 @@ ship_measure_history_clean_command :: proc() -> []string {
 }
 
 ship_restore :: proc() {
-	_ = run(ship_restore_command())
-	_ = run(ship_measure_history_clean_command())
+	_ = foundation.run(ship_restore_command())
+	_ = foundation.run(ship_measure_history_clean_command())
 }
 
 // The commands that publish one release, in their order. The add names the
@@ -213,52 +214,52 @@ run_ship :: proc(args: []string) -> int {
 			request_text = argument
 		} else {
 			fmt.eprintln(usage_text)
-			return EXIT_USAGE
+			return foundation.EXIT_USAGE
 		}
 	}
 	request, exact, request_ok := ship_request_parse(request_text)
 	if !request_ok {
 		fmt.eprintln(usage_text)
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	branch, branch_ok := command_output(ship_branch_command())
 	if !branch_ok || strings.trim_space(branch) != SHIP_BRANCH {
 		fmt.eprintfln("modustool: ship: the branch is %q; a release is made on %s", strings.trim_space(branch), SHIP_BRANCH)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	status, status_ok := command_output(ship_status_command())
 	if !status_ok || strings.trim_space(status) != "" {
 		fmt.eprintln("modustool: ship: the tree has changes that are not committed; a release is made from a commit")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
-	if !run(ship_fetch_command()) {
+	if !foundation.run(ship_fetch_command()) {
 		fmt.eprintfln("modustool: ship: no answer from %s", SHIP_REMOTE)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if !command_succeeds(ship_holds_remote_command()) {
 		fmt.eprintfln("modustool: ship: %s does not hold %s; merge it, check, then ship", SHIP_BRANCH, SHIP_REMOTE_BRANCH)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	for attempt in 0 ..< SHIP_ATTEMPT_COUNT {
 		if attempt > 0 {
-			if !run(ship_fetch_command()) {
+			if !foundation.run(ship_fetch_command()) {
 				fmt.eprintfln("modustool: ship: no answer from %s; nothing was published", SHIP_REMOTE)
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
-			if !run(ship_merge_command()) {
-				_ = run(ship_merge_abort_command())
+			if !foundation.run(ship_merge_command()) {
+				_ = foundation.run(ship_merge_abort_command())
 				fmt.eprintfln("modustool: ship: %s does not merge with %s; nothing was published", SHIP_BRANCH, SHIP_REMOTE_BRANCH)
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 		}
 		newest, newest_ok := ship_newest_release_read()
 		if !newest_ok {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		number, number_ok := ship_number_next(newest, request, exact)
 		if !number_ok {
 			fmt.eprintfln("modustool: ship: the release %s is not after the newest release %s", release_number_text(exact), release_number_text(newest))
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		number_text := release_number_text(number)
 		if dry_run {
@@ -268,7 +269,7 @@ run_ship :: proc(args: []string) -> int {
 				fmt.printfln("  %s", strings.join(command, " ", context.temp_allocator))
 			}
 			if !changelog_assemble() {
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 			fmt.println("modustool: ship: a dry run; nothing was written")
 			return 0
@@ -276,32 +277,32 @@ run_ship :: proc(args: []string) -> int {
 		if !changelog_release(number_text) {
 			ship_restore()
 			fmt.eprintln("modustool: ship: the release was not written; nothing was published")
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		publish := ship_publish_commands(number)
 		// The add and the commit: on a failure, the tree goes back to the
 		// last commit.
 		for command in publish[:2] {
-			if !run(command) {
+			if !foundation.run(command) {
 				ship_restore()
 				fmt.eprintln("modustool: ship: the release was not committed; nothing was published")
-				return EXIT_FAILURE
+				return foundation.EXIT_FAILURE
 			}
 		}
-		if !run(publish[2]) {
-			_ = run(ship_undo_commands(number)[1])
+		if !foundation.run(publish[2]) {
+			_ = foundation.run(ship_undo_commands(number)[1])
 			fmt.eprintln("modustool: ship: the release tag was not made (is a signing key configured for git?); the commit is undone; nothing was published")
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
-		if run(publish[3]) {
+		if foundation.run(publish[3]) {
 			fmt.printfln("modustool: ship: released %s: the commit and the release tag %s are on %s", number_text, release_tag_name(number), SHIP_REMOTE)
 			return 0
 		}
 		for command in ship_undo_commands(number) {
-			_ = run(command)
+			_ = foundation.run(command)
 		}
 		fmt.eprintfln("modustool: ship: %s refused the push of %s (try %d of %d): %s moved; it is merged, and the release takes the next number", SHIP_REMOTE, number_text, attempt + 1, SHIP_ATTEMPT_COUNT, SHIP_REMOTE_BRANCH)
 	}
 	fmt.eprintfln("modustool: ship: %s kept moving after %d tries; nothing was published", SHIP_REMOTE_BRANCH, SHIP_ATTEMPT_COUNT)
-	return EXIT_FAILURE
+	return foundation.EXIT_FAILURE
 }

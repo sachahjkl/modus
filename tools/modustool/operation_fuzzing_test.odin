@@ -8,6 +8,7 @@ import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:foundation"
 
 // ---------------------------------------------------------------------
 // The arguments.
@@ -235,11 +236,11 @@ a_late_line_of_isolation_belongs_to_the_sequence_that_caused_it :: proc(t: ^test
 // not exist gives no line.
 @(test)
 the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
-	folder :: BUILD_FOLDER + "/operation_log_lines_test"
+	folder :: foundation.BUILD_FOLDER + "/operation_log_lines_test"
 	defer {
 		_ = os.remove_all(folder)
 	}
-	testing.expect(t, reset_folder(folder))
+	testing.expect(t, foundation.reset_folder(folder))
 	path := folder + "/log.txt"
 	scanned: i64
 	testing.expect_value(t, operation_log_new_lines(path, &scanned), "")
@@ -263,7 +264,7 @@ the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
 @(test)
 a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	BEFORE_SERVICE :: "rootrootx"
-	CONTENT :: BEFORE_SERVICE + OPERATION_FUZZING_MODULE
+	CONTENT :: BEFORE_SERVICE + foundation.OPERATION_FUZZING_MODULE
 	name_place := operation_parameter_place(.Process_Create, "name")
 	length_place := operation_parameter_place(.Process_Create, "name_length")
 	testing.expect(t, name_place >= 0 && length_place >= 0, "Process_Create has no name or no name_length")
@@ -286,12 +287,12 @@ a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	create(sequence, name_place, length_place, 0, 4) // "root"
 	create(sequence, name_place, length_place, 4, 5) // "rootx"
 	create(sequence, name_place, length_place, 4, 3) // "roo"
-	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(OPERATION_FUZZING_MODULE))
+	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(foundation.OPERATION_FUZZING_MODULE))
 	create(sequence, name_place, length_place, len(BEFORE_SERVICE), len(CONTENT)) // past the content
 	testing.expect_value(t, operation_protected_names_changed(sequence), 2)
 	testing.expect_value(t, string(sequence.content[:len(BEFORE_SERVICE)]), "_ootrootx")
 	testing.expect_value(t, sequence.content[len(BEFORE_SERVICE)], u8(OPERATION_PROTECTED_NAME_CHANGE))
-	testing.expect_value(t, string(sequence.content[len(BEFORE_SERVICE) + 1:len(CONTENT)]), string(OPERATION_FUZZING_MODULE)[1:])
+	testing.expect_value(t, string(sequence.content[len(BEFORE_SERVICE) + 1:len(CONTENT)]), string(foundation.OPERATION_FUZZING_MODULE)[1:])
 	testing.expect_value(t, operation_protected_names_changed(sequence), 0)
 	bytes, accepted := operation_sequence_encode(sequence)
 	defer delete(bytes)

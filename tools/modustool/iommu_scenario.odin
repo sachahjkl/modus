@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The IOMMU (src/md/infrastructure/iommu.md): one machine with the
 // remapping unit of Intel (machine_command, the argument iommu). The
 // whole system starts with translation and interrupt remapping on: the
@@ -22,7 +24,7 @@ package modustool
 // the entropy device at the place 19: its two reads arrive through the unit
 // with no DMA fault.
 
-TEST_OUTPUT_IOMMU :: BUILD_FOLDER + "/test_output_iommu.txt"
+TEST_OUTPUT_IOMMU :: foundation.BUILD_FOLDER + "/test_output_iommu.txt"
 
 @(rodata)
 scenario_iommu := [?]Step {
@@ -101,7 +103,7 @@ iommu_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 // waits for that size, finds the page as it was and no interrupt. Then `net` sends its datagrams through the window of
 // its datagram region.
 
-TEST_OUTPUT_IOMMU_AMD :: BUILD_FOLDER + "/test_output_iommu_amd.txt"
+TEST_OUTPUT_IOMMU_AMD :: foundation.BUILD_FOLDER + "/test_output_iommu_amd.txt"
 
 // The command of the monitor that gives the disk of the measures (the
 // drive `scratch`) twice its size: a size that it does not have, as the

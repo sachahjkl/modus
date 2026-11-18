@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:slice"
 import "modus:contract/start_grant"
+import "modustool:foundation"
 
 // The check of the table of the roles of the root service
 // (docs/TOOLS.md, "The table of the roles of the root service"): each module with an
@@ -33,7 +34,7 @@ SYSTEM_PART_THAT_SERVES :: "compositor"
 // System_Part alone (with Serve for the compositor) with no term. The debug
 // access to a process refuses a part of the system by that grant, and its
 // starter gives no handle of another grant.
-process_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, builds: []Module_Build, file: string) -> []string {
+process_roles_problems :: proc(rows: []foundation.Site_Role_Row, system_parts: []string, builds: []foundation.Module_Build, file: string) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	named := make(map[string]bool, context.temp_allocator)
 	for row in rows {
@@ -43,7 +44,7 @@ process_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 		named[row.name] = true
 		in_image := false
 		for build in builds {
-			in_image ||= build.name == row.name && module_in_a_boot_image(build)
+			in_image ||= build.name == row.name && foundation.module_in_a_boot_image(build)
 		}
 		if !in_image || row.name == ROOT_SERVICE_MODULE {
 			append(&problems, fmt.tprintf("%s, line %d: the row %s names no process that the root service starts from the boot image", file, row.line, row.name))
@@ -67,7 +68,7 @@ process_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 		}
 	}
 	for build in builds {
-		if !build.entry || !module_in_a_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
+		if !build.entry || !foundation.module_in_a_boot_image(build) || build.name == ROOT_SERVICE_MODULE {
 			continue
 		}
 		if !named[build.name] {
@@ -85,7 +86,7 @@ process_roles_problems :: proc(rows: []Site_Role_Row, system_parts: []string, bu
 // system_part_grants_hold says if the row of a part of the system has the
 // grants of its starter: System_Part, with Serve for the compositor, and no
 // term.
-system_part_grants_hold :: proc(row: Site_Role_Row) -> bool {
+system_part_grants_hold :: proc(row: foundation.Site_Role_Row) -> bool {
 	expected := make([dynamic]string, context.temp_allocator)
 	append(&expected, start_grant.GRANT_NAMES[.System_Part])
 	if row.name == SYSTEM_PART_THAT_SERVES {
@@ -104,12 +105,12 @@ system_part_grants_hold :: proc(row: Site_Role_Row) -> bool {
 
 // process_roles_read reads the rows and the list of the parts of the
 // system from the source of the root service.
-process_roles_read :: proc(text: string) -> (rows: []Site_Role_Row, system_parts: []string, problem: string) {
-	rows, problem = site_role_table_read(text, SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
+process_roles_read :: proc(text: string) -> (rows: []foundation.Site_Role_Row, system_parts: []string, problem: string) {
+	rows, problem = foundation.site_role_table_read(text, foundation.SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
 	if problem != "" {
 		return nil, nil, problem
 	}
-	system_parts, problem = site_string_list_read(text, SITE_ROOT_ROLES_FILE, SYSTEM_PART_NAMES_LIST)
+	system_parts, problem = foundation.site_string_list_read(text, foundation.SITE_ROOT_ROLES_FILE, SYSTEM_PART_NAMES_LIST)
 	return rows, system_parts, problem
 }
 
@@ -117,9 +118,9 @@ process_roles_read :: proc(text: string) -> (rows: []Site_Role_Row, system_parts
 // It prints each fault, and gives false when there is one: the build then
 // stops before the first compiler starts.
 process_roles_hold :: proc() -> bool {
-	text, read := site_read_quiet(SITE_ROOT_ROLES_FILE)
+	text, read := foundation.site_read_quiet(foundation.SITE_ROOT_ROLES_FILE)
 	if !read {
-		fmt.eprintfln("modustool: cannot read %s", SITE_ROOT_ROLES_FILE)
+		fmt.eprintfln("modustool: cannot read %s", foundation.SITE_ROOT_ROLES_FILE)
 		return false
 	}
 	rows, system_parts, problem := process_roles_read(text)
@@ -127,7 +128,7 @@ process_roles_hold :: proc() -> bool {
 		fmt.eprintfln("modustool: %s", problem)
 		return false
 	}
-	problems := process_roles_problems(rows, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE)
+	problems := process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.SITE_ROOT_ROLES_FILE)
 	for item in problems {
 		fmt.eprintfln("modustool: %s", item)
 	}

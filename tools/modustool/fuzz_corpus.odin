@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modus:contract/blake3"
+import "modustool:foundation"
 
 // The corpus of the fuzz targets (docs/glossary/project.md, "Corpus";
 // src/md/infrastructure/fuzzing.md, "Fuzz findings, minimization and the
@@ -12,7 +13,7 @@ import "modus:contract/blake3"
 // reach inputs, one file for each input, named by the BLAKE3 hash of its
 // bytes. The repository reviews them as code, so they have bounds.
 
-FUZZ_CORPUS_FOLDER :: TOOL_SOURCE_FOLDER + "/fuzzing_corpus"
+FUZZ_CORPUS_FOLDER :: foundation.TOOL_SOURCE_FOLDER + "/fuzzing_corpus"
 FUZZ_REGRESSION_PART :: "regression" // The inputs of the fuzz findings after their fix: never removed.
 FUZZ_REACH_PART :: "reach" // The smallest set of inputs that gives each edge class that the long runs reached.
 
@@ -22,7 +23,7 @@ FUZZ_CORPUS_BYTE_LIMIT :: 16 << 20 // The bytes of the whole corpus.
 
 // The folders of a run, which git ignores: the inputs that a long run kept,
 // and the fuzz findings.
-FUZZING_BUILD_FOLDER :: BUILD_FOLDER + "/fuzzing"
+FUZZING_BUILD_FOLDER :: foundation.BUILD_FOLDER + "/fuzzing"
 FUZZ_KEPT_PART :: "kept"
 FUZZ_FINDINGS_PART :: "findings"
 
@@ -78,7 +79,7 @@ fuzz_inputs_read :: proc(folder: string, allocator := context.allocator) -> []Fu
 // fuzz_input_write writes an input to a folder under its name, and gives
 // its path in the temporary memory.
 fuzz_input_write :: proc(folder: string, input: []u8) -> (path: string, ok: bool) {
-	if !make_folder(folder) {
+	if !foundation.make_folder(folder) {
 		return "", false
 	}
 	path = strings.concatenate({folder, "/", fuzz_input_name(input)}, context.temp_allocator)
@@ -162,6 +163,6 @@ fuzz_corpus_check :: proc() -> bool {
 	if len(problems) > 0 {
 		return false
 	}
-	test_passed_print("the corpus of the fuzz targets in %s has its form and its bounds", FUZZ_CORPUS_FOLDER)
+	foundation.test_passed_print("the corpus of the fuzz targets in %s has its form and its bounds", FUZZ_CORPUS_FOLDER)
 	return true
 }

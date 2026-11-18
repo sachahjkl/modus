@@ -54,6 +54,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 ## Subtle points
 
 - `context.temp_allocator` is of each thread in Odin, so the rule "the tool frees it after each step" holds on each worker. The texts that a machine keeps past one step are in memory of their own, as before.
+- The list of the given ports and the table of the names of the pictures outlive the caller that fills them first, so their memory is the heap of the process, never the allocator of a caller. Each procedure takes the list or the table as an argument; the machines pass the one of the process, and a host test passes its own. The test runner of Odin frees the allocator of a host test when the test ends and gives that memory to the next test: a list that took its memory from a test made a later port a write into the operation sequences of another test, which then differed for one seed.
 - The list of the boot volumes that the build made is read by every part and changed by the part `trusted_boot` (the disk of the release image): a lock holds it. The cache of the interface font is read once under a lock.
 - The lines of two parts that run at once are mixed on the terminal. Each line is whole. The end of the log of a machine that failed is one write, with the name of its log. The line of the end of each part names the part.
 - The data disk of a part that failed stays in `build/`; the disks of the parts that passed are removed.

@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // TCP: two machines of their own (docs/NETWORK.md, "The tests").
 //
 // scenario_tcp: the network device goes to the peer of the tool. `server`
@@ -12,8 +14,8 @@ package modustool
 // the pages of `server` (hostfwd), and `fetch` fetches from a listener of
 // the tool (guestfwd).
 
-TEST_OUTPUT_TCP :: BUILD_FOLDER + "/test_output_tcp.txt"
-TEST_OUTPUT_TCP_REAL :: BUILD_FOLDER + "/test_output_tcp_real.txt"
+TEST_OUTPUT_TCP :: foundation.BUILD_FOLDER + "/test_output_tcp.txt"
+TEST_OUTPUT_TCP_REAL :: foundation.BUILD_FOLDER + "/test_output_tcp_real.txt"
 
 scenario_tcp := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},

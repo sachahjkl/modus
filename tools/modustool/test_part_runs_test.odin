@@ -1,11 +1,13 @@
 package modustool
 
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:time"
+import "modustool:foundation"
 
 // The ports of these tests are under 1024: the system never gives one of
 // them to a bind of port 0, so no machine of a test that runs at the same
@@ -16,22 +18,30 @@ TEST_PORT_FIRST :: 7
 TEST_PORT_SECOND :: 9
 
 // A port is never given twice while it is in the list; a port that is not
-// in the list, and the port 0, change nothing when taken back.
+// in the list, and the port 0, change nothing when taken back. The test has
+// its own list: the list of the process outlives each test, and the tests
+// run on several threads.
 @(test)
 a_given_port_is_not_given_again :: proc(t: ^testing.T) {
-	testing.expect(t, loopback_port_give(TEST_PORT_FIRST), "a port that is in no list is given")
-	defer loopback_port_take_back(TEST_PORT_FIRST)
-	testing.expect(t, !loopback_port_give(TEST_PORT_FIRST), "a port of the list is refused")
-	testing.expect(t, loopback_port_is_given(TEST_PORT_FIRST))
+	ports: Given_Loopback_Ports
+	defer loopback_ports_free(&ports)
+	testing.expect(t, loopback_port_give(&ports, TEST_PORT_FIRST), "a port that is in no list is given")
+	testing.expect(t, !loopback_port_give(&ports, TEST_PORT_FIRST), "a port of the list is refused")
+	testing.expect(t, loopback_port_is_given(&ports, TEST_PORT_FIRST))
 	// A port not in the list and 0: the list stays as it is.
-	testing.expect(t, !loopback_port_is_given(TEST_PORT_SECOND))
-	loopback_port_take_back(TEST_PORT_SECOND)
-	loopback_port_take_back(0)
-	testing.expect(t, loopback_port_is_given(TEST_PORT_FIRST), "taking back another port leaves the port")
-	testing.expect(t, !loopback_port_give(TEST_PORT_FIRST), "taking back another port does not free the port")
-	loopback_port_take_back(TEST_PORT_FIRST)
-	testing.expect(t, !loopback_port_is_given(TEST_PORT_FIRST))
-	testing.expect(t, loopback_port_give(TEST_PORT_FIRST), "a port taken back is given again")
+	testing.expect(t, !loopback_port_is_given(&ports, TEST_PORT_SECOND))
+	loopback_port_take_back(&ports, TEST_PORT_SECOND)
+	loopback_port_take_back(&ports, 0)
+	testing.expect_value(t, loopback_ports_given_count(&ports), 1)
+	testing.expect(t, loopback_port_is_given(&ports, TEST_PORT_FIRST), "taking back another port leaves the port")
+	testing.expect(t, !loopback_port_give(&ports, TEST_PORT_FIRST), "taking back another port does not free the port")
+	loopback_port_take_back(&ports, TEST_PORT_FIRST)
+	testing.expect(t, !loopback_port_is_given(&ports, TEST_PORT_FIRST))
+	testing.expect(t, loopback_port_give(&ports, TEST_PORT_FIRST), "a port taken back is given again")
+	// The memory of a list is the heap of the process, never the memory of
+	// the test that adds the first port, which the runner frees when that
+	// test ends.
+	testing.expect(t, ports.ports.allocator.procedure == runtime.heap_allocator().procedure, "the list holds memory of its first caller")
 }
 
 @(private = "file")
@@ -56,15 +66,16 @@ port_of_the_next_try :: proc(data: rawptr) -> (int, bool) {
 // it gives the first port that is not in the list.
 @(test)
 the_search_of_a_port_has_a_limit :: proc(t: ^testing.T) {
-	testing.expect(t, loopback_port_give(TEST_PORT_FIRST))
-	defer loopback_port_take_back(TEST_PORT_FIRST)
+	ports: Given_Loopback_Ports
+	defer loopback_ports_free(&ports)
+	testing.expect(t, loopback_port_give(&ports, TEST_PORT_FIRST))
 	always_given := Port_Tries{ports = {TEST_PORT_FIRST}}
-	port, found := loopback_port_search(port_of_the_next_try, &always_given)
+	port, found := loopback_port_search(&ports, port_of_the_next_try, &always_given)
 	testing.expect(t, !found, "each try gives a port of the list: refused")
 	testing.expect_value(t, port, 0)
 	testing.expect_value(t, always_given.tries, FREE_PORT_TRIES)
 	failing := Port_Tries{fails = true}
-	_, found = loopback_port_search(port_of_the_next_try, &failing)
+	_, found = loopback_port_search(&ports, port_of_the_next_try, &failing)
 	testing.expect(t, !found, "a try that fails ends the search")
 	testing.expect_value(t, failing.tries, 1)
 	// The last try of the limit gives a free port: it is given.
@@ -74,19 +85,18 @@ the_search_of_a_port_has_a_limit :: proc(t: ^testing.T) {
 	}
 	at_the_limit[FREE_PORT_TRIES - 1] = TEST_PORT_SECOND
 	late := Port_Tries{ports = at_the_limit}
-	port, found = loopback_port_search(port_of_the_next_try, &late)
-	defer loopback_port_take_back(TEST_PORT_SECOND)
+	port, found = loopback_port_search(&ports, port_of_the_next_try, &late)
 	testing.expect(t, found, "the last try gives a free port")
 	testing.expect_value(t, port, TEST_PORT_SECOND)
-	testing.expect(t, loopback_port_is_given(TEST_PORT_SECOND), "the port given is in the list")
+	testing.expect(t, loopback_port_is_given(&ports, TEST_PORT_SECOND), "the port given is in the list")
 	// A real port of the system: never one of the list, and in it after.
-	real_port, real_found := free_port()
+	real_port, real_found := free_port(&ports)
 	testing.expect(t, real_found)
 	if real_found {
 		testing.expect(t, real_port != TEST_PORT_FIRST && real_port != TEST_PORT_SECOND)
-		testing.expect(t, loopback_port_is_given(real_port))
-		loopback_port_take_back(real_port)
-		testing.expect(t, !loopback_port_is_given(real_port))
+		testing.expect(t, loopback_port_is_given(&ports, real_port))
+		loopback_port_take_back(&ports, real_port)
+		testing.expect(t, !loopback_port_is_given(&ports, real_port))
 	}
 }
 
@@ -118,7 +128,7 @@ part_that_notes_its_run :: proc(_: ^Test_Part_Run) -> bool {
 @(private = "file")
 part_that_waits_for_the_failure :: proc(_: ^Test_Part_Run) -> bool {
 	for start := time.tick_now(); !sync.atomic_load(&pool_failure_seen); {
-		if time.tick_since(start) > HANG_BOUND {
+		if time.tick_since(start) > foundation.HANG_BOUND {
 			return false
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
@@ -202,36 +212,28 @@ the_pool_waits_for_the_parts_that_run :: proc(t: ^testing.T) {
 	}
 }
 
-// The count of processors: NIX_BUILD_CORES bounds it when it is a number
-// above 0; any other text leaves the count of the host.
-@(test)
-the_sandbox_bounds_the_processors :: proc(t: ^testing.T) {
-	testing.expect_value(t, test_processors_of(16, ""), 16)
-	testing.expect_value(t, test_processors_of(16, "0"), 16)
-	testing.expect_value(t, test_processors_of(16, "-4"), 16)
-	testing.expect_value(t, test_processors_of(16, "four"), 16)
-	testing.expect_value(t, test_processors_of(16, "4x"), 16)
-	testing.expect_value(t, test_processors_of(16, "1"), 1)
-	testing.expect_value(t, test_processors_of(16, "8"), 8)
-	testing.expect_value(t, test_processors_of(16, "64"), 16)
-}
-
 // A picture name that a part took is refused to another part, and given
-// again to the same part.
+// again to the same part; a forgotten name is free again. The test has its
+// own table: the table of the process outlives each test.
 @(test)
 two_parts_never_save_one_picture :: proc(t: ^testing.T) {
-	// A name that no scenario uses: tests of the parts run at once.
 	NAME :: "a_picture_of_the_test_of_the_picture_names"
-	owner, claimed := picture_name_claim("first", NAME)
+	names: Picture_Names
+	defer picture_names_free(&names)
+	owner, claimed := picture_name_claim(&names, "first", NAME)
 	testing.expect(t, claimed)
 	testing.expect_value(t, owner, "first")
-	owner, claimed = picture_name_claim("second", NAME)
+	owner, claimed = picture_name_claim(&names, "second", NAME)
 	testing.expect(t, !claimed, "another part is refused the name")
 	testing.expect_value(t, owner, "first")
-	_, claimed = picture_name_claim("first", NAME)
+	_, claimed = picture_name_claim(&names, "first", NAME)
 	testing.expect(t, claimed, "the same part saves the name again")
-	_, claimed = picture_name_claim("second", NAME + "_other")
+	_, claimed = picture_name_claim(&names, "second", NAME + "_other")
 	testing.expect(t, claimed, "another name is free")
+	picture_names_forget(&names)
+	owner, claimed = picture_name_claim(&names, "second", NAME)
+	testing.expect(t, claimed, "a forgotten name is free again")
+	testing.expect_value(t, owner, "second")
 }
 
 // paths_first_repeat gives the first path that two names hold, or "".
@@ -260,7 +262,7 @@ PATTERN_NUMBERS :: 40
 @(private = "file")
 part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 	paths := make([dynamic][2]string, context.temp_allocator)
-	files, listed := files_with_suffix(TOOL_SOURCE_FOLDER, ".odin")
+	files, listed := foundation.files_with_suffix(foundation.TOOL_SOURCE_FOLDER, ".odin")
 	testing.expect(t, listed, "the test runs from the root of the repository")
 	for path in files {
 		if strings.has_suffix(path, "_test.odin") {
@@ -270,8 +272,16 @@ part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 		testing.expect(t, error == nil)
 		rest := string(bytes)
 		for line in strings.split_lines_iterator(&rest) {
+			// The package foundation holds BUILD_FOLDER, so a constant of
+			// the main package names it with its package.
 			MARK :: " :: BUILD_FOLDER + \""
+			QUALIFIED_MARK :: " :: foundation.BUILD_FOLDER + \""
 			at := strings.index(line, MARK)
+			mark_length := len(MARK)
+			if at < 0 {
+				at = strings.index(line, QUALIFIED_MARK)
+				mark_length = len(QUALIFIED_MARK)
+			}
 			if at <= 0 || !strings.has_prefix(line, "TEST_") {
 				continue
 			}
@@ -279,7 +289,7 @@ part_paths_of_the_sources :: proc(t: ^testing.T) -> [][2]string {
 			if !(strings.has_prefix(name, "TEST_OUTPUT") || strings.has_suffix(name, "_DISK")) || strings.contains(name, "MEASURE") || strings.contains(name, "FILM") {
 				continue
 			}
-			value := line[at + len(MARK):]
+			value := line[at + mark_length:]
 			value = value[:max(strings.index_byte(value, '"'), 0)]
 			if strings.contains(value, "%d") {
 				for number in 0 ..= PATTERN_NUMBERS {
@@ -311,7 +321,7 @@ the_files_of_the_parts_are_distinct :: proc(t: ^testing.T) {
 	testing.expect_value(t, paths_first_repeat(paths), "")
 	// The data disk of `run` is never the disk of a part.
 	for path in paths {
-		whole := strings.concatenate({BUILD_FOLDER, path[1]}, context.temp_allocator)
+		whole := strings.concatenate({foundation.BUILD_FOLDER, path[1]}, context.temp_allocator)
 		testing.expectf(t, whole != DATA_DISK && whole != SCRATCH_DISK, "%s is a disk of a command", path[0])
 	}
 }

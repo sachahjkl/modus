@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // A comment of a source gives the reason itself, in plain words
 // (docs/TOOLS.md, "The comments of the sources"). The number of a
@@ -16,7 +17,7 @@ import "core:strings"
 
 // The folders whose sources the check reads, with their tests, and the
 // sources at the root of the repository.
-COMMENT_RULE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, SOURCE_FOLDER_MODULES, "tools"}
+COMMENT_RULE_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES, "tools"}
 COMMENT_RULE_ROOT_FILES :: [?]string{"flake.nix"}
 
 // The forms that a comment must not have.
@@ -68,7 +69,7 @@ Comment_Rule_Exemption :: struct {
 
 @(rodata)
 comment_rule_exemptions := [?]Comment_Rule_Exemption {
-	{CRYPTOGRAPHY_MANIFEST, "a file taken from the cryptography of Odin: `modustool cryptography-origin` proves that it is its origin with listed changes only, so its comments are those of Odin, and its header gives the release of the copy"},
+	{foundation.CRYPTOGRAPHY_MANIFEST, "a file taken from the cryptography of Odin: `modustool cryptography-origin` proves that it is its origin with listed changes only, so its comments are those of Odin, and its header gives the release of the copy"},
 }
 
 // One comment that breaks a rule.
@@ -87,12 +88,12 @@ COMMENT_RULE_DATE_WINDOW :: 48
 
 @(private = "file")
 comment_rule_word_starts :: proc(text: string, at: int) -> bool {
-	return at == 0 || !(site_is_word_byte(text[at - 1]) || text[at - 1] == '-')
+	return at == 0 || !(foundation.site_is_word_byte(text[at - 1]) || text[at - 1] == '-')
 }
 
 @(private = "file")
 comment_rule_word_ends :: proc(text: string, end: int) -> bool {
-	return end >= len(text) || !site_is_word_byte(text[end])
+	return end >= len(text) || !foundation.site_is_word_byte(text[end])
 }
 
 @(private = "file")
@@ -316,16 +317,16 @@ comment_rule_breaches_of_source :: proc(file, content: string, exempt_files: map
 	if file in exempt_files {
 		return breaches[:]
 	}
-	syntax, known := comment_syntax_of(file)
+	syntax, known := foundation.comment_syntax_of(file)
 	if !known {
 		return breaches[:]
 	}
-	for block in comment_blocks(content, syntax) {
+	for block in foundation.comment_blocks(content, syntax) {
 		text := comment_rule_text(block.text)
 		for at in 0 ..< len(text) {
 			for form in Comment_Rule_Form {
 				if end, matched := comment_rule_match(form, text, at); matched {
-					append(&breaches, Comment_Rule_Breach{file = file, line = comment_block_line(block, at), form = form, text = block.text[at:end]})
+					append(&breaches, Comment_Rule_Breach{file = file, line = foundation.comment_block_line(block, at), form = form, text = block.text[at:end]})
 				}
 			}
 		}
@@ -338,7 +339,7 @@ comment_rule_breaches_of_source :: proc(file, content: string, exempt_files: map
 comment_rule_exempt_files :: proc() -> (files: map[string]string, ok: bool) {
 	files = make(map[string]string, context.temp_allocator)
 	for exemption in comment_rule_exemptions {
-		lines := manifest_lines(exemption.manifest) or_return
+		lines := foundation.manifest_lines(exemption.manifest) or_return
 		for fields in lines {
 			if len(fields) > 0 {
 				files[fields[0]] = exemption.reason
@@ -357,10 +358,10 @@ comment_rule_source_files :: proc(folder: string, files: ^[dynamic]string) -> bo
 		return false
 	}
 	for entry in entries {
-		path := join(folder, "/", entry.name)
+		path := foundation.join(folder, "/", entry.name)
 		if entry.type == .Directory {
 			comment_rule_source_files(path, files) or_return
-		} else if _, is_source := comment_syntax_of(entry.name); is_source {
+		} else if _, is_source := foundation.comment_syntax_of(entry.name); is_source {
 			append(files, path)
 		}
 	}
@@ -401,6 +402,6 @@ comment_rule_check :: proc() -> bool {
 	if len(breaches) > 0 {
 		return false
 	}
-	test_passed_print("no comment of a source names a property, a choice, a step, a review or a decision by its number, its label or its date (%d files read)", files_read)
+	foundation.test_passed_print("no comment of a source names a property, a choice, a step, a review or a decision by its number, its label or its date (%d files read)", files_read)
 	return true
 }

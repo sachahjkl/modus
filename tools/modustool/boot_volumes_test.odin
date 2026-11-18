@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "core:time"
+import "modustool:foundation"
 
 // The table of the boot volumes: 16 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
@@ -46,7 +46,7 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	files := make([dynamic]string, context.temp_allocator)
 	main_found := false
 	for volume in volumes {
-		testing.expectf(t, strings.has_prefix(volume.path, BUILD_FOLDER + "/boot_volume") && strings.has_suffix(volume.path, ".img"), "%s is a volume file of the build folder", volume.path)
+		testing.expectf(t, strings.has_prefix(volume.path, foundation.BUILD_FOLDER + "/boot_volume") && strings.has_suffix(volume.path, ".img"), "%s is a volume file of the build folder", volume.path)
 		if volume.path == BOOT_VOLUME {
 			main_found = true
 			testing.expect_value(t, boot_volume_name(volume.path), MAIN_BOOT_VOLUME_NAME)
@@ -65,7 +65,7 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 		if volume.change.kernel_changed_after_description {
 			testing.expect(t, strings.contains(boot_volume_kernel_module_path(volume), boot_volume_name(volume.path)), "the changed kernel has the name of its volume")
 		} else {
-			testing.expect_value(t, boot_volume_kernel_module_path(volume), module_path(volume.kernel))
+			testing.expect_value(t, boot_volume_kernel_module_path(volume), foundation.module_path(volume.kernel))
 		}
 	}
 	testing.expect(t, main_found, "the main boot volume is in the table")
@@ -74,7 +74,7 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 			testing.expectf(t, file != other, "%s belongs to one volume only", file)
 		}
 	}
-	testing.expect_value(t, boot_volume_name(BUILD_FOLDER + "/boot_volume_self_test_3.img"), "self_test_3")
+	testing.expect_value(t, boot_volume_name(foundation.BUILD_FOLDER + "/boot_volume_self_test_3.img"), "self_test_3")
 	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_SHORTAGE), "shortage")
 	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_MEASURE), "measure")
 	// The volume of a measure run has its own boot image.
@@ -321,7 +321,7 @@ volume_constants_are_found_in_the_procedures_of_a_source :: proc(t: ^testing.T) 
 // the repository.
 @(test)
 each_volume_that_a_scenario_names_is_in_the_table_of_its_part :: proc(t: ^testing.T) {
-	paths, listed := files_with_suffix(TOOL_SOURCE_FOLDER, ".odin")
+	paths, listed := foundation.files_with_suffix(foundation.TOOL_SOURCE_FOLDER, ".odin")
 	testing.expect(t, listed, "the test runs from the root of the repository")
 	named := make([dynamic]Named_Volume, context.temp_allocator)
 	declared := make([dynamic]string, context.temp_allocator)
@@ -396,10 +396,10 @@ each_volume_that_a_scenario_names_is_in_the_table_of_its_part :: proc(t: ^testin
 boot_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "boot_volumes_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	for name in ([]string{SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, "resources/keys"}) {
+	for name in ([]string{foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_RUNTIME, "resources/keys"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
-	boot_tree_file_write(folder, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {}\n")
+	boot_tree_file_write(folder, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {}\n")
 	boot_tree_file_write(folder, BOOT_PROGRAM_JUMP_SOURCE, "global jump\njump: ret\n")
 	boot_tree_file_write(folder, RUNTIME_MEMORY, "global copy\ncopy: ret\n")
 	boot_tree_file_write(folder, TEST_SIGNING_KEY_FILE, "00\n")
@@ -426,7 +426,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 	append(&built_files, Record_Output{path = BOOT_IMAGE, hash = hash_of_text(image_content)})
 	append(&built_files, Record_Output{path = BOOT_IMAGE_SHORTAGE, hash = hash_of_text("the image of the shortage")})
 	append(&built_files, Record_Output{path = BOOT_IMAGE_MEASURE, hash = hash_of_text("the image of a measure run")})
-	append(&built_files, Record_Output{path = module_path("kernel"), hash = hash_of_text("the kernel")})
+	append(&built_files, Record_Output{path = foundation.module_path("kernel"), hash = hash_of_text("the kernel")})
 	append(&built_files, Record_Output{path = DEBUG_IMAGE, hash = hash_of_text("the debug image")})
 	append(&built_files, Record_Output{path = SYSTEM_KEY_FILE, hash = hash_of_text("the public key")})
 	settings := make([]string, 1, context.temp_allocator)
@@ -437,7 +437,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 @(private = "file")
 boot_sources :: proc(root: string) -> []string {
 	sources := make([]string, 1, context.temp_allocator)
-	sources[0] = fmt.tprintf("%s/%s/main.odin", root, SOURCE_FOLDER_BOOT)
+	sources[0] = fmt.tprintf("%s/%s/main.odin", root, foundation.SOURCE_FOLDER_BOOT)
 	return sources
 }
 
@@ -446,7 +446,7 @@ boot_sources :: proc(root: string) -> []string {
 volume_key_of_a_new_build :: proc(t: ^testing.T, root: string, volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs) -> blake3.Hash {
 	inputs, readable := boot_volume_key_inputs(volume, shared, boot_sources(root), nil)
 	testing.expect(t, readable, "each built file of the volume has its hash")
-	table := input_file_table_make(root, {SOURCE_FOLDER_BOOT})
+	table := input_file_table_make(root, {foundation.SOURCE_FOLDER_BOOT})
 	defer input_file_table_destroy(table)
 	key, complete := build_key(inputs, table)
 	testing.expect(t, complete, "each input of the tree can be read")
@@ -469,7 +469,7 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 
 	other_kernel := shared_inputs_of_a_test("the boot image")
 	for &file in other_kernel.built_files {
-		if file.path == module_path("kernel") {
+		if file.path == foundation.module_path("kernel") {
 			file.hash = hash_of_text("another kernel")
 		}
 	}
@@ -515,7 +515,7 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	testing.expect(t, volume_key_of_a_new_build(t, root, measure_volume, other_measure_image) != measure_key, "another boot image of a measure run changes the key of its volume")
 	testing.expect_value(t, volume_key_of_a_new_build(t, root, main_volume, other_measure_image), first)
 
-	boot_tree_file_write(root, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {_ = 1}\n")
+	boot_tree_file_write(root, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {_ = 1}\n")
 	after_source := volume_key_of_a_new_build(t, root, main_volume, shared)
 	testing.expect(t, after_source != first, "a byte of a source of the boot program changes the key")
 
@@ -552,7 +552,7 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	testing.expect(t, build_record_write(record_file, key, {volume_file, image_file}, sources, nil), "the record is written")
 
 	decision :: proc(root, record_file: string, inputs: Build_Key_Inputs, outputs: []string) -> (kept: bool, reason: string) {
-		table := input_file_table_make(root, {SOURCE_FOLDER_BOOT})
+		table := input_file_table_make(root, {foundation.SOURCE_FOLDER_BOOT})
 		defer input_file_table_destroy(table)
 		return recorded_build_is_kept(record_file, inputs, table, outputs)
 	}
@@ -583,18 +583,18 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	testing.expect(t, !kept, "a volume whose boot image changed is built again")
 	testing.expect_value(t, reason, "an input changed")
 
-	boot_tree_file_write(root, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {_ = 2}\n")
+	boot_tree_file_write(root, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {_ = 2}\n")
 	kept, reason = decision(root, record_file, inputs, {volume_file, image_file})
 	testing.expect(t, !kept, "a volume whose boot program changed is built again")
 	testing.expect_value(t, reason, "an input changed")
-	boot_tree_file_write(root, SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {}\n")
+	boot_tree_file_write(root, foundation.SOURCE_FOLDER_BOOT + "/main.odin", "package boot\n\nefi_main :: proc() {}\n")
 	kept, _ = decision(root, record_file, inputs, {volume_file, image_file})
 	testing.expect(t, kept, "the same source again gives the recorded key")
 
 	// The two parts of the decision, as the build of all the volumes uses
 	// them: the key first, then the hashes of the outputs read at once.
 	{
-		table := input_file_table_make(root, {SOURCE_FOLDER_BOOT})
+		table := input_file_table_make(root, {foundation.SOURCE_FOLDER_BOOT})
 		defer input_file_table_destroy(table)
 		record, same, _ := recorded_build_has_its_key(record_file, inputs, table)
 		testing.expect(t, same, "the record has the key of the inputs")
@@ -676,22 +676,4 @@ only_a_volume_of_this_build_is_ready :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(boot_volumes_ready), 1)
 	boot_volumes_ready_forget()
 	testing.expect(t, !boot_volume_is_ready(BOOT_VOLUME), "a new build forgets the volumes of the build before")
-}
-
-// The pool gives one outcome for each command, in the order of the
-// commands; a command that cannot start is a failure.
-@(test)
-build_host_processes_keep_the_outcome_of_each_command :: proc(t: ^testing.T) {
-	commands := make([][]string, 1, context.temp_allocator)
-	command := make([]string, 1, context.temp_allocator)
-	command[0] = "/a program that is not there"
-	commands[0] = command
-	outcomes := build_host_processes_run(commands, 4, context.temp_allocator)
-	testing.expect_value(t, len(outcomes), 1)
-	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
-	testing.expect(t, outcomes[0].duration >= time.Duration(0), "the time of a host process is a measure")
-	// The output is memory of the worker thread, outside the memory that
-	// the test runner follows: the test does not free it.
-	none := build_host_processes_run(nil, 4, context.temp_allocator)
-	testing.expect_value(t, len(none), 0)
 }

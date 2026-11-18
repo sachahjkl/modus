@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The return to a process (docs/ARCHITECTURE.md, "The return to a process"):
 // three machines.
 //
@@ -37,8 +39,8 @@ package modustool
 // but the last one searches from the place after "extended_state: the
 // usable instruction sets".
 
-TEST_OUTPUT_RETURN_FAULT :: BUILD_FOLDER + "/test_output_return_fault.txt"
-TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK :: BUILD_FOLDER + "/test_output_return_fault_without_check.txt"
+TEST_OUTPUT_RETURN_FAULT :: foundation.BUILD_FOLDER + "/test_output_return_fault.txt"
+TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK :: foundation.BUILD_FOLDER + "/test_output_return_fault_without_check.txt"
 
 // The boot line of kernel_without_return_check: the same text as
 // TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/kernel/return_to_process.odin.
@@ -85,7 +87,7 @@ scenario_return_fault_without_check := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-TEST_OUTPUT_NON_MASKABLE_INTERRUPT :: BUILD_FOLDER + "/test_output_non_maskable_interrupt.txt"
+TEST_OUTPUT_NON_MASKABLE_INTERRUPT :: foundation.BUILD_FOLDER + "/test_output_non_maskable_interrupt.txt"
 
 // The line of the stop is one of two: "kernel: non-maskable interrupt
 // vector 2 while a process ran, at ..." or "kernel: exception in the

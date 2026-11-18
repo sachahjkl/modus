@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The randomness of the system: three machines (docs/RANDOMNESS.md).
 //
 // Two machines with each feature of the processor: the root service makes
@@ -18,7 +20,7 @@ package modustool
 // the fresh bytes page of each process, and each process `randomness`
 // mixes them into its generator (src/md/features/fresh_bytes.md).
 
-TEST_OUTPUT_RANDOM :: BUILD_FOLDER + "/test_output_random.txt"
+TEST_OUTPUT_RANDOM :: foundation.BUILD_FOLDER + "/test_output_random.txt"
 
 scenario_random_with_the_processor := [?]Step {
 	{kind = .Wait, text = "root: the random seed of the system, strength entropy (rdseed): rdseed present, 8 good values, 0 refused; rdrand present, 8 good, 0 refused"},

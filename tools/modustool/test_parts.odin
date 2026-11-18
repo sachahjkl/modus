@@ -1,12 +1,13 @@
 package modustool
 
+import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // The parts of the machine test (src/md/infrastructure/machine_test_parts.md).
 // One table holds each part: `test <part>` finds its row, the whole test
@@ -207,7 +208,7 @@ test_part_guide_row :: proc(part: Test_Part) -> string {
 // machines outside the test. Its texts are in memory of its own: a scenario
 // frees the temporary memory after each step.
 test_part_run_make :: proc(name: string) -> Test_Part_Run {
-	return {name = strings.clone(name), data_disk = fmt.aprintf("%s/test_data_disk_%s.img", BUILD_FOLDER, name)}
+	return {name = strings.clone(name), data_disk = fmt.aprintf("%s/test_data_disk_%s.img", foundation.BUILD_FOLDER, name)}
 }
 
 // test_part_run_start makes the new data disk of the part: a part starts
@@ -248,49 +249,55 @@ test_parts_at_once :: proc(part_count: int, processors: int) -> int {
 	return max(1, min(part_count, processors / MACHINE_PROCESSOR_COUNT))
 }
 
-// test_processors_of gives the processors that the test counts on: the
-// processors of the host, or fewer when the sandbox of Nix gives the build
-// fewer (NIX_BUILD_CORES, a number; 0, empty or not a number: no bound).
-test_processors_of :: proc(host_processors: int, nix_build_cores: string) -> int {
-	cores, is_number := strconv.parse_int(nix_build_cores, 10)
-	if !is_number || cores <= 0 {
-		return host_processors
-	}
-	return min(host_processors, cores)
-}
-
 // The pictures that the parts of this run saved, by name, with the part of
 // each: all go to one folder, so two parts that save one name would leave
-// the picture of whichever part ended last.
+// the picture of whichever part ended last. The table outlives the caller
+// that claims first, so its map and its names are memory of the heap of
+// the process, never of the allocator of a caller: the allocator of a host
+// test is freed when the test ends.
 Picture_Names :: struct {
 	lock:  sync.Mutex,
 	parts: map[string]string, // The name of a picture -> the name of its part.
 }
 
+// The table of the process, which the machines use. A host test gives its
+// own table.
 picture_names: Picture_Names
 
 // picture_name_claim takes a name of a picture for a part. It refuses a
 // name that another part of the run took, and gives that part; the same
 // part can save one name again (a later picture replaces the earlier one).
-picture_name_claim :: proc(part: string, picture: string) -> (owner: string, ok: bool) {
-	sync.mutex_lock(&picture_names.lock)
-	defer sync.mutex_unlock(&picture_names.lock)
-	if owner_part, taken := picture_names.parts[picture]; taken {
+picture_name_claim :: proc(names: ^Picture_Names, part: string, picture: string) -> (owner: string, ok: bool) {
+	sync.mutex_lock(&names.lock)
+	defer sync.mutex_unlock(&names.lock)
+	if owner_part, taken := names.parts[picture]; taken {
 		return owner_part, owner_part == part
 	}
-	picture_names.parts[strings.clone(picture)] = strings.clone(part)
+	if names.parts == nil {
+		names.parts = make(map[string]string, runtime.heap_allocator())
+	}
+	names.parts[strings.clone(picture, runtime.heap_allocator())] = strings.clone(part, runtime.heap_allocator())
 	return part, true
 }
 
 // picture_names_forget forgets the names of an earlier run.
-picture_names_forget :: proc() {
-	sync.mutex_lock(&picture_names.lock)
-	defer sync.mutex_unlock(&picture_names.lock)
-	for picture, part in picture_names.parts {
-		delete(picture)
-		delete(part)
+picture_names_forget :: proc(names: ^Picture_Names) {
+	sync.mutex_lock(&names.lock)
+	defer sync.mutex_unlock(&names.lock)
+	for picture, part in names.parts {
+		delete(picture, runtime.heap_allocator())
+		delete(part, runtime.heap_allocator())
 	}
-	clear(&picture_names.parts)
+	clear(&names.parts)
+}
+
+// picture_names_free frees a table that a host test gave.
+picture_names_free :: proc(names: ^Picture_Names) {
+	picture_names_forget(names)
+	sync.mutex_lock(&names.lock)
+	defer sync.mutex_unlock(&names.lock)
+	delete(names.parts)
+	names.parts = nil
 }
 
 // The parts that the worker threads of the whole test share.

@@ -9,6 +9,7 @@ package modustool
 
 import "core:fmt"
 import "core:strings"
+import "modustool:foundation"
 
 // The documents of the root of the repository that the check reads.
 SOURCE_PATH_ROOT_DOCUMENTS :: [?]string{"README.md", "AGENTS.md"}
@@ -122,7 +123,7 @@ source_path_problems :: proc(file, content: string, folders: []string, exists: p
 	list := make([dynamic]string, context.temp_allocator)
 	starts := source_path_starts(folders)
 	fenced := false
-	for line, line_index in site_lines(content) {
+	for line, line_index in foundation.site_lines(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -167,16 +168,16 @@ source_path_problems :: proc(file, content: string, folders: []string, exists: p
 source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: bool) {
 	list := make([dynamic]Source_Path_Document, context.temp_allocator)
 	paths := make([dynamic]string, context.temp_allocator)
-	guides := files_with_suffix(DOCUMENT_FOLDER, ".md") or_return
+	guides := foundation.files_with_suffix(DOCUMENT_FOLDER, ".md") or_return
 	append(&paths, ..guides)
-	glossary_files := files_with_suffix(GLOSSARY_FOLDER, ".md") or_return
+	glossary_files := foundation.files_with_suffix(GLOSSARY_FOLDER, ".md") or_return
 	append(&paths, ..glossary_files)
 	roots := SOURCE_PATH_ROOT_DOCUMENTS
 	for root in roots {
 		append(&paths, root)
 	}
 	for path in paths {
-		content, read_ok := site_read_quiet(path)
+		content, read_ok := foundation.site_read_quiet(path)
 		if !read_ok {
 			fmt.eprintfln("modustool: test failed: cannot read %s", path)
 			return nil, false
@@ -199,11 +200,11 @@ source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: 
 // the folder of the tool.
 source_path_checked_folders :: proc() -> []string {
 	folders := make([dynamic]string, context.temp_allocator)
-	present := SOURCE_FOLDERS
-	gone := SOURCE_FOLDERS_GONE
+	present := foundation.SOURCE_FOLDERS
+	gone := foundation.SOURCE_FOLDERS_GONE
 	append(&folders, ..present[:])
 	append(&folders, ..gone[:])
-	append(&folders, TOOLS_FOLDER)
+	append(&folders, foundation.TOOLS_FOLDER)
 	return folders[:]
 }
 
@@ -240,6 +241,6 @@ source_paths_check :: proc() -> bool {
 	if len(problems) > 0 {
 		return false
 	}
-	test_passed_print("each of the %d code spans of the %d documents (the guides, the glossary, the documents of the root and the intent files) that starts as the path of a source or of a file of the tool names a file or a folder of the repository", span_count, document_count)
+	foundation.test_passed_print("each of the %d code spans of the %d documents (the guides, the glossary, the documents of the root and the intent files) that starts as the path of a source or of a file of the tool names a file or a folder of the repository", span_count, document_count)
 	return true
 }

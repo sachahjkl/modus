@@ -1,12 +1,12 @@
 package modustool
 
-import "base:intrinsics"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "modustool:foundation"
 
 // A closed set of choices is an enum, never a family of integer constants
 // passed as an integer (src/md/infrastructure/choice_constants.md). The
@@ -19,7 +19,7 @@ import "core:strings"
 // members or more is refused, unless the short list of exceptions below
 // names it with its reason.
 
-CHOICE_CONSTANT_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_LIBRARY, TOOL_SOURCE_FOLDER}
+CHOICE_CONSTANT_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_MODULES, foundation.SOURCE_FOLDER_LIBRARY, foundation.TOOL_SOURCE_FOLDER}
 
 // The depth of the constants that a value names through other constants
 // (B :: A + 1): past it, the value is not read. It ends a cycle too.
@@ -28,7 +28,7 @@ CHOICE_VALUE_DEPTH_LIMIT :: 16
 
 // A copy of a package of the Odin library: its forms are not the forms of
 // this system.
-CHOICE_CONSTANT_SKIPPED_FOLDER :: SOURCE_FOLDER_SUPPORT + "/cryptography"
+CHOICE_CONSTANT_SKIPPED_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/cryptography"
 
 // The largest magnitude of a constant that can be a member of a family, on
 // each side of 0: a larger value is a mask, an address, a magic number or
@@ -97,25 +97,25 @@ Choice_Constant_Exception :: struct {
 // choices by their use.
 @(rodata)
 CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
-	{SOURCE_FOLDER_SUPPORT + "/quic", "FRAME", .First, "the frame types of QUIC (RFC 9000, section 12.4): the numbers of the wire, read and written as numbers"},
-	{SOURCE_FOLDER_SUPPORT + "/quic", "PARAMETER", .First, "the transport parameters of QUIC (RFC 9000, section 18.2): a receiver ignores a parameter that it does not know"},
-	{SOURCE_FOLDER_SUPPORT + "/network", "PROTOCOL", .First, "the protocol numbers of IPv4 (IANA): a packet of another protocol is legal and is not read"},
-	{SOURCE_FOLDER_SUPPORT + "/network", "ICMP", .First, "the message types of ICMP (RFC 792): a message of another type is legal and is not read"},
-	{SOURCE_FOLDER_SUPPORT + "/virtio", "CAPABILITY", .First, "the capability types of virtio (virtio 1.2, section 4.1.4): a capability of another type is legal and is skipped"},
-	{SOURCE_FOLDER_KERNEL + "/iommu", "AMD", .First, "the entry and block types of the ACPI table IVRS and the event codes of the event log of AMD-Vi (AMD I/O virtualization, sections 2.5 and 5.2): an entry of another type is legal and is skipped by its length, and an event of another code is written with its number"},
-	{SOURCE_FOLDER_KERNEL + "/iommu", "STRUCTURE", .First, "the structure types of the ACPI table DMAR (Intel VT-d, section 8.1): a structure of another type is legal and is skipped by its length"},
-	{SOURCE_FOLDER_KERNEL + "/iommu", "SCOPE", .First, "the device scope types of the ACPI table DMAR (Intel VT-d, section 8.3.1): a scope of another type is legal and is skipped"},
-	{SOURCE_FOLDER_KERNEL + "/acpi_processors", "ENTRY", .First, "the entry types of the ACPI table APIC (ACPI 6.5, section 5.2.12): an entry of another type is legal and is skipped by its length"},
-	{SOURCE_FOLDER_SUPPORT + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
-	{SOURCE_FOLDER_PRIVATE + "/input/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
-	{SYSTEM_MODULE_SOURCES + "input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
-	{SOURCE_FOLDER_SUPPORT + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
-	{SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},
-	{TOOL_SOURCE_FOLDER, "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
-	{TOOL_SOURCE_FOLDER, "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},
-	{TOOL_SOURCE_FOLDER, "NBD", .First, "the options, the replies and the commands of the network block device protocol (NBD, the protocol document): a client sends options that the server of the tests answers as unsupported"},
-	{SOURCE_FOLDER_CONTRACT + "/remote", "FIELD", .First, "the places of the fields of a Request, from 1, which the argument of an error record names (REQUEST_FIELD_NAMES): a place in a record, not a choice; the test of the peer selects the field to break by its place"},
-	{SOURCE_FOLDER_KERNEL, "EVENT", .First, "the event types of the event injection of AMD SVM (AMD64 volume 2, section 15.20): the numbers of the processor"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/quic", "FRAME", .First, "the frame types of QUIC (RFC 9000, section 12.4): the numbers of the wire, read and written as numbers"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/quic", "PARAMETER", .First, "the transport parameters of QUIC (RFC 9000, section 18.2): a receiver ignores a parameter that it does not know"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/network", "PROTOCOL", .First, "the protocol numbers of IPv4 (IANA): a packet of another protocol is legal and is not read"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/network", "ICMP", .First, "the message types of ICMP (RFC 792): a message of another type is legal and is not read"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/virtio", "CAPABILITY", .First, "the capability types of virtio (virtio 1.2, section 4.1.4): a capability of another type is legal and is skipped"},
+	{foundation.SOURCE_FOLDER_KERNEL + "/iommu", "AMD", .First, "the entry and block types of the ACPI table IVRS and the event codes of the event log of AMD-Vi (AMD I/O virtualization, sections 2.5 and 5.2): an entry of another type is legal and is skipped by its length, and an event of another code is written with its number"},
+	{foundation.SOURCE_FOLDER_KERNEL + "/iommu", "STRUCTURE", .First, "the structure types of the ACPI table DMAR (Intel VT-d, section 8.1): a structure of another type is legal and is skipped by its length"},
+	{foundation.SOURCE_FOLDER_KERNEL + "/iommu", "SCOPE", .First, "the device scope types of the ACPI table DMAR (Intel VT-d, section 8.3.1): a scope of another type is legal and is skipped"},
+	{foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors", "ENTRY", .First, "the entry types of the ACPI table APIC (ACPI 6.5, section 5.2.12): an entry of another type is legal and is skipped by its length"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
+	{foundation.SOURCE_FOLDER_PRIVATE + "/input/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
+	{foundation.SYSTEM_MODULE_SOURCES + "input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
+	{foundation.SOURCE_FOLDER_SUPPORT + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
+	{foundation.SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},
+	{foundation.TOOL_SOURCE_FOLDER, "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
+	{foundation.TOOL_SOURCE_FOLDER, "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},
+	{foundation.TOOL_SOURCE_FOLDER, "NBD", .First, "the options, the replies and the commands of the network block device protocol (NBD, the protocol document): a client sends options that the server of the tests answers as unsupported"},
+	{foundation.SOURCE_FOLDER_CONTRACT + "/remote", "FIELD", .First, "the places of the fields of a Request, from 1, which the argument of an error record names (REQUEST_FIELD_NAMES): a place in a record, not a choice; the test of the peer selects the field to break by its place"},
+	{foundation.SOURCE_FOLDER_KERNEL, "EVENT", .First, "the event types of the event injection of AMD SVM (AMD64 volume 2, section 15.20): the numbers of the processor"},
 }
 
 // The state of the walk of one file.
@@ -499,7 +499,7 @@ imports_of :: proc(file: ^ast.File, folder: string) -> map[string]string {
 		}
 		path := strings.trim(declaration.fullpath, "\"`")
 		target: string
-		library_folder, in_source_library := source_library_package_folder(path)
+		library_folder, in_source_library := foundation.source_library_package_folder(path)
 		switch {
 		case in_source_library:
 			target = library_folder
@@ -508,7 +508,7 @@ imports_of :: proc(file: ^ast.File, folder: string) -> map[string]string {
 		case:
 			// "../x" names a folder beside the one of the file: the key of
 			// a package is its folder with no "." and no "..".
-			target = path_without_dots(join(folder, "/", path))
+			target = path_without_dots(foundation.join(folder, "/", path))
 		}
 		name := declaration.name.text
 		if name == "" {
@@ -743,9 +743,9 @@ Enum_Cast_Exception :: struct {
 // The justified casts. Each row names one place of a design.
 @(rodata)
 ENUM_CAST_EXCEPTIONS := [?]Enum_Cast_Exception {
-	{SOURCE_FOLDER_KERNEL + "/enter.odin", "op.Operation", 1, "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
-	{DEMONSTRATION_MODULE_SOURCES + "errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
-	{TOOL_SOURCE_FOLDER + "/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
+	{foundation.SOURCE_FOLDER_KERNEL + "/enter.odin", "op.Operation", 1, "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
+	{foundation.DEMONSTRATION_MODULE_SOURCES + "errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
+	{foundation.TOOL_SOURCE_FOLDER + "/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
 }
 
 // An exception whose count of casts is not the count that it holds: none
@@ -1064,22 +1064,6 @@ enum_member_of :: proc(walk: ^Enum_Cast_Walk, expression: ^ast.Expr) -> bool {
 	return false
 }
 
-// enum_member_at gives the member of an enum at a place, from 0, in the
-// order of its members: a choice of the tool by a place (a draw of the
-// fuzzer, a count of the sections that a check saw), which is no word of
-// another party. A place past the last member is a fault of the tool, and
-// stops it: no member stands in for it.
-enum_member_at :: proc($Enum: typeid, place: int) -> Enum where intrinsics.type_is_enum(Enum) {
-	count := 0
-	for member in Enum {
-		if count == place {
-			return member
-		}
-		count += 1
-	}
-	fmt.panicf("modustool: the place %d is past the %d members of %v", place, count, typeid_of(Enum))
-}
-
 // enum_cast_exception_matches says if an exception names a cast: the same
 // file and the same enum. A tree under another root ends with the path.
 enum_cast_exception_matches :: proc(exception: Enum_Cast_Exception, cast_of_word: Enum_Cast) -> bool {
@@ -1094,16 +1078,16 @@ choice_families_of_tree :: proc(root: string) -> (families: []Choice_Family, cas
 	files := make([dynamic]string, context.temp_allocator)
 	folders := CHOICE_CONSTANT_FOLDERS
 	for folder in folders {
-		source_files_of_a_folder(root == "" ? folder : join(root, "/", folder), &files) or_return
+		foundation.source_files_of_a_folder(root == "" ? folder : foundation.join(root, "/", folder), &files) or_return
 	}
 	slice.sort(files[:])
 	sources := make([dynamic]Export_Source, context.temp_allocator)
-	skipped := join(root == "" ? CHOICE_CONSTANT_SKIPPED_FOLDER : join(root, "/", CHOICE_CONSTANT_SKIPPED_FOLDER), "/")
+	skipped := foundation.join(root == "" ? CHOICE_CONSTANT_SKIPPED_FOLDER : foundation.join(root, "/", CHOICE_CONSTANT_SKIPPED_FOLDER), "/")
 	for file in files {
 		if source_is_a_test(file) || strings.has_prefix(file, skipped) {
 			continue
 		}
-		text, read_ok := site_read_quiet(file)
+		text, read_ok := foundation.site_read_quiet(file)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return nil, nil, 0, false
@@ -1169,6 +1153,6 @@ choice_constant_check :: proc() -> bool {
 		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, and %d exceptions of casts do not hold their count", refused, stale, casts_refused, casts_stale)
 		return false
 	}
-	test_passed_print("no family of integer constants is a closed set of choices, and no cast of a word to an enum is kept, passed or switched on, in the %d source files of the system and of the tool that are not tests (%d exceptions of outside standards, %d casts of a design)", file_count, len(CHOICE_CONSTANT_EXCEPTIONS), len(ENUM_CAST_EXCEPTIONS))
+	foundation.test_passed_print("no family of integer constants is a closed set of choices, and no cast of a word to an enum is kept, passed or switched on, in the %d source files of the system and of the tool that are not tests (%d exceptions of outside standards, %d casts of a design)", file_count, len(CHOICE_CONSTANT_EXCEPTIONS), len(ENUM_CAST_EXCEPTIONS))
 	return true
 }

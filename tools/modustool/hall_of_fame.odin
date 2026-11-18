@@ -11,10 +11,11 @@ import "core:image/png"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 HALL_OF_FAME_RESOURCE_FOLDER :: "resources/hall_of_fame"
 HALL_OF_FAME_CREDITS_FILE :: HALL_OF_FAME_RESOURCE_FOLDER + "/CREDITS.md"
-HALL_OF_FAME_MODULE_FOLDER :: DEMONSTRATION_MODULE_SOURCES + "hall_of_fame"
+HALL_OF_FAME_MODULE_FOLDER :: foundation.DEMONSTRATION_MODULE_SOURCES + "hall_of_fame"
 HALL_OF_FAME_MODULE_FILE :: HALL_OF_FAME_MODULE_FOLDER + "/main.odin"
 HALL_OF_FAME_PORTRAIT_FOLDER :: HALL_OF_FAME_MODULE_FOLDER + "/portraits"
 // Each picture of the resources is a crop of this size.
@@ -49,7 +50,7 @@ Hall_Of_Fame_Credit :: struct {
 // problem.
 hall_of_fame_credits_parse :: proc(content: string) -> (credits: []Hall_Of_Fame_Credit, problem: string) {
 	rows := make([dynamic]Hall_Of_Fame_Credit, context.temp_allocator)
-	for line, index in site_lines(content) {
+	for line, index in foundation.site_lines(content) {
 		if !strings.has_prefix(line, "| `") {
 			continue
 		}
@@ -127,26 +128,26 @@ run_portraits :: proc(args: []string) -> int {
 	credits, problem := hall_of_fame_credits_read()
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if err := os.make_directory_all(HALL_OF_FAME_PORTRAIT_FOLDER); err != nil && err != .Exist {
 		fmt.eprintfln("modustool: cannot make %s: %v", HALL_OF_FAME_PORTRAIT_FOLDER, err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	for credit in credits {
 		source_path := strings.concatenate({HALL_OF_FAME_RESOURCE_FOLDER, "/", credit.file}, context.temp_allocator)
-		source, ok := read_file(source_path)
+		source, ok := foundation.read_file(source_path)
 		if !ok {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		picture, err := png.load_from_bytes(source, {}, context.temp_allocator)
 		if err != nil {
 			fmt.eprintfln("modustool: cannot decode %s: %v", source_path, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		if picture.channels < 3 || picture.depth != 8 || picture.width != HALL_OF_FAME_SOURCE_WIDTH || picture.height != HALL_OF_FAME_SOURCE_HEIGHT {
 			fmt.eprintfln("modustool: %s has %dx%d pixels of %d channels of %d bits: it must have %dx%d pixels of 3 or 4 channels of 8 bits", source_path, picture.width, picture.height, picture.channels, picture.depth, HALL_OF_FAME_SOURCE_WIDTH, HALL_OF_FAME_SOURCE_HEIGHT)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		bytes := picture.pixels[:]
 		pixels := make([]u32, HALL_OF_FAME_PORTRAIT_WIDTH * HALL_OF_FAME_PORTRAIT_HEIGHT, context.temp_allocator)
@@ -170,7 +171,7 @@ run_portraits :: proc(args: []string) -> int {
 		output := hall_of_fame_pixels_path(credit.file)
 		if write_err := os.write_entire_file(output, slice.to_bytes(pixels)); write_err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", output, write_err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		fmt.printfln("modustool: wrote %s: %dx%d pixels from %s", output, HALL_OF_FAME_PORTRAIT_WIDTH, HALL_OF_FAME_PORTRAIT_HEIGHT, source_path)
 	}

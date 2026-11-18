@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The echo of a line of the console
 // (docs/TOOLS.md, "How the tool sends input and waits").
@@ -143,7 +144,7 @@ console_echo_owe :: proc(machine: ^Machine, text: string) {
 console_echo_wait :: proc(machine: ^Machine, step_number: int) -> bool {
 	echo := &machine.echo
 	typed_from := echo.from
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		log := log_read(machine)
 		for len(echo.owed) > 0 {
 			end := console_echo_end(log, echo.from, echo.owed[0])
@@ -162,7 +163,7 @@ console_echo_wait :: proc(machine: ^Machine, step_number: int) -> bool {
 		}
 		log_change_wait(machine)
 	}
-	fmt.eprintfln("modustool: test failed: step %d: the tool typed the line \"%s\" into the console, and the console did not write its echo \"%s%s\" on the log within %v: a key of the line did not reach the console, or the line before it did not end", step_number, echo.owed[0], CONSOLE_ECHO_START, echo.owed[0], HANG_BOUND)
+	fmt.eprintfln("modustool: test failed: step %d: the tool typed the line \"%s\" into the console, and the console did not write its echo \"%s%s\" on the log within %v: a key of the line did not reach the console, or the line before it did not end", step_number, echo.owed[0], CONSOLE_ECHO_START, echo.owed[0], foundation.HANG_BOUND)
 	if machine.confirm {
 		if values, read := record_fields(&machine.client, "compositor.pointer()", {"keys", "keys_waiting", "keys_refused"}); read {
 			fmt.eprintfln("modustool: the compositor: %d key records from the input service since the start, %d wait for a window whose ring is full, %d refused (lost)", values[0], values[1], values[2])

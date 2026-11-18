@@ -8,6 +8,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/remote"
+import "modustool:foundation"
 
 // The fuzz targets of the remote protocol (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the remote service reads a call
@@ -361,7 +362,7 @@ fuzz_call_function :: proc(choices: ^Fuzz_Choices) -> (function: module.Function
 		word = u8(fuzz_choice_below(choices, type_count))
 	}
 	for &direction in function.parameter_directions {
-		direction = enum_member_at(module.Direction, fuzz_choice_below(choices, direction_count))
+		direction = foundation.enum_member_at(module.Direction, fuzz_choice_below(choices, direction_count))
 	}
 	for &detail in function.parameter_details {
 		detail = u32(fuzz_choice_word(choices, 4))

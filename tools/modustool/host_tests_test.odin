@@ -2,55 +2,7 @@ package modustool
 
 import "core:strings"
 import "core:testing"
-
-// The pool of processes that the host tests share with the build. Its
-// outputs are memory of the worker threads, outside the memory that the
-// test runner follows: the tests do not free them.
-
-// A command that cannot start, and a command that ends with a failure,
-// are failures; after a failure the pool starts no new host process. With
-// one host process at once the order is fixed: the second and the third
-// commands never start.
-@(test)
-host_test_pool_stops_after_a_failure :: proc(t: ^testing.T) {
-	missing := []string{"/a program that is not there"}
-	outcomes := build_host_processes_run([][]string{missing, []string{"true"}, []string{"true"}}, 1, context.temp_allocator)
-	testing.expect_value(t, len(outcomes), 3)
-	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a command that cannot start is a failure")
-	testing.expect(t, len(outcomes[0].output) > 0, "a command that cannot start says why")
-	testing.expect(t, !outcomes[1].started && !outcomes[2].started, "no host process starts after a failure")
-	// A host process that runs and ends with a status that is not 0: its
-	// output is kept, and the next command does not start.
-	absent := "/a folder that is not there/of a host test"
-	outcomes = build_host_processes_run([][]string{[]string{"ls", absent}, []string{"true"}}, 1, context.temp_allocator)
-	testing.expect(t, outcomes[0].started && !outcomes[0].success, "a status that is not 0 is a failure")
-	testing.expect(t, strings.contains(string(outcomes[0].output), absent), "the output of a failure is kept: it names the folder")
-	testing.expect(t, !outcomes[1].started, "no host process starts after a failure")
-}
-
-// No count of processes starts no process: the caller then counts each
-// command as not started, never as passed. host_tests_run asks for one
-// at the least.
-@(test)
-host_test_pool_with_no_host_process_starts_none :: proc(t: ^testing.T) {
-	for host_processes in ([]int{0, -1}) {
-		outcomes := build_host_processes_run([][]string{[]string{"true"}}, host_processes, context.temp_allocator)
-		testing.expect_value(t, len(outcomes), 1)
-		testing.expectf(t, !outcomes[0].started && !outcomes[0].success, "%d host processes at once start no command", host_processes)
-	}
-}
-
-// The outcomes have the order of the commands, not the order of their
-// ends, and each keeps its own output. The successful case is the last.
-@(test)
-host_test_pool_keeps_the_order_of_the_commands :: proc(t: ^testing.T) {
-	outcomes := build_host_processes_run([][]string{[]string{"echo", "first"}, []string{"echo", "second"}, []string{"echo", "third"}}, 3, context.temp_allocator)
-	testing.expect_value(t, len(outcomes), 3)
-	for text, place in ([]string{"first\n", "second\n", "third\n"}) {
-		testing.expectf(t, outcomes[place].started && outcomes[place].success, "the command %d passed", place)
-		testing.expect_value(t, string(outcomes[place].output), text)
-	}
-}
+import "modustool:foundation"
 
 // The count at once: at least one, at most one for each processor and
 // one for each folder. The edges first: no processor, a negative count,
@@ -67,8 +19,8 @@ host_tests_at_once_is_bounded :: proc(t: ^testing.T) {
 	testing.expect_value(t, host_tests_at_once(16, 16), 16)
 	testing.expect_value(t, host_tests_at_once(17, 16), 16)
 	// The bound of the sandbox: NIX_BUILD_CORES bounds the processors.
-	testing.expect_value(t, host_tests_at_once(77, test_processors_of(32, "4")), 4)
-	testing.expect_value(t, host_tests_at_once(77, test_processors_of(32, "")), 32)
+	testing.expect_value(t, host_tests_at_once(77, foundation.test_processors_of(32, "4")), 4)
+	testing.expect_value(t, host_tests_at_once(77, foundation.test_processors_of(32, "")), 32)
 }
 
 // Two folders whose files have one name are refused before any process
@@ -97,23 +49,40 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 		testing.expect_value(t, command[1], "TMPDIR=/temporary")
 		kernel_flag_count := 0
 		for word in command {
-			if word == KERNEL_LIBRARY_FLAG {
+			if word == foundation.KERNEL_LIBRARY_FLAG {
 				kernel_flag_count += 1
 			}
 		}
-		testing.expectf(t, kernel_flag_count == (source_folder_takes_kernel_library(folder) ? 1 : 0), "%s: the flag of the kernel parts %d times", folder, kernel_flag_count)
+		testing.expectf(t, kernel_flag_count == (foundation.source_folder_takes_kernel_library(folder) ? 1 : 0), "%s: the flag of the kernel parts %d times", folder, kernel_flag_count)
+		tool_flag_count := 0
+		for word in command {
+			if word == foundation.TOOL_LIBRARY_FLAG {
+				tool_flag_count += 1
+			}
+		}
+		testing.expectf(t, tool_flag_count == (foundation.source_folder_is_of_the_tool(folder) ? 1 : 0), "%s: the flag of the source library of the tool %d times", folder, tool_flag_count)
 		test_program := command[len(command) - 1]
-		testing.expectf(t, strings.has_prefix(test_program, "-out:" + BUILD_FOLDER + "/test_"), "%s: the last word is the test program, not %s", folder, test_program)
+		testing.expectf(t, strings.has_prefix(test_program, "-out:" + foundation.BUILD_FOLDER + "/test_"), "%s: the last word is the test program, not %s", folder, test_program)
 		testing.expectf(t, !test_programs[test_program], "%s: the test program %s is the test program of another folder", folder, test_program)
 		test_programs[test_program] = true
 	}
-	tool := host_test_command(TOOL_SOURCE_FOLDER, "/temporary")
-	testing.expect(t, strings.contains(strings.join(tool, " ", context.temp_allocator), KERNEL_LIBRARY_FLAG), "the tool takes the kernel parts")
-	library := host_test_command(SOURCE_FOLDER_CONTRACT + "/ring", "/temporary")
-	testing.expect(t, !strings.contains(strings.join(library, " ", context.temp_allocator), KERNEL_LIBRARY_FLAG), "a folder of the library does not take the kernel parts")
+	tool := host_test_command(foundation.TOOL_SOURCE_FOLDER, "/temporary")
+	testing.expect(t, strings.contains(strings.join(tool, " ", context.temp_allocator), foundation.KERNEL_LIBRARY_FLAG), "the tool takes the kernel parts")
+	library := host_test_command(foundation.SOURCE_FOLDER_CONTRACT + "/ring", "/temporary")
+	testing.expect(t, !strings.contains(strings.join(library, " ", context.temp_allocator), foundation.KERNEL_LIBRARY_FLAG), "a folder of the library does not take the kernel parts")
+	testing.expect(t, !strings.contains(strings.join(library, " ", context.temp_allocator), foundation.TOOL_LIBRARY_FLAG), "a folder of the library does not take the source library of the tool")
+	// A package of the tool takes both: it imports another package of the
+	// tool, which can import a kernel part.
+	package_of_the_tool := strings.join(host_test_command(foundation.TOOL_SOURCE_FOLDER + "/foundation", "/temporary"), " ", context.temp_allocator)
+	testing.expect(t, strings.contains(package_of_the_tool, foundation.KERNEL_LIBRARY_FLAG) && strings.contains(package_of_the_tool, foundation.TOOL_LIBRARY_FLAG), "a package of the tool takes the kernel parts and the source library of the tool")
+	listed := false
+	for folder in folders {
+		listed = listed || folder == foundation.TOOL_SOURCE_FOLDER + "/foundation"
+	}
+	testing.expect(t, listed, "the host tests of the package foundation run in the check")
 	// With no temporary folder of its own, a folder keeps the temporary
 	// folder of the check: its command sets no variable.
-	inherited := host_test_command(SOURCE_FOLDER_CONTRACT + "/ring", "")
+	inherited := host_test_command(foundation.SOURCE_FOLDER_CONTRACT + "/ring", "")
 	testing.expect_value(t, inherited[0], "odin")
 	testing.expect(t, !strings.contains(strings.join(inherited, " ", context.temp_allocator), "TMPDIR="), "no temporary folder is set")
 }

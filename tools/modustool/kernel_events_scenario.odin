@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // Kernel events (docs/ARCHITECTURE.md, "Kernel events"): one machine. The
 // process kernel_events gives event tables to the kernel and reads the
@@ -31,7 +32,7 @@ import "core:strings"
 // Then the thread counters on the same machine (scenario_thread_counters),
 // which the tool chooses from what the host gives the test machine.
 
-TEST_OUTPUT_KERNEL_EVENTS :: BUILD_FOLDER + "/test_output_kernel_events.txt"
+TEST_OUTPUT_KERNEL_EVENTS :: foundation.BUILD_FOLDER + "/test_output_kernel_events.txt"
 
 @(rodata)
 scenario_kernel_events := [?]Step {

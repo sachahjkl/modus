@@ -1301,7 +1301,7 @@ Under the heading, a paragraph says what a property, its status and its state ar
 
 ## The reference tables
 
-Each table is read from the text of the file that defines the thing (`tools/modustool/site_source_readers.odin`): the comments of a contract are its documentation, and the compiler drops them. Each row links to its line in the file, at the commit of the build. Under each table, the page names the file. Each reader knows one form; when a file loses it, the command stops with the file and the line.
+Each table is read from the text of the file that defines the thing (`tools/modustool/foundation/site_source_readers.odin`): the comments of a contract are its documentation, and the compiler drops them. Each row links to its line in the file, at the commit of the build. Under each table, the page names the file. Each reader knows one form; when a file loses it, the command stops with the file and the line.
 
 | Page | Read from | The form |
 |---|---|---|
@@ -1332,7 +1332,7 @@ What the tables cannot show:
 
 ## The module pages
 
-`docs/reference/modules/` lists each module of `module_builds` (`tools/modustool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Modules with an entry (a row marked `entry`: a module with an entry function that the root service starts), Modules with no entry (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
+`docs/reference/modules/` lists each module of `module_builds` (`tools/modustool/foundation/module_table.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Modules with an entry (a row marked `entry`: a module with an entry function that the root service starts), Modules with no entry (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
 
 - its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/modustool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
 - for a module that is a build of the source of another module with settings of its own (`defines` of its row of `module_builds`), a first paragraph before the documentation: "The module `kernel` built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true`", then the comment above its row in `module_builds`, which says why it exists. The documentation after it is the comment of the shared source, which describes the other module. Its description for other sites names its source and its settings;

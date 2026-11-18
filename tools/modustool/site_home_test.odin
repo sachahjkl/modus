@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "modus:support/graphics"
 import "modus:support/mark"
+import "modustool:foundation"
 
 // The stages of the start as a run of the main machine test logged them.
 @(private = "file")
@@ -152,7 +153,7 @@ site_home_timeline_markup :: proc(t: ^testing.T) {
 		data, read_error := os.read_entire_file(text.guide, context.temp_allocator)
 		testing.expectf(t, read_error == nil, "cannot read %s", text.guide)
 		has_heading := false
-		for line in site_lines(string(data)) {
+		for line in foundation.site_lines(string(data)) {
 			if strings.has_prefix(line, "#") && strings.trim_left(line, "# ") == text.heading {
 				has_heading = true
 			}

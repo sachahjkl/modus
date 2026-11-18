@@ -10,6 +10,7 @@ import format "modus:contract/store"
 import "modus:support/principals"
 import "modus:private/storage/storage_mount"
 import "modus:support/tpm2"
+import "modustool:foundation"
 
 // The machines of the machine key sealed by the TPM
 // (docs/PRINCIPALS.md, "The machine key sealed by the TPM"),
@@ -49,15 +50,15 @@ import "modus:support/tpm2"
 // to 16 seal the machine key with a machine passphrase, on a disk and a
 // state of the software TPM of their own.
 
-TEST_TPM_KEY_DISK :: BUILD_FOLDER + "/test_tpm_key_disk.img"
+TEST_TPM_KEY_DISK :: foundation.BUILD_FOLDER + "/test_tpm_key_disk.img"
 // The disk of machine 5: the store of `unlock` with the record of machine 4,
 // one byte of its creation ticket changed.
-TEST_TPM_KEY_CHANGED_TICKET_DISK :: BUILD_FOLDER + "/test_tpm_key_changed_ticket_disk.img"
+TEST_TPM_KEY_CHANGED_TICKET_DISK :: foundation.BUILD_FOLDER + "/test_tpm_key_changed_ticket_disk.img"
 // The store of `unlock`: a store of principal 0 has the name of its process.
 UNLOCK_STORE :: "unlock"
-TEST_OUTPUT_TPM_KEY :: BUILD_FOLDER + "/test_output_tpm_key_%d.txt"
+TEST_OUTPUT_TPM_KEY :: foundation.BUILD_FOLDER + "/test_output_tpm_key_%d.txt"
 // The state of the software TPM that the ten machines share.
-TPM_KEY_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_key_state"
+TPM_KEY_STATE_FOLDER :: foundation.BUILD_FOLDER + "/test_tpm_key_state"
 
 // The lines of the TPM service on its lockout hierarchy
 // (src/md/features/tpm_sealed_principal_keys.md, "The lockout authorization
@@ -69,8 +70,8 @@ TPM_LOCKOUT_FOUND_LINE :: "tpm: the lockout hierarchy has an authorization value
 TPM_COUNT_LIMITS_LINE :: "tpm: the count limits of the TPM: a lockout after 3 wrong authorization values, one forgiven each 1000 seconds; "
 // A new state of the software TPM, whose lockout hierarchy has the empty
 // value: the reset that the TPM of the part refuses is taken there.
-TPM_LOCKOUT_EMPTY_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_lockout_empty_state"
-TEST_OUTPUT_TPM_LOCKOUT :: BUILD_FOLDER + "/test_output_tpm_lockout_%d.txt"
+TPM_LOCKOUT_EMPTY_STATE_FOLDER :: foundation.BUILD_FOLDER + "/test_tpm_lockout_empty_state"
+TEST_OUTPUT_TPM_LOCKOUT :: foundation.BUILD_FOLDER + "/test_output_tpm_lockout_%d.txt"
 // The largest answer to a command that the tool sends to the TPM.
 TPM_TOOL_ANSWER_LIMIT :: 256
 
@@ -259,7 +260,7 @@ scenario_tpm_key_secure_boot_off := [?]Step {
 // counts are those of before: one failure on machine 8, one on machine 10,
 // one on machine 12, and the lockout at the next try.
 
-TEST_TPM_PRINCIPAL_DISK :: BUILD_FOLDER + "/test_tpm_principal_disk.img"
+TEST_TPM_PRINCIPAL_DISK :: foundation.BUILD_FOLDER + "/test_tpm_principal_disk.img"
 WRONG_PRINCIPAL_PASSPHRASE :: "not the passphrase of alice"
 NEW_PRINCIPAL_PASSPHRASE :: "a new passphrase of alice"
 // The passphrase that the change of machine 10 gives.
@@ -547,8 +548,8 @@ scenario_tpm_principal_lockout := [?]Step {
 //      try, and Enter with nothing goes back to the passphrase; the
 //      passphrase of machine 13 is refused and counted, and the new one
 //      opens the key with no recovery.
-TEST_TPM_MACHINE_PASSPHRASE_DISK :: BUILD_FOLDER + "/test_tpm_machine_passphrase_disk.img"
-TPM_MACHINE_PASSPHRASE_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_machine_passphrase_state"
+TEST_TPM_MACHINE_PASSPHRASE_DISK :: foundation.BUILD_FOLDER + "/test_tpm_machine_passphrase_disk.img"
+TPM_MACHINE_PASSPHRASE_STATE_FOLDER :: foundation.BUILD_FOLDER + "/test_tpm_machine_passphrase_state"
 WRONG_MACHINE_PASSPHRASE :: "not the machine passphrase"
 NEW_MACHINE_PASSPHRASE :: "a new machine passphrase"
 
@@ -851,7 +852,7 @@ principal_change_with_a_dropped_zero_run :: proc(part: ^Test_Part_Run, parts: ^P
 		fmt.eprintfln("modustool: test failed: the disk kept %d blocks of zeros of the erase and dropped the write of block %d; the line of the storage service counts %d blocks written with zeros (found: %v), and the row that unlock writes %d (found: %v)", kept, server.zero_dropped_block, storage_zeroed, storage_found, unlock_zeroed, unlock_found)
 		return 0, false
 	}
-	test_passed_print("the disk dropped the write of zeros over block %d, which held the file of alice before the change; the read back of the zeros found it, and the line of the storage service and the row of unlock count the %d blocks of zeros that the disk kept", server.zero_dropped_block, kept)
+	foundation.test_passed_print("the disk dropped the write of zeros over block %d, which held the file of alice before the change; the read back of the zeros found it, and the line of the storage service and the row of unlock count the %d blocks of zeros that the disk kept", server.zero_dropped_block, kept)
 	return server.zero_dropped_block, true
 }
 
@@ -917,11 +918,11 @@ principal_file_parts_absent :: proc(parts: ^Principal_File_Parts, dropped_block:
 		return false
 	}
 	if dropped_block_free {
-		test_passed_print("the disk of %d bytes holds the file of alice before the change only in the free block %d, whose write of zeros it dropped, as the log of the storage service says; the store erased its versions and wrote zeros over each other block", len(image), dropped_block)
+		foundation.test_passed_print("the disk of %d bytes holds the file of alice before the change only in the free block %d, whose write of zeros it dropped, as the log of the storage service says; the store erased its versions and wrote zeros over each other block", len(image), dropped_block)
 	} else {
-		test_passed_print("the disk of %d bytes holds none of the salt, the keys under the seal key and the keys under the recovery key of the file of alice before the change: a later commit took the block %d, whose write of zeros the disk dropped", len(image), dropped_block)
+		foundation.test_passed_print("the disk of %d bytes holds none of the salt, the keys under the seal key and the keys under the recovery key of the file of alice before the change: a later commit took the block %d, whose write of zeros the disk dropped", len(image), dropped_block)
 	}
-	test_passed_print("the disk after the erase opens at the generation %d with no wrong block, and the file of alice has no version", mounted.generation)
+	foundation.test_passed_print("the disk after the erase opens at the generation %d with no wrong block, and the file of alice has no version", mounted.generation)
 	return true
 }
 
@@ -964,7 +965,7 @@ TPM_ALONE_CONTROL_SOCKET :: "/control.socket"
 // folder of the output given, and connects to its socket of the commands.
 tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alone, ok: bool) {
 	folder := tpm_folder_of(output)
-	reset_folder(folder) or_return
+	foundation.reset_folder(folder) or_return
 	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
 	server_path := strings.concatenate({folder, TPM_ALONE_SERVER_SOCKET}, context.temp_allocator)
 	server := strings.concatenate({"type=unixio,path=", server_path}, context.temp_allocator)
@@ -1020,7 +1021,7 @@ tpm_alone_transact :: proc(alone: ^Tpm_Alone, command: []u8, answer: []u8, what:
 	start := time.tick_now()
 	for received < size {
 		got, receive_error := linux.recv(alone.connection, answer[received:size], {})
-		if (receive_error == .EAGAIN || receive_error == .EINTR) && time.tick_since(start) < HANG_BOUND {
+		if (receive_error == .EAGAIN || receive_error == .EINTR) && time.tick_since(start) < foundation.HANG_BOUND {
 			continue
 		}
 		if receive_error != .NONE || got <= 0 {
@@ -1052,19 +1053,19 @@ tpm_alone_transact :: proc(alone: ^Tpm_Alone, command: []u8, answer: []u8, what:
 // answer TPM_RC_LOCKOUT; read that cause first if the code is 0x921.
 @(private = "file")
 tpm_lockout_reset_tests_run :: proc() -> bool {
-	reset_folder(TPM_LOCKOUT_EMPTY_STATE_FOLDER) or_return
+	foundation.reset_folder(TPM_LOCKOUT_EMPTY_STATE_FOLDER) or_return
 	code := tpm_lockout_reset_try(TPM_LOCKOUT_EMPTY_STATE_FOLDER, 1) or_return
 	if code != tpm2.RESPONSE_SUCCESS {
 		fmt.eprintfln("modustool: test failed: a new TPM, whose lockout value is empty, refused TPM2_DictionaryAttackLockReset with the empty value (response code 0x%X)", code)
 		return false
 	}
-	test_passed_print("%s", "a new TPM, whose lockout value is empty, took TPM2_DictionaryAttackLockReset from another system")
+	foundation.test_passed_print("%s", "a new TPM, whose lockout value is empty, took TPM2_DictionaryAttackLockReset from another system")
 	code = tpm_lockout_reset_try(TPM_KEY_STATE_FOLDER, 2) or_return
 	if !tpm2.authorization_fails(code) {
 		fmt.eprintfln("modustool: test failed: the TPM whose lockout value the TPM service set answered 0x%X to TPM2_DictionaryAttackLockReset with the empty value, not TPM_RC_AUTH_FAIL", code)
 		return false
 	}
-	test_passed_print("the TPM whose lockout value the TPM service set refused TPM2_DictionaryAttackLockReset from another system (response code 0x%X): the count of the wrong passphrases holds", code)
+	foundation.test_passed_print("the TPM whose lockout value the TPM service set refused TPM2_DictionaryAttackLockReset from another system (response code 0x%X): the count of the wrong passphrases holds", code)
 	return true
 }
 
@@ -1074,26 +1075,26 @@ tpm_lockout_reset_tests_run :: proc() -> bool {
 // TPM, on a disk and a state of their own.
 principals_tpm_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_KEY_DISK, DATA_DISK_SIZE, true) or_return
-	reset_folder(TPM_KEY_STATE_FOLDER) or_return
+	foundation.reset_folder(TPM_KEY_STATE_FOLDER) or_return
 	screen_text_forget(part)
 	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_key_seal[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 1) or_return
-	test_passed_print("%s", "machine_seal() sealed the machine key by the TPM, and the window of unlock showed its recovery key")
+	foundation.test_passed_print("%s", "machine_seal() sealed the machine key by the TPM, and the window of unlock showed its recovery key")
 	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 2) or_return
-	test_passed_print("%s", "the same system: the TPM proved the creation and released the machine key with no typing")
+	foundation.test_passed_print("%s", "the same system: the TPM proved the creation and released the machine key with no typing")
 	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_recovery[:], scenario_tpm_key_reseal[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 3) or_return
-	test_passed_print("%s", "another system: the TPM refused, the recovery key opened the machine key, and it was sealed again")
+	foundation.test_passed_print("%s", "another system: the TPM refused, the recovery key opened the machine key, and it was sealed again")
 	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 4) or_return
-	test_passed_print("%s", "the other system after the recovery: the TPM released the machine key with no typing")
+	foundation.test_passed_print("%s", "the other system after the recovery: the TPM released the machine key with no typing")
 	// The record that machine 4 opened, with one byte of its ticket changed,
 	// on a disk of its own: the disk of the part stays as it is.
 	tpm_key_changed_ticket_disk_write() or_return
 	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_changed_ticket[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 5, TEST_TPM_KEY_CHANGED_TICKET_DISK) or_return
-	test_passed_print("%s", "one byte of the creation ticket changed: the TPM refused the ticket, and nothing was unsealed")
+	foundation.test_passed_print("%s", "one byte of the creation ticket changed: the TPM refused the ticket, and nothing was unsealed")
 	// The system of the seal of machine 3 with Secure Boot off: the firmware
 	// with no Secure Boot starts the signed boot program too, so only PCR 7
 	// differs.
 	tpm_key_machine_run(part, [][]Step{scenario_tpm_key_recovery[:], scenario_tpm_key_secure_boot_off[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Tpm_Driver, 6) or_return
-	test_passed_print("%s", "the same system with Secure Boot off: the TPM refused for PCR 7 alone, the recovery key opened the machine key, and no seal trusts the boot program")
+	foundation.test_passed_print("%s", "the same system with Secure Boot off: the TPM refused for PCR 7 alone, the recovery key opened the machine key, and no seal trusts the boot program")
 	fmt.println("modustool: the machine key sealed by the TPM: 6 machines passed")
 	principals_tpm_principal_tests_run(part) or_return
 	return true
@@ -1107,21 +1108,21 @@ principals_tpm_principal_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_PRINCIPAL_DISK, DATA_DISK_SIZE, true) or_return
 	screen_text_forget(part)
 	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_principal_create[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 7, TEST_TPM_PRINCIPAL_DISK) or_return
-	test_passed_print("%s", "principal_create() sealed the keys of alice by the TPM with her passphrase, and the window of unlock showed her recovery key")
+	foundation.test_passed_print("%s", "principal_create() sealed the keys of alice by the TPM with her passphrase, and the window of unlock showed her recovery key")
 	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 8, TEST_TPM_PRINCIPAL_DISK) or_return
-	test_passed_print("%s", "the same system: the TPM counted a wrong passphrase, and released the keys to the right one")
+	foundation.test_passed_print("%s", "the same system: the TPM counted a wrong passphrase, and released the keys to the right one")
 	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 9, TEST_TPM_PRINCIPAL_DISK) or_return
-	test_passed_print("%s", "another system: the TPM refused the passphrase, the recovery key opened the keys, and a new passphrase sealed them again")
+	foundation.test_passed_print("%s", "another system: the TPM refused the passphrase, the recovery key opened the keys, and a new passphrase sealed them again")
 	// The file of alice before the change, as the store holds it: its secret
 	// parts must leave the disk with the change.
 	old_parts := principal_file_parts_read() or_return
 	dropped_block := principal_change_with_a_dropped_zero_run(part, &old_parts) or_return
-	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the lock stopped the window that showed the recovery key of a machine passphrase, which was not written; the old passphrase was refused and counted, and the new one opened the keys")
+	foundation.test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the lock stopped the window that showed the recovery key of a machine passphrase, which was not written; the old passphrase was refused and counted, and the new one opened the keys")
 	principal_file_parts_absent(&old_parts, dropped_block) or_return
 	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_recovery_with_no_try[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
-	test_passed_print("%s", "another system: Ctrl+R asked for the recovery key with no try, the recovery key before the change opened nothing, and the new one opened the keys")
+	foundation.test_passed_print("%s", "another system: Ctrl+R asked for the recovery key with no try, the recovery key before the change opened nothing, and the new one opened the keys")
 	tpm_key_machine_run(part, [][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 12, TEST_TPM_PRINCIPAL_DISK) or_return
-	test_passed_print("%s", "the TPM counted each wrong passphrase, refused each try after three, and the recovery key opened the keys")
+	foundation.test_passed_print("%s", "the TPM counted each wrong passphrase, refused each try after three, and the recovery key opened the keys")
 	fmt.println("modustool: the keys of a named principal sealed by the TPM: 6 machines passed")
 	// After the last machine of the TPM: the try of the reset closes the
 	// lockout hierarchy of that TPM for its recovery time.
@@ -1136,16 +1137,16 @@ principals_tpm_principal_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 @(private = "file")
 principals_tpm_machine_passphrase_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_MACHINE_PASSPHRASE_DISK, DATA_DISK_SIZE, true) or_return
-	reset_folder(TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
+	foundation.reset_folder(TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
 	screen_text_forget(part)
 	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_machine_passphrase_set[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 13, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
-	test_passed_print("%s", "machine_passphrase() on a machine with the TPM: the TPM sealed the machine key with the machine passphrase, and the window of unlock showed its recovery key")
+	foundation.test_passed_print("%s", "machine_passphrase() on a machine with the TPM: the TPM sealed the machine key with the machine passphrase, and the window of unlock showed its recovery key")
 	tpm_key_machine_run(part, [][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 14, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
-	test_passed_print("%s", "the same system: the TPM counted a wrong machine passphrase, and released the machine key to the right one")
+	foundation.test_passed_print("%s", "the same system: the TPM counted a wrong machine passphrase, and released the machine key to the right one")
 	tpm_key_machine_run(part, [][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_other_system[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 15, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
-	test_passed_print("%s", "another system: the TPM refused the right machine passphrase, the recovery key opened the machine key, and a new machine passphrase sealed it again")
+	foundation.test_passed_print("%s", "another system: the TPM refused the right machine passphrase, the recovery key opened the machine key, and a new machine passphrase sealed it again")
 	tpm_key_machine_run(part, [][]Step{tpm_machine_passphrase_asked[:], scenario_tpm_machine_passphrase_after_the_new_seal[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 16, TEST_TPM_MACHINE_PASSPHRASE_DISK, TPM_MACHINE_PASSPHRASE_STATE_FOLDER) or_return
-	test_passed_print("%s", "the other system after the new seal: Ctrl+R asked for the recovery key with no try, the passphrase before the new seal was refused and counted, and the new one opened the machine key")
+	foundation.test_passed_print("%s", "the other system after the new seal: Ctrl+R asked for the recovery key with no try, the passphrase before the new seal was refused and counted, and the new one opened the machine key")
 	fmt.println("modustool: the machine passphrase with the TPM: 4 machines passed")
 	return true
 }

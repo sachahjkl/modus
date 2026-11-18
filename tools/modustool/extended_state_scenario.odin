@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The extended state of the processor: three machines (docs/ARCHITECTURE.md,
 // "The extended state of the processor").
@@ -19,7 +20,7 @@ import "core:strings"
 // (512 bytes), the other form of the same save, and the process holds xmm0
 // to xmm15.
 
-TEST_OUTPUT_EXTENDED_STATE :: BUILD_FOLDER + "/test_output_extended_state.txt"
+TEST_OUTPUT_EXTENDED_STATE :: foundation.BUILD_FOLDER + "/test_output_extended_state.txt"
 
 // What AVX-512 the guest of `-cpu max` gets from this host.
 Host_Avx_512 :: enum {

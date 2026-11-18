@@ -11,7 +11,7 @@ import "modus:support/system"
 // exports of the module in place of the difference and the execution of
 // this package, so the module holds no copy of that code. The modus tool
 // sets it for each module that imports the drawing module (the module table,
-// tools/modustool/modules.odin).
+// tools/modustool/foundation/module_table.odin).
 //
 // A window of such a process has at most one picture memory: a call of
 // the module takes one. A frame with more than one is refused

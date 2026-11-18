@@ -22,6 +22,7 @@ import "core:fmt"
 import "core:strings"
 import "core:unicode/utf8"
 import "modus:support/line_editor"
+import "modustool:foundation"
 
 SITE_SEARCH_INDEX :: "search.json"
 SITE_SEARCH_SCRIPT :: "search.js"
@@ -342,17 +343,17 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		kind: Site_Search_Kind = item.kind == "entry" ? .Entry_Module : .Module
 		site_search_add(&entries, item.build.name, item.page, "", kind, site_source_comment_plain(site, item.description.about))
 		for export in item.description.exports {
-			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))
+			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", foundation.site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))
 		}
 	}
 	for operation in site.reference.operations {
 		if operation.member.number != 0 {
-			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, site_source_comment_plain(site, operation.text))
+			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", foundation.site_slug(operation.member.name)}, context.temp_allocator), .Operation, site_source_comment_plain(site, operation.text))
 		}
 	}
 	for kind in site.reference.error_kinds {
 		if kind.number != 0 {
-			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, site_source_comment_plain(site, kind.comment))
+			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", foundation.site_slug(kind.name)}, context.temp_allocator), .Error_Kind, site_source_comment_plain(site, kind.comment))
 		}
 	}
 	// Each type of the contract, by its name and by its name with its
@@ -370,7 +371,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, title, types_page, type.id, .Type, text)
 	}
 	for command in site.reference.console_commands {
-		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
+		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", foundation.site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({foundation.site_console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
 	}
 	for term in site.terms {
 		// The entry of the term, on the page of its group: a result never
@@ -447,46 +448,6 @@ site_search_problems :: proc(entries: []Site_Search_Entry, written: map[string]s
 	return problems[:]
 }
 
-// site_json_string writes a text as a JSON string. Each character that
-// can end the string or a line of a script is escaped, also when the JSON
-// is put inside a page or a script: the quote, the backslash, the control
-// characters, < > & (no "</script>" in the text), U+2028 and U+2029 (line
-// ends for a script). A byte that is not UTF-8 becomes U+FFFD.
-site_json_string :: proc(b: ^strings.Builder, text: string) {
-	strings.write_byte(b, '"')
-	index := 0
-	for index < len(text) {
-		character, size := utf8.decode_rune_in_string(text[index:])
-		switch {
-		case character == utf8.RUNE_ERROR && size <= 1:
-			strings.write_string(b, "\\ufffd")
-			size = 1
-		case character == '"':
-			strings.write_string(b, "\\\"")
-		case character == '\\':
-			strings.write_string(b, "\\\\")
-		case character == '\n':
-			strings.write_string(b, "\\n")
-		case character == '<':
-			strings.write_string(b, "\\u003c")
-		case character == '>':
-			strings.write_string(b, "\\u003e")
-		case character == '&':
-			strings.write_string(b, "\\u0026")
-		case character == 0x2028:
-			strings.write_string(b, "\\u2028")
-		case character == 0x2029:
-			strings.write_string(b, "\\u2029")
-		case character < 0x20 || character == 0x7F:
-			fmt.sbprintf(b, "\\u%04x", int(character))
-		case:
-			strings.write_string(b, text[index:index + size])
-		}
-		index += size
-	}
-	strings.write_byte(b, '"')
-}
-
 // site_search_index_json gives search.json:
 //   {"kinds": [[<name>, <value kind>], ...], "pages": [[<link>, <title>], ...],
 //    "entries": [[<title>, <page index>, <anchor>, <kind index>, <text>], ...]}
@@ -502,9 +463,9 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 			strings.write_byte(&b, ',')
 		}
 		strings.write_byte(&b, '[')
-		site_json_string(&b, site_search_kinds[kind].name)
+		foundation.site_json_string(&b, site_search_kinds[kind].name)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, value_kinds.VALUE_KIND_NAMES[site_search_kinds[kind].value_kind])
+		foundation.site_json_string(&b, value_kinds.VALUE_KIND_NAMES[site_search_kinds[kind].value_kind])
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"pages\":[")
@@ -512,19 +473,19 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 	for page, index in pages {
 		page_numbers[page.path] = index
 		strings.write_string(&b, index > 0 ? ",\n[" : "\n[")
-		site_json_string(&b, site_page_link(site, SITE_PAGE, page.path))
+		foundation.site_json_string(&b, site_page_link(site, SITE_PAGE, page.path))
 		strings.write_byte(&b, ',')
-		site_json_string(&b, page.title)
+		foundation.site_json_string(&b, page.title)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"entries\":[")
 	for entry, index in entries {
 		strings.write_string(&b, index > 0 ? ",\n[" : "\n[")
-		site_json_string(&b, entry.title)
+		foundation.site_json_string(&b, entry.title)
 		fmt.sbprintf(&b, ",%d,", page_numbers[entry.page])
-		site_json_string(&b, entry.anchor)
+		foundation.site_json_string(&b, entry.anchor)
 		fmt.sbprintf(&b, ",%d,", int(entry.kind))
-		site_json_string(&b, entry.text)
+		foundation.site_json_string(&b, entry.text)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "]}\n")
@@ -562,47 +523,47 @@ site_search_cases_json :: proc() -> string {
 	strings.write_string(&b, "{\"names\":[")
 	for name, index in site_search_match_names {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		site_json_string(&b, name.group)
+		foundation.site_json_string(&b, name.group)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, name.name)
+		foundation.site_json_string(&b, name.name)
 		fmt.sbprintf(&b, ",%d]", name.tie_order)
 	}
 	strings.write_string(&b, "],\"orders\":[")
 	for order, index in site_search_match_orders {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		site_json_string(&b, order.group)
+		foundation.site_json_string(&b, order.group)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, order.query)
+		foundation.site_json_string(&b, order.query)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, order.name)
+		foundation.site_json_string(&b, order.name)
 		fmt.sbprintf(&b, ",%d]", order.score)
 	}
 	strings.write_string(&b, "],\"kinds\":[")
 	for kind_case, index in site_search_kind_cases {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		site_json_string(&b, kind_case.group)
+		foundation.site_json_string(&b, kind_case.group)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, kind_case.query)
+		foundation.site_json_string(&b, kind_case.query)
 		fmt.sbprintf(&b, ",%d,", kind_case.only)
-		site_json_string(&b, kind_case.counts)
+		foundation.site_json_string(&b, kind_case.counts)
 		fmt.sbprintf(&b, ",%d,", kind_case.listed)
-		site_json_string(&b, kind_case.first)
+		foundation.site_json_string(&b, kind_case.first)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\"segments\":[")
 	for segment_case, index in site_search_segment_cases {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		site_json_string(&b, segment_case.counts)
+		foundation.site_json_string(&b, segment_case.counts)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, segment_case.segments)
+		foundation.site_json_string(&b, segment_case.segments)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\"builds\":[")
 	for build_case, index in site_build_notice_cases {
 		strings.write_string(&b, index > 0 ? ",[" : "[")
-		site_json_string(&b, build_case.page_commit)
+		foundation.site_json_string(&b, build_case.page_commit)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, build_case.served)
+		foundation.site_json_string(&b, build_case.served)
 		strings.write_string(&b, build_case.older ? ",true]" : ",false]")
 	}
 	strings.write_string(&b, "]}")
@@ -619,9 +580,9 @@ SITE_VERSION_FILE :: "version.json"
 site_version_json :: proc(commit, build_time: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"commit\": ")
-	site_json_string(&b, commit)
+	foundation.site_json_string(&b, commit)
 	strings.write_string(&b, ", \"built\": ")
-	site_json_string(&b, build_time)
+	foundation.site_json_string(&b, build_time)
 	strings.write_string(&b, "}\n")
 	return strings.to_string(b)
 }
@@ -712,7 +673,7 @@ site_search_field_problem :: proc(page: Site_Page, html: string) -> string {
 }
 
 // The source of the match of the console, which the script ports.
-SITE_SEARCH_MATCH_SOURCE :: SOURCE_FOLDER_SUPPORT + "/line_editor/fuzzy_match.odin"
+SITE_SEARCH_MATCH_SOURCE :: foundation.SOURCE_FOLDER_SUPPORT + "/line_editor/fuzzy_match.odin"
 
 // The script. The match is that of SITE_SEARCH_MATCH_SOURCE: lower, fuzzy_match,
 // ranked_before and rank_candidates (with no skip of equal names), on the

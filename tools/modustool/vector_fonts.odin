@@ -8,6 +8,7 @@ import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:support/vector_font"
+import "modustool:foundation"
 
 // The vector fonts of the system (docs/FONTS.md).
 //
@@ -34,7 +35,7 @@ import "modus:support/vector_font"
 
 VECTOR_FONT_SOURCES_VARIABLE :: "VECTOR_FONT_SOURCES"
 VECTOR_FONT_FOLDER :: "resources/fonts"
-VECTOR_FONT_BUILD_FOLDER :: BUILD_FOLDER + "/fonts"
+VECTOR_FONT_BUILD_FOLDER :: foundation.BUILD_FOLDER + "/fonts"
 GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache.bin"
 GLYPH_CACHE_RESOURCE :: "glyph_cache"
 GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_no_grid_fit.bin"
@@ -104,10 +105,10 @@ run_vector_fonts :: proc(args: []string) -> int {
 	sources := os.get_env(VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)
 	if sources == "" {
 		fmt.eprintln("modustool: " + VECTOR_FONT_SOURCES_VARIABLE + " is not set. Use the development shell: nix develop")
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
-	make_folder(VECTOR_FONT_FOLDER)
-	make_folder(VECTOR_FONT_BUILD_FOLDER)
+	foundation.make_folder(VECTOR_FONT_FOLDER)
+	foundation.make_folder(VECTOR_FONT_BUILD_FOLDER)
 	fmt.printfln("%-18s %10s %8s %10s %8s %8s %8s %6s %s", "font", "source", "subset", "composite", "advance", "x-height", "cap", "pairs", "zero")
 	// proportional: each character has its own advance; the subset keeps
 	// the pair adjustments of kern.
@@ -136,26 +137,26 @@ run_vector_fonts :: proc(args: []string) -> int {
 		}
 		if path == "" {
 			fmt.eprintfln("modustool: %s has no %s", VECTOR_FONT_SOURCES_VARIABLE, candidate.name)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
-		source, read := read_file(path)
+		source, read := foundation.read_file(path)
 		if !read {
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		subset, report, ok := font_subset(source, candidate, request.proportional)
 		if !ok {
 			fmt.eprintfln("modustool: %s: %s", path, report.problem)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
-		output := join(VECTOR_FONT_FOLDER, "/", candidate.name, ".ttf")
+		output := foundation.join(VECTOR_FONT_FOLDER, "/", candidate.name, ".ttf")
 		if err := os.write_entire_file(output, subset); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", output, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
-		license_path := join(VECTOR_FONT_FOLDER, "/", candidate.name, ".license")
+		license_path := foundation.join(VECTOR_FONT_FOLDER, "/", candidate.name, ".license")
 		if err := os.write_entire_file(license_path, transmute([]u8)report.license_text); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", license_path, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d %6d %s", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height, report.pairs, report.zero)
 		for equivalent in report.equivalents {
@@ -167,7 +168,7 @@ run_vector_fonts :: proc(args: []string) -> int {
 	}
 	_, interface_written := interface_glyph_caches_write()
 	if !candidates_picture_write() || !interface_written {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: the subsets are in %s, the picture of the choice is %s", VECTOR_FONT_FOLDER, CANDIDATES_PICTURE)
 	return 0
@@ -782,7 +783,7 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 // them as resources of the boot image. The setting "grid_fit" of the
 // system chooses one of the first two at run time.
 build_glyph_caches :: proc() -> (resources: [6]Resource_File, ok: bool) {
-	make_folder(VECTOR_FONT_BUILD_FOLDER)
+	foundation.make_folder(VECTOR_FONT_BUILD_FOLDER)
 	builds := [3]struct {
 		font:         string,
 		grid_fit:     bool,
@@ -790,7 +791,7 @@ build_glyph_caches :: proc() -> (resources: [6]Resource_File, ok: bool) {
 		output, name: string,
 	}{{DEFAULT_VECTOR_FONT, true, 3, GLYPH_CACHE_OUTPUT, GLYPH_CACHE_RESOURCE}, {DEFAULT_VECTOR_FONT, false, 3, GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT, GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE}, {EMPHASIS_VECTOR_FONT, true, 1, GLYPH_CACHE_BOLD_OUTPUT, GLYPH_CACHE_BOLD_RESOURCE}}
 	for build, index in builds {
-		font := read_file(join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
+		font := foundation.read_file(foundation.join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
 		cache := glyph_cache_of(font, build.font, build.grid_fit, build.scale_count) or_return
 		if err := os.write_entire_file(build.output, cache); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", build.output, err)
@@ -825,7 +826,7 @@ font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
 			fmt.eprintfln("modustool: the font %s has a name of %d bytes; the font outlines hold names of 1 to %d bytes", name, len(name), font_outlines.NAME_SIZE - 1)
 			return {}, false
 		}
-		bytes := read_file(join(VECTOR_FONT_FOLDER, "/", name, ".ttf")) or_return
+		bytes := foundation.read_file(foundation.join(VECTOR_FONT_FOLDER, "/", name, ".ttf")) or_return
 		fonts[index] = {name = name, bytes = bytes}
 	}
 	size := font_outlines.resource_size(fonts[:])
@@ -863,7 +864,7 @@ interface_glyph_caches_write :: proc() -> (resources: [2]Resource_File, ok: bool
 		positions:          []int,
 	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_GLYPH_CACHE_RESOURCE, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_GLYPH_CACHE_BOLD_RESOURCE, INTERFACE_BOLD_POSITIONS[:]}}
 	for build, index in builds {
-		font_bytes := read_file(join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
+		font_bytes := foundation.read_file(foundation.join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
 		font, problem := vector_font.font_open(font_bytes)
 		memory := new(vector_font.Render_Memory, context.temp_allocator)
 		words := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8, context.temp_allocator)

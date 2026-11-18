@@ -6,6 +6,7 @@ package modustool
 
 import "core:fmt"
 import "core:strings"
+import "modustool:foundation"
 
 SITE_NEWS_FEED :: "news.xml"
 // The entries that the home shows.
@@ -50,7 +51,7 @@ Site_News :: struct {
 // site_news_anchor gives the id of an entry on the page of the news: from its file
 // name, which no other entry has.
 site_news_anchor :: proc(entry: News_Entry) -> string {
-	return strings.concatenate({"news-", site_slug(strings.trim_suffix(entry.file_name, ".md"))}, context.temp_allocator)
+	return strings.concatenate({"news-", foundation.site_slug(strings.trim_suffix(entry.file_name, ".md"))}, context.temp_allocator)
 }
 
 // site_news_read reads and checks the entries, before any page is written.
@@ -67,8 +68,8 @@ site_news_read :: proc(site: ^Site) -> bool {
 	for entry in entries {
 		item := Site_News{entry = entry, anchor = site_news_anchor(entry)}
 		if entry.picture != NEWS_NONE {
-			data := read_file(entry.picture) or_return
-			item.picture_width, item.picture_height, _ = site_png_size(data)
+			data := foundation.read_file(entry.picture) or_return
+			item.picture_width, item.picture_height, _ = foundation.site_png_size(data)
 			item.picture = strings.concatenate({SITE_PICTURE_FOLDER, "/", site_file_name(entry.picture)}, context.temp_allocator)
 			site.copies[item.picture] = entry.picture
 			// The alt text: the caption of the picture in README.md, the
@@ -83,7 +84,7 @@ site_news_read :: proc(site: ^Site) -> bool {
 		}
 		if news_entry_has_film(entry) && item.picture != "" {
 			// The site copies the file as it is: it needs no encoder.
-			data := read_file(entry.film) or_return
+			data := foundation.read_file(entry.film) or_return
 			film_width, film_height, sized := film_document_picture_size(data)
 			if !sized {
 				fmt.eprintfln("modustool: site: the film %s states no width and no height of its pictures", entry.film)
@@ -102,7 +103,7 @@ site_news_read :: proc(site: ^Site) -> bool {
 // site_news_lead gives the first sentence of the first paragraph of an
 // entry: its line on the home and its summary in the feed.
 site_news_lead :: proc(entry: News_Entry) -> string {
-	paragraphs := site_paragraphs(site_lines(entry.text))
+	paragraphs := site_paragraphs(foundation.site_lines(entry.text))
 	if len(paragraphs) == 0 {
 		return entry.title
 	}
@@ -131,7 +132,7 @@ site_news_meta :: proc(site: ^Site, b: ^strings.Builder, from_page: string, entr
 				}
 			}
 			fmt.sbprintf(b, " - the guide <a href=\"%s\">", site_page_link(site, from_page, page))
-			site_escape(b, title)
+			foundation.site_escape(b, title)
 			strings.write_string(b, "</a>")
 		}
 	}
@@ -216,7 +217,7 @@ site_news_add :: proc(site: ^Site) {
 		item.body = strings.clone(strings.to_string(renderer.builder), context.temp_allocator)
 
 		fmt.sbprintf(&b, "<article class=\"card news-entry %s\" id=\"%s\">\n<h2>", site_news_kind_classes[entry.kind], item.anchor)
-		site_escape(&b, entry.title)
+		foundation.site_escape(&b, entry.title)
 		strings.write_string(&b, "</h2>\n")
 		site_news_meta(site, &b, path, entry, true)
 		// A picture stands beside the text. A film stands under it, over
@@ -258,7 +259,7 @@ site_news_home :: proc(site: ^Site, b: ^strings.Builder) {
 		// under its line of the kind, in the row of the pictures.
 		without_picture: string = item.picture == "" ? " news-card-without-picture" : ""
 		fmt.sbprintf(b, "<article class=\"card news-card %s%s\">\n<h3><a href=\"%s#%s\">", site_news_kind_classes[entry.kind], without_picture, news_link, item.anchor)
-		site_escape(b, entry.title)
+		foundation.site_escape(b, entry.title)
 		strings.write_string(b, "</a></h3>\n")
 		site_news_meta(site, b, home, entry, false)
 		if item.film != "" {
@@ -283,7 +284,7 @@ site_news_of_release :: proc(site: ^Site, b: ^strings.Builder, from_page, releas
 		}
 		strings.write_string(b, count == 0 ? "<p class=\"news-links\">News: " : ", ")
 		fmt.sbprintf(b, "<a href=\"%s#%s\">", site_page_link(site, from_page, site_section_page(.News)), item.anchor)
-		site_escape(b, item.entry.title)
+		foundation.site_escape(b, item.entry.title)
 		strings.write_string(b, "</a>")
 		count += 1
 	}
@@ -321,7 +322,7 @@ site_feed_page_address :: proc(site: ^Site, target: string) -> string {
 
 // site_xml_escape writes a text for XML: the five characters of markup.
 site_xml_escape :: proc(b: ^strings.Builder, text: string) {
-	site_escape(b, text)
+	foundation.site_escape(b, text)
 }
 
 // site_news_feed gives the Atom feed of the news (RFC 4287). The id of

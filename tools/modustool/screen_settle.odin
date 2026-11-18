@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // When the tool takes a picture of the screen
 // (docs/TOOLS.md, "When the tool takes a picture").
@@ -206,7 +207,7 @@ Screen_Settle_Result :: enum {
 // draw with no end. what names the picture in a message of failure.
 screen_settle_wait_by_calls :: proc(machine: ^Machine, what: string) -> Screen_Settle_Result {
 	problem := ""
-	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
 		before, before_read := settle_processes_read(machine)
 		if !before_read {
 			return .Not_Readable
@@ -224,7 +225,7 @@ screen_settle_wait_by_calls :: proc(machine: ^Machine, what: string) -> Screen_S
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
-	fmt.eprintfln("modustool: test failed: the screen did not settle within %v before the picture %s: %s", HANG_BOUND, what, problem)
+	fmt.eprintfln("modustool: test failed: the screen did not settle within %v before the picture %s: %s", foundation.HANG_BOUND, what, problem)
 	return .Hang
 }
 

@@ -6,6 +6,7 @@ import "core:time"
 
 import "modus:contract/glyph_cache"
 import "modus:support/graphics"
+import "modustool:foundation"
 
 // The read of a text off the screen (docs/TOOLS.md, "How a step reads a text off the screen"):
 // a step Screen_Text reads the text of a named element of a window from a
@@ -112,7 +113,7 @@ text_fills_its_box :: proc(text: string) -> bool {
 screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) -> (text: string, ok: bool) {
 	element_x, element_y, element_width, element_height: int
 	found := Element_Line.Absent
-	for start := time.now(); time.since(start) < HANG_BOUND; {
+	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		element_x, element_y, element_width, element_height, found = element_line_read(log_read(machine), owner, element)
 		if found == .Placed {
 			break
@@ -120,7 +121,7 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 		log_change_wait(machine)
 	}
 	if found != .Placed || element_height < graphics.CELL_HEIGHT {
-		fmt.eprintfln("modustool: test failed: step %d: the element %s of %s is not placed as one line of text within %v", index + 1, element, owner, HANG_BOUND)
+		fmt.eprintfln("modustool: test failed: step %d: the element %s of %s is not placed as one line of text within %v", index + 1, element, owner, foundation.HANG_BOUND)
 		return "", false
 	}
 	window_x, window_y, placed := window_place(machine, owner)
@@ -146,11 +147,11 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 		if read && text_fills_its_box(text) {
 			break
 		}
-		if time.since(read_start) >= HANG_BOUND {
-			fmt.eprintfln("modustool: test failed: step %d: the element %s of %s at %d,%d of the screen is not a text of Spleen 8x16 that fills its box within %v (set the font to spleen first)", index + 1, element, owner, x, y, HANG_BOUND)
+		if time.since(read_start) >= foundation.HANG_BOUND {
+			fmt.eprintfln("modustool: test failed: step %d: the element %s of %s at %d,%d of the screen is not a text of Spleen 8x16 that fills its box within %v (set the font to spleen first)", index + 1, element, owner, x, y, foundation.HANG_BOUND)
 			return "", false
 		}
 	}
-	test_passed_print("the tool read the element %s of %s off the screen: %d characters", element, owner, len(text))
+	foundation.test_passed_print("the tool read the element %s of %s off the screen: %d characters", element, owner, len(text))
 	return text, true
 }

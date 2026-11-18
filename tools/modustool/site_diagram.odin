@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The font of the diagrams in the site, and the name of its family in the
 // style sheet. The text of a picture asks for this font only, so the
@@ -32,7 +33,7 @@ site_diagram_fence_write :: proc(renderer: ^Site_Renderer, body: string, fence_l
 		append(&site.diagram_problems, fmt.tprintf("%s, line %d: %s", site_renderer_place(renderer), fence_line + problem.line, problem.text))
 	}
 	strings.write_string(&renderer.builder, "<pre><code>")
-	site_escape(&renderer.builder, body)
+	foundation.site_escape(&renderer.builder, body)
 	strings.write_string(&renderer.builder, "</code></pre>\n")
 }
 
@@ -107,7 +108,7 @@ site_diagram_html_write :: proc(b: ^strings.Builder, picture: ^Site_Diagram_Pict
 		}
 	}
 	strings.write_string(b, "</svg>\n<details class=\"diagram-source\"><summary>The text of the diagram</summary><pre><code>")
-	site_escape(b, body)
+	foundation.site_escape(b, body)
 	strings.write_string(b, "</code></pre></details>\n</figure>\n")
 }
 
@@ -122,7 +123,7 @@ site_diagram_box_write :: proc(b: ^strings.Builder, font: ^Site_Diagram_Font, bo
 		x := box.text_place.x + box.text_place.width / 2
 		y := box.text_place.y + line_index * font.line_height + font.baseline
 		fmt.sbprintf(b, "<text class=\"%s\" x=\"%d\" y=\"%d\" text-anchor=\"middle\" textLength=\"%d\" lengthAdjust=\"spacingAndGlyphs\">", text_class, x, y, box.text.widths[line_index])
-		site_escape(b, line)
+		foundation.site_escape(b, line)
 		strings.write_string(b, "</text>\n")
 	}
 }

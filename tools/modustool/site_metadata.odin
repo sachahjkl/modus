@@ -16,6 +16,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 SITE_SITEMAP :: "sitemap.xml"
 SITE_ROBOTS :: "robots.txt"
@@ -169,7 +170,7 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 	}
 	if site.author != "" {
 		strings.write_string(b, "<meta name=\"author\" content=\"")
-		site_escape(b, site.author)
+		foundation.site_escape(b, site.author)
 		strings.write_string(b, "\">\n")
 	}
 	if site.address == "" {
@@ -179,11 +180,11 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 	card_address := site_file_address(site.address, SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD)
 	meta :: proc(b: ^strings.Builder, property, value: string) {
 		fmt.sbprintf(b, "<meta property=\"%s\" content=\"", property)
-		site_escape(b, value)
+		foundation.site_escape(b, value)
 		strings.write_string(b, "\">\n")
 	}
 	strings.write_string(b, "<link rel=\"canonical\" href=\"")
-	site_escape(b, page_address)
+	foundation.site_escape(b, page_address)
 	strings.write_string(b, "\">\n")
 	meta(b, "og:type", site_guide_index(site, page.path) >= 0 ? "article" : "website")
 	meta(b, "og:site_name", SITE_SYSTEM_NAME)
@@ -232,7 +233,7 @@ site_json_key :: proc(object: ^Site_Json_Object, key: string) {
 		strings.write_byte(object.builder, ',')
 	}
 	object.first = false
-	site_json_string(object.builder, key)
+	foundation.site_json_string(object.builder, key)
 	strings.write_byte(object.builder, ':')
 }
 
@@ -242,7 +243,7 @@ site_json_text :: proc(object: ^Site_Json_Object, key, value: string) {
 		return
 	}
 	site_json_key(object, key)
-	site_json_string(object.builder, value)
+	foundation.site_json_string(object.builder, value)
 }
 
 site_json_number :: proc(object: ^Site_Json_Object, key: string, value: int) {
@@ -254,7 +255,7 @@ site_json_number :: proc(object: ^Site_Json_Object, key: string, value: int) {
 site_json_reference :: proc(object: ^Site_Json_Object, key, id: string) {
 	site_json_key(object, key)
 	strings.write_string(object.builder, "{\"@id\":")
-	site_json_string(object.builder, id)
+	foundation.site_json_string(object.builder, id)
 	strings.write_byte(object.builder, '}')
 }
 
@@ -819,7 +820,7 @@ site_language_model_index :: proc(site: ^Site) -> string {
 // type with no alpha channel (gray or RGB) and no tRNS chunk. Other sites
 // show the card on any background, so it must cover its rectangle.
 site_png_is_opaque :: proc(data: []u8) -> bool {
-	if _, _, is_png := site_png_size(data); !is_png || len(data) < 26 {
+	if _, _, is_png := foundation.site_png_size(data); !is_png || len(data) < 26 {
 		return false
 	}
 	color_type := data[25]

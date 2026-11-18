@@ -1,6 +1,7 @@
 package modustool
 
 import "core:testing"
+import "modustool:foundation"
 
 @(test)
 operation_count_reads_the_enumeration :: proc(t: ^testing.T) {
@@ -58,8 +59,8 @@ remake(3)
 // The two rules hold in the sources of the repository.
 @(test)
 rules_of_the_repository :: proc(t: ^testing.T) {
-	source, source_ok := site_read_quiet(OPERATION_SOURCE)
-	document, document_ok := site_read_quiet(OPERATION_PROPERTY_DOCUMENT)
+	source, source_ok := foundation.site_read_quiet(foundation.OPERATION_SOURCE)
+	document, document_ok := foundation.site_read_quiet(OPERATION_PROPERTY_DOCUMENT)
 	testing.expect(t, source_ok && document_ok)
 	declared, declared_ok := operation_count_of_source(source)
 	stated, stated_ok := operation_count_of_document(document)

@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
 import "core:time"
+import "modustool:foundation"
 
 // The connection of the tool to the machine protocol of QEMU: a Unix
 // stream socket that QEMU listens on, beside the log of the machine. One
@@ -31,13 +32,13 @@ qmp_socket_of :: proc(output: string) -> string {
 // starts: the tool tries until the socket takes the connection.
 qmp_open :: proc(qmp: ^Qmp, path: string) -> bool {
 	connected := false
-	for start := time.tick_now(); !connected && time.tick_since(start) < HANG_BOUND; {
+	for start := time.tick_now(); !connected && time.tick_since(start) < foundation.HANG_BOUND; {
 		if qmp.connection, connected = call_socket_connect(path); !connected {
 			time.sleep(CONDITION_POLL_PERIOD)
 		}
 	}
 	if !connected {
-		fmt.eprintfln("modustool: test failed: QEMU did not take a connection at %s within %v", path, HANG_BOUND)
+		fmt.eprintfln("modustool: test failed: QEMU did not take a connection at %s within %v", path, foundation.HANG_BOUND)
 		return false
 	}
 	qmp.open = true
@@ -77,7 +78,7 @@ qmp_line_read :: proc(qmp: ^Qmp) -> (line: string, ok: bool) {
 				return line, true
 			}
 		}
-		if time.tick_since(start) >= HANG_BOUND {
+		if time.tick_since(start) >= foundation.HANG_BOUND {
 			return "", false
 		}
 		buffer: [4096]u8
@@ -122,7 +123,7 @@ qmp_command :: proc(qmp: ^Qmp, command: string, print_failure := true) -> (value
 		reply, read := qmp_line_read(qmp)
 		if !read {
 			if !qmp.ended && print_failure {
-				fmt.eprintfln("modustool: test failed: QEMU gave no reply to the command %s within %v", command, HANG_BOUND)
+				fmt.eprintfln("modustool: test failed: QEMU gave no reply to the command %s within %v", command, foundation.HANG_BOUND)
 			}
 			return "", false
 		}

@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // A time in a machine test has one role: to end a test that hangs. Each
 // step has HANG_BOUND, and a step with a bound of its own names it with a
@@ -13,7 +14,7 @@ TEST_BOUND_FIELD :: "seconds = "
 
 test_bound_check :: proc() -> bool {
 	files := make([dynamic]string, context.temp_allocator)
-	source_files_of_a_folder(TEST_BOUND_FOLDER, &files) or_return
+	foundation.source_files_of_a_folder(TEST_BOUND_FOLDER, &files) or_return
 	texts := make([]string, len(files), context.temp_allocator)
 	for path, index in files {
 		bytes, read_error := os.read_entire_file(path, context.temp_allocator)
@@ -81,7 +82,7 @@ test_bound_check :: proc() -> bool {
 	if found > 0 {
 		return false
 	}
-	test_passed_print("each of the %d steps with a bound of its own names a constant with its reason, and each of the %d time.sleep of the tool names its period (%d files read)", bounds, sleeps, len(files))
+	foundation.test_passed_print("each of the %d steps with a bound of its own names a constant with its reason, and each of the %d time.sleep of the tool names its period (%d files read)", bounds, sleeps, len(files))
 	return true
 }
 

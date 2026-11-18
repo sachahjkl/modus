@@ -9,6 +9,7 @@ import module "modus:contract/module"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
+import "modustool:foundation"
 
 // The fuzz targets of the text between processes
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"):
@@ -431,7 +432,7 @@ fuzz_sentences_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	copy(mem.ptr_to_bytes(&record), input)
 	rest := input[min(len(input), size_of(record)):]
 	choices := fuzz_choices_of(rest)
-	chosen := enum_member_at(Fuzz_Sentence, fuzz_choice_below(&choices, len(Fuzz_Sentence)))
+	chosen := foundation.enum_member_at(Fuzz_Sentence, fuzz_choice_below(&choices, len(Fuzz_Sentence)))
 	small_size := fuzz_choice_below(&choices, 256)
 	file := rest[min(len(rest), choices.place):]
 	// The readers of a module file need validate first, as each caller

@@ -8,16 +8,17 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 SITE_NOT_RECORDED :: "not recorded"
 SITE_FLAKE_FILE :: "flake.nix"
 SITE_FLAKE_LOCK_FILE :: "flake.lock"
 SITE_FONT_FOLDER :: "resources/fonts"
-SITE_SPLEEN_LICENSE_FILE :: SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
+SITE_SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
 SITE_POSY_MANIFEST :: "resources/pointers/posy.manifest"
 SITE_SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest"
-SITE_ODIN_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
-SITE_FIAT_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.fiat-crypto.txt"
+SITE_ODIN_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
+SITE_FIAT_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.fiat-crypto.txt"
 // The start of the line of a license file that names its license, in the
 // form of SPDX: "SPDX-License-Identifier: BSD-2-Clause".
 SPDX_IDENTIFIER_LINE_START :: "SPDX-License-Identifier: "
@@ -78,7 +79,7 @@ Site_Font_License :: struct {
 }
 
 site_font_license_parse :: proc(file_name, content: string) -> (font: Site_Font_License, problem: string) {
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	if len(lines) == 0 || strings.trim_space(lines[0]) == "" {
 		return {}, fmt.tprintf("%s: line 1 must be the copyright", file_name)
 	}
@@ -119,7 +120,7 @@ Site_Pointer_Manifest :: struct {
 
 site_pointer_manifest_parse :: proc(file_name, content: string) -> (manifest: Site_Pointer_Manifest, problem: string) {
 	attribution := make([dynamic]string, context.temp_allocator)
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		switch {
 		case strings.has_prefix(line, "theme "):
 			manifest.theme = strings.trim_space(line[len("theme "):])
@@ -174,20 +175,6 @@ Site_Flake :: struct {
 	spleen_package:   string,
 }
 
-// site_quoted gives the text between the first two quotes after start.
-site_quoted :: proc(line: string, start: int = 0) -> (text: string, end: int, found: bool) {
-	first := strings.index_byte(line[start:], '"')
-	if first < 0 {
-		return "", 0, false
-	}
-	first += start + 1
-	second := strings.index_byte(line[first:], '"')
-	if second < 0 {
-		return "", 0, false
-	}
-	return line[first:first + second], first + second + 1, true
-}
-
 // site_package_after gives the name after "${pkgs." up to the next "." or "}".
 site_package_after :: proc(line: string) -> string {
 	start := strings.index(line, "${pkgs.")
@@ -205,21 +192,21 @@ site_package_after :: proc(line: string) -> string {
 site_flake_parse :: proc(content: string) -> (flake: Site_Flake, problem: string) {
 	flake.fetchers = make(map[string]Site_Flake_Fetcher, context.temp_allocator)
 	flake.font_sources = make(map[string]Site_Flake_Source, context.temp_allocator)
-	lines := site_lines(content)
+	lines := foundation.site_lines(content)
 	odin_line := -1
 	current_fetcher := ""
 	for raw_line, index in lines {
 		line := strings.trim_space(raw_line)
 		switch {
 		case strings.has_prefix(line, "odinRelease = "):
-			flake.odin_release, _, _ = site_quoted(line)
+			flake.odin_release, _, _ = foundation.site_quoted(line)
 			odin_line = index
 		case odin_line >= 0 && flake.odin_owner == "" && strings.has_prefix(line, "owner = "):
-			flake.odin_owner, _, _ = site_quoted(line)
+			flake.odin_owner, _, _ = foundation.site_quoted(line)
 		case odin_line >= 0 && flake.odin_repository == "" && strings.has_prefix(line, "repo = "):
-			flake.odin_repository, _, _ = site_quoted(line)
+			flake.odin_repository, _, _ = foundation.site_quoted(line)
 		case odin_line >= 0 && flake.odin_hash == "" && strings.has_prefix(line, "hash = \""):
-			flake.odin_hash, _, _ = site_quoted(line)
+			flake.odin_hash, _, _ = foundation.site_quoted(line)
 		case strings.has_prefix(line, "buildTools = [") && strings.has_suffix(line, "];"):
 			inner := line[len("buildTools = ["):len(line) - len("];")]
 			tools := make([dynamic]string, context.temp_allocator)
@@ -230,11 +217,11 @@ site_flake_parse :: proc(content: string) -> (flake: Site_Flake, problem: string
 			}
 			flake.build_tools = tools[:]
 		case strings.has_prefix(line, "config.allowUnfreePredicate = "):
-			flake.unfree_allowed, _, _ = site_quoted(line)
+			flake.unfree_allowed, _, _ = foundation.site_quoted(line)
 		case strings.has_suffix(line, " = name: hash:"):
 			current_fetcher = line[:len(line) - len(" = name: hash:")]
 		case current_fetcher != "" && strings.has_prefix(line, "url = \"https://raw.githubusercontent.com/"):
-			address, _, _ := site_quoted(line)
+			address, _, _ := foundation.site_quoted(line)
 			parts := strings.split(address[len("https://raw.githubusercontent.com/"):], "/", context.temp_allocator)
 			if len(parts) >= 3 {
 				flake.fetchers[current_fetcher] = {owner = parts[0], repository = parts[1], commit = parts[2]}
@@ -260,9 +247,9 @@ site_flake_parse :: proc(content: string) -> (flake: Site_Flake, problem: string
 				source.fetcher = rest[:space]
 				end: int
 				found: bool
-				source.file, end, found = site_quoted(rest, space)
+				source.file, end, found = foundation.site_quoted(rest, space)
 				hash_found: bool
-				source.hash, _, hash_found = site_quoted(rest, end)
+				source.hash, _, hash_found = foundation.site_quoted(rest, end)
 				if !found || !hash_found {
 					return {}, fmt.tprintf("%s, line %d: a font source \"<font>=${<fetcher> \"<file>\" \"<hash>\"}\" is expected", SITE_FLAKE_FILE, index + 1)
 				}
@@ -287,14 +274,14 @@ site_flake_parse :: proc(content: string) -> (flake: Site_Flake, problem: string
 // first line "rev": "<commit>" after the line "nixpkgs": {.
 site_flake_lock_revision :: proc(content: string) -> (revision: string, problem: string) {
 	in_nixpkgs := false
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		trimmed := strings.trim_space(line)
 		if trimmed == "\"nixpkgs\": {" {
 			in_nixpkgs = true
 			continue
 		}
 		if in_nixpkgs && strings.has_prefix(trimmed, "\"rev\": \"") {
-			text, _, found := site_quoted(trimmed, len("\"rev\":"))
+			text, _, found := foundation.site_quoted(trimmed, len("\"rev\":"))
 			if found && text != "" {
 				return text, ""
 			}
@@ -305,7 +292,7 @@ site_flake_lock_revision :: proc(content: string) -> (revision: string, problem:
 
 // site_line_after gives the rest of the first line that starts with start.
 site_line_after :: proc(content, start: string) -> string {
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		if strings.has_prefix(line, start) {
 			return strings.trim_space(line[len(start):])
 		}
@@ -333,12 +320,12 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 		return "no"
 	}
 
-	flake_text := site_read(SITE_FLAKE_FILE) or_return
+	flake_text := foundation.site_read(SITE_FLAKE_FILE) or_return
 	flake, flake_problem := site_flake_parse(flake_text)
 	if flake_problem != "" {
 		return {}, fail(flake_problem)
 	}
-	lock_text := site_read(SITE_FLAKE_LOCK_FILE) or_return
+	lock_text := foundation.site_read(SITE_FLAKE_LOCK_FILE) or_return
 	nixpkgs_revision, lock_problem := site_flake_lock_revision(lock_text)
 	if lock_problem != "" {
 		return {}, fail(lock_problem)
@@ -346,8 +333,8 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	nixpkgs_version := strings.concatenate({"nixpkgs ", nixpkgs_revision[:min(12, len(nixpkgs_revision))]}, context.temp_allocator)
 
 	// The system itself.
-	license_text := site_read(SITE_LICENSE_FILE) or_return
-	license_lines := site_lines(license_text)
+	license_text := foundation.site_read(SITE_LICENSE_FILE) or_return
+	license_lines := foundation.site_lines(license_text)
 	system_row := Site_License_Row {
 		what          = SITE_SYSTEM_NAME,
 		place         = SITE_LICENSE_FILE,
@@ -369,7 +356,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	append(&fonts, ..vector_font_interface[:])
 	for candidate in fonts {
 		file_name := strings.concatenate({SITE_FONT_FOLDER, "/", candidate.name, ".license"}, context.temp_allocator)
-		text := site_read(file_name) or_return
+		text := foundation.site_read(file_name) or_return
 		font, font_problem := site_font_license_parse(file_name, text)
 		if font_problem != "" {
 			return {}, fail(font_problem)
@@ -395,8 +382,8 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 
 	// Spleen: the fallback font, compiled into src/library/support/graphics.
-	spleen_text := site_read(SITE_SPLEEN_LICENSE_FILE) or_return
-	spleen_lines := site_lines(spleen_text)
+	spleen_text := foundation.site_read(SITE_SPLEEN_LICENSE_FILE) or_return
+	spleen_lines := foundation.site_lines(spleen_text)
 	spleen := Site_License_Row {
 		what          = "Spleen 8x16",
 		place         = SITE_SPLEEN_LICENSE_FILE,
@@ -421,7 +408,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 
 	// The pointer themes.
 	for manifest_path in ([]string{SITE_SYSTEM_POINTER_MANIFEST, SITE_POSY_MANIFEST}) {
-		text := site_read(manifest_path) or_return
+		text := foundation.site_read(manifest_path) or_return
 		manifest, manifest_problem := site_pointer_manifest_parse(manifest_path, text)
 		if manifest_problem != "" {
 			return {}, fail(manifest_problem)
@@ -446,18 +433,18 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 
 	// The cryptography taken from Odin.
-	odin_license_text := site_read(SITE_ODIN_LICENSE_FILE) or_return
-	fiat_text := site_read(SITE_FIAT_LICENSE_FILE) or_return
-	manifest_text := site_read(CRYPTOGRAPHY_MANIFEST) or_return
+	odin_license_text := foundation.site_read(SITE_ODIN_LICENSE_FILE) or_return
+	fiat_text := foundation.site_read(SITE_FIAT_LICENSE_FILE) or_return
+	manifest_text := foundation.site_read(foundation.CRYPTOGRAPHY_MANIFEST) or_return
 	taken := 0
-	for line in site_lines(manifest_text) {
+	for line in foundation.site_lines(manifest_text) {
 		if strings.trim_space(line) != "" && !strings.has_prefix(line, "#") {
 			taken += 1
 		}
 	}
 	crypto := Site_License_Row {
 		what          = fmt.tprintf("Cryptography taken from Odin's core:crypto (%d files)", taken),
-		place         = CRYPTOGRAPHY_FOLDER,
+		place         = foundation.CRYPTOGRAPHY_FOLDER,
 		license       = strings.contains(odin_license_text, "(zlib)") ? "Zlib" : SITE_NOT_RECORDED,
 		author        = site_line_after(odin_license_text, "Copyright "),
 		in_boot_image = in_image(boot_image, "cryptography"),

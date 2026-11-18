@@ -11,6 +11,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "modustool:foundation"
 
 MEASURE_RECORD_FOLDER :: "docs/measures"
 MEASURE_RECORD_FILE :: MEASURE_RECORD_FOLDER + "/measures.txt"
@@ -90,7 +91,7 @@ measure_time_text :: proc(moment: time.Time) -> string {
 measure_run_facts_read :: proc() -> Measure_Run_Facts {
 	// The commit is kept in memory of its own: the pass frees the temporary
 	// memory many times before it writes the record.
-	facts := Measure_Run_Facts{started = time.now(), commit = strings.clone(site_git_commit())}
+	facts := Measure_Run_Facts{started = time.now(), commit = strings.clone(foundation.site_git_commit())}
 	command := [?]string{"git", "status", "--porcelain"}
 	state, standard_output, _, error := os.process_exec({command = command[:]}, context.temp_allocator)
 	if error == nil && state.exited && state.success {
@@ -144,7 +145,7 @@ measure_text_without_private :: proc(text: string, names: Measure_Private_Names)
 measure_host_text :: proc(processor_information: string, has_kvm: bool) -> string {
 	model := "a processor whose model the tool cannot read"
 	count := 0
-	for line in site_lines(processor_information) {
+	for line in foundation.site_lines(processor_information) {
 		colon := strings.index_byte(line, ':')
 		if colon < 0 {
 			continue
@@ -215,7 +216,7 @@ measure_record_number_read :: proc(measure: Site_Measure, started: time.Time, na
 // the main machine, with the texts of the host cut out.
 measure_boot_lines :: proc(content: string, names: Measure_Private_Names) -> []string {
 	lines := make([dynamic]string, context.temp_allocator)
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		if strings.has_prefix(line, SITE_BOOT_STAGE_PREFIX) {
 			append(&lines, measure_text_without_private(line, names))
 		}
@@ -266,7 +267,7 @@ measure_record_format :: proc(record: Measure_Record) -> string {
 // measure_record_parse reads a record in its form. The file is a file of
 // the repository that a developer can change: each line is checked.
 measure_record_parse :: proc(text: string) -> (record: Measure_Record, problem: string) {
-	lines := site_lines(text)
+	lines := foundation.site_lines(text)
 	for len(lines) > 0 && lines[len(lines) - 1] == "" {
 		lines = lines[:len(lines) - 1]
 	}
@@ -374,9 +375,9 @@ measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
 		time          = measure_time_text(time.now()),
 		commit        = facts.commit,
 		tree          = facts.tree,
-		checks_passed = sync.atomic_load(&test_passed_count),
+		checks_passed = sync.atomic_load(&foundation.test_passed_count),
 	}
-	processor_information, _ := site_read_quiet("/proc/cpuinfo")
+	processor_information, _ := foundation.site_read_quiet("/proc/cpuinfo")
 	record.host = measure_text_without_private(measure_host_text(processor_information, os.exists("/dev/kvm")), names)
 	changelog_problems := make([dynamic]string, context.temp_allocator)
 	changelog, changelog_ok := changelog_read(&changelog_problems)
@@ -411,7 +412,7 @@ measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
 	// The lines of the start, from the log of the main machine of this run.
 	main_log_information, main_log_error := os.stat(TEST_OUTPUT, context.temp_allocator)
 	if main_log_error == nil && time.diff(facts.started, main_log_information.modification_time) >= 0 {
-		if main_log, has_main_log := site_read_quiet(TEST_OUTPUT); has_main_log {
+		if main_log, has_main_log := foundation.site_read_quiet(TEST_OUTPUT); has_main_log {
 			record.boot_lines = measure_boot_lines(main_log, names)
 		}
 	}
@@ -425,7 +426,7 @@ measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
 		fmt.eprintfln("modustool: %s is not written: it does not read back: %s", MEASURE_RECORD_FILE, problem)
 		return false
 	}
-	make_folder(MEASURE_RECORD_FOLDER) or_return
+	foundation.make_folder(MEASURE_RECORD_FOLDER) or_return
 	if error := os.write_entire_file(MEASURE_RECORD_FILE, transmute([]u8)text); error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", MEASURE_RECORD_FILE, error)
 		return false

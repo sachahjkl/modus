@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"): one machine. The
 // process fault_ring runs one child for each role; a fault of a child is a
 // record for a handler thread of the child in place of a stop. The
@@ -26,7 +28,7 @@ package modustool
 // Each child gives back every page and every thread of its budget. The
 // time of one repaired fault is a line of the log and of the window.
 
-TEST_OUTPUT_FAULT_RING :: BUILD_FOLDER + "/test_output_fault_ring.txt"
+TEST_OUTPUT_FAULT_RING :: foundation.BUILD_FOLDER + "/test_output_fault_ring.txt"
 
 @(rodata)
 scenario_fault_ring := [?]Step {

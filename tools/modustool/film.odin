@@ -9,6 +9,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "modustool:foundation"
 
 // The films of the machine (docs/TOOLS.md, "The film").
 //
@@ -26,7 +27,7 @@ import "core:time"
 // goes on, so a film never shows a state that the machine did not reach.
 // No scenario of a test has a step Film_Type or Film_Hold.
 
-FILM_FOLDER :: BUILD_FOLDER + "/films"
+FILM_FOLDER :: foundation.BUILD_FOLDER + "/films"
 // The slots of a film in one second, and the pictures that the worker asks
 // for in one second: a rate, not a wait.
 FILM_RATE :: 30
@@ -306,7 +307,7 @@ film_start :: proc(machine: ^Machine, name: string) -> bool {
 	folder := fmt.aprintf("%s/%s", FILM_FOLDER, name)
 	worker := new(Film_Worker)
 	worker.folder = folder
-	if !reset_folder(folder) || !qmp_open(&worker.qmp, film_qmp_socket_of(machine.output)) {
+	if !foundation.reset_folder(folder) || !qmp_open(&worker.qmp, film_qmp_socket_of(machine.output)) {
 		qmp_close(&worker.qmp)
 		delete(folder)
 		free(worker)
@@ -396,10 +397,10 @@ Film :: struct {
 }
 
 FILM_NAMES :: "terminal | palette | heron | boot"
-TEST_OUTPUT_FILM_TERMINAL :: BUILD_FOLDER + "/test_output_film_terminal.txt"
-TEST_OUTPUT_FILM_PALETTE :: BUILD_FOLDER + "/test_output_film_palette.txt"
-TEST_OUTPUT_FILM_HERON :: BUILD_FOLDER + "/test_output_film_heron.txt"
-TEST_OUTPUT_FILM_BOOT :: BUILD_FOLDER + "/test_output_film_boot.txt"
+TEST_OUTPUT_FILM_TERMINAL :: foundation.BUILD_FOLDER + "/test_output_film_terminal.txt"
+TEST_OUTPUT_FILM_PALETTE :: foundation.BUILD_FOLDER + "/test_output_film_palette.txt"
+TEST_OUTPUT_FILM_HERON :: foundation.BUILD_FOLDER + "/test_output_film_heron.txt"
+TEST_OUTPUT_FILM_BOOT :: foundation.BUILD_FOLDER + "/test_output_film_boot.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -431,13 +432,13 @@ run_film :: proc(args: []string) -> int {
 	film, found := film_of_name(name)
 	if len(args) > 1 || !found {
 		fmt.eprintln("modustool: film [" + FILM_NAMES + "]")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	if code := build_system(boot_volumes_of_command("film")); code != 0 {
 		return code
 	}
-	if !make_folder(FILM_FOLDER) || !make_folder(SCREENSHOT_FOLDER) {
-		return EXIT_FAILURE
+	if !foundation.make_folder(FILM_FOLDER) || !foundation.make_folder(SCREENSHOT_FOLDER) {
+		return foundation.EXIT_FAILURE
 	}
 	// The machine starts paused only for a scenario that lets it run with a
 	// step Monitor "cont": a paused machine with no such step never starts.
@@ -451,9 +452,9 @@ run_film :: proc(args: []string) -> int {
 	defer test_part_run_free(&part)
 	// The tool ends QEMU: status 0.
 	if !test_part_run_start(&part) || !machine_test(&part, film.steps, {volume = BOOT_VOLUME, output = film.output, exit_status = 0, vnc = true, paused = paused}) {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
-	return film_write(film.name) ? 0 : EXIT_FAILURE
+	return film_write(film.name) ? 0 : foundation.EXIT_FAILURE
 }
 
 // The moments of a film whose picture goes to the development log beside
@@ -467,8 +468,8 @@ FILM_STILL_DIVISOR :: 4
 // log, removes the pictures, and copies the WebM file to the repository
 // when a news entry names the film.
 film_write :: proc(name: string) -> bool {
-	folder := join(FILM_FOLDER, "/", name)
-	paths, listed := files_with_suffix(folder, FILM_PICTURE_SUFFIX)
+	folder := foundation.join(FILM_FOLDER, "/", name)
+	paths, listed := foundation.files_with_suffix(folder, FILM_PICTURE_SUFFIX)
 	if !listed || len(paths) == 0 {
 		fmt.eprintfln("modustool: the film %s has no picture in %s: its scenario has no step Film_Start, or QEMU wrote none", name, folder)
 		return false
@@ -487,7 +488,7 @@ film_write :: proc(name: string) -> bool {
 	}
 	runs := film_runs(times)
 	slot_count := film_slot_count(runs)
-	list_path := join(folder, "/", FILM_LIST_NAME)
+	list_path := foundation.join(folder, "/", FILM_LIST_NAME)
 	if write_error := os.write_entire_file(list_path, film_list_text(names, runs)); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", list_path, write_error)
 		return false
@@ -495,16 +496,16 @@ film_write :: proc(name: string) -> bool {
 	// Two files from the same timed pictures: the MP4 file for a post on
 	// another site, and the WebM file, which the repository holds when a
 	// news entry names the film.
-	output := join(FILM_FOLDER, "/", name, FILM_MP4_SUFFIX)
-	run(film_mp4_encode_command(list_path, output)) or_return
-	webm_output := join(FILM_FOLDER, "/", name, FILM_WEBM_SUFFIX)
-	run(film_webm_encode_command(list_path, webm_output)) or_return
+	output := foundation.join(FILM_FOLDER, "/", name, FILM_MP4_SUFFIX)
+	foundation.run(film_mp4_encode_command(list_path, output)) or_return
+	webm_output := foundation.join(FILM_FOLDER, "/", name, FILM_WEBM_SUFFIX)
+	foundation.run(film_webm_encode_command(list_path, webm_output)) or_return
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
-	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d_film_%s", development_log_folder(), year, int(month), day, hour, minute, second, name)
-	make_folder(log_folder) or_return
-	target := join(log_folder, "/", name, FILM_MP4_SUFFIX)
+	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d_film_%s", foundation.development_log_folder(), year, int(month), day, hour, minute, second, name)
+	foundation.make_folder(log_folder) or_return
+	target := foundation.join(log_folder, "/", name, FILM_MP4_SUFFIX)
 	if copy_error := os.copy_file(target, output); copy_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", target, copy_error)
 		return false
@@ -514,7 +515,7 @@ film_write :: proc(name: string) -> bool {
 		for film_run in runs {
 			if slot >= film_run.first_slot && slot < film_run.first_slot + film_run.slot_count {
 				still := fmt.tprintf("%s/%s_at_%03d_seconds.png", log_folder, name, slot / FILM_RATE)
-				run({"ffmpeg", "-loglevel", "error", "-y", "-i", paths[film_run.picture], still}) or_return
+				foundation.run({"ffmpeg", "-loglevel", "error", "-y", "-i", paths[film_run.picture], still}) or_return
 				break
 			}
 		}

@@ -4,6 +4,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:math/bits"
+import "modustool:foundation"
 
 // The parts of the budget of a module that the tool counts, and the sum
 // that the table Budget holds (docs/MODULE_CONTRACT.md, "The budget that a
@@ -95,12 +96,12 @@ module_pages_of_size :: proc(size: u64) -> u64 {
 // module of the table imports, at each level, each module one time, from
 // the files of the build. The conversion of a module runs after the
 // conversion of each import, so each file is there.
-budget_import_memory_sizes :: proc(build: Module_Build) -> (sizes: []u64, ok: bool) {
+budget_import_memory_sizes :: proc(build: foundation.Module_Build) -> (sizes: []u64, ok: bool) {
 	names := make([dynamic]string, context.temp_allocator)
 	append(&names, ..build.imports)
 	// The list is the queue of the walk: each name is read one time.
 	for walked := 0; walked < len(names); walked += 1 {
-		for item in module_builds {
+		for item in foundation.module_builds {
 			if item.name != names[walked] {
 				continue
 			}
@@ -117,7 +118,7 @@ budget_import_memory_sizes :: proc(build: Module_Build) -> (sizes: []u64, ok: bo
 	}
 	list := make([]u64, len(names), context.temp_allocator)
 	for name, index in names {
-		file := read_file(module_import_path(name)) or_return
+		file := foundation.read_file(foundation.module_import_path(name)) or_return
 		head, header_error := module.header(file)
 		if header_error != .None {
 			fmt.eprintfln("modustool: the file of the import %s of %s is not a module", name, build.name)

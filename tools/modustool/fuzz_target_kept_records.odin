@@ -5,6 +5,7 @@ import "core:slice"
 import op "modus:contract/operation"
 import "modus:contract/settings"
 import "modus:support/disk_process"
+import "modustool:foundation"
 
 // The fuzz targets of the records that a process keeps
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"):
@@ -305,7 +306,7 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		name := fuzz_stop_report_name(number)
 		// Only a keep can take the place of another report.
 		eviction_allowed := false
-		switch enum_member_at(Fuzz_Stop_Report_Step, fuzz_choice_below(&choices, len(Fuzz_Stop_Report_Step))) {
+		switch foundation.enum_member_at(Fuzz_Stop_Report_Step, fuzz_choice_below(&choices, len(Fuzz_Stop_Report_Step))) {
 		case .Keep:
 			report := fuzz_stop_report_of(&choices)
 			disk_process.stop_report_hide(&report)

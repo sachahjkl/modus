@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "modustool:foundation"
 
 // The times of a test: where the time of `modustool test` goes. The tool
 // reads the monotonic clock of the host at the start and at the end of the
@@ -12,7 +13,7 @@ import "core:time"
 // step in a file. Each number is a measure: no test reads one, and nothing
 // fails because of a time (docs/TOOLS.md, "The times of a test").
 
-TEST_TIMES_FILE :: BUILD_FOLDER + "/test_times.txt"
+TEST_TIMES_FILE :: foundation.BUILD_FOLDER + "/test_times.txt"
 // The bytes of the text of a step that a record keeps: enough to know the
 // step, and a line of the file stays short.
 TEST_TIMES_TEXT_BYTES :: 60

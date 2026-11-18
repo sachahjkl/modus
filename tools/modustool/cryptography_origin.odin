@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modus:contract/blake3"
+import "modustool:foundation"
 
 // The cryptography of the system is code of Odin's `core:crypto`, taken
 // into src/library/support/cryptography and changed in a listed way only
@@ -14,13 +15,11 @@ import "modus:contract/blake3"
 // the file of the repository, byte for byte. A reader audits the changes
 // here, not in a diff of each file.
 
-CRYPTOGRAPHY_MANIFEST :: CRYPTOGRAPHY_FOLDER + "/origin.manifest"
 // The files of src/library/support/cryptography that the system wrote itself (the
 // compatibility layer, the files in the place of a hardware dispatch, the
 // tests), each with its BLAKE3 hash: a change of one of them shows in the
 // check and in review, as a change of a taken file does.
-CRYPTOGRAPHY_SYSTEM_FILES :: CRYPTOGRAPHY_FOLDER + "/system_files.manifest"
-CRYPTOGRAPHY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/cryptography"
+CRYPTOGRAPHY_SYSTEM_FILES :: foundation.CRYPTOGRAPHY_FOLDER + "/system_files.manifest"
 CRYPTOGRAPHY_ORIGIN_PREFIX :: "core/crypto/"
 // The word in place of a hash that the coordinator has to compute with
 // `modustool cryptography-system-hashes`.
@@ -128,7 +127,7 @@ cryptography_adjusted :: proc(origin_path: string) -> bool {
 // zlib license of Odin asks that an altered source says so.
 cryptography_marking :: proc(origin_path: string) -> string {
 	what := cryptography_adjusted(origin_path) ? "its imports changed, and the adjustments that tools/modustool/cryptography_origin.odin lists" : "only its imports changed"
-	return fmt.tprintf("// Altered source: Odin %s, %s; %s (" + CRYPTOGRAPHY_MANIFEST + ", docs/CRYPTOGRAPHY.md).\n", CRYPTOGRAPHY_ORIGIN_RELEASE, origin_path, what)
+	return fmt.tprintf("// Altered source: Odin %s, %s; %s (" + foundation.CRYPTOGRAPHY_MANIFEST + ", docs/CRYPTOGRAPHY.md).\n", CRYPTOGRAPHY_ORIGIN_RELEASE, origin_path, what)
 }
 
 // cryptography_file_from_origin gives the bytes that the file of the
@@ -176,16 +175,16 @@ odin_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool 
 		return false
 	}
 	for entry in entries {
-		path := join(folder, "/", entry.name)
+		path := foundation.join(folder, "/", entry.name)
 		switch {
 		case entry.type == .Symlink:
-			fmt.eprintfln("modustool: test failed: %s is a symbolic link: the files of " + CRYPTOGRAPHY_FOLDER + " are in its folders", path)
+			fmt.eprintfln("modustool: test failed: %s is a symbolic link: the files of " + foundation.CRYPTOGRAPHY_FOLDER + " are in its folders", path)
 			return false
 		case entry.type == .Directory:
 			odin_files_of_a_folder(path, files) or_return
 		case strings.has_suffix(entry.name, ".odin"):
 			append(files, path)
-		case strings.has_prefix(entry.name, "LICENSE.") && folder == CRYPTOGRAPHY_FOLDER, path == CRYPTOGRAPHY_MANIFEST, path == CRYPTOGRAPHY_SYSTEM_FILES:
+		case strings.has_prefix(entry.name, "LICENSE.") && folder == foundation.CRYPTOGRAPHY_FOLDER, path == foundation.CRYPTOGRAPHY_MANIFEST, path == CRYPTOGRAPHY_SYSTEM_FILES:
 		case:
 			fmt.eprintfln("modustool: test failed: %s is not a .odin file, a license or a manifest: no list can name it", path)
 			return false
@@ -194,29 +193,11 @@ odin_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool 
 	return true
 }
 
-// manifest_lines gives the lines of a manifest that are not comments, each
-// as its fields.
-manifest_lines :: proc(path: string) -> (lines: [][]string, ok: bool) {
-	text, err := os.read_entire_file(path, context.temp_allocator)
-	if err != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", path, err)
-		return nil, false
-	}
-	list := make([dynamic][]string, context.temp_allocator)
-	for line in strings.split_lines(string(text), context.temp_allocator) {
-		if len(line) == 0 || line[0] == '#' {
-			continue
-		}
-		append(&list, strings.fields(line, context.temp_allocator))
-	}
-	return list[:], true
-}
-
 // cryptography_system_files_check reads the list of the files that the
 // system wrote: "<file of the repository> <BLAKE3 of the file>". Each file
 // must have that hash.
 cryptography_system_files_check :: proc(listed: ^map[string]string) -> bool {
-	lines := manifest_lines(CRYPTOGRAPHY_SYSTEM_FILES) or_return
+	lines := foundation.manifest_lines(CRYPTOGRAPHY_SYSTEM_FILES) or_return
 	for parts in lines {
 		if len(parts) != 2 {
 			fmt.eprintfln("modustool: test failed: a line of %s does not have 2 parts: %v", CRYPTOGRAPHY_SYSTEM_FILES, parts)
@@ -251,9 +232,9 @@ cryptography_system_files_check :: proc(listed: ^map[string]string) -> bool {
 // lines in src/library/support/cryptography/system_files.manifest.
 run_cryptography_system_hashes :: proc(args: []string) -> int {
 	taken := make(map[string]bool, context.temp_allocator)
-	lines, ok := manifest_lines(CRYPTOGRAPHY_MANIFEST)
+	lines, ok := foundation.manifest_lines(foundation.CRYPTOGRAPHY_MANIFEST)
 	if !ok {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	for parts in lines {
 		if len(parts) > 0 {
@@ -261,8 +242,8 @@ run_cryptography_system_hashes :: proc(args: []string) -> int {
 		}
 	}
 	files := make([dynamic]string, context.temp_allocator)
-	if !odin_files_of_a_folder(CRYPTOGRAPHY_FOLDER, &files) {
-		return EXIT_FAILURE
+	if !odin_files_of_a_folder(foundation.CRYPTOGRAPHY_FOLDER, &files) {
+		return foundation.EXIT_FAILURE
 	}
 	slice.sort(files[:])
 	for file in files {
@@ -272,7 +253,7 @@ run_cryptography_system_hashes :: proc(args: []string) -> int {
 		bytes, err := os.read_entire_file(file, context.temp_allocator)
 		if err != nil {
 			fmt.eprintfln("modustool: cannot read %s: %v", file, err)
-			return EXIT_FAILURE
+			return foundation.EXIT_FAILURE
 		}
 		hash := blake3.hash(bytes)
 		fmt.printfln("%s %s", file, hex_text(hash[:]))
@@ -288,9 +269,9 @@ run_cryptography_system_hashes :: proc(args: []string) -> int {
 // does not agree.
 cryptography_origin_check :: proc() -> bool {
 	listed := make(map[string]string, context.temp_allocator)
-	manifest, err := os.read_entire_file(CRYPTOGRAPHY_MANIFEST, context.temp_allocator)
+	manifest, err := os.read_entire_file(foundation.CRYPTOGRAPHY_MANIFEST, context.temp_allocator)
 	if err != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", CRYPTOGRAPHY_MANIFEST, err)
+		fmt.eprintfln("modustool: cannot read %s: %v", foundation.CRYPTOGRAPHY_MANIFEST, err)
 		return false
 	}
 	files := 0
@@ -300,20 +281,20 @@ cryptography_origin_check :: proc() -> bool {
 		}
 		parts := strings.fields(line, context.temp_allocator)
 		if len(parts) != 3 {
-			fmt.eprintfln("modustool: test failed: a line of %s does not have 3 parts: %q", CRYPTOGRAPHY_MANIFEST, line)
+			fmt.eprintfln("modustool: test failed: a line of %s does not have 3 parts: %q", foundation.CRYPTOGRAPHY_MANIFEST, line)
 			return false
 		}
 		// An origin is a file of core:crypto, by a path with no "..": a line
 		// cannot take a file of another part of Odin, or of the host.
-		if !strings.has_prefix(parts[1], CRYPTOGRAPHY_ORIGIN_PREFIX) || strings.contains(parts[1], "..") || !strings.has_prefix(parts[0], CRYPTOGRAPHY_FOLDER + "/") || strings.contains(parts[0], "..") {
-			fmt.eprintfln("modustool: test failed: a line of %s names %s from %s: an origin starts with %s, a file with %s/, and neither has \"..\"", CRYPTOGRAPHY_MANIFEST, parts[0], parts[1], CRYPTOGRAPHY_ORIGIN_PREFIX, CRYPTOGRAPHY_FOLDER)
+		if !strings.has_prefix(parts[1], CRYPTOGRAPHY_ORIGIN_PREFIX) || strings.contains(parts[1], "..") || !strings.has_prefix(parts[0], foundation.CRYPTOGRAPHY_FOLDER + "/") || strings.contains(parts[0], "..") {
+			fmt.eprintfln("modustool: test failed: a line of %s names %s from %s: an origin starts with %s, a file with %s/, and neither has \"..\"", foundation.CRYPTOGRAPHY_MANIFEST, parts[0], parts[1], CRYPTOGRAPHY_ORIGIN_PREFIX, foundation.CRYPTOGRAPHY_FOLDER)
 			return false
 		}
 		if parts[0] in listed {
-			fmt.eprintfln("modustool: test failed: %s is in %s two times", parts[0], CRYPTOGRAPHY_MANIFEST)
+			fmt.eprintfln("modustool: test failed: %s is in %s two times", parts[0], foundation.CRYPTOGRAPHY_MANIFEST)
 			return false
 		}
-		listed[parts[0]] = CRYPTOGRAPHY_MANIFEST
+		listed[parts[0]] = foundation.CRYPTOGRAPHY_MANIFEST
 		origin_path := strings.concatenate({ODIN_ROOT, parts[1]}, context.temp_allocator)
 		origin, origin_error := os.read_entire_file(origin_path, context.temp_allocator)
 		if origin_error != nil {
@@ -348,12 +329,12 @@ cryptography_origin_check :: proc() -> bool {
 		return false
 	}
 	found := make([dynamic]string, context.temp_allocator)
-	if !odin_files_of_a_folder(CRYPTOGRAPHY_FOLDER, &found) {
+	if !odin_files_of_a_folder(foundation.CRYPTOGRAPHY_FOLDER, &found) {
 		return false
 	}
 	for file in found {
 		if file not_in listed {
-			fmt.eprintfln("modustool: test failed: %s is in no list: a file of the origin goes in %s, a file of the system in %s", file, CRYPTOGRAPHY_MANIFEST, CRYPTOGRAPHY_SYSTEM_FILES)
+			fmt.eprintfln("modustool: test failed: %s is in no list: a file of the origin goes in %s, a file of the system in %s", file, foundation.CRYPTOGRAPHY_MANIFEST, CRYPTOGRAPHY_SYSTEM_FILES)
 			return false
 		}
 	}
@@ -363,12 +344,12 @@ cryptography_origin_check :: proc() -> bool {
 			found_it ||= other == file
 		}
 		if !found_it {
-			fmt.eprintfln("modustool: test failed: %s is in a list, and is not in %s", file, CRYPTOGRAPHY_FOLDER)
+			fmt.eprintfln("modustool: test failed: %s is in a list, and is not in %s", file, foundation.CRYPTOGRAPHY_FOLDER)
 			return false
 		}
 	}
-	test_passed_print("each of the %d .odin files of %s is in a list; %d files of the system have the hash of their list", len(found), CRYPTOGRAPHY_FOLDER, len(listed) - files)
-	test_passed_print("%d files of " + CRYPTOGRAPHY_FOLDER + " are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
+	foundation.test_passed_print("each of the %d .odin files of %s is in a list; %d files of the system have the hash of their list", len(found), foundation.CRYPTOGRAPHY_FOLDER, len(listed) - files)
+	foundation.test_passed_print("%d files of " + foundation.CRYPTOGRAPHY_FOLDER + " are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
 	return true
 }
 
@@ -378,20 +359,20 @@ cryptography_origin_check :: proc() -> bool {
 run_cryptography_take :: proc(args: []string) -> int {
 	if len(args) != 2 {
 		fmt.eprintln("modustool: cryptography-take <file under the root of Odin> <file of the repository>")
-		return EXIT_USAGE
+		return foundation.EXIT_USAGE
 	}
 	origin, err := os.read_entire_file(strings.concatenate({ODIN_ROOT, args[0]}, context.temp_allocator), context.temp_allocator)
 	if err != nil {
 		fmt.eprintfln("modustool: cannot read the origin %s: %v", args[0], err)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	file, adjusted := cryptography_file_from_origin(string(origin), args[0])
 	if !adjusted {
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	if write_error := os.write_entire_file(args[1], transmute([]u8)file); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", args[1], write_error)
-		return EXIT_FAILURE
+		return foundation.EXIT_FAILURE
 	}
 	hash := blake3.hash(origin)
 	fmt.printfln("%s %s %s", args[1], args[0], hex_text(hash[:]))
@@ -399,5 +380,5 @@ run_cryptography_take :: proc(args: []string) -> int {
 }
 
 run_cryptography_origin :: proc(args: []string) -> int {
-	return cryptography_origin_check() ? 0 : EXIT_FAILURE
+	return cryptography_origin_check() ? 0 : foundation.EXIT_FAILURE
 }

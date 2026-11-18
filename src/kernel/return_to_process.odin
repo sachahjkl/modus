@@ -57,7 +57,7 @@ foreign _ {
 }
 
 // A setting of the compiler for one kernel of the test only: the module
-// kernel_without_return_check of tools/modustool/modules.odin, which one
+// kernel_without_return_check of tools/modustool/foundation/module_table.odin, which one
 // machine of `modustool test return_fault` boots. It skips the check of
 // the instruction address, so that the processor itself refuses the return
 // and the second layer runs. The module "kernel" has no define, so this is

@@ -4,6 +4,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modustool:foundation"
 
 // A module build file with each key gives each field of a row.
 @(test)
@@ -67,7 +68,7 @@ module_build_file_faults :: proc(t: ^testing.T) {
 @(test)
 outside_module_examples_follow_the_module_table :: proc(t: ^testing.T) {
 	examples := OUTSIDE_MODULE_EXAMPLES
-	folders := SOURCE_FOLDERS
+	folders := foundation.SOURCE_FOLDERS
 	for folder in folders {
 		testing.expectf(t, !strings.has_prefix(THIRD_PARTY_EXAMPLE_FOLDER, folder), "%s is under %s", THIRD_PARTY_EXAMPLE_FOLDER, folder)
 	}
@@ -78,7 +79,7 @@ outside_module_examples_follow_the_module_table :: proc(t: ^testing.T) {
 		testing.expect_value(t, problem, "")
 		testing.expect_value(t, file.name, example.name)
 		found := false
-		for row in module_builds {
+		for row in foundation.module_builds {
 			if row.name != example.name {
 				continue
 			}

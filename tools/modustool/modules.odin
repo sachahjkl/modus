@@ -10,35 +10,29 @@ import "core:slice"
 import "core:strings"
 import "core:sys/linux"
 import "core:time"
+import "modustool:foundation"
 
-MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 // The modules of the build with no debug information: the check that the
 // debug objects change no byte of a module builds every module there
 // (repeat.odin, modules_same_without_debug_information).
-MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: BUILD_FOLDER + "/modules_without_debug_information"
-BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
-BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
-BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
-// The boot image of the operation sequences: the modules of the boot image,
-// and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
-BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.image"
-OPERATION_FUZZING_MODULE :: "operation_fuzzing"
-OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
+MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: foundation.BUILD_FOLDER + "/modules_without_debug_information"
+BOOT_IMAGE :: foundation.BUILD_FOLDER + "/boot.image"
+BOOT_IMAGE_FAILS :: foundation.BUILD_FOLDER + "/boot_fails.image"
+BOOT_IMAGE_SHORTAGE :: foundation.BUILD_FOLDER + "/boot_shortage.image"
 // The boot image of a measure run: the usual one, with one resource more,
 // which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
-BOOT_IMAGE_MEASURE :: BUILD_FOLDER + "/boot_measure.image"
+BOOT_IMAGE_MEASURE :: foundation.BUILD_FOLDER + "/boot_measure.image"
 MEASURE_RUN_RESOURCE_NAME :: "measure_run" // system.MEASURE_RUN_RESOURCE.
-MEASURE_RUN_RESOURCE_FILE :: BUILD_FOLDER + "/measure_run.resource"
+MEASURE_RUN_RESOURCE_FILE :: foundation.BUILD_FOLDER + "/measure_run.resource"
 // The bytes of the resource: the root service reads its name only.
 MEASURE_RUN_RESOURCE_TEXT :: "This machine runs for a measure.\n"
-SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/system"
 // The copy and the fill of every module, of the kernel and of the boot
 // program: copy_bytes_without_overlap, copy_bytes_with_overlap,
 // fill_bytes_with_value, and the names that the compiler calls (memcpy,
 // memmove, memset). The builds do not use -no-crt: with it, the Odin runtime
 // gives its own functions under these names (loops of one byte, two with no
 // optimization), and a symbol of another object cannot replace them.
-RUNTIME_MEMORY :: SOURCE_FOLDER_RUNTIME + "/memory.asm"
+RUNTIME_MEMORY :: foundation.SOURCE_FOLDER_RUNTIME + "/memory.asm"
 
 // The features of llc for the kernel: no x87, MMX, SSE or AVX instruction,
 // as the Linux kernel is built (-mno-80387 -mno-mmx -mno-sse -mno-sse2
@@ -49,215 +43,7 @@ RUNTIME_MEMORY :: SOURCE_FOLDER_RUNTIME + "/memory.asm"
 // the link (vector_check.odin) is the proof.
 KERNEL_TARGET_FEATURES :: "-mattr=-x87,-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,-avx512f,+soft-float"
 
-// The modules of the project, each one after its imports.
-//   source:  the folder of the Odin package, and of its .asm files.
-// The exports of a module and their descriptions come from the source
-// (describe.odin).
-//   kernel:  the module runs in kernel mode: interrupts use its stack.
-//   image:   the module is in the boot image.
-Module_Build :: struct {
-	name:    string,
-	source:  string,
-	imports: []string,
-	kernel:  bool,
-	// A module with an entry function, which the root service
-	// starts. The roles of the root service name each such module of the
-	// boot image, the site shows it as a module with an entry, and a host test checks that
-	// its source has the entry. A module of any group can be one: a module
-	// group says what a module is for, not whether it starts.
-	entry:   bool,
-	image:   bool,
-	// Settings of the compiler for this module only (-define): a kernel
-	// for one machine of the test, and each module that draws its window
-	// through the drawing module (DRAWING_THROUGH_MODULE).
-	defines: []string,
-	// A library module (docs/MODULE_CONTRACT.md, "A library as a module"):
-	// many processes import it, each at another address. The conversion
-	// refuses a segment that is read-only after the load: with none, the
-	// module is one shared copy at each address, and takes one place in the
-	// table of prepared modules of a starter, not one for each importer.
-	library: bool,
-	// A module that a disk holds: it is built as each module with an
-	// entry, with the system library, and no boot image gets its file
-	// (disk_processes.odin).
-	disk:    bool,
-	// The one boot image of a test that holds the module, and no other
-	// image: the modules of the operation sequences. "": the module is in
-	// each boot image of the build. A release refuses an image that holds
-	// such a module (release_test_module_problem).
-	only_in_image: string,
-}
-
-// module_in_boot_image says if the boot image holds the file of a module.
-module_in_boot_image :: proc(build: Module_Build) -> bool {
-	return build.image && !build.disk && build.only_in_image == ""
-}
-
-// module_in_a_boot_image says if some boot image of the build holds the
-// file of a module: the boot image, or the one image of a test.
-module_in_a_boot_image :: proc(build: Module_Build) -> bool {
-	return module_in_boot_image(build) || build.image && !build.disk && build.only_in_image != ""
-}
-
-// The drawing module, and the setting of a module that draws its window
-// through it (src/library/support/interface, window_drawing.odin). A module with the
-// setting imports the module: a host test checks it
-// (import_declarations_test.odin).
-DRAWING_MODULE :: "drawing"
-DRAWING_THROUGH_MODULE :: "DRAWING_THROUGH_MODULE=true"
-
-// The source of a row starts with the constant of its group
-// (source_folders.odin): module_group_of_source reads the group from it.
-module_builds := [?]Module_Build {
-	{name = "test_callee", source = TEST_MODULE_SOURCES + "test_callee"},
-	{name = "test_caller", source = TEST_MODULE_SOURCES + "test_caller", imports = {"test_callee"}},
-	{name = "kernel", source = SOURCE_FOLDER_KERNEL, kernel = true},
-	// The same kernel with the check of the instruction address before a
-	// return to a process skipped, for one machine of `test return_fault`
-	// only: its boot volume is BOOT_VOLUME_WITHOUT_RETURN_CHECK, and
-	// machine_test refuses the line of this kernel in every other machine.
-	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
-	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", entry = true, image = true},
-	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", entry = true, image = true},
-	// The drawing of a window, for each module below that imports it.
-	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", image = true, library = true},
-	// It draws its screen in parts, one call of the drawing module for each
-	// part (src/md/api/picture.md).
-	{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "console", source = SYSTEM_MODULE_SOURCES + "console", entry = true, image = true},
-	{name = "monitor", source = SYSTEM_MODULE_SOURCES + "monitor", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "plasma", source = DEMONSTRATION_MODULE_SOURCES + "plasma", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "life", source = DEMONSTRATION_MODULE_SOURCES + "life", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "paint", source = DEMONSTRATION_MODULE_SOURCES + "paint", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "fault", source = DEMONSTRATION_MODULE_SOURCES + "fault", entry = true, image = true},
-	{name = "hall_of_fame", source = DEMONSTRATION_MODULE_SOURCES + "hall_of_fame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "heron", source = DEMONSTRATION_MODULE_SOURCES + "heron", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "node", source = DEMONSTRATION_MODULE_SOURCES + "node", entry = true, image = true},
-	{name = "rings", source = DEMONSTRATION_MODULE_SOURCES + "rings", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "threads", source = DEMONSTRATION_MODULE_SOURCES + "threads", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "workers", source = DEMONSTRATION_MODULE_SOURCES + "workers", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "rights", source = DEMONSTRATION_MODULE_SOURCES + "rights", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "origin", source = DEMONSTRATION_MODULE_SOURCES + "origin", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "limits", source = DEMONSTRATION_MODULE_SOURCES + "limits", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "budget", source = DEMONSTRATION_MODULE_SOURCES + "budget", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "flow", source = DEMONSTRATION_MODULE_SOURCES + "flow", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "crowd", source = DEMONSTRATION_MODULE_SOURCES + "crowd", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", entry = true, image = true},
-	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "extended_state", source = DEMONSTRATION_MODULE_SOURCES + "extended_state", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", entry = true, image = true},
-	{name = "fault_ring", source = DEMONSTRATION_MODULE_SOURCES + "fault_ring", entry = true, image = true},
-	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true},
-	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", entry = true, image = true},
-	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
-	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", entry = true, image = true},
-	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true},
-	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true},
-	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "flood", source = TEST_MODULE_SOURCES + "flood", entry = true, image = true},
-	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", entry = true, image = true},
-	{name = "arena", source = TEST_MODULE_SOURCES + "arena", entry = true, image = true},
-	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", entry = true, image = true},
-	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", entry = true, image = true},
-	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true},
-	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", entry = true, image = true},
-	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
-	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true},
-	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", entry = true, image = true},
-	{name = "log_reader", source = TEST_MODULE_SOURCES + "log_reader", entry = true, image = true},
-	{name = "block", source = SYSTEM_MODULE_SOURCES + "block", entry = true, image = true},
-	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", entry = true, image = true},
-	{name = "iommu_device", source = TEST_MODULE_SOURCES + "iommu_device", entry = true, image = true},
-	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", entry = true, image = true},
-	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", entry = true, image = true},
-	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", entry = true, image = true},
-	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", entry = true, image = true},
-	{name = "iommu", source = TEST_MODULE_SOURCES + "iommu", entry = true, image = true},
-	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", entry = true, image = true},
-	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "server", source = DEMONSTRATION_MODULE_SOURCES + "server", entry = true, image = true},
-	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", entry = true, image = true},
-	{name = "module_files", source = SYSTEM_MODULE_SOURCES + "module_files", entry = true, image = true},
-	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "disk", source = DEMONSTRATION_MODULE_SOURCES + "disk", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "storage", source = SYSTEM_MODULE_SOURCES + "storage", entry = true, image = true},
-	{name = "notes", source = DEMONSTRATION_MODULE_SOURCES + "notes", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "hierarchy", source = TEST_MODULE_SOURCES + "hierarchy", entry = true, image = true},
-	{name = "ranges", source = TEST_MODULE_SOURCES + "ranges", entry = true, image = true},
-	{name = "host", source = SYSTEM_MODULE_SOURCES + "host", entry = true, image = true},
-	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
-	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
-	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
-	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "sample", source = DEMONSTRATION_MODULE_SOURCES + "sample", image = true},
-	{name = "hostile_exports", source = TEST_MODULE_SOURCES + "hostile_exports", image = true},
-	{name = "calendar", source = LIBRARY_MODULE_SOURCES + "calendar", image = true},
-	{name = "calendar_fixed", source = TEST_MODULE_SOURCES + "calendar_fixed", image = true},
-	{name = "calendar_changed", source = TEST_MODULE_SOURCES + "calendar_changed", image = true},
-	{name = "agenda", source = DEMONSTRATION_MODULE_SOURCES + "agenda", imports = {"calendar"}, image = true},
-	// Its import is not in the boot image: a loader refuses it.
-	{name = "lonely", source = TEST_MODULE_SOURCES + "lonely", imports = {"test_callee"}, image = true},
-	{name = "imports", source = DEMONSTRATION_MODULE_SOURCES + "imports", entry = true, imports = {"calendar"}, image = true},
-	{name = "errors", source = DEMONSTRATION_MODULE_SOURCES + "errors", entry = true, image = true},
-	{name = "interface_elements", source = DEMONSTRATION_MODULE_SOURCES + "interface_elements", entry = true, image = true},
-	{name = "tables", source = DEMONSTRATION_MODULE_SOURCES + "tables", entry = true, image = true},
-	{name = "interface_module", source = LIBRARY_MODULE_SOURCES + "interface_module", image = true},
-	// It compares the package compiled in with the two modules, so it has
-	// no setting: its window layer is its own code.
-	{name = "interface_through_module", source = DEMONSTRATION_MODULE_SOURCES + "interface_through_module", entry = true, imports = {"interface_module", DRAWING_MODULE}, image = true},
-	{name = "text_shaping", source = LIBRARY_MODULE_SOURCES + "text_shaping", image = true},
-	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
-	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
-	{name = "glyphs", source = SYSTEM_MODULE_SOURCES + "glyphs", entry = true, image = true},
-	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
-	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", entry = true, image = true},
-	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", entry = true, image = true},
-	// The module of the operation sequences and its runner: only the boot
-	// image of the operation sequences holds them, and the root service
-	// starts nothing else there.
-	{name = OPERATION_SEQUENCE_RUNNER_MODULE, source = TEST_MODULE_SOURCES + OPERATION_SEQUENCE_RUNNER_MODULE, entry = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
-	{name = OPERATION_FUZZING_MODULE, source = TEST_MODULE_SOURCES + OPERATION_FUZZING_MODULE, entry = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
-	// It is not in the boot image: the tool writes its file in the store
-	// `module_files` of a data disk, and the root service starts it from there
-	// (disk_processes.odin).
-	{name = DISK_MODULE_NAME, source = TEST_MODULE_SOURCES + DISK_MODULE_NAME, entry = true, image = true, disk = true},
-	// A library module and a process that imports it, both in the store
-	// `module_files` only: the root service finds the import by the hash of
-	// its bytes (disk_processes.odin).
-	{name = STORE_LIBRARY_MODULE, source = TEST_MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
-	{name = STORE_IMPORTER_MODULE, source = TEST_MODULE_SOURCES + STORE_IMPORTER_MODULE, entry = true, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
-}
-
-// The folder of the modules of this build, and whether the compiler writes
-// debug information: a module process receives both from its command.
-module_build_folder := MODULE_BUILD_FOLDER
 debug_information := true
-
-join :: proc(parts: ..string) -> string {
-	return strings.concatenate(parts, context.temp_allocator)
-}
-
-module_path :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, ".module")
-}
-
-// The folder of the module file of each import of a module. "": the folder
-// of the modules of this build, where the import was written before its
-// importer. A module from a source outside the repository is written to a
-// folder of its developer, and its imports are modules of the system, in
-// the folder of the build of the system (outside_module.odin).
-module_import_folder := ""
 
 // The folder of the source of the module that this process builds, when
 // that source is outside the repository: an absolute path with its links
@@ -266,14 +52,6 @@ module_import_folder := ""
 // the readers of the list of the compiler and the writer of the debug
 // object ask for it (outside_module.odin).
 outside_source_folder := ""
-
-// module_import_path gives the path of the module file of an import.
-module_import_path :: proc(name: string) -> string {
-	if module_import_folder == "" {
-		return module_path(name)
-	}
-	return join(module_import_folder, "/", name, ".module")
-}
 
 build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
@@ -312,7 +90,7 @@ build_modules :: proc() -> bool {
 	// process shortage (the test of the shortage of frames).
 	// The fifth holds the module of the operation sequences, which no
 	// other image holds.
-	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
+	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(foundation.BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
 	if images_built {
 		// The fourth is the image of a measure run: the same modules and one
 		// resource more, so a measure runs the code that a test checked.
@@ -334,21 +112,21 @@ build_modules :: proc() -> bool {
 // before a module became an importer. It checks nothing, and a file that
 // cannot be read only ends the line of its library.
 library_modules_measure_print :: proc() {
-	for library in module_builds {
+	for library in foundation.module_builds {
 		if !library.library {
 			continue
 		}
-		file, readable := read_file(module_path(library.name))
+		file, readable := foundation.read_file(foundation.module_path(library.name))
 		if !readable {
 			continue
 		}
 		line := strings.builder_make(context.temp_allocator)
 		sum, count := 0, 0
-		for build in module_builds {
+		for build in foundation.module_builds {
 			if !slice.contains(build.imports, library.name) {
 				continue
 			}
-			importer, importer_readable := read_file(module_path(build.name))
+			importer, importer_readable := foundation.read_file(foundation.module_path(build.name))
 			if !importer_readable {
 				return
 			}
@@ -358,23 +136,6 @@ library_modules_measure_print :: proc() {
 		}
 		fmt.printfln("modustool: measure: the library module %s has %d bytes; the files of the %d modules that import it have %d bytes in all: %s", library.name, len(file), count, sum, strings.to_string(line))
 	}
-}
-
-// files_with_suffix gives the paths of the files of a folder that end with suffix.
-files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool) {
-	entries, err := os.read_all_directory_by_path(folder, context.temp_allocator)
-	if err != nil {
-		fmt.eprintfln("modustool: cannot list %s: %v", folder, err)
-		return nil, false
-	}
-	list := make([dynamic]string, context.temp_allocator)
-	for entry in entries {
-		if strings.has_suffix(entry.name, suffix) {
-			append(&list, join(folder, "/", entry.name))
-		}
-	}
-	slice.sort(list[:])
-	return list[:], true
 }
 
 // The checks of the kernel: the lock order at each take (TEST_BUILD_CHECKS_LOCK_ORDER),
@@ -395,8 +156,8 @@ test_build_checks := true
 // information, the settings of the module. The build key of the module
 // holds this command (incremental_build.odin), so a flag is written here
 // and nowhere else.
-module_compile_command :: proc(build: Module_Build) -> []string {
-	llvm_ir_folder := join(module_build_folder, "/", build.name, "/llvm_ir")
+module_compile_command :: proc(build: foundation.Module_Build) -> []string {
+	llvm_ir_folder := foundation.join(foundation.module_build_folder, "/", build.name, "/llvm_ir")
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -418,14 +179,14 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		// The compiler writes the list of the files that it read: the inputs
 		// of the next build of this module.
 		"-export-dependencies:json",
-		join("-export-dependencies-file:", module_dependency_file(build.name)),
+		foundation.join("-export-dependencies-file:", module_dependency_file(build.name)),
 		// The same one library for each module, the kernel too: one package
 		// has one import line in each file. The compiler then accepts an
 		// import of a support package in the kernel; the check of the
 		// imports refuses it before this command runs
 		// (library_imports_check.odin).
-		SOURCE_LIBRARY_FLAG,
-		join("-out:", llvm_ir_folder),
+		foundation.SOURCE_LIBRARY_FLAG,
+		foundation.join("-out:", llvm_ir_folder),
 	)
 	// The line program of DWARF, for the line table of the debug object.
 	// The module itself has no byte of it: the converter copies the
@@ -444,7 +205,7 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 	if build.kernel {
 		// The kernel parts: no other module gets this source library, so
 		// the compiler refuses a kernel part in a module.
-		append(&compile, KERNEL_LIBRARY_FLAG)
+		append(&compile, foundation.KERNEL_LIBRARY_FLAG)
 		append(&compile, "-disable-red-zone")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
@@ -457,8 +218,8 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 // of the Odin compiler (18) makes the object. Each function keeps its
 // frame pointer: the kernel walks them for the stack trace of a fault.
 // The build key of the module holds this command.
-module_object_command :: proc(build: Module_Build) -> []string {
-	folder := join(module_build_folder, "/", build.name)
+module_object_command :: proc(build: foundation.Module_Build) -> []string {
+	folder := foundation.join(foundation.module_build_folder, "/", build.name)
 	llc := make([dynamic]string, context.temp_allocator)
 	// -misched-topdown: with debug instructions in a block, the instruction
 	// scheduler of this LLVM (18) orders some register copies in another
@@ -477,19 +238,19 @@ module_object_command :: proc(build: Module_Build) -> []string {
 		// (kernel_stack.odin), and the module file does not change.
 		append(&llc, "-stack-size-section")
 	}
-	append(&llc, "-o", join(folder, "/objects/", build.name, ".o"), join(folder, "/", build.name, ".ll"))
+	append(&llc, "-o", foundation.join(folder, "/objects/", build.name, ".o"), foundation.join(folder, "/", build.name, ".ll"))
 	return llc[:]
 }
 
 // module_assembly_files gives the assembly files that a module links: the
 // copies and the fills, the files of its folder, and for a module with an
 // entry the files of the system library, which has instructions of its own.
-module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool) {
+module_assembly_files :: proc(build: foundation.Module_Build) -> (files: []string, ok: bool) {
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, RUNTIME_MEMORY)
-	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
+	append(&assembly, ..(foundation.files_with_suffix(build.source, ".asm") or_return))
 	if build.image {
-		append(&assembly, ..(files_with_suffix(SYSTEM_LIBRARY_FOLDER, ".asm") or_return))
+		append(&assembly, ..(foundation.files_with_suffix(foundation.SYSTEM_LIBRARY_FOLDER, ".asm") or_return))
 	}
 	return assembly[:], true
 }
@@ -497,12 +258,12 @@ module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool
 // module_linked_file gives the path of the linked file of a module: the
 // output of its compile step, and the input of its conversion.
 module_linked_file :: proc(name: string) -> string {
-	return join(module_build_folder, "/", name, "/linked.elf")
+	return foundation.join(foundation.module_build_folder, "/", name, "/linked.elf")
 }
 
 // build_module runs the two steps of the build of a module, one after the
 // other: the compile step, then the conversion.
-build_module :: proc(build: Module_Build) -> bool {
+build_module :: proc(build: foundation.Module_Build) -> bool {
 	return module_compile(build) && module_convert(build)
 }
 
@@ -515,32 +276,32 @@ build_module :: proc(build: Module_Build) -> bool {
 // a call to a symbol that is not defined, and the link leaves it not
 // defined. So the linked file is the same for every file of an import,
 // and the build key of this step holds none (incremental_build.odin).
-module_compile :: proc(build: Module_Build) -> bool {
-	folder := join(module_build_folder, "/", build.name)
-	objects := join(folder, "/objects")
-	reset_folder(objects) or_return
-	llvm_ir_folder := join(folder, "/llvm_ir")
-	reset_folder(llvm_ir_folder) or_return
+module_compile :: proc(build: foundation.Module_Build) -> bool {
+	folder := foundation.join(foundation.module_build_folder, "/", build.name)
+	objects := foundation.join(folder, "/objects")
+	foundation.reset_folder(objects) or_return
+	llvm_ir_folder := foundation.join(folder, "/llvm_ir")
+	foundation.reset_folder(llvm_ir_folder) or_return
 	// The list of an earlier build must not stay when this compiler fails.
 	_ = os.remove(module_dependency_file(build.name))
 	compile := module_compile_command(build)
-	run(compile[:]) or_return
+	foundation.run(compile[:]) or_return
 	// Odin writes the IR in the folder of -out, with the name of the first
 	// package of the module. The folder was empty: its one .ll file is the IR.
-	llvm_ir_files := files_with_suffix(llvm_ir_folder, ".ll") or_return
+	llvm_ir_files := foundation.files_with_suffix(llvm_ir_folder, ".ll") or_return
 	if len(llvm_ir_files) != 1 {
 		fmt.eprintfln("modustool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
 		return false
 	}
-	if err := file_move(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
+	if err := foundation.file_move(llvm_ir_files[0], foundation.join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("modustool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
 	{
 		// The time of the compile leaves the IR: a build is the same bytes
 		// as the build before (compile_time.odin).
-		path := join(folder, "/", build.name, ".ll")
-		ir := read_file(path) or_return
+		path := foundation.join(folder, "/", build.name, ".ll")
+		ir := foundation.read_file(path) or_return
 		if without, changed := llvm_ir_without_compile_time(string(ir), context.temp_allocator); changed > 0 {
 			if err := os.write_entire_file(path, without); err != nil {
 				fmt.eprintfln("modustool: cannot write the LLVM IR of %s: %v", build.name, err)
@@ -554,13 +315,13 @@ module_compile :: proc(build: Module_Build) -> bool {
 		// function attribute would take the place of -mattr for that
 		// function. The disassembly after the link would find its vector
 		// instructions; this test gives the cause first.
-		ir := read_file(join(folder, "/", build.name, ".ll")) or_return
+		ir := foundation.read_file(foundation.join(folder, "/", build.name, ".ll")) or_return
 		if strings.contains(string(ir), "\"target-features\"") {
 			fmt.eprintfln("modustool: the LLVM IR of %s has functions with target features of their own: the features of llc for the kernel would not hold for them", build.name)
 			return false
 		}
 	}
-	run(module_object_command(build)) or_return
+	foundation.run(module_object_command(build)) or_return
 	{
 		// No unwind table in the object. No part of the system reads one:
 		// the converter leaves it out of the module, and a stack trace
@@ -568,17 +329,17 @@ module_compile :: proc(build: Module_Build) -> bool {
 		// entry for more functions, so the table has another size, and
 		// the code and the data after it have other addresses: the module
 		// would not be the same bytes with and without debug information.
-		object := join(folder, "/objects/", build.name, ".o")
-		run({"llvm-objcopy", "--remove-section=.eh_frame", "--remove-section=.rela.eh_frame", object}) or_return
+		object := foundation.join(folder, "/objects/", build.name, ".o")
+		foundation.run({"llvm-objcopy", "--remove-section=.eh_frame", "--remove-section=.rela.eh_frame", object}) or_return
 	}
 	assembly := module_assembly_files(build) or_return
 	for source in assembly {
 		name := source[strings.last_index(source, "/") + 1:]
 		if build.kernel && source == RUNTIME_MEMORY {
 			// The kernel form of the copies: no vector register.
-			run({"nasm", "-f", "elf64", "-DWITHOUT_VECTOR_REGISTERS", "-o", join(objects, "/", name, ".o"), source}) or_return
+			foundation.run({"nasm", "-f", "elf64", "-DWITHOUT_VECTOR_REGISTERS", "-o", foundation.join(objects, "/", name, ".o"), source}) or_return
 		} else {
-			run({"nasm", "-f", "elf64", "-o", join(objects, "/", name, ".o"), source}) or_return
+			foundation.run({"nasm", "-f", "elf64", "-o", foundation.join(objects, "/", name, ".o"), source}) or_return
 		}
 	}
 
@@ -590,7 +351,7 @@ module_compile :: proc(build: Module_Build) -> bool {
 		fmt.sbprintf(&script, "%s; ", export.name)
 	}
 	strings.write_string(&script, "local: *; };\n")
-	script_path := join(folder, "/exports.version")
+	script_path := foundation.join(folder, "/exports.version")
 	if err := os.write_entire_file(script_path, strings.to_string(script)); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", script_path, err)
 		return false
@@ -610,12 +371,12 @@ module_compile :: proc(build: Module_Build) -> bool {
 		"now",
 		"-z",
 		"relro",
-		join("--version-script=", script_path),
+		foundation.join("--version-script=", script_path),
 		"-o",
 		linked,
 	)
-	append(&link, ..(files_with_suffix(objects, ".o") or_return))
-	run(link[:]) or_return
+	append(&link, ..(foundation.files_with_suffix(objects, ".o") or_return))
+	foundation.run(link[:]) or_return
 	if build.kernel {
 		listing := kernel_listing(linked) or_return
 		kernel_has_no_vector_instruction(listing) or_return
@@ -630,17 +391,17 @@ module_compile :: proc(build: Module_Build) -> bool {
 //
 // It is the one step that reads the file of an import: for its hash, and
 // for the number of each export that a slot names. It runs no compiler.
-module_convert :: proc(build: Module_Build) -> bool {
+module_convert :: proc(build: foundation.Module_Build) -> bool {
 	description := describe_package(build.source) or_return
 	// The request of the table Budget counts the pages of each import, at
 	// each level.
 	if description.budget.stated {
 		description.budget.import_memory_sizes = budget_import_memory_sizes(build) or_return
 	}
-	elf := read_file(module_linked_file(build.name)) or_return
+	elf := foundation.read_file(module_linked_file(build.name)) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
 	for name in build.imports {
-		append(&imports, Import_File{name = name, file = read_file(module_import_path(name)) or_return})
+		append(&imports, Import_File{name = name, file = foundation.read_file(foundation.module_import_path(name)) or_return})
 	}
 	slot_symbols := make([dynamic]string, context.temp_allocator)
 	file := convert(build.name, elf, description, imports[:], &slot_symbols) or_return
@@ -654,8 +415,8 @@ module_convert :: proc(build: Module_Build) -> bool {
 	if build.library {
 		module_is_a_library_check(build.name, file) or_return
 	}
-	if err := os.write_entire_file(module_path(build.name), file); err != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", module_path(build.name), err)
+	if err := os.write_entire_file(foundation.module_path(build.name), file); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", foundation.module_path(build.name), err)
 		return false
 	}
 	if debug_information {
@@ -671,16 +432,16 @@ module_convert :: proc(build: Module_Build) -> bool {
 // volume gets a copy with its own (system_description.odin).
 build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
-	for build in module_builds {
-		in_this_image := module_in_boot_image(build) && build.name != without || module_in_a_boot_image(build) && build.only_in_image == path
+	for build in foundation.module_builds {
+		in_this_image := foundation.module_in_boot_image(build) && build.name != without || foundation.module_in_a_boot_image(build) && build.only_in_image == path
 		if !in_this_image {
 			continue
 		}
-		append(&files, Image_File{name = build.name, file = read_file(module_path(build.name)) or_return})
+		append(&files, Image_File{name = build.name, file = foundation.read_file(foundation.module_path(build.name)) or_return})
 	}
 	module_count := len(files)
 	for resource in resources {
-		append(&files, Image_File{name = resource.name, file = read_file(resource.path) or_return})
+		append(&files, Image_File{name = resource.name, file = foundation.read_file(resource.path) or_return})
 	}
 	image := boot_image_encode(files[:], module_count)
 	if err := os.write_entire_file(path, image); err != nil {
@@ -720,16 +481,6 @@ boot_image_encode :: proc(files: []Image_File, module_count: int) -> []u8 {
 	return image[:]
 }
 
-read_file :: proc(path: string) -> (data: []u8, ok: bool) {
-	err: os.Error
-	data, err = os.read_entire_file(path, context.temp_allocator)
-	if err != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", path, err)
-		return nil, false
-	}
-	return data, true
-}
-
 // A module that the tool loaded in its own address space.
 Host_Module :: struct {
 	file:   []u8,
@@ -745,7 +496,7 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 		fmt.eprintfln(format, ..args)
 		return {}, false
 	}
-	file := read_file(module_path(name)) or_return
+	file := foundation.read_file(foundation.module_path(name)) or_return
 	if error := module.validate(file); error != .None {
 		return fail(name, "%v", error)
 	}
@@ -799,8 +550,8 @@ test_descriptions :: proc() -> bool {
 		.Table   = "Table",
 		.Bytes   = "Bytes",
 	}
-	for build in module_builds {
-		file := read_file(module_path(build.name)) or_return
+	for build in foundation.module_builds {
+		file := foundation.read_file(foundation.module_path(build.name)) or_return
 		described := describe_package(build.source) or_return
 		exports := described.exports
 		about, text := module.documentation(file)
@@ -858,7 +609,7 @@ test_descriptions :: proc() -> bool {
 				fmt.eprintfln("modustool: test failed: the record %s in %s does not agree with its source", item.name, build.name)
 				return false
 			}
-			test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
+			foundation.test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
 		// The budget that the module asks for: the table Budget holds the
 		// stated budget of the source and the counted parts, computed here
@@ -877,13 +628,13 @@ test_descriptions :: proc() -> bool {
 				fmt.eprintfln("modustool: test failed: the budget that %s asks for, %d pages, %d processes, %d threads, is not its stated budget and its counted parts: %s", build.name, request.pages, request.processes, request.threads, budget_count_line(counted))
 				return false
 			}
-			test_passed_print("the budget that %s asks for is its stated budget and its counted parts: %s", build.name, budget_count_line(counted))
+			foundation.test_passed_print("the budget that %s asks for is its stated budget and its counted parts: %s", build.name, budget_count_line(counted))
 		}
 		if build.name == "math" {
-			test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
+			foundation.test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
 		}
 		if len(exports) > 1 {
-			test_passed_print("the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
+			foundation.test_passed_print("the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
 		}
 	}
 	return true
@@ -909,7 +660,7 @@ test_modules :: proc() -> bool {
 		return false
 	}
 	hash := blake3.hash(callee.file)
-	test_passed_print(
+	foundation.test_passed_print(
 		"test_caller called test_callee (%d bytes, %d rebase words, hash %x...) and got %d",
 		len(callee.file),
 		module.count(callee.file, .Rebases),
@@ -917,17 +668,4 @@ test_modules :: proc() -> bool {
 		result,
 	)
 	return true
-}
-
-// file_move renames a file, or copies it and removes the source when the
-// two paths are on two file systems (build/ can be a link to another disk:
-// /tmp/disk, when the memory file system of the computer is full).
-file_move :: proc(source, destination: string) -> os.Error {
-	if err := os.rename(source, destination); err == nil {
-		return nil
-	}
-	if err := os.copy_file(destination, source); err != nil {
-		return err
-	}
-	return os.remove(source)
 }

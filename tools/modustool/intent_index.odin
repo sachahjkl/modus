@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 // The folder of the intent files, from the root of the repository.
 INTENT_FOLDER :: "src/md"
@@ -52,7 +53,7 @@ intent_files_under :: proc(folder, inside: string, files: ^[dynamic]Intent_File)
 				return false
 			}
 		} else if strings.has_suffix(entry.name, ".md") {
-			content, read_ok := site_read_quiet(path)
+			content, read_ok := foundation.site_read_quiet(path)
 			if !read_ok {
 				return false
 			}
@@ -79,7 +80,7 @@ intent_files_read :: proc() -> (files: []Intent_File, ok: bool) {
 // fences of code, is a heading of level 1.
 intent_has_title :: proc(content: string) -> bool {
 	fenced := false
-	for line in site_lines(content) {
+	for line in foundation.site_lines(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -102,7 +103,7 @@ intent_has_title :: proc(content: string) -> bool {
 intent_links :: proc(content: string) -> []Intent_Link {
 	links := make([dynamic]Intent_Link, context.temp_allocator)
 	fenced := false
-	for line, line_index in site_lines(content) {
+	for line, line_index in foundation.site_lines(content) {
 		if strings.has_prefix(strings.trim_space(line), "```") {
 			fenced = !fenced
 			continue
@@ -244,7 +245,7 @@ intent_index_problems :: proc(files: []Intent_File, outside_exists: proc(path: s
 	index_headings := 0
 	in_index := false
 	fenced := false
-	for line, line_index in site_lines(files[readme].content) {
+	for line, line_index in foundation.site_lines(files[readme].content) {
 		trimmed := strings.trim_space(line)
 		if strings.has_prefix(trimmed, "```") {
 			fenced = !fenced
@@ -359,6 +360,6 @@ intent_index_check :: proc() -> bool {
 	if len(problems) > 0 {
 		return false
 	}
-	test_passed_print("the file index of %s%s lists each of the %d other files of the folder once, each file has its title, and each link of the folder names a file", INTENT_PREFIX, INTENT_README, len(files) - 1)
+	foundation.test_passed_print("the file index of %s%s lists each of the %d other files of the folder once, each file has its title, and each link of the folder names a file", INTENT_PREFIX, INTENT_README, len(files) - 1)
 	return true
 }

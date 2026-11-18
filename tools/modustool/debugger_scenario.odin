@@ -1,5 +1,7 @@
 package modustool
 
+import "modustool:foundation"
+
 // The debugger of a process (docs/ARCHITECTURE.md, "The debugger of a
 // process"): one machine. The process debugged starts children of its own
 // module and is their debugger: the process that creates a process has the
@@ -27,7 +29,7 @@ package modustool
 // Each line of a case has a fixed text: the addresses and the statuses
 // are in the lines "debugged: detail:", which no step waits for.
 
-TEST_OUTPUT_DEBUGGER :: BUILD_FOLDER + "/test_output_debugger.txt"
+TEST_OUTPUT_DEBUGGER :: foundation.BUILD_FOLDER + "/test_output_debugger.txt"
 
 @(rodata)
 scenario_debugger := [?]Step {
@@ -101,10 +103,10 @@ scenario_debugger := [?]Step {
 // `wait_stop`, which gives the stop that waits: no step waits a time. The
 // machine ends by a quit of QEMU: the console lost the machine by then.
 
-TEST_OUTPUT_DEBUGGER_COMMANDS :: BUILD_FOLDER + "/test_output_debugger_commands.txt"
+TEST_OUTPUT_DEBUGGER_COMMANDS :: foundation.BUILD_FOLDER + "/test_output_debugger_commands.txt"
 
 // The source file of the module debug_target, as its debug object names it.
-DEBUG_TARGET_SOURCE_FILE :: TEST_MODULE_SOURCES + "debug_target/main.odin"
+DEBUG_TARGET_SOURCE_FILE :: foundation.TEST_MODULE_SOURCES + "debug_target/main.odin"
 
 // The line of the second statement of the procedure add_step of that
 // file, a volatile store. The compiler gives

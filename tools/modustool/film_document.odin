@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modustool:foundation"
 
 // The film of a document (docs/TOOLS.md, "The film of a document").
 //
@@ -231,12 +232,12 @@ film_is_named_by_a_news_entry :: proc(name: string) -> bool {
 // folder to the repository, after the checks that `news check` makes on
 // it: the command never leaves a file there that the check refuses.
 film_document_write :: proc(name, source: string) -> bool {
-	data := read_file(source) or_return
+	data := foundation.read_file(source) or_return
 	if problem := film_document_problem(data); problem != "" {
 		fmt.eprintfln("modustool: the film: %s %s; the repository keeps the film that it has", source, problem)
 		return false
 	}
-	make_folder(FILM_DOCUMENT_FOLDER) or_return
+	foundation.make_folder(FILM_DOCUMENT_FOLDER) or_return
 	target := film_document_path(name)
 	if write_error := os.write_entire_file(target, data); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", target, write_error)
