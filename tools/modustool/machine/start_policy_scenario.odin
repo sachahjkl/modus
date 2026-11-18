@@ -54,7 +54,9 @@ scenario_start_policy_key := [?]Step {
 	{kind = .Wait, text = "start_policy: the start list has 4 rows: each starts in its order"},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "start_policy: each needed row runs: the machine is usable"},
-	{kind = .Wait, text = "root: the machine is usable, by the start policy "},
+	// The root service writes its line when it takes Machine_Usable, before or
+	// after the line of the start policy: two processes, no fixed order.
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Wait, text = RESCUE_USABLE_TEXT},
 	{kind = .Quit},
 }
@@ -71,7 +73,9 @@ scenario_start_policy_missing_console := [?]Step {
 	{kind = .Wait, text = ": the rescue start policy starts"},
 	{kind = .Wait, text = "start_policy: the start list has 4 rows: each starts in its order"},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "root: the machine is usable, by the start policy "},
+	// The root service writes its line when it takes Machine_Usable, before or
+	// after the line of the start policy: two processes, no fixed order.
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Wait, text = RESCUE_USABLE_TEXT},
 	{kind = .Quit},
 }
@@ -79,7 +83,9 @@ scenario_start_policy_missing_console := [?]Step {
 @(rodata)
 scenario_start_policy_entry := [?]Step {
 	{kind = .Wait, text = RESCUE_ENTRY_WRITTEN_LINE},
-	{kind = .Wait, text = "root: the machine is usable, by the start policy "},
+	// The root service writes its line when it takes Machine_Usable, before or
+	// after the line of the start policy: two processes, no fixed order.
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Wait, text = " of the list start_list: the budget of this service holds "},
 	{kind = .Quit},
 }
@@ -89,7 +95,9 @@ scenario_start_policy_boot_next := [?]Step {
 	{kind = .Wait, text = "boot program: the load options of the boot entry ask for the rescue start policy", fails_on = RESCUE_ENTRY_WRITTEN_LINE},
 	{kind = .Wait, text = "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy "},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "root: the machine is usable, by the start policy "},
+	// The root service writes its line when it takes Machine_Usable, before or
+	// after the line of the start policy: two processes, no fixed order.
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	// The entry is there: the boot program writes no second one.
 	{kind = .Wait, text = RESCUE_USABLE_TEXT, fails_on = RESCUE_ENTRY_WRITTEN_LINE},
 	{kind = .Quit},
