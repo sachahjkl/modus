@@ -17,7 +17,8 @@
 // - `Damage`, `records_equal` (`difference.odin`): what changed since the
 //   frame before.
 // - `execute`, `execute_in_rectangles` (`execute.odin`): the records drawn
-//   into a canvas.
+//   into a canvas; a path by the exact area of each pixel (`path.odin`).
+// - `draw_path`, `draw_line`: a path of points, and a line as its stroke.
 // - `Area`, `Column`, `Size`, `row_split` (`layout.odin`): where each element
 //   goes.
 // - `Font`, `Text_Builder`, `text_width` (`text.odin`): the measure of a text.
@@ -47,8 +48,13 @@ Draw_Record :: draw_record.Draw_Record
 Draw_Color :: draw_record.Draw_Color
 Picture_Format :: draw_record.Picture_Format
 COORDINATE_LIMIT :: draw_record.COORDINATE_LIMIT
-LINE_THICKNESS_LIMIT :: draw_record.LINE_THICKNESS_LIMIT
-LINE_COORDINATE_LIMIT :: draw_record.LINE_COORDINATE_LIMIT
+STROKE_WIDTH_LIMIT :: draw_record.STROKE_WIDTH_LIMIT
+Path_Point :: draw_record.Path_Point
+
+// The ends of a line stay inside this distance of the corner of the
+// surface, in pixels: the ends of its stroke, which lie half its width past
+// them, then stay inside COORDINATE_LIMIT.
+LINE_END_LIMIT :: COORDINATE_LIMIT - STROKE_WIDTH_LIMIT
 
 // One cell of a text grid: a character of the font of the system, in its
 // color; or, reverse, in the color of the background on a cell of its
@@ -92,9 +98,10 @@ Text_Grid :: struct {
 Draw_Table :: struct {
 	records:      []Draw_Record, // The memory of the records, from the caller.
 	record_count: int, // The records of the frame so far.
-	// The memory of the text table, from the caller: the bytes of the texts
-	// and the cells of the grids. A table with a grid starts at an address
-	// that is a multiple of 4, as the colors of a cell.
+	// The memory of the text table, from the caller: the bytes of the texts,
+	// the cells of the grids and the points of the paths. A table with a
+	// grid or a path starts at an address that is a multiple of 4, as the
+	// colors of a cell and the words of a point.
 	text:         []u8,
 	text_count:   int, // The bytes of the text table in use.
 	full:         bool, // A record, a text or the cells of a grid did not fit.
@@ -350,31 +357,35 @@ draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: 
 
 // draw_folded_gap appends a part with no measure on this scale: the track,
 // then two lines at an angle, from the bottom left up to the right
-// (docs/DESIGN.md, "2. Forms"). Three records, each with the box of the
-// gap: the lines are cut to it, as the pixels of the gap always were, so
-// their ends can lie on its right edge. A line with an end past
-// LINE_COORDINATE_LIMIT is left out: no surface reaches it.
+// (docs/DESIGN.md, "2. Forms"). Two records, each with the box of the gap:
+// the track, and one Path of two subpaths, the two lines stroked 1 pixel
+// wide as draw_line strokes them. The lines are cut to the gap, as the
+// pixels of the gap always were, so their ends can lie on its right edge.
+// A line with an end past LINE_END_LIMIT is left out: no surface reaches
+// it.
 draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
 	draw_rectangle(table, x, y, width, height, graphics.colors.track, element)
-	line_in_box(table, x + 2, y + height - 4, x + width - 4, y + 4, graphics.colors.dim, element, x, y, width, height)
-	line_in_box(table, x + 6, y + height - 4, x + width, y + 8, graphics.colors.dim, element, x, y, width, height)
-}
-
-// line_in_box appends a line of 1 pixel from one end to the other in the
-// order given, whose record has the box of a place and a size: the line
-// draws only inside it. The execution walks the path from the end that
-// line_ends_in_order puts first, so the ends are written in that order.
-@(private)
-line_in_box :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y: int, color: graphics.Color, element: u32, x, y, width, height: int) {
-	if !inside_line_limit(from_x) || !inside_line_limit(from_y) || !inside_line_limit(to_x) || !inside_line_limit(to_y) {
+	lines := [2][4]int{{x + 2, y + height - 4, x + width - 4, y + 4}, {x + 6, y + height - 4, x + width, y + 8}}
+	points: [4]Path_Point
+	count := 0
+	for line in lines {
+		if !inside_line_limit(line[0]) || !inside_line_limit(line[1]) || !inside_line_limit(line[2]) || !inside_line_limit(line[3]) {
+			continue
+		}
+		start_x, start_y, end_x, end_y := line_ends_in_order(line[0], line[1], line[2], line[3])
+		ends := line_points(start_x, start_y, end_x, end_y, 1)
+		points[count], points[count + 1] = ends[0], ends[1]
+		count += 2
+	}
+	if count == 0 {
 		return
 	}
-	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
-	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = draw_record.opaque(color), thickness = 1}
-	record_append(table, placed_record(line, element, x, y, width, height))
+	left, right := cut_edges(x, width)
+	top, bottom := cut_edges(y, height)
+	path_append(table, points[:count], 0, draw_record.opaque(graphics.colors.dim), draw_record.UNITS_PER_PIXEL, element, {left, top, right, bottom})
 }
 
 // draw_picture appends the pixels of a picture of the process at (x, y).
@@ -545,7 +556,7 @@ text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -
 	switch fields in primitive {
 	case draw_record.Draw_Text:
 		first, count, scale = fields.first, fields.count, int(fields.scale)
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
 		return "", 0, false
 	}
 	if u64(first) + u64(count) > u64(table.text_count) || u64(first) + u64(count) > u64(len(table.text)) {
@@ -554,14 +565,17 @@ text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -
 	return string(table.text[first:][:count]), scale, true
 }
 
-// draw_line appends a straight line from one point to another, with a
-// thickness in pixels. The record always goes from the left end (the top
-// end when the two ends have one x), so a line and its reverse are one
+// draw_line appends a straight line from one pixel to another, with a
+// thickness in pixels: a Path of one segment, stroked, whose two ends go
+// half the thickness past the two pixels. The line runs through the
+// centers of the squares that the line of before drew at its two ends, so
+// a line across or down covers whole pixels, those of before; a line at an
+// angle has antialiased edges. The path always goes from the left end (the
+// top end when the two ends have one x), so a line and its reverse are one
 // record and draw the same pixels. A thickness of 0 or less draws nothing;
-// a thickness past LINE_THICKNESS_LIMIT is cut to it. A line with an end
-// past LINE_COORDINATE_LIMIT is refused: no record. A line of length 0 is
-// one square of its thickness. The box of the record holds each square of
-// the path.
+// a thickness past STROKE_WIDTH_LIMIT is cut to it. A line with an end past
+// LINE_END_LIMIT is refused: no record. A line of length 0 is one square of
+// its thickness.
 draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y: int, thickness: int, color: graphics.Color, element: u32 = 0) {
 	if thickness <= 0 {
 		return
@@ -569,11 +583,146 @@ draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y:
 	if !inside_line_limit(from_x) || !inside_line_limit(from_y) || !inside_line_limit(to_x) || !inside_line_limit(to_y) {
 		return
 	}
-	side := min(thickness, LINE_THICKNESS_LIMIT)
+	side := min(thickness, STROKE_WIDTH_LIMIT)
 	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
-	line := draw_record.Draw_Line{start_x = draw_record.units_of_pixels(start_x), start_y = draw_record.units_of_pixels(start_y), end_x = draw_record.units_of_pixels(end_x), end_y = draw_record.units_of_pixels(end_y), color = draw_record.opaque(color), thickness = u8(side)}
-	box := line_rectangle(start_x, start_y, end_x, end_y, side)
-	record_append(table, placed_record_of_edges(line, element, box.left, box.top, box.right, box.bottom))
+	ends := line_points(start_x, start_y, end_x, end_y, side)
+	// The box of the four corners of the band, which the execution computes
+	// from the same two points: a line across or down has the box of its
+	// squares, its damage before.
+	width := i64(side) * draw_record.UNITS_PER_PIXEL
+	normal_x, normal_y := segment_normal(i64(ends[1].x) - i64(ends[0].x), i64(ends[1].y) - i64(ends[0].y), width)
+	reach_x, reach_y := abs(normal_x), abs(normal_y)
+	left := min(i64(ends[0].x), i64(ends[1].x)) - reach_x
+	top := min(i64(ends[0].y), i64(ends[1].y)) - reach_y
+	right := max(i64(ends[0].x), i64(ends[1].x)) + reach_x
+	bottom := max(i64(ends[0].y), i64(ends[1].y)) + reach_y
+	box := units_box_rounded_out(left, top, right, bottom)
+	path_append(table, ends[:], 0, draw_record.opaque(color), i32(width), element, box)
+}
+
+// units_box_rounded_out gives the box of whole pixels that holds a box in
+// units, each edge cut to COORDINATE_LIMIT. Each edge is at most an i32
+// and a reach of a stroke, so the pixels fit an int.
+@(private)
+units_box_rounded_out :: proc "contextless" (left, top, right, bottom: i64) -> Rectangle {
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	return {cut_place(int(left >> draw_record.UNIT_SHIFT)), cut_place(int(top >> draw_record.UNIT_SHIFT)), cut_place(int((right + UNITS - 1) >> draw_record.UNIT_SHIFT)), cut_place(int((bottom + UNITS - 1) >> draw_record.UNIT_SHIFT))}
+}
+
+// line_points gives the two points of the stroke of a line between two
+// pixels, side pixels wide, in units: the center of the square of side
+// pixels that starts side / 2 pixels before each pixel, then half the side
+// further along the line at each end, so the stroke covers those squares
+// at the two ends. A line of length 0 goes across its one square. The ends
+// are inside LINE_END_LIMIT, so each place fits an i32.
+@(private)
+line_points :: proc "contextless" (start_x, start_y, end_x, end_y, side: int) -> [2]Path_Point {
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	center :: proc "contextless" (place, side: int) -> i64 {
+		return i64(place - side / 2) * UNITS + i64(side) * UNITS / 2
+	}
+	half := i64(side) * UNITS / 2
+	first_x, first_y := center(start_x, side), center(start_y, side)
+	last_x, last_y := center(end_x, side), center(end_y, side)
+	along_x, along_y := half, i64(0)
+	if first_x != last_x || first_y != last_y {
+		// A quarter turn back of the normal is the direction, half the side
+		// long.
+		along_x, along_y = segment_normal(last_y - first_y, first_x - last_x, 2 * half)
+	}
+	return {{command = .Move, x = i32(first_x - along_x), y = i32(first_y - along_y)}, {command = .Line, x = i32(last_x + along_x), y = i32(last_y + along_y)}}
+}
+
+// draw_path appends a path. Its points are places in units of 1/64 pixel
+// of the surface (draw_record.UNITS_PER_PIXEL): they go into the text
+// table at a multiple of 4 bytes, and the record gets the box that holds
+// each pixel that it draws: the box of its points, control points too,
+// grown by half the width of its stroke, rounded out to whole pixels and
+// cut to COORDINATE_LIMIT. fill and stroke are colors with alpha, 0 for no
+// fill or no stroke; a stroke_width in units of 0 or below is no stroke.
+// Points that the border of the points refuses (draw_record.path_points_read),
+// a stroke wider than STROKE_WIDTH_LIMIT pixels, and a table whose text does
+// not start at a multiple of 4 are refused: no record, and refused is set.
+// Points that do not fit the text table make the table full.
+draw_path :: proc "contextless" (table: ^Draw_Table, points: []Path_Point, fill, stroke: Draw_Color, stroke_width: i32, element: u32 = 0) {
+	if len(points) == 0 {
+		table.refused = true
+		return
+	}
+	left, top := i64(max(i64)), i64(max(i64))
+	right, bottom := i64(min(i64)), i64(min(i64))
+	for point in points {
+		if point.command == .Close {
+			continue
+		}
+		left, top = min(left, i64(point.x)), min(top, i64(point.y))
+		right, bottom = max(right, i64(point.x)), max(bottom, i64(point.y))
+	}
+	if left > right {
+		table.refused = true
+		return
+	}
+	if stroke_width > 0 && draw_record.alpha_of(stroke) != 0 {
+		reach := (i64(stroke_width) + 1) / 2
+		left, top, right, bottom = left - reach, top - reach, right + reach, bottom + reach
+	}
+	path_append(table, points, fill, stroke, stroke_width, element, units_box_rounded_out(left, top, right, bottom))
+}
+
+// path_append appends a path in a box of whole pixels inside
+// COORDINATE_LIMIT, which cuts it. The colors and the width take their
+// canonical form: a color with alpha 0 is 0, and no stroke has the color 0
+// and the width 0.
+@(private)
+path_append :: proc "contextless" (table: ^Draw_Table, points: []Path_Point, fill, stroke: Draw_Color, stroke_width: i32, element: u32, box: Rectangle) {
+	fill_color, stroke_color := canonical_color(fill), canonical_color(stroke)
+	width := stroke_width
+	if stroke_color == 0 || width <= 0 {
+		stroke_color, width = 0, 0
+	}
+	if width > draw_record.STROKE_WIDTH_UNIT_LIMIT || len(points) < 2 || len(points) > draw_record.PATH_POINT_LIMIT || uintptr(raw_data(table.text)) % align_of(draw_record.Path_Point_Record) != 0 {
+		table.refused = true
+		return
+	}
+	start := (table.text_count + align_of(draw_record.Path_Point_Record) - 1) / align_of(draw_record.Path_Point_Record) * align_of(draw_record.Path_Point_Record)
+	size := len(points) * draw_record.PATH_POINT_SIZE
+	if start + size > len(table.text) || table.record_count >= len(table.records) {
+		table.full = true
+		return
+	}
+	records := ([^]draw_record.Path_Point_Record)(&table.text[start])[:len(points)]
+	for point, index in points {
+		records[index] = {command = u32(point.command), x = point.x, y = point.y}
+	}
+	// The border of the points, on the bytes that the reader reads: a
+	// command that a caller made from a number is checked too.
+	if draw_record.path_points_check(records) != .None {
+		table.refused = true
+		return
+	}
+	table.text_count = start + size
+	path := draw_record.Draw_Path{first = u32(start), count = u32(size), fill_color = fill_color, stroke_color = stroke_color, stroke_width = u32(width)}
+	record_append(table, record_of_pixels(path, element, box.left, box.top, box.right, box.bottom))
+}
+
+// path_of gives the points that a Path record names in the text table of
+// its table, through the border of the points, into points: false when
+// the record is not a Path that the border reads, or names points that the
+// table does not hold or that the border of the points refuses. A test and
+// a tool read the points of a frame with it.
+path_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record, points: []Path_Point) -> (count: int, ok: bool) {
+	primitive, problem := draw_record.read(record)
+	fields, is_path := primitive.(draw_record.Draw_Path)
+	if problem != .None || !is_path {
+		return 0, false
+	}
+	start, size := u64(fields.first), u64(fields.count)
+	if start + size > u64(table.text_count) || start + size > u64(len(table.text)) || (uintptr(raw_data(table.text)) + uintptr(start)) % align_of(draw_record.Path_Point_Record) != 0 {
+		return 0, false
+	}
+	records := ([^]draw_record.Path_Point_Record)(&table.text[start])[:int(size / draw_record.PATH_POINT_SIZE)]
+	read_count, points_problem := draw_record.path_points_read(records, points)
+	return read_count, points_problem == .None
 }
 
 // draw_outline appends the border of a rectangle, thickness pixels wide
@@ -592,28 +741,17 @@ draw_outline :: proc "contextless" (table: ^Draw_Table, x, y, width, height, thi
 // inside_line_limit says if a place can be an end of a line. A comparison,
 // not abs: abs of the smallest int is still negative.
 inside_line_limit :: proc "contextless" (value: int) -> bool {
-	return value >= -LINE_COORDINATE_LIMIT && value <= LINE_COORDINATE_LIMIT
+	return value >= -LINE_END_LIMIT && value <= LINE_END_LIMIT
 }
 
 // line_ends_in_order gives the two ends of a line with the left end first,
-// or the top end first when the two ends have one x. The path of the line
-// depends on its first end: one order gives one path in both directions.
+// or the top end first when the two ends have one x: one order gives one
+// path, so a line and its reverse are one record.
 line_ends_in_order :: proc "contextless" (from_x, from_y, to_x, to_y: int) -> (start_x, start_y, end_x, end_y: int) {
 	if to_x < from_x || to_x == from_x && to_y < from_y {
 		return to_x, to_y, from_x, from_y
 	}
 	return from_x, from_y, to_x, to_y
-}
-
-// line_rectangle gives the rectangle that holds each pixel of a line, in
-// pixels: the path stays between the x and the y of its two ends, and the
-// square of each point starts half a thickness before the point. It is the
-// box of the record, so it is the damage of the line. Pieces of the path
-// would be tighter, but the damage list joins rectangles that touch, and
-// the pieces of one line touch.
-line_rectangle :: proc "contextless" (start_x, start_y, end_x, end_y, thickness: int) -> Rectangle {
-	before := thickness / 2
-	return {min(start_x, end_x) - before, min(start_y, end_y) - before, max(start_x, end_x) - before + thickness, max(start_y, end_y) - before + thickness}
 }
 
 // draw_clip appends a clip: the next records are cut to the rectangle. A
@@ -724,13 +862,6 @@ placed_record :: proc "contextless" (primitive: draw_record.Draw_Primitive, elem
 	left, right := cut_edges(x, width)
 	top, bottom := cut_edges(y, height)
 	return record_of_pixels(primitive, element, left, top, right, bottom)
-}
-
-// placed_record_of_edges gives the record of a primitive in the rectangle
-// of four edges, in pixels, each cut to COORDINATE_LIMIT.
-@(private)
-placed_record_of_edges :: proc "contextless" (primitive: draw_record.Draw_Primitive, element: u32, left, top, right, bottom: int) -> Draw_Record {
-	return record_of_pixels(primitive, element, cut_place(left), cut_place(top), cut_place(right), cut_place(bottom))
 }
 
 // record_of_pixels gives the record of a primitive in a box of edges in

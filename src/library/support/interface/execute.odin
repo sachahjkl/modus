@@ -111,12 +111,8 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			if grid, ok := grid_cells(table, fields); ok {
 				text_grid_draw(view, x, y, grid)
 			}
-		case draw_record.Draw_Line:
-			// The ends in the view; the path is the one of graphics.line from
-			// the end that line_ends_in_order puts first.
-			start_x, start_y, end_x, end_y := line_ends_in_order(draw_record.pixels_floor(fields.start_x) - area.left, draw_record.pixels_floor(fields.start_y) - area.top, draw_record.pixels_floor(fields.end_x) - area.left, draw_record.pixels_floor(fields.end_y) - area.top)
-			// The border keeps the color of a line opaque: its channels.
-			graphics.line(view, start_x, start_y, end_x, end_y, int(fields.thickness), draw_record.channels_of(fields.color))
+		case draw_record.Draw_Path:
+			path_draw(table, view, area, fields)
 		}
 	}
 }

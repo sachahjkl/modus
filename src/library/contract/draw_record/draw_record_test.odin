@@ -17,7 +17,7 @@ sample_primitives :: proc() -> [11]Draw_Primitive {
 		Draw_Clip{},
 		Draw_Picture{memory = 1, first = 7, stride = 40, generation = 9},
 		Draw_Text_Grid{first = 8, count = 32, columns = 2},
-		Draw_Line{start_x = units_of_pixels(2), start_y = units_of_pixels(3), end_x = units_of_pixels(20), end_y = units_of_pixels(-4), color = 0xFF708090, thickness = 3},
+		Draw_Path{first = 12, count = 3 * PATH_POINT_SIZE, fill_color = 0x80708090, stroke_color = 0xFF102030, stroke_width = 3 * UNITS_PER_PIXEL / 2},
 		Draw_Text{font = .Interface, first = 0, count = 4, color = 0xFFFFFFFF, origin_x = units_of_pixels(12) + UNITS_PER_PIXEL / 3, scale = 1, weight = .Regular},
 	}
 }
@@ -71,8 +71,8 @@ reserved_runs_of :: proc(kind: Draw_Kind) -> (runs: [2]Reserved_Run, count: int)
 		return {{int(offset_of(Picture_Fields, memory_reserved)), size_of(Picture_Fields{}.memory_reserved)}, {int(offset_of(Picture_Fields, reserved)), size_of(Picture_Fields{}.reserved)}}, 2
 	case .Text_Grid:
 		return {{int(offset_of(Text_Grid_Fields, reserved)), size_of(Text_Grid_Fields{}.reserved)}, {}}, 1
-	case .Line:
-		return {{int(offset_of(Line_Fields, reserved)), size_of(Line_Fields{}.reserved)}, {}}, 1
+	case .Path:
+		return {{int(offset_of(Path_Fields, reserved)), size_of(Path_Fields{}.reserved)}, {}}, 1
 	}
 	return {}, 0
 }
@@ -444,7 +444,7 @@ named_bytes_of :: proc(kind: Draw_Kind) -> int {
 			named = ends[index]
 		}
 		return named
-	case .None, .Rectangle, .Text, .Clip, .Picture, .Text_Grid, .Line:
+	case .None, .Rectangle, .Text, .Clip, .Picture, .Text_Grid, .Path:
 	}
 	return 0
 }
@@ -531,7 +531,7 @@ read_takes_a_box_inside_a_pixel_for_a_rectangle_and_a_gradient :: proc(t: ^testi
 			inside = value.repetition == (Repetition{})
 		case Draw_Gradient:
 			inside = true
-		case Draw_Nothing, Draw_Clip, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Line:
+		case Draw_Nothing, Draw_Clip, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Path:
 		}
 		for part in parts {
 			for side in 0 ..< 4 {
@@ -618,32 +618,71 @@ read_refuses_an_interface_text_past_its_bounds :: proc(t: ^testing.T) {
 	}
 }
 
-// The thickness and each end of a line: 0, one past each bound, the
-// largest values, and an end inside a pixel.
+// The fields of a path out of their bounds, each other field valid: a
+// first byte that is not a multiple of 4; a count of 0, of 1 point, one
+// byte past a point, one point past PATH_POINT_LIMIT and the largest u32;
+// a stroke color with a width of 0, a width with no color, a width one unit
+// past STROKE_WIDTH_UNIT_LIMIT and the largest u32; and a fill or a stroke
+// of alpha 0 that is not 0.
 @(test)
-read_refuses_a_line_past_its_bounds :: proc(t: ^testing.T) {
-	thicknesses := [?]u8{0, LINE_THICKNESS_LIMIT + 1, max(u8)}
-	for thickness in thicknesses {
-		record := sample_record(Draw_Line{color = SAMPLE_COLOR, thickness = thickness})
-		_, problem := read(record)
-		testing.expectf(t, problem == .Field_Past_Bound, "a line of thickness %d: %v", thickness, problem)
+read_refuses_a_path_past_its_bounds :: proc(t: ^testing.T) {
+	TWO :: 2 * PATH_POINT_SIZE
+	refused := [?]Draw_Path {
+		{first = 1, count = TWO, fill_color = SAMPLE_COLOR},
+		{first = 2, count = TWO, fill_color = SAMPLE_COLOR},
+		{first = max(u32), count = TWO, fill_color = SAMPLE_COLOR},
+		{count = 0, fill_color = SAMPLE_COLOR},
+		{count = PATH_POINT_SIZE, fill_color = SAMPLE_COLOR},
+		{count = TWO + 1, fill_color = SAMPLE_COLOR},
+		{count = (PATH_POINT_LIMIT + 1) * PATH_POINT_SIZE, fill_color = SAMPLE_COLOR},
+		{count = max(u32), fill_color = SAMPLE_COLOR},
+		{count = TWO, stroke_color = SAMPLE_COLOR, stroke_width = 0},
+		{count = TWO, stroke_color = 0, stroke_width = 1},
+		{count = TWO, stroke_color = SAMPLE_COLOR, stroke_width = STROKE_WIDTH_UNIT_LIMIT + 1},
+		{count = TWO, stroke_color = SAMPLE_COLOR, stroke_width = max(u32)},
+		{count = TWO, fill_color = Draw_Color(0x0012_3456)},
+		{count = TWO, stroke_color = Draw_Color(0x0012_3456), stroke_width = UNITS_PER_PIXEL},
 	}
-	ends := [?]i32 {
-		units_of_pixels(LINE_COORDINATE_LIMIT + 1),
-		units_of_pixels(-LINE_COORDINATE_LIMIT - 1),
-		1, // Inside a pixel.
-		max(i32),
-		min(i32),
+	for path, index in refused {
+		primitive, problem := read(sample_record(path))
+		testing.expectf(t, problem == .Field_Past_Bound && primitive == nil, "the path %d: %v", index, problem)
 	}
-	for end in ends {
-		for side in 0 ..< 4 {
-			coordinates := [4]i32{}
-			coordinates[side] = end
-			record := sample_record(Draw_Line{start_x = coordinates[0], start_y = coordinates[1], end_x = coordinates[2], end_y = coordinates[3], color = SAMPLE_COLOR, thickness = 1})
-			_, problem := read(record)
-			testing.expectf(t, problem == .Field_Past_Bound, "a line whose coordinate %d is %d units: %v", side, end, problem)
-		}
+	// The bounds themselves are read: 2 and PATH_POINT_LIMIT points, a
+	// width of 1 unit and STROKE_WIDTH_UNIT_LIMIT, no fill and no stroke, the
+	// largest first byte that is a multiple of 4.
+	accepted := [?]Draw_Path {
+		{count = TWO, fill_color = SAMPLE_COLOR},
+		{first = max(u32) - 3, count = PATH_POINT_LIMIT * PATH_POINT_SIZE, fill_color = SAMPLE_COLOR},
+		{count = TWO, stroke_color = SAMPLE_COLOR, stroke_width = 1},
+		{count = TWO, stroke_color = SAMPLE_COLOR, stroke_width = STROKE_WIDTH_UNIT_LIMIT},
+		{count = TWO},
 	}
+	for path, index in accepted {
+		primitive, problem := read(sample_record(path))
+		read_path, is_path := primitive.(Draw_Path)
+		testing.expectf(t, problem == .None && is_path && read_path == path, "the path %d at its bounds: %v", index, problem)
+	}
+}
+
+// The word of the kind Line (10), which became the stroke of a Path, names
+// no kind: a record of the form of version 15, a line of 3 pixels between
+// two whole pixels in an opaque color, is refused. The same bytes as a
+// Path are refused too: the thickness of the line lies in the reserved
+// bytes of a Path.
+@(test)
+read_refuses_the_word_of_the_line :: proc(t: ^testing.T) {
+	LINE_WORD :: 10
+	_, known := draw_kind_of_word(LINE_WORD)
+	testing.expect(t, !known, "the word 10 names a kind")
+	old_fields := [6]u32{u32(units_of_pixels(2)), u32(units_of_pixels(3)), u32(units_of_pixels(20)), u32(units_of_pixels(4)), 0xFF708090, 3}
+	record := sample_record(Draw_Nothing{})
+	record.kind = LINE_WORD
+	record.fields = transmute([FIELDS_SIZE]u8)old_fields
+	primitive, problem := read(record)
+	testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word 10 with the fields of a line: %v", problem)
+	record.kind = u8(Draw_Kind.Path)
+	primitive, problem = read(record)
+	testing.expectf(t, problem == .Reserved_Not_Zero && primitive == nil, "the bytes of a line as a Path: %v", problem)
 }
 
 // The edges that the border accepts: each bound itself. They come after
@@ -655,8 +694,7 @@ read_takes_each_bound :: proc(t: ^testing.T) {
 		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, scale = TEXT_SCALE_LIMIT, weight = max(Font_Weight)},
 		Draw_Text{font = .Interface, count = INTERFACE_TEXT_LIMIT, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = TEXT_SCALE_LIMIT},
 		Draw_Text{font = .Interface, count = 0, color = SAMPLE_COLOR, origin_x = units_of_pixels(10 + INK_MARGIN_LIMIT) + UNITS_PER_PIXEL * 2 / 3, scale = 1, weight = .Bold},
-		Draw_Line{start_x = units_of_pixels(-LINE_COORDINATE_LIMIT), start_y = units_of_pixels(LINE_COORDINATE_LIMIT), end_x = units_of_pixels(LINE_COORDINATE_LIMIT), end_y = units_of_pixels(-LINE_COORDINATE_LIMIT), color = SAMPLE_COLOR, thickness = LINE_THICKNESS_LIMIT},
-		Draw_Line{color = SAMPLE_COLOR, thickness = 1},
+		Draw_Path{count = PATH_POINT_LIMIT * PATH_POINT_SIZE, stroke_color = SAMPLE_COLOR, stroke_width = STROKE_WIDTH_UNIT_LIMIT},
 	}
 	for primitive in accepted {
 		record := sample_record(primitive)
@@ -755,24 +793,25 @@ gradient_of_colors :: proc(start, end: Draw_Color) -> Draw_Gradient {
 }
 
 // The records whose one color is the color given: a rectangle, a pattern,
-// each end of a gradient with the other end transparent, and a text in
-// each font.
+// each end of a gradient with the other end transparent, a text in each
+// font, and the fill of a path.
 @(private = "file")
-records_of_one_color :: proc(color: Draw_Color) -> [6]Draw_Primitive {
-	return [6]Draw_Primitive {
+records_of_one_color :: proc(color: Draw_Color) -> [7]Draw_Primitive {
+	return [7]Draw_Primitive {
 		Draw_Rectangle{color = color},
 		Draw_Rectangle{color = color, repetition = SAMPLE_PATTERN},
 		gradient_of_colors(color, 0),
 		gradient_of_colors(0, color),
 		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = color, scale = 1},
 		Draw_Text{font = .Interface, count = 1, color = color, origin_x = units_of_pixels(12), scale = 1},
+		Draw_Path{count = 2 * PATH_POINT_SIZE, fill_color = color},
 	}
 }
 
-// The record whose color must be opaque: a line.
+// The record of a stroke of one color: a path with no fill.
 @(private = "file")
-line_of_color :: proc(color: Draw_Color) -> Draw_Line {
-	return Draw_Line{start_x = units_of_pixels(1), start_y = units_of_pixels(1), end_x = units_of_pixels(9), end_y = units_of_pixels(1), color = color, thickness = 1}
+stroke_of_color :: proc(color: Draw_Color) -> Draw_Path {
+	return Draw_Path{count = 2 * PATH_POINT_SIZE, stroke_color = color, stroke_width = UNITS_PER_PIXEL}
 }
 
 // A color with alpha 0 draws nothing whatever its channels, so its one form
@@ -814,20 +853,19 @@ read_refuses_a_transparent_color_that_is_not_zero :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Problem.None)
 }
 
-// The color of a line is opaque: its squares overlap. Each other alpha is
-// refused, 0 too.
+// A stroke blends once, so it takes each alpha: a stroke of alpha 0 that
+// is not 0 is refused, and the color 0 with a width is refused, as a width
+// with no stroke; each alpha from 1 to 255 is read.
 @(test)
-read_refuses_a_line_that_is_not_opaque :: proc(t: ^testing.T) {
-	alphas := [4]u8{0, 1, 128, OPAQUE_ALPHA - 1}
+read_takes_a_stroke_of_each_alpha :: proc(t: ^testing.T) {
+	_, problem := read(sample_record(stroke_of_color(Draw_Color(0x0012_3456))))
+	testing.expectf(t, problem == .Field_Past_Bound, "the stroke of alpha 0 and channels: %v", problem)
+	_, problem = read(sample_record(stroke_of_color(0)))
+	testing.expectf(t, problem == .Field_Past_Bound, "the stroke of the color 0 with a width: %v", problem)
+	alphas := [4]u8{1, 128, OPAQUE_ALPHA - 1, OPAQUE_ALPHA}
 	for alpha in alphas {
-		_, problem := read(sample_record(line_of_color(Draw_Color(u32(alpha) << ALPHA_SHIFT | 0x0012_3456))))
-		testing.expectf(t, problem == .Field_Past_Bound, "the line with alpha %d: %v", alpha, problem)
-	}
-	_, problem := read(sample_record(line_of_color(0)))
-	testing.expectf(t, problem == .Field_Past_Bound, "the line with the color 0: %v", problem)
-	{
-		_, white := read(sample_record(line_of_color(opaque(CHANNELS_MASK))))
-		testing.expectf(t, white == .None, "the line in opaque white: %v", white)
+		_, read_problem := read(sample_record(stroke_of_color(with_alpha(0x0012_3456, alpha))))
+		testing.expectf(t, read_problem == .None, "the stroke with alpha %d: %v", alpha, read_problem)
 	}
 }
 

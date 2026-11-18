@@ -1249,7 +1249,8 @@ line_rows :: proc(t: ^testing.T, name: string, from_x, from_y, to_x, to_y, thick
 	}
 }
 
-// The pixels of a line, against pixels written by hand.
+// The pixels of a line across or down, against pixels written by hand: the
+// stroke covers whole pixels, the squares of the line of before.
 @(test)
 line_pixels_by_hand :: proc(t: ^testing.T) {
 	line_rows(t, "horizontal", 1, 1, 4, 1, 1, {
@@ -1265,24 +1266,6 @@ line_pixels_by_hand :: proc(t: ^testing.T) {
 		"..#.....",
 		"..#.....",
 		"..#.....",
-		"........",
-		"........",
-	})
-	line_rows(t, "diagonal", 0, 0, 3, 3, 1, {
-		"#.......",
-		".#......",
-		"..#.....",
-		"...#....",
-		"........",
-		"........",
-	})
-	// Five columns for two rows: each row of the path is a run of two or
-	// three pixels.
-	line_rows(t, "shallow", 0, 0, 5, 2, 1, {
-		"##......",
-		"..##....",
-		"....##..",
-		"........",
 		"........",
 		"........",
 	})
@@ -1315,6 +1298,35 @@ line_pixels_by_hand :: proc(t: ^testing.T) {
 	})
 }
 
+// A line at an angle is a stroke with antialiased edges: on the diagonal
+// of 1 pixel, each pixel of the diagonal is drawn and is not covered whole
+// (its corners are past the half width of the stroke), and no pixel two
+// columns or more from the diagonal is drawn. The record is one Path.
+@(test)
+line_at_an_angle_is_antialiased :: proc(t: ^testing.T) {
+	_ = blend_table()
+	pixels: [LINE_TEST_WIDTH * LINE_TEST_HEIGHT]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = LINE_TEST_WIDTH, height = LINE_TEST_HEIGHT, stride = LINE_TEST_WIDTH}
+	memory: Tables
+	table := table_of(&memory)
+	draw_line(&table, 0, 0, 5, 5, 1, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 1)
+	testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Path)
+	execute(&table, canvas)
+	for y in 0 ..< LINE_TEST_HEIGHT {
+		for x in 0 ..< LINE_TEST_WIDTH {
+			pixel := pixels[y * LINE_TEST_WIDTH + x]
+			if abs(x - y) >= 2 {
+				testing.expectf(t, pixel == 0, "the pixel (%d, %d), two columns from the diagonal, is %06x", x, y, pixel)
+			}
+		}
+	}
+	for step in 1 ..= 4 {
+		pixel := pixels[step * LINE_TEST_WIDTH + step]
+		testing.expectf(t, pixel != 0 && pixel != 0xFFFFFF, "the pixel (%d, %d) of the diagonal is %06x: not an antialiased edge", step, step, pixel)
+	}
+}
+
 // A small generator of numbers for the tests: the same numbers at each run.
 @(private = "file")
 next_test_number :: proc(seed: ^u32, below: int) -> int {
@@ -1325,6 +1337,7 @@ next_test_number :: proc(seed: ^u32, below: int) -> int {
 // A line and its reverse are one record and draw the same pixels.
 @(test)
 line_and_its_reverse_are_one :: proc(t: ^testing.T) {
+	_ = blend_table()
 	SIDE :: 40
 	seed: u32 = 11
 	for round in 0 ..< 300 {
@@ -1350,6 +1363,7 @@ line_and_its_reverse_are_one :: proc(t: ^testing.T) {
 // surface drawn again in the damage is the new frame drawn whole.
 @(test)
 line_damage_holds_each_changed_pixel :: proc(t: ^testing.T) {
+	_ = blend_table()
 	SIDE :: 64
 	seed: u32 = 5
 	whole_canvas :: proc(pixels: ^[SIDE * SIDE]graphics.Color) -> graphics.Canvas {
@@ -1406,24 +1420,32 @@ line_hostile_values :: proc(t: ^testing.T) {
 	draw_line(&table, 0, 0, 10, 10, 0, 0xFFFFFF)
 	draw_line(&table, 0, 0, 10, 10, -3, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 0)
-	// An end past the limit, or the smallest int: no record.
-	draw_line(&table, 0, 0, LINE_COORDINATE_LIMIT + 1, 0, 1, 0xFFFFFF)
-	draw_line(&table, min(int), 0, 4, 4, 1, 0xFFFFFF)
-	draw_line(&table, 0, max(int), 4, 4, 1, 0xFFFFFF)
+	// An end one past the limit, or the smallest or the largest int: no
+	// record, on each axis and at each end.
+	past := [?]int{LINE_END_LIMIT + 1, -LINE_END_LIMIT - 1, min(int), max(int)}
+	for value in past {
+		draw_line(&table, value, 0, 4, 4, 1, 0xFFFFFF)
+		draw_line(&table, 0, value, 4, 4, 1, 0xFFFFFF)
+		draw_line(&table, 0, 0, value, 4, 1, 0xFFFFFF)
+		draw_line(&table, 0, 0, 4, value, 1, 0xFFFFFF)
+	}
 	testing.expect_value(t, table.record_count, 0)
+	testing.expect(t, !table.refused && !table.full, "a line past the limit is no record, and no fault of the table")
 	// A thickness past the limit is cut to it.
 	draw_line(&table, 0, 0, 10, 0, 1000, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 1)
-	testing.expect_value(t, record_view(table.records[0]).thickness, LINE_THICKNESS_LIMIT)
-	// The ends at the limit: a record, and only the pixels in the canvas.
-	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
+	testing.expect_value(t, record_view(table.records[0]).stroke_width, STROKE_WIDTH_LIMIT * draw_record.UNITS_PER_PIXEL)
+	// The ends at the limit, with the widest stroke: a record that the
+	// border reads.
+	draw_line(&table, -LINE_END_LIMIT, -LINE_END_LIMIT, LINE_END_LIMIT, LINE_END_LIMIT, STROKE_WIDTH_LIMIT, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 2)
+	testing.expect(t, record_view(table.records[1]).read, "the line at the limit is refused by the border")
 
 	SIDE :: 16
 	pixels: [SIDE * SIDE]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE}
 	draw_table_clear(&table)
-	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
+	draw_line(&table, -LINE_END_LIMIT, 3, LINE_END_LIMIT, 3, 1, 0xFFFFFF)
 	execute(&table, canvas)
 	for y in 0 ..< SIDE {
 		for x in 0 ..< SIDE {
@@ -1431,35 +1453,15 @@ line_hostile_values :: proc(t: ^testing.T) {
 		}
 	}
 
-	// Records written by hand that the border refuses: a thickness of 0 or
-	// past the limit, an end past the limit or inside a pixel. No pixel,
-	// and their damage is their box.
+	// A line fully outside the canvas: no pixel, and its box holds its
+	// squares.
 	pixels = {}
-	line_record_of :: proc(fields: draw_record.Line_Fields) -> Draw_Record {
-		return {kind = u8(Draw_Kind.Line), right = draw_record.units_of_pixels(6), bottom = draw_record.units_of_pixels(6), fields = transmute([draw_record.FIELDS_SIZE]u8)fields}
-	}
-	one, six := draw_record.units_of_pixels(1), draw_record.units_of_pixels(6)
-	hostile := [?]Draw_Record {
-		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 0}),
-		line_record_of({start_x = one, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 200}),
-		line_record_of({start_x = one, start_y = one, end_x = max(i32) - 63, end_y = six, color = 0xFFFFFFFF, thickness = 1}),
-		line_record_of({start_x = one + 1, start_y = one, end_x = six, end_y = six, color = 0xFFFFFFFF, thickness = 1}),
-	}
-	for record in hostile {
-		_, problem := draw_record.read(record)
-		testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
-		testing.expect_value(t, record_rectangle(record), Rectangle{0, 0, 6, 6})
-	}
 	draw_table_clear(&table)
-	for record in hostile {
-		record_append(&table, record)
-	}
-	// A line fully outside the canvas.
 	draw_line(&table, -40, -40, -20, -10, 3, 0xFFFFFF)
 	draw_line(&table, SIDE + 4, 0, SIDE + 30, SIDE, 3, 0xFFFFFF)
 	execute(&table, canvas)
-	testing.expect(t, pixels == [SIDE * SIDE]graphics.Color{}, "no pixel from refused lines or lines outside")
-	testing.expect_value(t, record_rectangle(table.records[4]), Rectangle{-41, -41, -18, -8})
+	testing.expect(t, pixels == [SIDE * SIDE]graphics.Color{}, "no pixel from a line outside")
+	testing.expect(t, contains(record_rectangle(table.records[0]), Rectangle{-41, -41, -18, -8}), "the box of a line does not hold its squares")
 }
 
 // A picture record that names another picture of the table, with the same
@@ -2414,8 +2416,8 @@ contains :: proc(outer, inner: Rectangle) -> bool {
 	return outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
 }
 
-// A line that becomes refused: its box is damaged, where version 10 of the
-// record damaged nothing for a refused line, and it draws nothing.
+// A line whose stroke becomes refused, a stroke color with a width of 0:
+// its box is damaged, and it draws nothing.
 @(test)
 a_refused_line_damages_its_box_and_draws_nothing :: proc(t: ^testing.T) {
 	memory: Tables
@@ -2423,14 +2425,14 @@ a_refused_line_damages_its_box_and_draws_nothing :: proc(t: ^testing.T) {
 	draw_line(&before, 2, 2, 20, 2, 1, 0xFFFFFF)
 	testing.expect_value(t, before.record_count, 1)
 	line := before.records[0]
-	fields := transmute(draw_record.Line_Fields)line.fields
-	fields.thickness = 0
+	fields := transmute(draw_record.Path_Fields)line.fields
+	fields.stroke_width = 0
 	refused := line
 	refused.fields = transmute([draw_record.FIELDS_SIZE]u8)fields
 	_, problem := draw_record.read(refused)
 	testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
 	now_records := [1]Draw_Record{refused}
-	now := Draw_Table{records = now_records[:], record_count = 1}
+	now := Draw_Table{records = now_records[:], record_count = 1, text = before.text, text_count = before.text_count}
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 1)
@@ -2570,11 +2572,14 @@ the_grid_of_points_is_a_pattern_with_the_same_pixels :: proc(t: ^testing.T) {
 	}
 }
 
-// The folded gap is a track and two lines, three records with the box of
-// the gap, and draws the pixels of the kind that it replaced at each width
-// from 6 pixels; the lines are cut to the gap as they were.
+// The folded gap is a track and one path of its two lines, two records
+// with the box of the gap, at each width from 6 pixels. The lines are
+// antialiased strokes now: each pixel of the line of before is drawn, each
+// drawn pixel is next to a pixel of the line of before, and nothing leaves
+// the gap. The gap drawn in four damage rectangles is the gap drawn whole.
 @(test)
-the_folded_gap_is_three_records_with_the_same_pixels :: proc(t: ^testing.T) {
+the_folded_gap_is_two_records_near_the_pixels_of_before :: proc(t: ^testing.T) {
+	_ = blend_table()
 	WIDTH :: 80
 	HEIGHT :: 40
 	for width in 6 ..< 64 {
@@ -2582,19 +2587,39 @@ the_folded_gap_is_three_records_with_the_same_pixels :: proc(t: ^testing.T) {
 			memory: Tables
 			table := table_of(&memory)
 			draw_folded_gap(&table, 7, 5, width, height)
-			testing.expect_value(t, table.record_count, 3)
+			testing.expect_value(t, table.record_count, 2)
 			for record in table.records[:table.record_count] {
 				testing.expect_value(t, record_rectangle(record), Rectangle{7, 5, 7 + width, 5 + height})
 			}
 			testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Rectangle)
-			testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Line)
-			testing.expect_value(t, record_view(table.records[2]).kind, Draw_Kind.Line)
-			drawn, expected: [WIDTH * HEIGHT]graphics.Color
+			testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Path)
+			drawn, expected, parts: [WIDTH * HEIGHT]graphics.Color
 			execute(&table, {pixels = raw_data(drawn[:]), width = WIDTH, height = HEIGHT, stride = WIDTH})
 			folded_gap_reference({pixels = raw_data(expected[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, 7, 5, width, height)
-			if drawn != expected {
-				testing.expectf(t, false, "a folded gap of %d by %d draws other pixels", width, height)
+			rectangles := [4]Rectangle{{0, 0, 19, HEIGHT}, {19, 0, 30, 11}, {19, 11, 30, HEIGHT}, {30, 0, WIDTH, HEIGHT}}
+			execute_in_rectangles(&table, {pixels = raw_data(parts[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, rectangles[:])
+			if parts != drawn {
+				testing.expectf(t, false, "a folded gap of %d by %d in parts differs from the gap drawn whole", width, height)
 				return
+			}
+			for y in 0 ..< HEIGHT {
+				for x in 0 ..< WIDTH {
+					inside := x >= 7 && x < 7 + width && y >= 5 && y < 5 + height
+					pixel := drawn[y * WIDTH + x]
+					if !inside {
+						testing.expectf(t, pixel == 0, "a gap of %d by %d draws at (%d, %d), outside it", width, height, x, y)
+						continue
+					}
+					before := expected[y * WIDTH + x]
+					if before != graphics.colors.track && pixel == graphics.colors.track {
+						testing.expectf(t, false, "a gap of %d by %d: the pixel (%d, %d) of the line of before is not drawn", width, height, x, y)
+						return
+					}
+					if pixel != graphics.colors.track && !near_line_of_before(expected[:], WIDTH, HEIGHT, x, y) {
+						testing.expectf(t, false, "a gap of %d by %d: the pixel (%d, %d) is far from the line of before", width, height, x, y)
+						return
+					}
+				}
 			}
 		}
 	}
@@ -2604,6 +2629,21 @@ the_folded_gap_is_three_records_with_the_same_pixels :: proc(t: ^testing.T) {
 	draw_folded_gap(&table, 7, 5, 0, 16)
 	draw_folded_gap(&table, 7, 5, 16, -1)
 	testing.expect_value(t, table.record_count, 0)
+}
+
+// near_line_of_before says if a pixel or one of its eight neighbours is a
+// pixel of the lines of the folded gap of before: not the track.
+@(private = "file")
+near_line_of_before :: proc(expected: []graphics.Color, width, height, x, y: int) -> bool {
+	for near_y in max(y - 1, 0) ..= min(y + 1, height - 1) {
+		for near_x in max(x - 1, 0) ..= min(x + 1, width - 1) {
+			pixel := expected[near_y * width + near_x]
+			if pixel != graphics.colors.track && pixel != 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // One case of a pattern: its pattern in pixels, the area of its record in
