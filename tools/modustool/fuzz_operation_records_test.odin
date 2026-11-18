@@ -178,7 +178,9 @@ fuzz_record_overlapped :: proc(record: Fuzz_Record_Written, later: []Fuzz_Record
 // FUZZ_RECORDS_SEQUENCES_MOST sequences.
 @(test)
 each_record_of_a_generated_sequence_decodes_as_its_type :: proc(t: ^testing.T) {
-	testing.expect(t, fuzz_operation_sequence_start())
+	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+		return
+	}
 	sequence := new(operation_sequence.Sequence)
 	defer free(sequence)
 	written := make([dynamic]Fuzz_Record_Written)
@@ -225,7 +227,9 @@ each_record_of_a_generated_sequence_decodes_as_its_type :: proc(t: ^testing.T) {
 // records are written: the sequences hold some.
 @(test)
 the_records_of_a_seed_are_the_same_at_each_run :: proc(t: ^testing.T) {
-	testing.expect(t, fuzz_operation_sequence_start())
+	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+		return
+	}
 	first_sequence := new(operation_sequence.Sequence)
 	defer free(first_sequence)
 	second_sequence := new(operation_sequence.Sequence)
@@ -333,7 +337,9 @@ the_room_of_a_record_stops_at_its_area_and_at_the_content :: proc(t: ^testing.T)
 // and a register image.
 @(test)
 a_step_gets_a_record_only_where_its_writer_can_write_one :: proc(t: ^testing.T) {
-	testing.expect(t, fuzz_operation_sequence_start())
+	if !testing.expect(t, fuzz_operation_sequence_start(), "the grammar of the generator does not start") {
+		return
+	}
 	sequence := new(operation_sequence.Sequence)
 	defer free(sequence)
 	written := make([dynamic]Fuzz_Record_Written, context.temp_allocator)

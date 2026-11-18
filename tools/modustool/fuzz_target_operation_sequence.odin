@@ -3,6 +3,7 @@ package modustool
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "modus:contract/enum_word"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
@@ -191,18 +192,32 @@ fuzz_address_parameters_problem :: proc(rows: []Fuzz_Address_Parameter) -> strin
 
 // fuzz_operation_sequence_start reads the grammar once: the results of the
 // reference comments, and the check of the table of the address
-// parameters.
+// parameters. The host tests run on several threads, and each one that
+// generates calls this start: the first call reads and writes the results,
+// and each other call waits for it and then only reads, so no generator
+// reads the results while a start writes them.
 fuzz_operation_sequence_start :: proc() -> bool {
+	sync.once_do(&fuzz_operation_sequence_started, fuzz_operation_sequence_start_once)
+	return fuzz_operation_sequence_start_succeeded
+}
+
+@(private = "file")
+fuzz_operation_sequence_started: sync.Once
+@(private = "file")
+fuzz_operation_sequence_start_succeeded: bool
+
+@(private = "file")
+fuzz_operation_sequence_start_once :: proc() {
 	results, ok := fuzz_operation_results_read(fuzz_operation_reference)
 	if !ok {
-		return false
+		return
 	}
 	if problem := fuzz_address_parameters_problem(fuzz_address_parameters[:]); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
-		return false
+		return
 	}
 	fuzz_operation_results = results
-	return true
+	fuzz_operation_sequence_start_succeeded = true
 }
 
 // ---------------------------------------------------------------------
@@ -245,9 +260,12 @@ fuzz_member_at :: proc($Enum: typeid, place: int) -> Enum {
 // wrote, for a host test.
 fuzz_operation_sequence_generate :: proc(choices: ^Fuzz_Choices, sequence: ^operation_sequence.Sequence, written: ^[dynamic]Fuzz_Record_Written = nil) {
 	sequence^ = {}
-	sequence.area_count = 1 + fuzz_choice_below(choices, operation_sequence.AREAS_MOST)
+	// The loop runs on a local count: the places of the areas depend only
+	// on the choices, never on what the memory of the sequence holds.
+	area_count := 1 + fuzz_choice_below(choices, operation_sequence.AREAS_MOST)
+	sequence.area_count = area_count
 	content_place := 0
-	for area in 0 ..< sequence.area_count {
+	for area in 0 ..< area_count {
 		pages := 1 + fuzz_choice_below(choices, operation_sequence.AREA_PAGES_MOST)
 		content_bytes := fuzz_choice_below(choices, min(pages * operation.PAGE_SIZE, operation_sequence.CONTENT_BYTES_MOST - content_place) + 1)
 		sequence.areas[area] = {pages = pages, content_bytes = content_bytes}
