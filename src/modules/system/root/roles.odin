@@ -346,6 +346,8 @@ program_roles := [?]Program_Role_Row {
 	{name = "vector_glyphs"},
 	// The interface font, in its window.
 	{name = "interface_font"},
+	// An arena that grows until its own budget refuses a commit.
+	{name = "arena"},
 }
 
 // The programs that this service starts itself, each in its own way and

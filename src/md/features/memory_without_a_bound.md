@@ -1,6 +1,6 @@
 # Memory without a bound: arenas paid by the budget
 
-Some programs hold data whose size they cannot know before they read it: the tree of a document of the web, a style sheet, the heap of a language, a long text in an editor. Today each program of the system holds tables of a fixed size, which its stated budget names ([module_budget_request.md](module_budget_request.md)). This file records how a program holds such data with no fixed table and with no allocator of the language: in arenas that its budget pays for. Nothing of it is built.
+Some programs hold data whose size they cannot know before they read it: the tree of a document of the web, a style sheet, the heap of a language, a long text in an editor. Today each program of the system holds tables of a fixed size, which its stated budget names ([module_budget_request.md](module_budget_request.md)). This file records how a program holds such data with no fixed table and with no allocator of the language: in arenas that its budget pays for. The growable arena is built in the support package `system` (`src/library/support/system/arena.odin`); the state is at the end.
 
 The rule is [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "14. Memory is supplied by the caller". The mechanism that the arenas use is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The virtual memory of a program". The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md): "Arena", "Uncommitted object", "Committed page", "Decommit", "Budget".
 
@@ -20,6 +20,16 @@ An arena is a memory object of the program that grows by an explicit commit and 
 3. **The end.** The program ends the arena whole: a decommit of every committed page, or the close of the object and of its mapping. Each page returns to the budget at once. No object of the arena is freed alone.
 
 A procedure of the arena is a plain procedure of a support package, not an Odin allocator: the code calls `arena_push` with the arena, the size and the alignment, and reads a result and a status. So the check of the tool still finds no allocator in the system, and each push that can fail shows its failure in the code that called it.
+
+The procedures are `arena_create` (the reservation and its mapping), `arena_push`, `arena_reset` (the end back to 0, the pages kept) and `arena_end` (the unmap and the close). They are in the support package `system`, which each program imports: a package `arena` of its own would have one owner today, and the tool refuses a support package with fewer than two. A push refuses with a status of the kernel and an error record:
+
+- `Bad_Operation`: a size of 0 (`Too_Small`), an alignment that is not a power of two or is above the page (`Bad_Value`), a size above the whole reservation (`Too_Long`). The last check comes before any sum, so a size near the top of the type never wraps the end to a small one.
+- `No_Slot`: the bytes do not fit in the rest of the reservation (`Full`, unit `Bytes`).
+- `No_Budget`: the record of `Memory_Commit`.
+- `Bad_State`: the undo of a refused push of several calls was refused (the subtle points).
+- Each other status of `Memory_Commit`, with its record and with no retry.
+
+The page change is a procedure value of the arena: `Memory_Commit` on a machine, a fake in a host test. The arithmetic of a push then runs on the host with no kernel, and the host tests give it each refusal.
 
 Two kinds of arena are planned:
 
@@ -46,13 +56,11 @@ The program learns its limit from `Budget_Read`: the pages that its budget still
 
 ## What must change in the properties
 
-Property 14 holds as it is written: this form applies its second rule. Its field **Open** says "the accounting model"; this design decides it, so the text must change:
+Property 14 held as it was written: this form applies its second rule. Its field **Open** said "the accounting model"; this design decides it, so the text changed with the first arena:
 
 - a new rule: "A program that holds data with no known bound holds it in arenas: memory objects of its budget that grow by an explicit commit and end whole. A refused growth is the status `No_Budget`, which the program reads; it never stops the program."
-- a new forbid: "a growth of memory that a program does not ask for at a call: a commit by a fault, an allocator of the language in the code of the system."
+- a new forbid: "a growth of memory that a program does not ask for at a call: a commit that the kernel makes on a fault, an allocator of the language in the code of the system."
 - **Open**: the reservation size of each arena and the rule of the scratch arena, below.
-
-The change goes into `docs/PROPERTIES.md` with the first arena, in the same commit.
 
 ## The decision points
 
@@ -68,7 +76,14 @@ The change goes into `docs/PROPERTIES.md` with the first arena, in the same comm
 - **A committed page has no frame until its first touch.** A commit of 512 pages costs the budget 512 pages at once, and the frames come later. The budget limits the memory that a program can use, not the memory that it uses now.
 - **An address into an arena does not cross a border.** A record of a contract never holds an address. A program that sends a part of an arena to another program copies it into a call region, or gives a separate memory object.
 - **A program that reads hostile data bounds each arena below its budget.** Else a hostile page takes the whole budget, and the program has no pages left for its other documents.
+- **A refused step is not a refused push.** The budget refuses a commit whole. A step of 512 pages that a budget of 100 pages refuses would stop the arena while the budget still pays the push. So a refused step is followed by a commit of the missing pages alone, and the push gives `No_Budget` only when the budget cannot pay those. The arena then grows until its budget holds no page for the push.
+- **A retry halves the step.** An accepted step doubles the next one; a retry halves it, down to the first step of 16 pages. With a step that doubled after each retry, the budget near its end refused the step at each push, and each push paid one refused call and one accepted call: the machine test counted 410 commits for 1923 pages. A step that stays the same after a retry was refused: it costs the same two calls at each push until the budget ends. A halved step reaches a size that the budget pays after a few retries. A retry commits fewer pages than a step, so it is always one call.
+- **A push past one call is whole.** One `Memory_Commit` commits at most `RANGE_TABLE_PAGE_LIMIT` pages. A larger push makes several calls, and a refused call decommits the pages that the calls before it committed, so a push is whole or changes nothing, as one call is. The undo gives back the last call first. If a decommit of the undo is refused, the push gives `Bad_State` with the record of that decommit, and the committed end of the arena moves past the pages that stay committed, which follow it.
+- **The arena owns its object alone.** A decommit is refused for an object that another holder names, or that has a second mapping. A program that copies the handle of an arena, gives it, or maps the object again breaks the undo of a refused push. The arena does not check it: it is a rule for the program, as the address of a push that it must not keep past a reset.
+- **A record of the arena names no operation.** A refusal that the arena makes itself (a size, an alignment, the end of the reservation) has `operation` `None`, so a reader does not take it for a refusal of the kernel. A value past `max(i64)` is written as `max(i64)`: the record holds signed values. A record of a refused commit or decommit is the record of the kernel.
 
 ## State
 
-Not built. The first arena comes with the first program that holds data with no known bound; the order is in [desktop_to_browser.md](desktop_to_browser.md).
+Built: the growable arena and its procedures in the support package `system`, with the step of 16 pages that doubles up to 512 and halves after a retry, and the reservation of the pages of the budget rounded up to 512 (`arena_reservation_pages`), both as proposed and not yet measured. A scratch arena is a growable arena that its program resets at each frame. The host tests give a push each refusal and check that nothing changed; the test program `arena` grows an arena on a machine until its budget refuses, and checks that its budget comes back whole at the end.
+
+Left: the first program that holds data with no known bound (the order is in [desktop_to_browser.md](desktop_to_browser.md)), and with it the measure of the step; the give back of the pages of a scratch arena past a mark; a second object for an arena past 1 GiB; the largest budget.
