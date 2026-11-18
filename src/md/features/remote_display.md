@@ -47,9 +47,9 @@ The protocol has five kinds of record: a pixel update, the pointer, the input, t
 
 A pixel update is a damage rectangle with its pixels in a lossless coder in the manner of QOI: a run of one color, an index of the recent colors, a small difference from the last pixel. The screen is opaque `0x00RRGGBB`, and the desktop of the system has large areas of one color, so this coder fits it. Its rate and its size are estimates to measure. The pointer is not in the pixels: the viewer draws it at the place that the service sends, so a move of the pointer costs one record.
 
-### The viewer in gui_toolkit
+### The viewer, a program of its own
 
-The first viewer is a native program of `gui_toolkit`, which runs on Linux, macOS and Windows. It reuses:
+The first viewer is a native program in a repository of its own, which runs on Linux, macOS and Windows and uses `gui_toolkit` as a library. It is not a part of `gui_toolkit`: the toolkit holds what several programs share, and the viewer is one program. A part of the viewer that a second program needs later moves into the toolkit then. The viewer reuses:
 
 - the packages `modus:support/quic` and `modus:contract/remote_display` from a copy of the repository of the system that its flake pins. The QUIC package reads and writes bytes only, and the tool already runs it on the host in its peer (`tools/modustool/machine/peer_remote.odin`);
 - the form of the client key of the peer: an Ed25519 key, which the viewer keeps in the store of secrets of the toolkit and shows, so that a principal allows it;
@@ -142,7 +142,7 @@ The token is the one exception to "a client is a public key" ([remote_client_key
 
 Designed, not built. The layers, in their order:
 
-1. The service, the capture face and the input face of the compositor, the protocol of modus with lossless pixel updates, the uses of a client key, the indicator, and the viewer of `gui_toolkit`.
+1. The service, the capture face and the input face of the compositor, the protocol of modus with lossless pixel updates, the uses of a client key, the indicator, and the viewer, a program of its own that uses `gui_toolkit`.
 2. The screen of memory, with its size from the start row and from a viewer.
 3. The interface for agents.
 4. A gateway to a browser by WebTransport, with the display token.
