@@ -49,7 +49,7 @@ Measure_Run_Facts :: struct {
 	tree:    Measure_Tree_State,
 }
 
-// One number of `site_measures` in the record: the whole line of the log
+// One number of `measure_entries` in the record: the whole line of the log
 // that holds it, or why the run did not give it.
 Measure_Record_Number :: struct {
 	sentence:       string, // The sentence of the table: the key of the number.
@@ -93,7 +93,7 @@ measure_time_text :: proc(moment: time.Time) -> string {
 measure_run_facts_read :: proc() -> Measure_Run_Facts {
 	// The commit is kept in memory of its own: the pass frees the temporary
 	// memory many times before it writes the record.
-	facts := Measure_Run_Facts{started = time.now(), commit = strings.clone(foundation.site_git_commit())}
+	facts := Measure_Run_Facts{started = time.now(), commit = strings.clone(foundation.git_commit_read())}
 	command := [?]string{"git", "status", "--porcelain"}
 	state, standard_output, _, error := os.process_exec({command = command[:]}, context.temp_allocator)
 	if error == nil && state.exited && state.success {
@@ -147,7 +147,7 @@ measure_text_without_private :: proc(text: string, names: Measure_Private_Names)
 measure_host_text :: proc(processor_information: string, has_kvm: bool) -> string {
 	model := "a processor whose model the tool cannot read"
 	count := 0
-	for line in foundation.site_lines(processor_information) {
+	for line in foundation.lines_of_text(processor_information) {
 		colon := strings.index_byte(line, ':')
 		if colon < 0 {
 			continue
@@ -166,7 +166,7 @@ measure_host_text :: proc(processor_information: string, has_kvm: bool) -> strin
 
 // measure_record_number_from_log takes the line of a number from the
 // content of one log. It gives false when the log has no such line.
-measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: Site_Measure, path, content: string, names: Measure_Private_Names) -> bool {
+measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: Measure_Entry, path, content: string, names: Measure_Private_Names) -> bool {
 	line, line_number, matching_lines := log_line_choose(content, measure.pattern, measure.choice)
 	if matching_lines == 0 {
 		return false
@@ -175,7 +175,7 @@ measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: 
 	number.log = measure_text_without_private(path, names)
 	number.line_number = line_number
 	number.matching_lines = matching_lines
-	number.machine = site_output_conditions(path)
+	number.machine = measure_output_conditions(path)
 	number.line = measure_text_without_private(line, names)
 	number.absent = ""
 	return true
@@ -184,7 +184,7 @@ measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: 
 // measure_record_number_read reads one number from the logs of the run. A
 // log that is older than the start of the run is of another run: it is not
 // read.
-measure_record_number_read :: proc(measure: Site_Measure, started: time.Time, names: Measure_Private_Names) -> Measure_Record_Number {
+measure_record_number_read :: proc(measure: Measure_Entry, started: time.Time, names: Measure_Private_Names) -> Measure_Record_Number {
 	number := Measure_Record_Number{sentence = measure.sentence}
 	reasons := make([dynamic]string, context.temp_allocator)
 	for path in measure.files {
@@ -218,8 +218,8 @@ measure_record_number_read :: proc(measure: Site_Measure, started: time.Time, na
 // the main machine, with the texts of the host cut out.
 measure_boot_lines :: proc(content: string, names: Measure_Private_Names) -> []string {
 	lines := make([dynamic]string, context.temp_allocator)
-	for line in foundation.site_lines(content) {
-		if strings.has_prefix(line, SITE_BOOT_STAGE_PREFIX) {
+	for line in foundation.lines_of_text(content) {
+		if strings.has_prefix(line, BOOT_STAGE_PREFIX) {
 			append(&lines, measure_text_without_private(line, names))
 		}
 	}
@@ -269,7 +269,7 @@ measure_record_format :: proc(record: Measure_Record) -> string {
 // measure_record_parse reads a record in its form. The file is a file of
 // the repository that a developer can change: each line is checked.
 measure_record_parse :: proc(text: string) -> (record: Measure_Record, problem: string) {
-	lines := foundation.site_lines(text)
+	lines := foundation.lines_of_text(text)
 	for len(lines) > 0 && lines[len(lines) - 1] == "" {
 		lines = lines[:len(lines) - 1]
 	}
@@ -368,7 +368,7 @@ measure_record_parse :: proc(text: string) -> (record: Measure_Record, problem: 
 }
 
 // measure_record_write writes the record of the run that just passed: each
-// number of `site_measures`, the lines of the start, and the facts of the
+// number of `measure_entries`, the lines of the start, and the facts of the
 // run. A number that the table marks as required and that the logs of the
 // run do not hold is a fault of the run: the record is not written.
 measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
@@ -379,7 +379,7 @@ measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
 		tree          = facts.tree,
 		checks_passed = sync.atomic_load(&foundation.test_passed_count),
 	}
-	processor_information, _ := foundation.site_read_quiet("/proc/cpuinfo")
+	processor_information, _ := foundation.read_text_file_quiet("/proc/cpuinfo")
 	record.host = measure_text_without_private(measure_host_text(processor_information, os.exists("/dev/kvm")), names)
 	changelog_problems := make([dynamic]string, context.temp_allocator)
 	changelog, changelog_ok := changelog_read(&changelog_problems)
@@ -392,7 +392,7 @@ measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
 
 	numbers := make([dynamic]Measure_Record_Number, context.temp_allocator)
 	holes := make([dynamic]string, context.temp_allocator)
-	for measure in site_measures {
+	for measure in measure_entries {
 		number := measure_record_number_read(measure, facts.started, names)
 		if !number.found {
 			fmt.printfln("modustool: the run did not give the number \"%s\": %s", measure.sentence, number.absent)
@@ -414,12 +414,12 @@ measure_record_write :: proc(facts: Measure_Run_Facts) -> bool {
 	// The lines of the start, from the log of the main machine of this run.
 	main_log_information, main_log_error := os.stat(TEST_OUTPUT, context.temp_allocator)
 	if main_log_error == nil && time.diff(facts.started, main_log_information.modification_time) >= 0 {
-		if main_log, has_main_log := foundation.site_read_quiet(TEST_OUTPUT); has_main_log {
+		if main_log, has_main_log := foundation.read_text_file_quiet(TEST_OUTPUT); has_main_log {
 			record.boot_lines = measure_boot_lines(main_log, names)
 		}
 	}
 	if len(record.boot_lines) == 0 {
-		fmt.printfln("modustool: %s of this run has no line \"%s...\": the record has no stage of the start", TEST_OUTPUT, SITE_BOOT_STAGE_PREFIX)
+		fmt.printfln("modustool: %s of this run has no line \"%s...\": the record has no stage of the start", TEST_OUTPUT, BOOT_STAGE_PREFIX)
 	}
 
 	text := measure_record_format(record)
@@ -473,7 +473,7 @@ measure_process_lines :: proc(log: string, name: string) -> []string {
 }
 
 // Which line a number takes when the log has several lines with its text.
-Site_Line_Choice :: enum {
+Measure_Line_Choice :: enum {
 	First,
 	Last,
 }
@@ -494,11 +494,11 @@ Site_Measure_Place :: enum {
 // `modustool screenshots` that passed holds it, so the measure record
 // must hold it. A rate over a duration comes from a measure run only: the
 // test checks by count and measures no rate.
-Site_Measure :: struct {
+Measure_Entry :: struct {
 	sentence: string,
 	files:    [2]string, // "" for no second log.
 	pattern:  string,
-	choice:   Site_Line_Choice,
+	choice:   Measure_Line_Choice,
 	accent:   graphics.Color, // The color of the concept that the number measures.
 	place:    Site_Measure_Place,
 	required: bool,
@@ -507,7 +507,7 @@ Site_Measure :: struct {
 	reading: string,
 }
 
-site_measures := [?]Site_Measure {
+measure_entries := [?]Measure_Entry {
 	{sentence = "Kernel entries in one second, with 1, 2 and 4 processes that each take the locks of their own objects", files = {TEST_OUTPUT_MEASURE, ""}, pattern = "locks: kernel entries in one second", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Each locker is a process that enters the kernel again and again and takes only the locks of its own objects, so no two lockers wait for one lock. A count that grows with the lockers shows that the kernel serves several processors at once. It does not say what happens when processes share one object."},
 	{sentence = "Reads of the time in one second from the time page, with no kernel entry", files = {TEST_OUTPUT_MEASURE_CLOCK, ""}, pattern = "clock: the time page:", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "A process reads the time from a page that the kernel keeps up to date. The part that matters is the second one: **0 kernel entries for one million reads**, so the time costs a read of memory. The count of reads follows the speed of the host processor."},
 	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", files = {TEST_OUTPUT_MEASURE_SCHEDULER, ""}, pattern = "scheduler: EEVDF: two threads that wake each other", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Two threads wake each other while a spinner keeps each processor busy: the count is their wakes in one second. The same line gives how late a thread that sleeps 2 ms wakes among spinners, and the share of the processor of each spinner of one weight. It shows the scheduler under load; it compares no other strategy."},
@@ -532,12 +532,12 @@ site_measures := [?]Site_Measure {
 }
 
 // What each log is: the machine that wrote it and what else ran.
-Site_Output_File :: struct {
+Measure_Output_File :: struct {
 	path:       string,
 	conditions: string,
 }
 
-site_output_files := [?]Site_Output_File {
+measure_output_files := [?]Measure_Output_File {
 	{TEST_OUTPUT_MEASURE, "The machine of `modustool measure`: a measure run, only the desktop and the process that measures run"},
 	{TEST_OUTPUT_MEASURE_CLOCK, "The machine of `modustool measure clock`: a measure run, only the desktop and the process `clock` run"},
 	{TEST_OUTPUT_MEASURE_DISK, "The machine of `modustool measure disk`: a measure run, only the desktop and the process `disk` run"},
@@ -552,8 +552,8 @@ site_output_files := [?]Site_Output_File {
 
 // log_line_choose finds the lines of a log that contain the pattern, and
 // gives the first or the last one whole, with its label.
-log_line_choose :: proc(content, pattern: string, choice: Site_Line_Choice) -> (line: string, line_number, matching_lines: int) {
-	for candidate, index in foundation.site_lines(content) {
+log_line_choose :: proc(content, pattern: string, choice: Measure_Line_Choice) -> (line: string, line_number, matching_lines: int) {
+	for candidate, index in foundation.lines_of_text(content) {
 		if !strings.contains(candidate, pattern) {
 			continue
 		}
@@ -566,8 +566,8 @@ log_line_choose :: proc(content, pattern: string, choice: Site_Line_Choice) -> (
 	return
 }
 
-site_output_conditions :: proc(path: string) -> string {
-	for output in site_output_files {
+measure_output_conditions :: proc(path: string) -> string {
+	for output in measure_output_files {
 		if output.path == path {
 			return output.conditions
 		}
@@ -575,7 +575,7 @@ site_output_conditions :: proc(path: string) -> string {
 	return ""
 }
 
-SITE_BOOT_STAGE_PREFIX :: "kernel: boot: "
+BOOT_STAGE_PREFIX :: "kernel: boot: "
 
 TEST_OUTPUT_TCP_REAL :: foundation.BUILD_FOLDER + "/test_output_tcp_real.txt"
 

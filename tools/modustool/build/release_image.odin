@@ -421,7 +421,7 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	if packaging == .Publisher_Keys_Only {
 		repository_license, license_found := repository_license_read()
 		if !license_found {
-			return fmt.tprintf("cannot read the license of the repository in %s", resources.SITE_LICENSE_FILE)
+			return fmt.tprintf("cannot read the license of the repository in %s", resources.REPOSITORY_LICENSE_FILE)
 		}
 		if problem := release_pointer_theme_problem(image_path, image, image_resources, repository_license); problem != "" {
 			return problem
@@ -433,11 +433,11 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 // repository_license_read gives the SPDX identifier of the license of the
 // repository, from the first line of LICENSE, as the reuse list reads it.
 repository_license_read :: proc() -> (license: string, ok: bool) {
-	text, read_error := os.read_entire_file(resources.SITE_LICENSE_FILE, context.temp_allocator)
+	text, read_error := os.read_entire_file(resources.REPOSITORY_LICENSE_FILE, context.temp_allocator)
 	if read_error != nil {
 		return "", false
 	}
-	lines := foundation.site_lines(string(text))
+	lines := foundation.lines_of_text(string(text))
 	if len(lines) == 0 {
 		return "", false
 	}

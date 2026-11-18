@@ -18,10 +18,10 @@ comment_markdown_line_of_a_source :: proc(t: ^testing.T) {
 }
 
 @(test)
-site_search_json_escapes :: proc(t: ^testing.T) {
+json_string_escapes :: proc(t: ^testing.T) {
 	escaped :: proc(text: string) -> string {
 		b := strings.builder_make(context.temp_allocator)
-		site_json_string(&b, text)
+		json_string_write(&b, text)
 		return strings.to_string(b)
 	}
 	testing.expect_value(t, escaped("plain"), "\"plain\"")
@@ -37,17 +37,17 @@ site_search_json_escapes :: proc(t: ^testing.T) {
 }
 
 @(test)
-site_size_of_a_png_file :: proc(t: ^testing.T) {
+png_size_of_a_file :: proc(t: ^testing.T) {
 	header := []u8{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 0, 0, 0, 13, 'I', 'H', 'D', 'R', 0, 0, 4, 0, 0, 0, 3, 0}
-	width, height, ok := site_png_size(header)
+	width, height, ok := png_size(header)
 	testing.expect(t, ok)
 	testing.expect_value(t, width, 1024)
 	testing.expect_value(t, height, 768)
-	_, _, short_ok := site_png_size(header[:20])
+	_, _, short_ok := png_size(header[:20])
 	testing.expect(t, !short_ok)
 	not_png := make([]u8, len(header), context.temp_allocator)
 	copy(not_png, header)
 	not_png[1] = 'X'
-	_, _, not_png_ok := site_png_size(not_png)
+	_, _, not_png_ok := png_size(not_png)
 	testing.expect(t, !not_png_ok)
 }

@@ -5,16 +5,16 @@ package build
 import "core:strings"
 
 // The start of a list item: its indentation, its marker and its text.
-Site_Marker :: struct {
+List_Marker :: struct {
 	indent:  int,
 	ordered: bool,
 	label:   string,
 	text:    string,
 }
 
-// site_list_marker reads "- text", "* text", "12. text" or "34b. text" after
+// list_marker_read reads "- text", "* text", "12. text" or "34b. text" after
 // spaces.
-site_list_marker :: proc(line: string) -> (marker: Site_Marker, found: bool) {
+list_marker_read :: proc(line: string) -> (marker: List_Marker, found: bool) {
 	indent := 0
 	for indent < len(line) && line[indent] == ' ' {
 		indent += 1
@@ -40,7 +40,7 @@ site_list_marker :: proc(line: string) -> (marker: Site_Marker, found: bool) {
 	return {}, false
 }
 
-site_heading_level :: proc(line: string) -> (level: int, text: string) {
+heading_level :: proc(line: string) -> (level: int, text: string) {
 	for level < len(line) && line[level] == '#' {
 		level += 1
 	}
@@ -50,8 +50,8 @@ site_heading_level :: proc(line: string) -> (level: int, text: string) {
 	return level, strings.trim_space(line[level + 1:])
 }
 
-// site_table_row_cells splits a row of a table; "\|" is a "|" of the text.
-site_table_row_cells :: proc(line: string) -> []string {
+// table_row_cells splits a row of a table; "\|" is a "|" of the text.
+table_row_cells :: proc(line: string) -> []string {
 	cells := make([dynamic]string, context.temp_allocator)
 	inner := strings.trim_space(line)
 	inner = strings.trim_prefix(inner, "|")
@@ -76,9 +76,9 @@ site_table_row_cells :: proc(line: string) -> []string {
 	return cells[:]
 }
 
-// site_term_name gives the name of a term from the heading of its entry in
+// term_name_of_heading gives the name of a term from the heading of its entry in
 // the glossary: its text with no code marks.
-site_term_name :: proc(cell: string) -> string {
+term_name_of_heading :: proc(cell: string) -> string {
 	name, _ := strings.remove_all(cell, "`", context.temp_allocator)
 	return strings.trim_space(name)
 }

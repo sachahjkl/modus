@@ -88,12 +88,12 @@ COMMENT_RULE_DATE_WINDOW :: 48
 
 @(private = "file")
 comment_rule_word_starts :: proc(text: string, at: int) -> bool {
-	return at == 0 || !(foundation.site_is_word_byte(text[at - 1]) || text[at - 1] == '-')
+	return at == 0 || !(foundation.is_word_byte(text[at - 1]) || text[at - 1] == '-')
 }
 
 @(private = "file")
 comment_rule_word_ends :: proc(text: string, end: int) -> bool {
-	return end >= len(text) || !foundation.site_is_word_byte(text[end])
+	return end >= len(text) || !foundation.is_word_byte(text[end])
 }
 
 @(private = "file")
@@ -285,7 +285,7 @@ comment_rule_match :: proc(form: Comment_Rule_Form, text: string, at: int) -> (e
 // blank. It is the text of a heading of a guide, which can name a review,
 // not a word of the comment; the site checks that the heading exists.
 comment_rule_text :: proc(text: string) -> string {
-	pointers := site_document_pointers(text)
+	pointers := document_pointers(text)
 	if len(pointers) == 0 {
 		return text
 	}

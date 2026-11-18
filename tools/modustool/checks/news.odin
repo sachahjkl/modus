@@ -371,7 +371,7 @@ news_files_problems :: proc(entries: []News_Entry, changelog: Changelog, problem
 		}
 		if entry.picture != "" && entry.picture != NEWS_NONE && news_picture_problem(entry.picture) == "" {
 			data, err := os.read_entire_file(entry.picture, context.temp_allocator)
-			if _, _, is_png := foundation.site_png_size(data); err != nil || !is_png {
+			if _, _, is_png := foundation.png_size(data); err != nil || !is_png {
 				append(problems, fmt.tprintf("%s: the picture %s is not a PNG file of the repository", place, entry.picture))
 			}
 		}

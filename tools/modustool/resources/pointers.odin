@@ -1400,8 +1400,8 @@ pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, r
 	return file, table[:], ""
 }
 
-// site_relative_luminance gives the relative luminance of a color (WCAG 2).
-site_relative_luminance :: proc(color: graphics.Color) -> f64 {
+// relative_luminance gives the relative luminance of a color (WCAG 2).
+relative_luminance :: proc(color: graphics.Color) -> f64 {
 	channel :: proc(value: u32) -> f64 {
 		part := f64(value) / 255
 		return part <= 0.03928 ? part / 12.92 : math.pow((part + 0.055) / 1.055, 2.4)
@@ -1410,10 +1410,10 @@ site_relative_luminance :: proc(color: graphics.Color) -> f64 {
 	return 0.2126 * channel((value >> 16) & 0xFF) + 0.7152 * channel((value >> 8) & 0xFF) + 0.0722 * channel(value & 0xFF)
 }
 
-// site_contrast_ratio gives the contrast ratio of two colors (WCAG 2).
-site_contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
-	lighter := site_relative_luminance(first)
-	darker := site_relative_luminance(second)
+// contrast_ratio gives the contrast ratio of two colors (WCAG 2).
+contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
+	lighter := relative_luminance(first)
+	darker := relative_luminance(second)
 	if lighter < darker {
 		lighter, darker = darker, lighter
 	}

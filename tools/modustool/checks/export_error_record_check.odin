@@ -286,7 +286,7 @@ exports_without_error_record_of_tree :: proc(root: string) -> (found: []Export_W
 		if source_is_a_test(file) {
 			continue
 		}
-		text, read_ok := foundation.site_read_quiet(file)
+		text, read_ok := foundation.read_text_file_quiet(file)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return nil, 0, 0, false

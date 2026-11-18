@@ -195,6 +195,7 @@ host_tests_run :: proc(folders: []string) -> bool {
 HOST_TEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER + "/machine",
 	foundation.TOOL_SOURCE_FOLDER,
+	foundation.TOOL_SOURCE_FOLDER + "/site",
 	foundation.TOOL_SOURCE_FOLDER + "/build",
 	foundation.TOOL_SOURCE_FOLDER + "/checks",
 	foundation.TOOL_SOURCE_FOLDER + "/fuzz",

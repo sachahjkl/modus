@@ -69,7 +69,7 @@ measure_record_cuts_the_private_texts :: proc(t: ^testing.T) {
 	testing.expect_value(t, measure_text_without_private("all values", short), "all values")
 
 	// The writer cuts the line that it takes from a log.
-	measure := Site_Measure{sentence = "One read", files = {TEST_OUTPUT, ""}, pattern = "disk: read", choice = .First}
+	measure := Measure_Entry{sentence = "One read", files = {TEST_OUTPUT, ""}, pattern = "disk: read", choice = .First}
 	number := Measure_Record_Number{sentence = measure.sentence}
 	log := "[a] a: start\n[disk] disk: read /home/someone/Projects/kernel/build/scratch_disk.img: 12 us\n"
 	testing.expect(t, measure_record_number_from_log(&number, measure, TEST_OUTPUT, log, names))
@@ -77,7 +77,7 @@ measure_record_cuts_the_private_texts :: proc(t: ^testing.T) {
 	testing.expect_value(t, number.line_number, 2)
 	testing.expect_value(t, number.matching_lines, 1)
 	testing.expect_value(t, number.log, TEST_OUTPUT)
-	testing.expect(t, !measure_record_number_from_log(&number, Site_Measure{pattern = "absent"}, TEST_OUTPUT, log, names))
+	testing.expect(t, !measure_record_number_from_log(&number, Measure_Entry{pattern = "absent"}, TEST_OUTPUT, log, names))
 	boot := measure_boot_lines("kernel: boot: firmware: 1 us\n[x] x: y\nkernel: boot: kernel: /home/someone/a: 2 us\n", names)
 	testing.expect_value(t, len(boot), 2)
 	if len(boot) == 2 {

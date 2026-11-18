@@ -417,16 +417,16 @@ pointer_colors_show_on_the_surfaces_of_each_form :: proc(t: ^testing.T) {
 	}
 	for form in pointer_pictures.Pointer_Form {
 		colors := POINTER_FORM_COLORS[form]
-		testing.expectf(t, site_contrast_ratio(colors.edge, colors.fill) >= 15, "%v: the edge and the fill: %.2f to 1", form, site_contrast_ratio(colors.edge, colors.fill))
+		testing.expectf(t, contrast_ratio(colors.edge, colors.fill) >= 15, "%v: the edge and the fill: %.2f to 1", form, contrast_ratio(colors.edge, colors.fill))
 		for surface in surfaces[form] {
-			ratio := site_contrast_ratio(colors.fill, surface)
+			ratio := contrast_ratio(colors.fill, surface)
 			testing.expectf(t, ratio >= 7, "%v: the fill on 0x%06x has %.2f to 1", form, surface, ratio)
 		}
 	}
 	accents := pointer_accents()
 	for accent in accents {
-		on_dark := site_contrast_ratio(accent.on_dark, POINTER_DARK_COLOR)
-		on_light := site_contrast_ratio(accent.on_light, POINTER_LIGHT_COLOR)
+		on_dark := contrast_ratio(accent.on_dark, POINTER_DARK_COLOR)
+		on_light := contrast_ratio(accent.on_light, POINTER_LIGHT_COLOR)
 		testing.expectf(t, on_dark >= 3 && on_light >= 3, "the accent %s: %.2f to 1 on the dark, %.2f to 1 on white", accent.name, on_dark, on_light)
 	}
 }

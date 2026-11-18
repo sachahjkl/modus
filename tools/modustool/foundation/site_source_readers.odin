@@ -19,7 +19,7 @@ import "core:odin/parser"
 import "core:strings"
 
 // One member of an Odin enumeration, as its file writes it.
-Site_Enumeration_Member :: struct {
+Enumeration_Member :: struct {
 	name:    string,
 	number:  int, // Its value: "= <n>", or its place when the line gives no value.
 	comment: string, // The Markdown of the comment of its line, then of the comment lines after it, one line each.
@@ -27,7 +27,7 @@ Site_Enumeration_Member :: struct {
 }
 
 // One constant "NAME :: <decimal>" of a file.
-Site_Constant :: struct {
+Source_Constant :: struct {
 	name:    string,
 	value:   int,
 	comment: string, // The Markdown of the comment lines just above it, then of the comment of its line, one line each.
@@ -38,7 +38,7 @@ Site_Constant :: struct {
 // of src/modules/system/root/roles.odin): a process, its start grants and the
 // other terms of its role. A page shows each grant as one value, never the
 // literal itself.
-Site_Role_Row :: struct {
+Role_Row :: struct {
 	name:    string,
 	grants:  []string, // The members of the set of start grants, with no period: "Inspect".
 	terms:   string, // The record of the other terms as the source writes it, on one line and with no braces; "" for none.
@@ -48,7 +48,7 @@ Site_Role_Row :: struct {
 
 // One built-in command of the console:
 // `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`.
-Site_Console_Command :: struct {
+Console_Command_Entry :: struct {
 	name:       string,
 	parameters: []string,
 	result:     string,
@@ -60,8 +60,8 @@ Site_Console_Command :: struct {
 	line:          int,
 }
 
-// site_is_identifier says if a text is an Odin identifier.
-site_is_identifier :: proc(text: string) -> bool {
+// is_odin_identifier says if a text is an Odin identifier.
+is_odin_identifier :: proc(text: string) -> bool {
 	if text == "" || (text[0] >= '0' && text[0] <= '9') {
 		return false
 	}
@@ -121,9 +121,9 @@ source_code_and_comment :: proc(line: string, syntax: Comment_Syntax) -> (code: 
 	return strings.trim_space(line), ""
 }
 
-// site_code_and_comment splits a line of Odin into its code and the text of
+// code_and_comment splits a line of Odin into its code and the text of
 // its comment "// ...".
-site_code_and_comment :: proc(line: string) -> (code: string, comment: string) {
+code_and_comment :: proc(line: string) -> (code: string, comment: string) {
 	syntax, _ := comment_syntax_of(".odin")
 	return source_code_and_comment(line, syntax)
 }
@@ -139,7 +139,7 @@ Comment_Block :: struct {
 // comment_blocks gives the comments of a source, in their order.
 comment_blocks :: proc(content: string, syntax: Comment_Syntax) -> []Comment_Block {
 	blocks := make([dynamic]Comment_Block, context.temp_allocator)
-	lines := site_lines(content)
+	lines := lines_of_text(content)
 	index := 0
 	for index < len(lines) {
 		_, first := source_code_and_comment(lines[index], syntax)
@@ -179,7 +179,7 @@ comment_block_line :: proc(block: Comment_Block, offset: int) -> int {
 	return line + 1
 }
 
-// site_enumeration_read reads the members of an enumeration. The form:
+// enumeration_read reads the members of an enumeration. The form:
 //   a line "<enumeration> :: enum <type> {" at the start of a line;
 //   one member on each line: "<Name> = <decimal>," or "<Name>,", with a
 //   comment "// ..." or not;
@@ -188,10 +188,10 @@ comment_block_line :: proc(block: Comment_Block, offset: int) -> int {
 //   its Markdown: a line "//" alone is an empty line, and the indentation
 //   after "// " stays;
 //   a line "}" at the start of a line ends it.
-site_enumeration_read :: proc(content, file, enumeration: string) -> (members: []Site_Enumeration_Member, problem: string) {
-	lines := site_lines(content)
+enumeration_read :: proc(content, file, enumeration: string) -> (members: []Enumeration_Member, problem: string) {
+	lines := lines_of_text(content)
 	start := strings.concatenate({enumeration, " :: enum"}, context.temp_allocator)
-	list := make([dynamic]Site_Enumeration_Member, context.temp_allocator)
+	list := make([dynamic]Enumeration_Member, context.temp_allocator)
 	first := -1
 	for line, index in lines {
 		if strings.has_prefix(line, start) && strings.has_suffix(line, "{") {
@@ -225,14 +225,14 @@ site_enumeration_read :: proc(content, file, enumeration: string) -> (members: [
 			return nil, fmt.tprintf("%s, line %d: a member of %s is \"<Name> = <number>,\" or \"<Name>,\"; the line is \"%s\"", file, index + 1, enumeration, strings.trim_space(line))
 		}
 		code = strings.trim_suffix(code, ",")
-		member := Site_Enumeration_Member{number = len(list), comment = comment, line = index + 1}
+		member := Enumeration_Member{number = len(list), comment = comment, line = index + 1}
 		if equals := strings.index_byte(code, '='); equals >= 0 {
 			member.name = strings.trim_space(code[:equals])
-			member.number = site_digits_value(strings.trim_space(code[equals + 1:]))
+			member.number = decimal_digits_value(strings.trim_space(code[equals + 1:]))
 		} else {
 			member.name = code
 		}
-		if !site_is_identifier(member.name) || member.number < 0 {
+		if !is_odin_identifier(member.name) || member.number < 0 {
 			return nil, fmt.tprintf("%s, line %d: a member of %s is \"<Name> = <decimal>,\" or \"<Name>,\"; the line is \"%s\"", file, index + 1, enumeration, strings.trim_space(line))
 		}
 		append(&list, member)
@@ -240,12 +240,12 @@ site_enumeration_read :: proc(content, file, enumeration: string) -> (members: [
 	return nil, fmt.tprintf("%s: the enumeration %s has no line \"}\" at its end", file, enumeration)
 }
 
-// site_names_read reads a table of texts of an enumeration. The form:
+// names_table_read reads a table of texts of an enumeration. The form:
 //   a line "<table> := [<Enumeration>]string {" at the start of a line;
 //   one line ".<Name> = \"<text>\"," for each member;
 //   a line "}" at the start of a line ends it.
-site_names_read :: proc(content, file, table: string) -> (names: map[string]string, problem: string) {
-	lines := site_lines(content)
+names_table_read :: proc(content, file, table: string) -> (names: map[string]string, problem: string) {
+	lines := lines_of_text(content)
 	start := strings.concatenate({table, " := ["}, context.temp_allocator)
 	names = make(map[string]string, context.temp_allocator)
 	first := -1
@@ -263,12 +263,12 @@ site_names_read :: proc(content, file, table: string) -> (names: map[string]stri
 		if line == "}" {
 			return names, ""
 		}
-		code, _ := site_code_and_comment(line)
+		code, _ := code_and_comment(line)
 		equals := strings.index(code, " = ")
 		if !strings.has_prefix(code, ".") || equals < 0 {
 			return nil, fmt.tprintf("%s, line %d: a line of %s is \".<Name> = \"<text>\",\"", file, index + 1, table)
 		}
-		text, _, found := site_quoted(code, equals)
+		text, _, found := quoted_text_after(code, equals)
 		if !found {
 			return nil, fmt.tprintf("%s, line %d: a line of %s is \".<Name> = \"<text>\",\"", file, index + 1, table)
 		}
@@ -277,16 +277,16 @@ site_names_read :: proc(content, file, table: string) -> (names: map[string]stri
 	return nil, fmt.tprintf("%s: the table %s has no line \"}\" at its end", file, table)
 }
 
-// site_constants_read reads the constants of a file whose name starts with
+// constants_read reads the constants of a file whose name starts with
 // one of the prefixes, from the first line that starts with `first` (from
 // the first line of the file when it is ""). The form: a line
 // "<NAME> :: <decimal>" at the start of a line, with a comment or not; the
 // comment lines just above it, up to a line that is not a comment, are its
 // comment too. A constant with one of the prefixes and another value is a
 // problem: the table would miss it.
-site_constants_read :: proc(content, file, first: string, prefixes: []string) -> (constants: []Site_Constant, problem: string) {
-	lines := site_lines(content)
-	list := make([dynamic]Site_Constant, context.temp_allocator)
+constants_read :: proc(content, file, first: string, prefixes: []string) -> (constants: []Source_Constant, problem: string) {
+	lines := lines_of_text(content)
+	list := make([dynamic]Source_Constant, context.temp_allocator)
 	start := 0
 	if first != "" {
 		start = -1
@@ -303,7 +303,7 @@ site_constants_read :: proc(content, file, first: string, prefixes: []string) ->
 	for index in start ..< len(lines) {
 		line := lines[index]
 		separator := strings.index(line, " :: ")
-		if separator <= 0 || !site_is_identifier(line[:separator]) {
+		if separator <= 0 || !is_odin_identifier(line[:separator]) {
 			continue
 		}
 		name := line[:separator]
@@ -314,8 +314,8 @@ site_constants_read :: proc(content, file, first: string, prefixes: []string) ->
 		if !wanted {
 			continue
 		}
-		code, comment := site_code_and_comment(line[separator + len(" :: "):])
-		value := site_digits_value(code)
+		code, comment := code_and_comment(line[separator + len(" :: "):])
+		value := decimal_digits_value(code)
 		if value < 0 {
 			return nil, fmt.tprintf("%s, line %d: the constant %s is \"%s :: <decimal>\"; its value is \"%s\"", file, index + 1, name, name, code)
 		}
@@ -328,7 +328,7 @@ site_constants_read :: proc(content, file, first: string, prefixes: []string) ->
 			_, text, _ := markdown_comment_line(comment_line)
 			comment_above = markdown_comment_add(comment_above, text)
 		}
-		append(&list, Site_Constant{name = name, value = value, comment = markdown_comment_end(markdown_comment_add(comment_above, comment)), line = index + 1})
+		append(&list, Source_Constant{name = name, value = value, comment = markdown_comment_end(markdown_comment_add(comment_above, comment)), line = index + 1})
 	}
 	if len(list) == 0 {
 		return nil, fmt.tprintf("%s: no constant \"<NAME> :: <decimal>\" whose name starts with %v", file, prefixes)
@@ -336,12 +336,12 @@ site_constants_read :: proc(content, file, first: string, prefixes: []string) ->
 	return list[:], ""
 }
 
-// site_comment_above gives the comment lines just above the first line that
+// comment_above_declaration gives the comment lines just above the first line that
 // starts with a prefix ("Operation :: enum"), joined, or "" when there is
 // none: the documentation of a declaration, which a reference page shows
 // above its table.
-site_comment_above :: proc(content, prefix: string) -> string {
-	lines := site_lines(content)
+comment_above_declaration :: proc(content, prefix: string) -> string {
+	lines := lines_of_text(content)
 	for line, index in lines {
 		if !strings.has_prefix(line, prefix) {
 			continue
@@ -360,7 +360,7 @@ site_comment_above :: proc(content, prefix: string) -> string {
 	return ""
 }
 
-// site_role_table_read reads the table of the roles of the root service,
+// role_table_read reads the table of the roles of the root service,
 // with the parser of Odin: a reader of lines that met another form of the
 // same code would read it wrong and say nothing. The form:
 //   a declaration "<table> := <type> {...}" at the top of the file;
@@ -371,9 +371,9 @@ site_comment_above :: proc(content, prefix: string) -> string {
 //   the comment of a row is the comment lines above it, after the row
 //   before, and the comment of its own lines.
 // Any other form stops the command with the file and the line.
-site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role_Row, problem: string) {
-	lines := site_lines(content)
-	list := make([dynamic]Site_Role_Row, context.temp_allocator)
+role_table_read :: proc(content, file, table: string) -> (rows: []Role_Row, problem: string) {
+	lines := lines_of_text(content)
+	list := make([dynamic]Role_Row, context.temp_allocator)
 	// The tree of the parser lives in an arena of its own: every text that
 	// the result keeps is a string of the temporary allocator.
 	arena: virtual.Arena
@@ -386,8 +386,8 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 	tree.src = content
 	tree.fullpath = file
 	reader := parser.default_parser()
-	reader.err = site_code_quiet_error
-	reader.warn = site_code_quiet_error
+	reader.err = tokenizer_quiet_error
+	reader.warn = tokenizer_quiet_error
 	if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
 		return nil, fmt.tprintf("%s: the parser of Odin refuses the file", file)
 	}
@@ -414,7 +414,7 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 		if !is_row || row_literal.type != nil {
 			return nil, wrong_row
 		}
-		row := Site_Role_Row{line = element.pos.line}
+		row := Role_Row{line = element.pos.line}
 		name_seen, grants_seen, terms_seen := false, false, false
 		for part in row_literal.elems {
 			field, is_field := part.derived.(^ast.Field_Value)
@@ -431,7 +431,7 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 				if name_seen || !is_literal || name_literal.tok.kind != .String {
 					return nil, wrong_row
 				}
-				name, _, found := site_string_at(name_literal.tok.text, 0)
+				name, _, found := odin_string_at(name_literal.tok.text, 0)
 				if !found || name == "" {
 					return nil, wrong_row
 				}
@@ -471,7 +471,7 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 		if !name_seen {
 			return nil, wrong_row
 		}
-		row.comment = site_row_comment(lines, previous_end + 1, element.end.line)
+		row.comment = row_comment(lines, previous_end + 1, element.end.line)
 		previous_end = element.end.line
 		append(&list, row)
 	}
@@ -481,12 +481,12 @@ site_role_table_read :: proc(content, file, table: string) -> (rows: []Site_Role
 	return list[:], ""
 }
 
-// site_string_list_read reads a list of texts, with the parser of Odin. The
+// string_list_read reads a list of texts, with the parser of Odin. The
 // form: a declaration "<list> := <type> {"a", "b"}" at the top of the file,
 // whose elements are string literals. A constant in the list, or another
 // element, stops the command with the line: the tool reads the texts of the
 // source, not the compiled list.
-site_string_list_read :: proc(content, file, list_name: string) -> (texts: []string, problem: string) {
+string_list_read :: proc(content, file, list_name: string) -> (texts: []string, problem: string) {
 	list := make([dynamic]string, context.temp_allocator)
 	arena: virtual.Arena
 	if virtual.arena_init_growing(&arena) != nil {
@@ -498,8 +498,8 @@ site_string_list_read :: proc(content, file, list_name: string) -> (texts: []str
 	tree.src = content
 	tree.fullpath = file
 	reader := parser.default_parser()
-	reader.err = site_code_quiet_error
-	reader.warn = site_code_quiet_error
+	reader.err = tokenizer_quiet_error
+	reader.warn = tokenizer_quiet_error
 	if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
 		return nil, fmt.tprintf("%s: the parser of Odin refuses the file", file)
 	}
@@ -524,7 +524,7 @@ site_string_list_read :: proc(content, file, list_name: string) -> (texts: []str
 		if !is_text || text_literal.tok.kind != .String {
 			return nil, fmt.tprintf("%s, line %d: an element of %s is a string literal", file, element.pos.line, list_name)
 		}
-		text, _, found := site_string_at(text_literal.tok.text, 0)
+		text, _, found := odin_string_at(text_literal.tok.text, 0)
 		if !found {
 			return nil, fmt.tprintf("%s, line %d: an element of %s is a string literal", file, element.pos.line, list_name)
 		}
@@ -533,11 +533,11 @@ site_string_list_read :: proc(content, file, list_name: string) -> (texts: []str
 	return list[:], ""
 }
 
-// site_row_comment gives the comment of a row, as Markdown: the comment of
+// row_comment gives the comment of a row, as Markdown: the comment of
 // each line from its first line to its last, numbered from 1. A comment
 // after code is one line; a line that is only a comment keeps its
 // indentation.
-site_row_comment :: proc(lines: []string, first_line, last_line: int) -> string {
+row_comment :: proc(lines: []string, first_line, last_line: int) -> string {
 	comment := ""
 	for number in first_line ..= last_line {
 		if number < 1 || number > len(lines) {
@@ -555,8 +555,8 @@ site_row_comment :: proc(lines: []string, first_line, last_line: int) -> string 
 	return markdown_comment_end(comment)
 }
 
-// site_unquote gives the text of an Odin string with its escapes \" and \\.
-site_unquote :: proc(text: string) -> string {
+// odin_unquote gives the text of an Odin string with its escapes \" and \\.
+odin_unquote :: proc(text: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	for index := 0; index < len(text); index += 1 {
 		if text[index] == '\\' && index + 1 < len(text) {
@@ -567,9 +567,9 @@ site_unquote :: proc(text: string) -> string {
 	return strings.to_string(builder)
 }
 
-// site_string_at reads an Odin string that starts at a quote: its text,
+// odin_string_at reads an Odin string that starts at a quote: its text,
 // with its escapes, and the index after its closing quote.
-site_string_at :: proc(text: string, start: int) -> (value: string, end: int, found: bool) {
+odin_string_at :: proc(text: string, start: int) -> (value: string, end: int, found: bool) {
 	if start >= len(text) || text[start] != '"' {
 		return "", 0, false
 	}
@@ -578,28 +578,28 @@ site_string_at :: proc(text: string, start: int) -> (value: string, end: int, fo
 		case '\\':
 			index += 1
 		case '"':
-			return site_unquote(text[start + 1:index]), index + 1, true
+			return odin_unquote(text[start + 1:index]), index + 1, true
 		}
 	}
 	return "", 0, false
 }
 
-// site_console_commands_read reads the built-in commands of the console.
+// console_commands_read reads the built-in commands of the console.
 // The form: each line whose code starts with "command(\"" is
 // `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`.
 // The kind None of a parameter is any value: the console prints "Value".
 // The comment lines just above a command, up to a line that is not a
 // comment, are its documentation.
-site_console_commands_read :: proc(content, file: string) -> (commands: []Site_Console_Command, problem: string) {
-	list := make([dynamic]Site_Console_Command, context.temp_allocator)
-	lines := site_lines(content)
+console_commands_read :: proc(content, file: string) -> (commands: []Console_Command_Entry, problem: string) {
+	list := make([dynamic]Console_Command_Entry, context.temp_allocator)
+	lines := lines_of_text(content)
 	for line, index in lines {
-		code, _ := site_code_and_comment(line)
+		code, _ := code_and_comment(line)
 		if !strings.has_prefix(code, "command(\"") {
 			continue
 		}
 		wrong := fmt.tprintf("%s, line %d: a command is `command(\"<name>\", {{.<Kind>, ...}}, .<Kind>, \"<help>\", <procedure>)`", file, index + 1)
-		name, after_name, has_name := site_string_at(code, len("command("))
+		name, after_name, has_name := odin_string_at(code, len("command("))
 		if !has_name || !strings.has_prefix(code[after_name:], ", {") {
 			return nil, wrong
 		}
@@ -614,7 +614,7 @@ site_console_commands_read :: proc(content, file: string) -> (commands: []Site_C
 			if kind == "" {
 				continue
 			}
-			if !strings.has_prefix(kind, ".") || !site_is_identifier(kind[1:]) {
+			if !strings.has_prefix(kind, ".") || !is_odin_identifier(kind[1:]) {
 				return nil, wrong
 			}
 			append(&parameters, kind[1:] == "None" ? "Value" : kind[1:])
@@ -625,11 +625,11 @@ site_console_commands_read :: proc(content, file: string) -> (commands: []Site_C
 		}
 		rest = rest[len(", ."):]
 		comma := strings.index(rest, ", ")
-		if comma < 0 || !site_is_identifier(rest[:comma]) {
+		if comma < 0 || !is_odin_identifier(rest[:comma]) {
 			return nil, wrong
 		}
 		result := rest[:comma]
-		about, after_about, has_about := site_string_at(rest, comma + len(", "))
+		about, after_about, has_about := odin_string_at(rest, comma + len(", "))
 		if !has_about || !strings.has_prefix(rest[after_about:], ", ") || !strings.has_suffix(rest, ")") {
 			return nil, wrong
 		}
@@ -642,7 +642,7 @@ site_console_commands_read :: proc(content, file: string) -> (commands: []Site_C
 			_, text, _ := markdown_comment_line(comment_line)
 			documentation = markdown_comment_add(documentation, text)
 		}
-		append(&list, Site_Console_Command{name = name, parameters = parameters[:], result = result, about = about, documentation = markdown_comment_end(documentation), file = file, line = index + 1})
+		append(&list, Console_Command_Entry{name = name, parameters = parameters[:], result = result, about = about, documentation = markdown_comment_end(documentation), file = file, line = index + 1})
 	}
 	if len(list) == 0 {
 		return nil, fmt.tprintf("%s: no line `command(\"<name>\", ...)`", file)
@@ -650,9 +650,9 @@ site_console_commands_read :: proc(content, file: string) -> (commands: []Site_C
 	return list[:], ""
 }
 
-// site_console_signature gives a command as `help()` of the console prints
+// console_signature gives a command as `help()` of the console prints
 // it: "repeat(Text, Integer) -> Text"; no arrow for the result None.
-site_console_signature :: proc(command: Site_Console_Command) -> string {
+console_signature :: proc(command: Console_Command_Entry) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, command.name)
 	strings.write_byte(&builder, '(')
@@ -673,17 +673,17 @@ site_console_signature :: proc(command: Site_Console_Command) -> string {
 // The parts of the comment of a kernel operation. The contract writes each
 // operation as "<Name> = <n>, // (<parameters>) -> <result>. <text>", and
 // the lines after it continue the text.
-Site_Operation :: struct {
-	member:     Site_Enumeration_Member,
+Operation_Comment_Parts :: struct {
+	member:     Enumeration_Member,
 	parameters: string, // The text between the parentheses, as the comment writes it.
 	result:     string, // The text after "->" up to the end of its sentence, or "".
 	text:       string, // The rest of the comment.
 }
 
-// site_operation_parts splits the comment of an operation. A comment that
+// operation_comment_split splits the comment of an operation. A comment that
 // does not start with "(" has no parameters: all of it is the text.
-site_operation_parts :: proc(member: Site_Enumeration_Member) -> Site_Operation {
-	operation := Site_Operation{member = member, text = member.comment}
+operation_comment_split :: proc(member: Enumeration_Member) -> Operation_Comment_Parts {
+	operation := Operation_Comment_Parts{member = member, text = member.comment}
 	comment := member.comment
 	if !strings.has_prefix(comment, "(") {
 		return operation

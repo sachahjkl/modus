@@ -231,15 +231,15 @@ TOOL_SOURCE_FOLDER :: "tools/modustool"
 FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
 
 // The table of the roles of the root service (process_roles_check.odin).
-SITE_ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
+ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
 
-SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
+SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
 
-// site_git_commit reads the commit of the work tree from the files of git,
+// git_commit_read reads the commit of the work tree from the files of git,
 // with no host process: .git is a folder, or a file "gitdir: <folder>" in a
 // work tree; HEAD names a reference, which is a file or a line of
 // packed-refs in the common folder.
-site_git_commit :: proc() -> string {
+git_commit_read :: proc() -> string {
 	read_trimmed :: proc(path: string) -> string {
 		data, err := os.read_entire_file(path, context.temp_allocator)
 		if err != nil {
@@ -269,7 +269,7 @@ site_git_commit :: proc() -> string {
 			return commit
 		}
 	}
-	for line in site_lines(read_trimmed(strings.concatenate({common, "/packed-refs"}, context.temp_allocator))) {
+	for line in lines_of_text(read_trimmed(strings.concatenate({common, "/packed-refs"}, context.temp_allocator))) {
 		if strings.has_suffix(line, strings.concatenate({" ", reference}, context.temp_allocator)) && len(line) > 40 {
 			return line[:40]
 		}

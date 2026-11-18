@@ -109,7 +109,7 @@ The desktop has two appearances: dark and light. The setting `appearance` choose
 
 ### The colors of code
 
-Code has one set of colors wherever it is shown: on the site, and in the console of the system. The table is `src/library/support/graphics/code_colors.odin` (`Code_Class`, `code_class_colors`); the site (`tools/modustool/site_code.odin`) and the terminal (`src/library/support/terminal/code_runs.odin`) read it. Each class is an accent of the concepts, moved toward white on a dark surface and toward black on the light page of the site.
+Code has one set of colors wherever it is shown: on the site, and in the console of the system. The table is `src/library/support/graphics/code_colors.odin` (`Code_Class`, `code_class_colors`); the site (`tools/modustool/site/site_code.odin`) and the terminal (`src/library/support/terminal/code_runs.odin`) read it. Each class is an accent of the concepts, moved toward white on a dark surface and toward black on the light page of the site.
 
 | Class | What | Accent | Dark: shade, color | Light: shade |
 |---|---|---|---|---|
@@ -127,7 +127,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 ### The colors of values
 
-A technical value has one color wherever it is shown: on the site, and in the processes of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`glossary/project.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/modustool/site_values.odin`), the process `log` and the drawers of the console read it. The console gives a field of a record the kind that its description states (`CONSOLE.md`, "The drawers"). The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
+A technical value has one color wherever it is shown: on the site, and in the processes of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`glossary/project.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/modustool/site/site_values.odin`), the process `log` and the drawers of the console read it. The console gives a field of a record the kind that its description states (`CONSOLE.md`, "The drawers"). The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
 
 The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`; a band of a row of the log is the top of a card):
 
@@ -141,7 +141,7 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 | Status | Failed | `0xF06060` | 5.94 / 5.06 |
 
 - A part with no kind has the color of the text around it.
-- Each kind has at least 4.5 to 1 on the background and on both colors of a card, in both appearances (`src/library/support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/modustool/site_values_test.odin`).
+- Each kind has at least 4.5 to 1 on the background and on both colors of a card, in both appearances (`src/library/support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/modustool/site/site_values_test.odin`).
 - A color is never the only sign: the text of the value and its unit say the same fact.
 
 ### The icons of the kinds

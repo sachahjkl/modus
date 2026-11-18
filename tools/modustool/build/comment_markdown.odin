@@ -46,7 +46,7 @@ markdown_italic_opens :: proc(text: string, at: int) -> bool {
 	if at + 1 >= len(text) || text[at] != '*' || text[at + 1] == '*' || text[at + 1] == ' ' || text[at + 1] == '\n' {
 		return false
 	}
-	if at > 0 && (foundation.site_is_word_byte(text[at - 1]) || text[at - 1] == '*') {
+	if at > 0 && (foundation.is_word_byte(text[at - 1]) || text[at - 1] == '*') {
 		return false
 	}
 	return markdown_italic_close(text, at + 1) >= 0
@@ -71,7 +71,7 @@ markdown_italic_close :: proc(text: string, from: int) -> int {
 		if text[index - 1] == ' ' || text[index - 1] == '*' || text[index - 1] == '\n' {
 			continue
 		}
-		if index + 1 < len(text) && foundation.site_is_word_byte(text[index + 1]) {
+		if index + 1 < len(text) && foundation.is_word_byte(text[index + 1]) {
 			continue
 		}
 		return index
@@ -163,7 +163,7 @@ documentation_text_of_markdown :: proc(markdown: string) -> string {
 		empty_before^ = false
 		append(blocks, block)
 	}
-	for line in foundation.site_lines(markdown) {
+	for line in foundation.lines_of_text(markdown) {
 		trimmed := strings.trim_space(line)
 		if strings.has_prefix(trimmed, "```") {
 			fenced = !fenced
@@ -187,7 +187,7 @@ documentation_text_of_markdown :: proc(markdown: string) -> string {
 		if len(blocks) > 0 && !empty_before {
 			last = &blocks[len(blocks) - 1]
 		}
-		if marker, is_marker := site_list_marker(line); is_marker {
+		if marker, is_marker := list_marker_read(line); is_marker {
 			prefix := marker.ordered ? strings.concatenate({marker.label, ". "}, context.temp_allocator) : "- "
 			prefix = strings.concatenate({line[:marker.indent], prefix}, context.temp_allocator)
 			add(&blocks, &empty_before, Documentation_Block{prefix = prefix, text = marker.text, continues = true})

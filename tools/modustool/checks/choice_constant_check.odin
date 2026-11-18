@@ -1094,7 +1094,7 @@ choice_families_of_tree :: proc(root: string) -> (families: []Choice_Family, cas
 		if source_is_a_test(file) || strings.has_prefix(file, skipped) {
 			continue
 		}
-		text, read_ok := foundation.site_read_quiet(file)
+		text, read_ok := foundation.read_text_file_quiet(file)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return nil, nil, 0, false

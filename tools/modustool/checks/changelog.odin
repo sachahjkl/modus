@@ -42,7 +42,7 @@ RELEASE_NUMBER_LINE_START :: "RELEASE_NUMBER :: "
 // The release tag is this prefix and the release number.
 RELEASE_TAG_PREFIX :: "v"
 // A release link is "[<number>]: " then this address, the prefix and the number.
-RELEASE_LINK_ADDRESS_START :: SITE_REPOSITORY_ADDRESS + "/releases/tag/" + RELEASE_TAG_PREFIX
+RELEASE_LINK_ADDRESS_START :: REPOSITORY_ADDRESS + "/releases/tag/" + RELEASE_TAG_PREFIX
 // "yyyy-mm-dd" and "yyyy-mm-dd hh:mm": the two lengths of the moment of a heading.
 RELEASE_DAY_LENGTH :: 10
 RELEASE_TIME_LENGTH :: 16
@@ -1213,4 +1213,4 @@ changelog_times :: proc() -> bool {
 
 // The address of the repository: the one place that names it, because its
 // name can change with the name of the system.
-SITE_REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/modus"
+REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/modus"

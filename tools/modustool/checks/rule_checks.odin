@@ -82,8 +82,8 @@ operation_count_of_document :: proc(document: string) -> (count: int, ok: bool) 
 
 // operation_count_check compares the two counts.
 operation_count_check :: proc() -> bool {
-	source, source_ok := foundation.site_read_quiet(foundation.OPERATION_SOURCE)
-	document, document_ok := foundation.site_read_quiet(OPERATION_PROPERTY_DOCUMENT)
+	source, source_ok := foundation.read_text_file_quiet(foundation.OPERATION_SOURCE)
+	document, document_ok := foundation.read_text_file_quiet(OPERATION_PROPERTY_DOCUMENT)
 	if !source_ok || !document_ok {
 		fmt.eprintfln("modustool: test failed: cannot read %s or %s", foundation.OPERATION_SOURCE, OPERATION_PROPERTY_DOCUMENT)
 		return false
@@ -213,7 +213,7 @@ allocator_uses_of_tree :: proc(root: string) -> (uses: []Allocator_Use, file_cou
 		if source_is_a_test(file) {
 			continue
 		}
-		source, read_ok := foundation.site_read_quiet(file)
+		source, read_ok := foundation.read_text_file_quiet(file)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
 			return nil, 0, false

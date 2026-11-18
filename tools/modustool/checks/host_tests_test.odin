@@ -75,7 +75,7 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 	// tool, which can import a kernel part.
 	package_of_the_tool := strings.join(host_test_command(foundation.TOOL_SOURCE_FOLDER + "/foundation", "/temporary"), " ", context.temp_allocator)
 	testing.expect(t, strings.contains(package_of_the_tool, foundation.KERNEL_LIBRARY_FLAG) && strings.contains(package_of_the_tool, foundation.TOOL_LIBRARY_FLAG), "a package of the tool takes the kernel parts and the source library of the tool")
-	for package_folder in ([]string{foundation.TOOL_SOURCE_FOLDER + "/foundation", foundation.TOOL_SOURCE_FOLDER + "/resources", foundation.TOOL_SOURCE_FOLDER + "/build", foundation.TOOL_SOURCE_FOLDER + "/checks", foundation.TOOL_SOURCE_FOLDER + "/fuzz", foundation.TOOL_SOURCE_FOLDER + "/similarity", foundation.TOOL_SOURCE_FOLDER + "/machine"}) {
+	for package_folder in ([]string{foundation.TOOL_SOURCE_FOLDER + "/foundation", foundation.TOOL_SOURCE_FOLDER + "/resources", foundation.TOOL_SOURCE_FOLDER + "/build", foundation.TOOL_SOURCE_FOLDER + "/checks", foundation.TOOL_SOURCE_FOLDER + "/fuzz", foundation.TOOL_SOURCE_FOLDER + "/similarity", foundation.TOOL_SOURCE_FOLDER + "/machine", foundation.TOOL_SOURCE_FOLDER + "/site"}) {
 		listed := false
 		for folder in folders {
 			listed = listed || folder == package_folder

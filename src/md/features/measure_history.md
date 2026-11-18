@@ -35,7 +35,7 @@ The record in the tree of a tag says `release 0.91.0` for `v0.92.0`: the full ch
 
 ### The identity of a measure: its sentence
 
-A measure is the same measure across releases when its sentence (the key `number` of the record, the sentence of `site_measures`) is the same. A measure whose meaning changes (another count, another size, another machine) gets a new sentence: its history then starts again, and the old sentence is not drawn.
+A measure is the same measure across releases when its sentence (the key `number` of the record, the sentence of `measure_entries`) is the same. A measure whose meaning changes (another count, another size, another machine) gets a new sentence: its history then starts again, and the old sentence is not drawn.
 
 ### The number that a chart follows
 
@@ -76,7 +76,7 @@ The section says, before the charts: each point is one run of a full check, on a
 - **A ship that fails after the copy** puts the tree back with `git reset --hard`, which keeps a new file that git does not track. `ship` also cleans the folder of the history: the tree was clean when `ship` started, so the only file there that git does not track is the copy of this release.
 - **The folder must exist before a release.** `git add -A -- <folder>` fails on a path that matches no file. The folder holds the copies of the old releases from `measure-history`, so it exists from the first run of that command on.
 - **The same run is the same `time` and `commit`.** Two records of one commit, measured at two times, are two runs, and both are kept.
-- **A measure that leaves `site_measures`** keeps its lines in the old copies, and no chart reads them: a sentence of `measure_history_series` must be a sentence of `site_measures`, and a host test checks it.
+- **A measure that leaves `measure_entries`** keeps its lines in the old copies, and no chart reads them: a sentence of `measure_history_series` must be a sentence of `measure_entries`, and a host test checks it.
 - **A record that names no commit** (`commit unknown`) still has its points; the list says "unknown".
 
 ## State

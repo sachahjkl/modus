@@ -71,7 +71,7 @@ run_font :: proc(args: []string) -> int {
 	fmt.sbprintln(&out, "// This file is the output of \"modustool font\". Do not change it by hand.")
 	fmt.sbprintln(&out, "//")
 	fmt.sbprintln(&out, "// The font is Spleen 8x16 2.1.0, Copyright (c) 2018-2024, Frederic Cambus.")
-	fmt.sbprintln(&out, "// Its license is BSD 2-Clause: see " + SITE_SPLEEN_LICENSE_FILE + ".")
+	fmt.sbprintln(&out, "// Its license is BSD 2-Clause: see " + SPLEEN_LICENSE_FILE + ".")
 	fmt.sbprintln(&out, "package graphics")
 	fmt.sbprintln(&out)
 	fmt.sbprintln(&out, "import \"modus:contract/glyph_cache\"")
@@ -103,4 +103,4 @@ run_font :: proc(args: []string) -> int {
 
 // The license of the font of the terminal, beside the data that this
 // command writes; the reuse list and the site read it.
-SITE_SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
+SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"

@@ -51,6 +51,7 @@ import "core:slice"
 import "modustool:fuzz"
 import "modustool:similarity"
 import "modustool:machine"
+import "modustool:site"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -63,11 +64,6 @@ import "modustool:machine"
 // the folders and the flags of the two libraries are in
 // source_folders.odin; the rule of the kernel is held by
 // library_imports_check.odin.
-
-Command :: struct {
-	name, about: string,
-	run:         proc(args: []string) -> int,
-}
 
 // The commands of the tool. The name is the first argument; the help after
 // it is what `modustool help` prints, one line for each command. The comment
@@ -90,7 +86,7 @@ Command :: struct {
 // files of the repository that a command names (the pictures, the measure
 // record, the changelog). A command ends with the status 0 when it
 // succeeds, 1 when a step fails, and 2 when its arguments are wrong.
-COMMANDS :: [?]Command {
+COMMANDS :: [?]foundation.Command {
 	// Builds the whole system: each module, the boot image, and the boot
 	// program that holds the kernel and the boot image.
 	//
@@ -118,7 +114,7 @@ COMMANDS :: [?]Command {
 	// ```
 	// nix develop -c modustool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = build.run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
@@ -434,7 +430,7 @@ COMMANDS :: [?]Command {
 	//   it, and `modustool site` stops on such a fault too.
 	//
 	// The design: (docs/SITE.md, "The byte layouts").
-	{name = "byte-layouts", about = "write | check: the text of each fence `" + BYTE_LAYOUT_FENCE_LANGUAGE + "` of the guides, the byte layout of a record of a format from the code", run = run_byte_layouts},
+	{name = "byte-layouts", about = "write | check: the text of each fence `" + site.BYTE_LAYOUT_FENCE_LANGUAGE + "` of the guides, the byte layout of a record of a format from the code", run = site.run_byte_layouts},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
 	// roadmap, the index of the search and its script.
@@ -447,7 +443,7 @@ COMMANDS :: [?]Command {
 	// a page or a file that it writes, each picture with its text. A failure
 	// stops the command with the page and the reason, and writes nothing. The
 	// design: (docs/SITE.md, "The command").
-	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
+	{name = "site", about = "write the site of the system in " + site.SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
 	// the number that a workflow gives to a release.
 	{name = "release_number", about = "print the release number of the system: the newest release of `" + checks.CHANGELOG_FILE + "`", run = checks.run_release_number},
@@ -579,23 +575,11 @@ usage :: proc() {
 	}
 }
 
-// run_build is the command `build`: the modules, the boot images, and
-// every boot volume. A module whose inputs are the same is kept, and so is
-// each boot volume (incremental_build.odin, boot_volumes.odin); `build
-// whole` keeps nothing.
-run_build :: proc(args: []string) -> int {
-	// `build [whole] [host_processes]`: a whole build, and the count of module
-	// processes at once.
-	rest := args
-	if len(rest) >= 1 && rest[0] == "whole" {
-		build.build_whole = true
-		rest = rest[1:]
-	}
-	if len(rest) > 1 || (len(rest) == 1 && !build.parse_module_build_host_processes(rest[0])) {
-		fmt.eprintln("modustool: build [whole] [host_processes]")
-		return foundation.EXIT_USAGE
-	}
-	return build.build_system(nil)
+// run_site is the command `site`: the page of the commands shows this
+// table, and the package site cannot import the command package.
+run_site :: proc(args: []string) -> int {
+	commands := COMMANDS
+	return site.run_site(args, commands[:])
 }
 
 run_machine :: proc(args: []string) -> int {
@@ -907,7 +891,7 @@ run_check :: proc(args: []string) -> int {
 	if !resources.logo_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !readme_pictures_check() {
+	if !site.readme_pictures_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !checks.fixed_addresses_check() {
@@ -940,7 +924,7 @@ run_check :: proc(args: []string) -> int {
 	if !checks.roadmap_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if !byte_layouts_check() {
+	if !site.byte_layouts_check() {
 		return foundation.EXIT_FAILURE
 	}
 	if !checks.reuse_list_check() {

@@ -229,7 +229,7 @@ roadmap_sentence_count :: proc(text: string) -> (count: int, ends_whole: bool) {
 // characters. It is also what gives an entry its address on the page of the
 // site, so two entries with one key are one entry for a reader.
 roadmap_summary_key :: proc(summary: string) -> string {
-	return foundation.site_slug(summary)
+	return foundation.text_slug(summary)
 }
 
 // roadmap_entry_parse reads the text of one entry, on one line. Each

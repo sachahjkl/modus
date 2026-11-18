@@ -500,7 +500,7 @@ Do not use: screenshots page, album, lightbox.
 
 The gallery table is the one table of the tool that names each picture of the screen that the site shows: its file, its group, a caption of one sentence, its guide, and whether the home shows it.
 
-It is `site_gallery_rows` in `tools/modustool/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `modustool site` stops on a picture that neither names. Example: the row of `heron.png` has the group of the mark, its caption, the guide of the design rules, and the mark of the home.
+It is `site_gallery_rows` in `tools/modustool/site/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `modustool site` stops on a picture that neither names. Example: the row of `heron.png` has the group of the mark, its caption, the guide of the design rules, and the mark of the home.
 
 The design: `docs/SITE.md`, "The gallery table".
 

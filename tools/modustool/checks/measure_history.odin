@@ -46,7 +46,7 @@ Measure_Faster :: enum {
 
 // The one number of a line of a log that the chart of a measure follows.
 Measure_History_Series :: struct {
-	sentence: string, // The sentence of site_measures: the identity of the measure.
+	sentence: string, // The sentence of measure_entries: the identity of the measure.
 	title:    string,
 	before:   string, // The words of the line just before the number.
 	after:    string, // The words just after it: its unit as the log writes it.
@@ -196,7 +196,7 @@ measure_history_read :: proc(folder: string) -> (releases: []Measure_History_Rel
 // release. A record that does not read stops the release.
 measure_history_copy_prepare :: proc(number: Release_Number) -> (copy: Measure_History_Copy, ok: bool) {
 	number_text := release_number_text(number)
-	record_text, has_record := foundation.site_read_quiet(MEASURE_RECORD_FILE)
+	record_text, has_record := foundation.read_text_file_quiet(MEASURE_RECORD_FILE)
 	if !has_record {
 		fmt.printfln("modustool: %s is absent: the release %s has no copy in %s", MEASURE_RECORD_FILE, number_text, MEASURE_HISTORY_FOLDER)
 		return {}, true
@@ -284,7 +284,7 @@ run_measure_history :: proc(args: []string) -> int {
 		}
 		with_record += 1
 		path := measure_history_file_path(number)
-		if existing, exists := foundation.site_read_quiet(path); exists {
+		if existing, exists := foundation.read_text_file_quiet(path); exists {
 			present += 1
 			if existing != record_text {
 				fmt.printfln("modustool: measure-history: %s differs from %s in the tag %s; the file is kept", path, MEASURE_RECORD_FILE, release_tag_name(number))
@@ -421,7 +421,7 @@ measure_history_chart_svg :: proc(points: []Measure_History_Point, label: string
 		}
 	}
 	fmt.sbprintf(&b, "<svg class=\"measure-history-chart\" viewBox=\"0 0 %d %d\" role=\"img\" aria-label=\"", MEASURE_HISTORY_CHART_WIDTH, MEASURE_HISTORY_CHART_HEIGHT)
-	foundation.site_escape(&b, label)
+	foundation.html_escape(&b, label)
 	strings.write_string(&b, "\">\n")
 	fmt.sbprintf(&b, "<line class=\"measure-history-scale\" x1=\"0\" y1=\"%d\" x2=\"%d\" y2=\"%d\"/>\n", top, MEASURE_HISTORY_CHART_WIDTH, top)
 	fmt.sbprintf(&b, "<line class=\"measure-history-scale\" x1=\"0\" y1=\"%d\" x2=\"%d\" y2=\"%d\"/>\n", bottom, MEASURE_HISTORY_CHART_WIDTH, bottom)
@@ -449,9 +449,9 @@ measure_history_chart_svg :: proc(points: []Measure_History_Point, label: string
 			continue
 		}
 		fmt.sbprintf(&b, "<rect class=\"measure-history-point\" x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\"><title>", measure_history_point_x(index, len(points)) - half, measure_history_point_y(point.value, most) - half, MEASURE_HISTORY_POINT_SIZE, MEASURE_HISTORY_POINT_SIZE)
-		foundation.site_escape(&b, point.release)
+		foundation.html_escape(&b, point.release)
 		strings.write_string(&b, ": ")
-		foundation.site_escape(&b, point.value_text)
+		foundation.html_escape(&b, point.value_text)
 		strings.write_string(&b, "</title></rect>\n")
 	}
 	strings.write_string(&b, "</svg>\n")

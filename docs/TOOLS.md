@@ -715,7 +715,7 @@ The section "Reuse list" of `PROPERTIES.md` names each work of others that the s
 | The libraries of the compiler | `base:runtime`, always: the compiler puts it in each module. Each package of `core:` that a source of the system imports, in a file that is not a test and whose first line is not a build tag with `!freestanding`. Their license file is `LICENSE.odin.txt` |
 | The portraits | Each row of `resources/hall_of_fame/CREDITS.md` |
 
-The words of a record become an identifier through the table `site_spdx_names` of the page of the licenses (`SITE.md`, "The licenses"). The words "All rights reserved" give `NONE`. Words with no translation give no identifier, and the check then does not compare the license of that row.
+The words of a record become an identifier through the table `spdx_names` of the page of the licenses (`SITE.md`, "The licenses"). The words "All rights reserved" give `NONE`. Words with no translation give no identifier, and the check then does not compare the license of that row.
 
 **The faults.** Each one gives the line of the document and the place:
 
@@ -920,7 +920,7 @@ outsider_fault  visitor::fault_three  outsider/main.odin   169
 
 ## The commands of the tool
 
-All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The design is in `src/md/infrastructure/repository_layout.md`, which also says which concerns are packages today. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
+All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The layout is in "The packages of the tool", below; the design is in `src/md/infrastructure/repository_layout.md`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
 
 | Command | What it does |
 |---|---|
@@ -954,6 +954,23 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, and that no cast of a word to an enum skips its border ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
+
+### The packages of the tool
+
+Each package is a folder of `tools/modustool`. A package imports only the packages above it in this table; the compiler refuses a cycle. Each folder has its host tests, and `modustool check` runs the host tests of each folder in its own process ("The host tests of the check").
+
+| Package | What it holds | It imports |
+|---|---|---|
+| `foundation` | The folders of the sources and of the build, the source libraries and their flags, the table of the modules, the type of a command, the run of a process and the pool of host processes, the files, the lines of a text, the readers of the Odin sources | nothing of the tool |
+| `resources` | The mark and its pictures, the fonts, the pointer themes, the portraits, the PNG files | `foundation` |
+| `build` | The compile, the module files, the incremental build, the boot images and the boot volumes, the signatures, the release image, the outside modules, and the checks that each build runs | `foundation`, `resources` |
+| `checks` | The checks of the sources and of the documents, the changelog, the roadmap, the news, the reuse list, and the measures | `foundation`, `resources`, `build` |
+| `fuzz` | The fuzzing engine, the fuzz targets and their corpus, and the operation sequences on the host | `foundation`, `build` |
+| `similarity` | The similarity finder and its kept list | `foundation` |
+| `machine` | QEMU, the parts of the machine test with their scenarios, the peer, the films, the measure runs, and the fuzzing of the kernel operations on machines | `foundation`, `resources`, `build`, `checks`, `fuzz` |
+| `site` | The pages of the site, the byte layouts, and the pointers of an intent file | `foundation`, `resources`, `build`, `checks` |
+
+The command package is `tools/modustool` itself: `main.odin` holds the table of the commands, its dispatch, and the commands that reach several packages: `run`, `test`, `screenshots`, `measure`, `check` and `fuzz`. It is the only package that imports all the others, and it gives its table to the site as an argument.
 
 ### The tool built once
 
