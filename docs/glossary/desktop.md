@@ -786,7 +786,7 @@ Do not use: device-independent pixel, virtual pixel.
 
 The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
 
-It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps the grid of 8 on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. The desktop draws at scale 1 still; the boot display takes its scale from the size of the screen, with the same rounding.
+It is one setting of the system, not a choice of each process, so every window on a screen has the same scale. A count of eighths keeps the grid of 8 on whole pixels of the screen; a scale such as 1.3 has no value. The drawing module turns places into pixels of the screen and rounds each edge. The desktop draws at scale 1 still; the boot display takes its scale from the size of the screen, snapped to the sizes of its font.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/boot_display_scale.md`.
 

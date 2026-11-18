@@ -2,30 +2,27 @@
 package bootscreen
 
 import "core:fmt"
-import "core:os"
 import "core:sync"
 import "core:testing"
-import "core:time"
 import info "modus:contract/boot_info"
 import "modus:contract/glyph_cache"
 import "modus:support/graphics"
-import "modus:support/vector_font"
 
 // The scale of the boot display (src/md/features/boot_display_scale.md):
-// the pure procedure of the place, its refusals and its edges first; the
-// font of the cells and its refusals; then the display drawn at each scale,
-// whose boxes must stay in the panel and whose texts must not overlap.
+// the pure procedure of the place, snapped to the sizes of Spleen, its
+// refusals and its edges first; the form of Spleen of each cell and the
+// pixels of each size; then the display drawn at each scale, whose boxes
+// must stay in the panel and whose texts must not overlap.
 
-@(private = "file")
-cells_font_file := #load("../../../../resources/fonts/paper_mono.ttf")
-@(private = "file")
-proportional_font_file := #load("../../../../resources/fonts/b612.ttf")
-
-// The draw, the record of the boxes and the font of the cells are state of
-// the package: the tests that use them take this lock, as the runner runs
-// tests at the same time.
+// The draw and the record of the boxes are state of the package: the
+// tests that use them take this lock, as the runner runs tests at the
+// same time.
 @(private = "file")
 package_state_lock: sync.Mutex
+
+// The scales of the display, from scale 1.
+@(private = "file")
+EVERY_SCALE :: [4]int{SCALE_ONE, SPLEEN_12X24_WIDTH, SPLEEN_16X32_WIDTH, SPLEEN_32X64_WIDTH}
 
 @(test)
 a_screen_of_no_pixels_is_refused :: proc(t: ^testing.T) {
@@ -49,8 +46,6 @@ a_screen_below_the_base_size_keeps_scale_one_at_the_top_left :: proc(t: ^testing
 		testing.expect_value(t, place.x, max((size[0] - WIDTH) / 2, 0))
 		testing.expect_value(t, place.y, max((size[1] - HEIGHT) / 2, 0))
 	}
-	// One side below the base size: that side starts at 0, the other is
-	// in the middle.
 	place, _ := display_place(WIDTH + 100, HEIGHT - 1)
 	testing.expect_value(t, place.x, 50)
 	testing.expect_value(t, place.y, 0)
@@ -64,82 +59,80 @@ the_base_size_is_scale_one_with_no_margin :: proc(t: ^testing.T) {
 }
 
 @(test)
-the_least_scale_starts_at_its_size_with_its_margins :: proc(t: ^testing.T) {
-	width := scaled(WIDTH, SCALE_LEAST) + 2 * SCREEN_MARGIN
-	height := scaled(HEIGHT, SCALE_LEAST) + 2 * SCREEN_MARGIN
-	place, ok := display_place(width, height)
-	testing.expect(t, ok)
-	testing.expect_value(t, place, Display_Place{eighths = SCALE_LEAST, x = SCREEN_MARGIN, y = SCREEN_MARGIN, width = scaled(WIDTH, SCALE_LEAST), height = scaled(HEIGHT, SCALE_LEAST)})
-	// One pixel less on either side: the margin does not fit, so scale 1
-	// in the middle, never 9 eighths.
-	narrow, _ := display_place(width - 1, height)
-	testing.expect_value(t, narrow.eighths, SCALE_ONE)
-	low, _ := display_place(width, height - 1)
-	testing.expect_value(t, low.eighths, SCALE_ONE)
-	testing.expect_value(t, low.x, (width - WIDTH) / 2)
+each_scale_starts_at_its_size_with_its_margins :: proc(t: ^testing.T) {
+	scales := DISPLAY_SCALES
+	for eighths in scales {
+		width := scaled(WIDTH, eighths) + 2 * SCREEN_MARGIN
+		height := scaled(HEIGHT, eighths) + 2 * SCREEN_MARGIN
+		place, ok := display_place(width, height)
+		testing.expect(t, ok)
+		testing.expect_value(t, place, Display_Place{eighths = eighths, x = SCREEN_MARGIN, y = SCREEN_MARGIN, width = scaled(WIDTH, eighths), height = scaled(HEIGHT, eighths)})
+		// One pixel less on either side: the scale below in the list, never
+		// a scale between two sizes of Spleen.
+		for smaller in ([2][2]int{{width - 1, height}, {width, height - 1}}) {
+			below, _ := display_place(smaller[0], smaller[1])
+			testing.expectf(t, below.eighths < eighths, "%v x %v takes %v eighths", smaller[0], smaller[1], below.eighths)
+			testing.expectf(t, below.eighths == SCALE_ONE || below.eighths == SPLEEN_12X24_WIDTH || below.eighths == SPLEEN_16X32_WIDTH, "%v x %v takes %v eighths, no size of Spleen", smaller[0], smaller[1], below.eighths)
+		}
+	}
+	// The width of the base size, and one pixel less than the first scale.
+	first, _ := display_place(scaled(WIDTH, SPLEEN_12X24_WIDTH) + 2 * SCREEN_MARGIN - 1, 1080)
+	testing.expect_value(t, first.eighths, SCALE_ONE)
 }
 
 @(test)
-the_reference_screen_takes_one_and_a_half :: proc(t: ^testing.T) {
-	place, ok := display_place(1920, 1080)
-	testing.expect(t, ok)
-	// The height decides: 708 at 13 eighths is 1151 pixels, past 1080.
-	REFERENCE_EIGHTHS :: 12
-	testing.expect(t, scaled(HEIGHT, REFERENCE_EIGHTHS + 1) + 2 * SCREEN_MARGIN > 1080)
-	testing.expect_value(t, place.eighths, REFERENCE_EIGHTHS)
-	testing.expect_value(t, place.width, scaled(WIDTH, REFERENCE_EIGHTHS))
-	testing.expect_value(t, place.height, scaled(HEIGHT, REFERENCE_EIGHTHS))
-	testing.expect_value(t, place.x, (1920 - place.width) / 2)
-	testing.expect_value(t, place.y, (1080 - place.height) / 2)
-	testing.expect(t, place.y >= SCREEN_MARGIN)
-}
-
-@(test)
-a_large_screen_takes_the_largest_scale :: proc(t: ^testing.T) {
-	place, ok := display_place(3840, 2160)
-	testing.expect(t, ok)
-	testing.expect_value(t, place.eighths, SCALE_MOST)
-	testing.expect_value(t, place.x, (3840 - scaled(WIDTH, SCALE_MOST)) / 2)
-	// The largest values of the type: no sum wraps, the scale stays the
-	// top of the range, and the panel is in the middle.
-	largest, largest_ok := display_place(max(int), max(int))
-	testing.expect(t, largest_ok)
-	testing.expect_value(t, largest.eighths, SCALE_MOST)
-	testing.expect_value(t, largest.x, (max(int) - scaled(WIDTH, SCALE_MOST)) / 2)
-	testing.expect_value(t, largest.y, (max(int) - scaled(HEIGHT, SCALE_MOST)) / 2)
+the_common_screens_take_their_sizes_of_spleen :: proc(t: ^testing.T) {
+	screens := [?]struct {
+		width, height, eighths: int,
+	}{
+		{1920, 1080, SPLEEN_12X24_WIDTH}, // 1464 x 1062.
+		{2560, 1440, SPLEEN_16X32_WIDTH}, // 1952 x 1416.
+		{3840, 2160, SPLEEN_16X32_WIDTH}, // 32x64 needs 2832 lines.
+		{5120, 2880, SPLEEN_32X64_WIDTH}, // 3904 x 2832.
+		{7680, 4320, SPLEEN_32X64_WIDTH},
+		{1366, 768, SCALE_ONE},
+	}
+	for screen in screens {
+		place, ok := display_place(screen.width, screen.height)
+		testing.expect(t, ok)
+		testing.expectf(t, place.eighths == screen.eighths, "%v x %v takes %v eighths, not %v", screen.width, screen.height, place.eighths, screen.eighths)
+		testing.expect_value(t, place.width, scaled(WIDTH, place.eighths))
+		testing.expect_value(t, place.x, (screen.width - place.width) / 2)
+		testing.expect_value(t, place.y, (screen.height - place.height) / 2)
+	}
 }
 
 @(test)
 a_wide_screen_that_is_not_tall_keeps_the_proportions :: proc(t: ^testing.T) {
-	// The width holds scale 2; the height does not hold 1.25: the scale is
-	// 1 on both axes, never a stretch across.
-	place, ok := display_place(3840, 800)
+	place, ok := display_place(7680, 1000)
 	testing.expect(t, ok)
 	testing.expect_value(t, place.eighths, SCALE_ONE)
-	testing.expect_value(t, place.x, (3840 - WIDTH) / 2)
-	testing.expect_value(t, place.y, (800 - HEIGHT) / 2)
+	testing.expect_value(t, place.x, (7680 - WIDTH) / 2)
 	widest, _ := display_place(max(int), HEIGHT)
 	testing.expect_value(t, widest.eighths, SCALE_ONE)
 	testing.expect_value(t, widest.y, 0)
 	flat, _ := display_place(max(int), 1)
 	testing.expect_value(t, flat.eighths, SCALE_ONE)
 	testing.expect_value(t, flat.y, 0)
+	// The largest values of the type: no sum wraps, and the largest size.
+	largest, largest_ok := display_place(max(int), max(int))
+	testing.expect(t, largest_ok)
+	testing.expect_value(t, largest.eighths, SPLEEN_32X64_WIDTH)
+	testing.expect_value(t, largest.x, (max(int) - scaled(WIDTH, SPLEEN_32X64_WIDTH)) / 2)
 }
 
 @(test)
 each_edge_rounds_half_up_and_neighbours_share_it :: proc(t: ^testing.T) {
-	testing.expect_value(t, scaled(0, SCALE_LEAST), 0)
-	testing.expect_value(t, scaled(1, 12), 2) // 1.5: a half rounds up.
-	testing.expect_value(t, scaled(-1, 12), -1) // -1.5: up, toward plus infinity.
-	testing.expect_value(t, scaled(3, SCALE_LEAST), 4) // 3.75.
-	testing.expect_value(t, scaled(1, SCALE_LEAST), 1) // 1.25.
+	testing.expect_value(t, scaled(0, SPLEEN_12X24_WIDTH), 0)
+	testing.expect_value(t, scaled(1, SPLEEN_12X24_WIDTH), 2) // 1.5: a half rounds up.
+	testing.expect_value(t, scaled(-1, SPLEEN_12X24_WIDTH), -1) // -1.5: up, toward plus infinity.
 	testing.expect_value(t, scaled(WIDTH, SCALE_ONE), WIDTH)
-	for eighths in ([?]int{SCALE_ONE, SCALE_LEAST, 11, 12, 13, 14, 15, SCALE_MOST}) {
+	testing.expect_value(t, scaled(WIDTH, SPLEEN_32X64_WIDTH), 4 * WIDTH)
+	scales := EVERY_SCALE
+	for eighths in scales {
 		for logical in -1 ..< WIDTH {
-			// A rectangle of one logical pixel keeps at least one screen pixel,
-			// and two at most at scale 2.
 			size := scaled(logical + 1, eighths) - scaled(logical, eighths)
-			testing.expectf(t, size >= 1 && size <= 2, "at %v eighths, the pixel %v has %v screen pixels", eighths, logical, size)
+			testing.expectf(t, size >= eighths / SCALE_ONE && size <= (eighths + SCALE_ONE - 1) / SCALE_ONE, "at %v eighths, the pixel %v has %v screen pixels", eighths, logical, size)
 		}
 		// A cell of the text is whole pixels at each place.
 		for place := 0; place < WIDTH; place += CELL {
@@ -149,73 +142,94 @@ each_edge_rounds_half_up_and_neighbours_share_it :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_font_of_the_cells_that_is_refused_leaves_no_font :: proc(t: ^testing.T) {
-	sync.mutex_lock(&package_state_lock)
-	defer sync.mutex_unlock(&package_state_lock)
-	memory := new(Scaled_Glyph_Memory)
-	defer free(memory)
-	testing.expect_value(t, cell_font_use(cells_font_file, nil), vector_font.Font_Problem.Too_Many_Points)
-	testing.expect(t, cell_font.memory == nil)
-	testing.expect(t, cell_font_use(nil, memory) != .None)
-	testing.expect(t, cell_font.memory == nil)
-	testing.expect(t, cell_font_use(cells_font_file[:100], memory) != .None)
-	testing.expect(t, cell_font.memory == nil)
-	// A proportional font has no one advance for a cell.
-	testing.expect_value(t, cell_font_use(proportional_font_file, memory), vector_font.Font_Problem.Unknown_Format)
-	testing.expect(t, cell_font.memory == nil)
-	// With no font, no glyph is drawn: the cell takes the whole scale below.
-	_, drawn := scaled_glyph_of(33, 'A', 12)
-	testing.expect(t, !drawn)
-	testing.expect_value(t, memory.word_count, 0)
+a_cell_that_no_size_fills_is_refused :: proc(t: ^testing.T) {
+	for cell in ([?]int{min(int), -1, 0, 1, graphics.CELL_WIDTH - 1, 10, 14, 20, 30, max(int)}) {
+		form, ok := spleen_form_of(cell)
+		testing.expectf(t, !ok, "a cell of %v is refused", cell)
+		testing.expect_value(t, form, Spleen_Form{})
+	}
 }
 
 @(test)
-a_glyph_past_the_cells_of_the_renderer_is_refused :: proc(t: ^testing.T) {
-	sync.mutex_lock(&package_state_lock)
-	defer sync.mutex_unlock(&package_state_lock)
-	memory := new(Scaled_Glyph_Memory)
-	defer free(memory)
-	defer cell_font_use(nil, nil)
-	testing.expect_value(t, cell_font_use(cells_font_file, memory), vector_font.Font_Problem.None)
-	index, _ := glyph_cache.character_index('A')
-	refused := [?][2]int{{index, 0}, {index, -1}, {index, vector_font.CELL_WIDTH_LIMIT + 1}, {index, max(int)}, {-1, 12}, {glyph_cache.CHARACTER_COUNT, 12}, {max(int), 12}}
-	for refused_case in refused {
-		_, refused_ok := scaled_glyph_of(refused_case[0], 'A', refused_case[1])
-		testing.expectf(t, !refused_ok, "the index %v at a cell of %v is refused", refused_case[0], refused_case[1])
-		testing.expect_value(t, memory.word_count, 0)
-		testing.expect_value(t, memory.cell_widths, [SCALED_CELL_TABLES]int{})
-		testing.expect_value(t, memory.drawn_count, 0)
+each_cell_of_each_scale_has_its_size_of_spleen :: proc(t: ^testing.T) {
+	expected := [?]struct {
+		cell: int,
+		form: Spleen_Form,
+	}{
+		{graphics.CELL_WIDTH, {.Cells_8x16, 1}},
+		{SPLEEN_12X24_WIDTH, {.Cells_12x24, 1}},
+		{SPLEEN_16X32_WIDTH, {.Cells_16x32, 1}},
+		{SPLEEN_32X64_WIDTH, {.Cells_32x64, 1}},
+		// The large digits at 12 and 32 eighths: no size has their cell.
+		{2 * SPLEEN_12X24_WIDTH, {.Cells_8x16, 3}},
+		{2 * SPLEEN_32X64_WIDTH, {.Cells_8x16, 8}},
 	}
-	// The largest cell of the renderer is drawn.
-	largest, largest_ok := scaled_glyph_of(index, 'A', vector_font.CELL_WIDTH_LIMIT)
-	testing.expect(t, largest_ok)
-	testing.expect(t, largest.row_count > 0)
-	// A glyph is drawn once, then kept.
-	glyph, ok := scaled_glyph_of(index, 'A', 12)
-	testing.expect(t, ok)
-	testing.expect(t, glyph.row_count > 0 && int(glyph.first_row) + int(glyph.row_count) <= 24)
-	words, drawn := memory.word_count, memory.drawn_count
-	again, _ := scaled_glyph_of(index, 'A', 12)
-	testing.expect_value(t, again, glyph)
-	testing.expect_value(t, memory.word_count, words)
-	testing.expect_value(t, memory.drawn_count, drawn)
-	// A space has no ink and no words.
-	space_index, _ := glyph_cache.character_index(' ')
-	space, space_ok := scaled_glyph_of(space_index, ' ', 12)
-	testing.expect(t, space_ok)
-	testing.expect_value(t, space.row_count, 0)
-	testing.expect_value(t, memory.word_count, words)
-	// A third cell: the scale changed, and the glyphs of the old one go.
-	_, _ = scaled_glyph_of(index, 'A', 10)
-	testing.expect_value(t, memory.cell_widths, [SCALED_CELL_TABLES]int{10, 0})
-	// A full memory empties and starts again: the glyph that did not fit
-	// is drawn, and the words never pass the capacity.
-	for character in rune(33) ..= 126 {
-		character_index, _ := glyph_cache.character_index(character)
-		kept, kept_ok := scaled_glyph_of(character_index, character, vector_font.CELL_WIDTH_LIMIT)
-		testing.expect(t, kept_ok)
-		testing.expect(t, int(kept.word_offset) + int(kept.row_count) * vector_font.CELL_WIDTH_LIMIT <= memory.word_count)
-		testing.expect(t, memory.word_count <= SCALED_GLYPH_WORD_CAPACITY)
+	for row in expected {
+		form, ok := spleen_form_of(row.cell)
+		testing.expect(t, ok)
+		testing.expectf(t, form == row.form, "a cell of %v is %v, not %v", row.cell, form, row.form)
+	}
+	// Each cell that the display draws, the text and the large digits, has
+	// a form that fills it.
+	scales := EVERY_SCALE
+	for eighths in scales {
+		for cell in ([2]int{CELL * eighths / SCALE_ONE, LARGE_CELL * eighths / SCALE_ONE}) {
+			form, ok := spleen_form_of(cell)
+			testing.expectf(t, ok, "at %v eighths the cell of %v has no form", eighths, cell)
+			testing.expect_value(t, spleen_size_widths[form.size] * form.factor, cell)
+		}
+	}
+}
+
+// m_draw draws M in one cell into a canvas of that cell.
+@(private = "file")
+m_draw :: proc(pixels: []graphics.Color, cell_width: int) -> graphics.Canvas {
+	for &pixel in pixels {
+		pixel = 0
+	}
+	canvas := graphics.Canvas{pixels = raw_data(pixels), width = cell_width, height = 2 * cell_width, stride = cell_width}
+	spleen_text_draw(canvas, 0, 0, "M", graphics.COLOR_WHITE, cell_width)
+	return canvas
+}
+
+@(test)
+m_has_the_pixels_of_each_size :: proc(t: ^testing.T) {
+	largest_cell := 2 * SPLEEN_32X64_WIDTH
+	pixels := make([]graphics.Color, largest_cell * 2 * largest_cell)
+	defer delete(pixels)
+	index, _ := glyph_cache.character_index('M')
+	// ink gives the bit of the table of a size, at a pixel of its cell.
+	ink :: proc(size: Spleen_Size, index, row, column: int) -> bool {
+		switch size {
+		case .Cells_8x16:
+			return graphics.font[index][row] << uint(column) & 0x80 != 0
+		case .Cells_12x24:
+			return spleen_12x24[index][row] << uint(column) & 0x8000 != 0
+		case .Cells_16x32:
+			return spleen_16x32[index][row] << uint(column) & 0x8000 != 0
+		case .Cells_32x64:
+			return spleen_32x64[index][row] << uint(column) & 0x8000_0000 != 0
+		}
+		return false
+	}
+	cells := [?]int{graphics.CELL_WIDTH, SPLEEN_12X24_WIDTH, SPLEEN_16X32_WIDTH, SPLEEN_32X64_WIDTH, 2 * SPLEEN_12X24_WIDTH, 2 * SPLEEN_32X64_WIDTH}
+	for cell in cells {
+		form, _ := spleen_form_of(cell)
+		canvas := m_draw(pixels, cell)
+		wrong, drawn_count := 0, 0
+		for row in 0 ..< 2 * cell {
+			for column in 0 ..< cell {
+				expected := ink(form.size, index, row / form.factor, column / form.factor)
+				drawn := canvas.pixels[row * canvas.stride + column] != 0
+				if drawn {
+					drawn_count += 1
+				}
+				if expected != drawn {
+					wrong += 1
+				}
+			}
+		}
+		testing.expectf(t, wrong == 0 && drawn_count > 0, "M in a cell of %v: %v pixels differ from Spleen %v at %v times, %v drawn", cell, wrong, form.size, form.factor, drawn_count)
 	}
 }
 
@@ -317,15 +331,12 @@ the_boot_display_at_each_scale_keeps_its_boxes :: proc(t: ^testing.T) {
 	started_machine(data)
 	record := new(Drawn_Boxes)
 	defer free(record)
-	memory := new(Scaled_Glyph_Memory)
-	defer free(memory)
 	drawn_boxes = record
 	defer drawn_boxes = nil
-	defer cell_font_use(nil, nil)
-	// The screens of the scales 1, 10/8, 12/8 and 16/8.
+	// A screen of each scale: 1, 1.5, 2 and 4.
 	screens := [?]struct {
 		width, height, eighths: int,
-	}{{1024, 768, SCALE_ONE}, {1280, 960, SCALE_LEAST}, {1920, 1080, 12}, {3840, 2160, SCALE_MOST}}
+	}{{1024, 768, SCALE_ONE}, {1920, 1080, SPLEEN_12X24_WIDTH}, {2560, 1440, SPLEEN_16X32_WIDTH}, {5120, 2880, SPLEEN_32X64_WIDTH}}
 	for screen in screens {
 		place, ok := display_place(screen.width, screen.height)
 		testing.expect(t, ok)
@@ -333,83 +344,25 @@ the_boot_display_at_each_scale_keeps_its_boxes :: proc(t: ^testing.T) {
 		pixels := make([]graphics.Color, screen.width * screen.height)
 		defer delete(pixels)
 		canvas := graphics.Canvas{pixels = raw_data(pixels), width = screen.width, height = screen.height, stride = screen.width}
-		// The boot program draws with no font of the cells; the root
-		// service with one. The boxes are the same.
-		for with_font in ([2]bool{false, true}) {
-			if with_font {
-				testing.expect_value(t, cell_font_use(cells_font_file, memory), vector_font.Font_Problem.None)
-			} else {
-				cell_font_use(nil, nil)
-			}
-			for &pixel in pixels {
-				pixel = 0xFF00FF
-			}
-			record.count, record.lost = 0, 0
-			memory.drawn_count = 0
-			draw_screen(canvas, data)
-			name := fmt.tprintf("%v x %v, %v eighths, font of the cells %v", screen.width, screen.height, place.eighths, with_font)
-			boxes_check(t, record, place, name)
-			// Each pixel outside the panel is the background, and the
-			// panel covers each of its own pixels.
-			testing.expect_value(t, pixels[0], graphics.Color(graphics.DARK_BACKGROUND))
-			testing.expect_value(t, pixels[len(pixels) - 1], graphics.Color(graphics.DARK_BACKGROUND))
-			missed := 0
-			for row in place.y ..< place.y + place.height {
-				for column in place.x ..< place.x + place.width {
-					if pixels[row * screen.width + column] == 0xFF00FF {
-						missed += 1
-					}
+		for &pixel in pixels {
+			pixel = 0xFF00FF
+		}
+		record.count, record.lost = 0, 0
+		draw_screen(canvas, data)
+		name := fmt.tprintf("%v x %v, %v eighths", screen.width, screen.height, place.eighths)
+		boxes_check(t, record, place, name)
+		// Each pixel outside the panel is the background, and the panel
+		// covers each of its own pixels.
+		testing.expect_value(t, pixels[0], graphics.Color(graphics.DARK_BACKGROUND))
+		testing.expect_value(t, pixels[len(pixels) - 1], graphics.Color(graphics.DARK_BACKGROUND))
+		missed := 0
+		for row in place.y ..< place.y + place.height {
+			for column in place.x ..< place.x + place.width {
+				if pixels[row * screen.width + column] == 0xFF00FF {
+					missed += 1
 				}
 			}
-			testing.expectf(t, missed == 0, "%s: %v pixels of the panel are not drawn", name, missed)
-			// A cell of a whole scale draws from the caches; another from the
-			// outlines when the font is given.
-			cell_from_outlines := place.eighths % SCALE_ONE != 0
-			testing.expectf(t, (memory.drawn_count > 0) == (with_font && cell_from_outlines), "%s: %v glyphs drawn from the outlines", name, memory.drawn_count)
 		}
-	}
-}
-
-// The cost of the glyphs of the root service at each scale: the first
-// draw of the display after the font is given draws each glyph from its
-// outline; the next draw finds them kept. It prints measures and asserts
-// nothing. It measures only when the environment sets
-// MODUS_MEASURE_BOOT_DISPLAY:
-//
-//   MODUS_MEASURE_BOOT_DISPLAY=1 odin test src/library/support/bootscreen -o:speed -collection:modus=src/library -define:ODIN_TEST_NAMES=bootscreen.scaled_glyph_measure
-//
-// Each time is the least of MEASURE_BATCHES draws, so that an interruption
-// of the host does not count.
-@(test)
-scaled_glyph_measure :: proc(t: ^testing.T) {
-	if os.get_env("MODUS_MEASURE_BOOT_DISPLAY", context.temp_allocator) == "" {
-		return
-	}
-	MEASURE_BATCHES :: 20
-	sync.mutex_lock(&package_state_lock)
-	defer sync.mutex_unlock(&package_state_lock)
-	data := new(Data)
-	defer free(data)
-	started_machine(data)
-	memory := new(Scaled_Glyph_Memory)
-	defer free(memory)
-	defer cell_font_use(nil, nil)
-	screens := [?][2]int{{1280, 960}, {1920, 1080}, {3840, 2160}}
-	for screen in screens {
-		pixels := make([]graphics.Color, screen[0] * screen[1])
-		defer delete(pixels)
-		canvas := graphics.Canvas{pixels = raw_data(pixels), width = screen[0], height = screen[1], stride = screen[0]}
-		place, _ := display_place(screen[0], screen[1])
-		first_least, kept_least := max(i64), max(i64)
-		for _ in 0 ..< MEASURE_BATCHES {
-			cell_font_use(cells_font_file, memory)
-			start := time.tick_now()
-			draw_screen(canvas, data)
-			first_least = min(first_least, i64(time.duration_microseconds(time.tick_since(start))))
-			start = time.tick_now()
-			draw_screen(canvas, data)
-			kept_least = min(kept_least, i64(time.duration_microseconds(time.tick_since(start))))
-		}
-		fmt.printfln("bootscreen: the display at %v eighths on %v x %v: %v us for the first draw with %v glyphs from the outlines, %v us for a draw with the glyphs kept (%v words kept, the least of %v draws)", place.eighths, screen[0], screen[1], first_least, memory.drawn_count, kept_least, memory.word_count, MEASURE_BATCHES)
+		testing.expectf(t, missed == 0, "%s: %v pixels of the panel are not drawn", name, missed)
 	}
 }

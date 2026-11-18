@@ -139,8 +139,9 @@
       # certificate of the firmware signing key enrolled and Secure Boot on.
       OVMF_FULL_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";
       OVMF_FULL_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
-      # The source of the font, for the command "font" of modustool.
-      FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc/spleen-8x16.bdf";
+      # The folder of the BDF files of the font (8x16, 12x24, 16x32, 32x64), for
+      # the command "font" of modustool.
+      FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc";
     };
 
     # The Xcursor folder of the pointer theme of the owner, for the build in

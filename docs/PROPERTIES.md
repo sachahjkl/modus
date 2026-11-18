@@ -563,6 +563,7 @@ The table does not name the tools of the host that build and test the system (th
 | B612, as the subset "B612 ASCII" | `resources/fonts/b612.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
 | B612 Bold, as the subset "B612 ASCII Bold" | `resources/fonts/b612_bold.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
 | Spleen 8x16, the fallback font | `src/library/support/graphics/font.odin` | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` |
+| Spleen 12x24, 16x32 and 32x64, the text of the boot display at 12, 16 and 32 eighths | `src/library/support/bootscreen/spleen_sizes.odin` | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` |
 | The pointer theme "Posy's Cursor", in the boot image of a development build that has it, never in a release image | `resources/pointers/posy.manifest` | CC-BY-NC-4.0 | `resources/pointers/posy.manifest` |
 | The cryptography of Odin's `core:crypto`, the files of `origin.manifest` | `src/library/support/cryptography` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
 | The field arithmetic of fiat-crypto, in Odin's port | `src/library/support/cryptography/_fiat` | BSD-1-Clause | `src/library/support/cryptography/LICENSE.fiat-crypto.txt` |

@@ -3,25 +3,20 @@ package root
 import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
-import "modus:support/bootscreen"
-import "modus:support/display"
 import "modus:contract/settings"
-import "modus:support/graphics"
 import "modus:support/system"
-import "modus:support/vector_font"
 
 // The text of the system and the settings of the system (docs/FONTS.md):
 // this service creates the settings page, checks the hashes and the format
-// of the glyph caches of the boot image once, draws the boot display with the
-// default one, and maps the page and the caches read-only into each
-// process with a surface, into each terminal and into the compositor. The
-// process `settings` receives the page with Write.
+// of the glyph caches of the boot image once, and maps the page and the
+// caches read-only into each process with a surface, into each terminal and
+// into the compositor. The process `settings` receives the page with Write.
+// The boot display that this service draws reads no glyph cache: its text
+// is Spleen at the size of its scale (src/md/features/boot_display_scale.md).
 //
-// The boot display is drawn before the storage service runs: it uses the
-// defaults (the vector font with the grid fit, red green blue). At the end
-// of the boot this service starts `settings` for its boot pass: it reads the
-// settings kept in its private store and writes the page; the compositor
-// sees the change and each window draws again.
+// At the end of the boot this service starts `settings` for its boot pass:
+// it reads the settings kept in its private store and writes the page; the
+// compositor sees the change and each window draws again.
 
 // The resource of the boot image of each glyph cache.
 glyph_cache_resources := [settings.Glyph_Cache]string {
@@ -33,8 +28,6 @@ glyph_cache_resources := [settings.Glyph_Cache]string {
 }
 
 settings_memory: system.Handle
-boot_interface_font: display.Interface_Font // The interface font of the boot display, from the boot image.
-boot_glyph_memory: bootscreen.Scaled_Glyph_Memory // The glyphs of the boot display at a cell that no glyph cache holds.
 settings_page: ^settings.Page
 glyph_cache_mappings: [settings.Glyph_Cache]system.Mapping // page_count 0: no such glyph cache.
 // The font outlines of the boot image: page_count 0 when the image has
@@ -80,12 +73,9 @@ text_settings_create :: proc "contextless" () {
 	}
 	// The font outlines, given only when their hash is right and their
 	// format valid, as a glyph cache; and the demand cache beside them.
-	outlines: font_outlines.Outlines
 	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
-		problem: font_outlines.Problem
-		outlines, problem = font_outlines.validate(image[entry.offset:][:entry.size])
-		if problem.kind == .None {
+		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
 			font_outlines_mapping = mapping
 		} else {
 			system.log_in("processes", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
@@ -94,35 +84,6 @@ text_settings_create :: proc "contextless" () {
 	demand_cache_create()
 	if glyph_cache_mappings[.With_Grid_Fit].page_count == 0 {
 		system.log_in("processes", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
-		return
-	}
-	// The boot display: the caches in the image that this service maps.
-	if problem := graphics.text_cache_use(caches[.With_Grid_Fit]); problem.kind != .None {
-		system.log_in("processes", .Warning, "root: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the boot display is Spleen 8x16")
-	}
-	if glyph_cache_mappings[.Bold].page_count != 0 {
-		graphics.text_bold_cache_use(caches[.Bold])
-	}
-	// The boot display at a scale of eighths: the font file of the cells,
-	// the one whose hash the cache of the cells names, drawn at the size of
-	// a cell that no cache holds (src/md/features/boot_display_scale.md).
-	if font_outlines_mapping.page_count != 0 {
-		for &record, index in outlines.records {
-			if record.hash != caches[.With_Grid_Fit].header.font_hash {
-				continue
-			}
-			if problem := bootscreen.cell_font_use(font_outlines.font_bytes(&outlines, index), &boot_glyph_memory); problem != .None {
-				system.log_in("processes", .Warning, "root: the font of the cells is refused for the boot display: ", vector_font.font_problem_names[problem], ": its text at a scale of eighths is the whole scale below")
-			}
-			break
-		}
-	}
-	// The boot display: its titles and the names of its facts in the
-	// interface font, from the same caches that the processes receive.
-	interface_given := glyph_cache_mappings[.Interface].page_count != 0 && glyph_cache_mappings[.Interface_Bold].page_count != 0
-	if interface_given && caches[.Interface].header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 && caches[.Interface_Bold].header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 {
-		boot_interface_font = {regular = caches[.Interface], bold = caches[.Interface_Bold]}
-		bootscreen.interface_font_use(&boot_interface_font)
 	}
 }
 

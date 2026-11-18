@@ -15,7 +15,8 @@
 //
 // The layout is in logical pixels, a panel of WIDTH x HEIGHT; each place
 // becomes a screen place at the one border of the drawing procedures of
-// this file (src/md/features/boot_display_scale.md).
+// this file (src/md/features/boot_display_scale.md). Each text is Spleen,
+// at the size of the scale, in each drawer (spleen_cells.odin).
 //
 // A record that is all zero is valid: its card shows that the fact is
 // not known yet. This package uses no kernel operation: package collect
@@ -32,7 +33,6 @@ package bootscreen
 
 import info "modus:contract/boot_info"
 import "modus:support/bootscreen/image_card"
-import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/mark"
@@ -121,7 +121,7 @@ WHOLE :: Area{0, 0, WIDTH, HEIGHT}
 // The kind of a box that a draw records for the host test.
 Box_Kind :: enum u8 {
 	Element, // A rectangle, a gradient or the mark.
-	Text, // The cells of a text, or the box of a name in the interface font.
+	Text, // The cells of a text.
 }
 
 // One box that a draw drew, in screen pixels from the top left of the
@@ -336,7 +336,7 @@ write_in_cells :: proc "contextless" (area: Area, x, y: int, characters: string,
 	// of a text are whole and the same at each place.
 	cell_width := cell * scale_eighths / SCALE_ONE
 	box_record(.Text, area, x0, y0, x0 + count * cell_width, y0 + 2 * cell_width)
-	cells_draw(canvas, x0 - left, y0 - top, characters, tone(color), cell_width)
+	spleen_text_draw(canvas, x0 - left, y0 - top, characters, tone(color), cell_width)
 	return x + count * cell
 }
 
@@ -368,69 +368,14 @@ write_large :: proc "contextless" (area: Area, x, y: int, characters: string, co
 	return write_in_cells(area, x, y, characters, color, LARGE_CELL)
 }
 
-// stripes_of_screen gives the order of the stripes of the vector font for
-// the words of the screen: a screen with red in the low byte has the
-// channels of a color in the other order.
-@(private)
-stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> graphics.Subpixel_Order {
-	if !red_first {
-		return order
-	}
-	switch order {
-	case .Red_Green_Blue:
-		return .Blue_Green_Red
-	case .Blue_Green_Red:
-		return .Red_Green_Blue
-	case .None:
-	}
-	return order
-}
-
 CARD_MARGIN :: graphics.CARD_MARGIN // The margin inside a card.
 CARD_TITLE :: graphics.CARD_TITLE // The height of the title of a card.
 
-// The interface font of the boot display (docs/DESIGN.md, section 5): the
-// root service gives it after it validated the caches of the boot image
-// (interface_font_use), so its titles and the names of its facts are in
-// B612 and its values in the font of the cells. Its caches hold the whole
-// scales: at a scale of eighths, the names are in the font of the cells.
-// The boot program holds no glyph cache: its first screen is in Spleen
-// 8x16, the one font of its binary.
-boot_interface_font: ^display.Interface_Font
-
-// interface_font_use gives the display the interface font that the root
-// service validated. nil: the font of the cells for each text.
-interface_font_use :: proc "contextless" (font: ^display.Interface_Font) {
-	boot_interface_font = font
-}
-
-// write_name draws a name in the interface font when the display has it
-// at its scale, cut to room, else in the font of the cells, and gives the
-// logical x after it. bold: the weight of the title of a card.
+// write_name draws a name cut to room, in the cells of Spleen as each text
+// of the display, and gives the logical x after it. The whole name is on
+// the log or in another card: text_fit is the rule of such a name.
 @(private)
-write_name :: proc "contextless" (area: Area, x, y: int, name: string, room: int, color: graphics.Color, bold := false) -> int {
-	if scale_eighths == SCALE_ONE && boot_interface_font != nil {
-		records: [1]interface.Draw_Record
-		text: [64]u8
-		table := interface.Draw_Table{records = records[:], text = text[:], interface_font = boot_interface_font}
-		font := bold ? interface.FONT_INTERFACE_BOLD : interface.FONT_INTERFACE
-		shown := interface.text_fit(&table, font, name, room)
-		if interface.font_in_use(&table, font, len(shown)).kind == .Interface && len(shown) <= len(text) {
-			if len(shown) == 0 {
-				return x
-			}
-			canvas, left, top := area_canvas(area)
-			x0, y0 := to_screen(area.x + x), to_screen(area.y + y)
-			order := graphics.text_state.order
-			graphics.text_state.order = stripes_of_screen(order)
-			defer graphics.text_state.order = order
-			after := interface.draw_text(&table, x0 - left, y0 - top, shown, tone(color), font)
-			interface.execute(&table, canvas)
-			box_record(.Text, area, x0, y0, after + left, y0 + LINE)
-			// At scale 1 a logical pixel is a screen pixel.
-			return x + (after + left - x0)
-		}
-	}
+write_name :: proc "contextless" (area: Area, x, y: int, name: string, room: int, color: graphics.Color) -> int {
 	return write(area, x, y, interface.text_fit(nil, {}, name, room), color)
 }
 
@@ -451,7 +396,7 @@ card :: proc "contextless" (x, y, width, height: int, title, caption: string, ac
 	if reserved > 0 {
 		right -= reserved + 16
 	}
-	after := write_name(WHOLE, title_left, y + 12, title, right - title_left, accent, true)
+	after := write_name(WHOLE, title_left, y + 12, title, right - title_left, accent)
 	write_name(WHOLE, after + 16, y + 12, caption, right - (after + 16), graphics.DARK_DIM)
 	return {x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - 8}
 }

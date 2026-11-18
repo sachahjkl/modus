@@ -28,7 +28,7 @@ SIMILARITY_NEAR_LISTED_MOST :: 20
 
 // The source files that a command of the tool writes: the finder does not
 // read them, as their source is not Odin code of the project.
-SIMILARITY_GENERATED_SOURCES :: [?]string{foundation.FONT_OUTPUT}
+SIMILARITY_GENERATED_SOURCES :: [?]string{foundation.FONT_OUTPUT, foundation.BOOT_DISPLAY_FONT_OUTPUT}
 // The first line of a file that a command writes.
 SIMILARITY_GENERATED_MARK :: "// This file is the output of"
 
