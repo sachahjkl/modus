@@ -82,8 +82,8 @@ a_list_with_a_wrong_header_is_refused :: proc(t: ^testing.T) {
 
 // A row: a name of no byte, a name with a capital, a space or a byte past
 // ASCII, a name of 32 bytes with no zero after it, a byte after the zero
-// bytes, a bit of needs past the last part and the highest bit, a rule of
-// 0, one past the last and the largest word, a mark one past Needed and the
+// bytes, a bit of needs past the last part and the highest bit, a rule one
+// past the last and the largest word, a mark one past Needed and the
 // largest word, a reserved word that is not 0, one restart past the limit,
 // and two rows of one module. The refusal names the row, and gives no row.
 @(test)
@@ -101,7 +101,6 @@ a_row_with_a_wrong_word_is_refused :: proc(t: ^testing.T) {
 		{proc(record: ^Row_Record) {record.module_name[MODULE_NAME_SIZE - 1] = 'a'}, .Bad_Name},
 		{proc(record: ^Row_Record) {record.needs = u64(1) << (u64(max(Machine_Part)) + 1)}, .Unknown_Part},
 		{proc(record: ^Row_Record) {record.needs = u64(1) << 63}, .Unknown_Part},
-		{proc(record: ^Row_Record) {record.absent_rule = 0}, .Unknown_Rule},
 		{proc(record: ^Row_Record) {record.absent_rule = u32(max(Absent_Part_Rule)) + 1}, .Unknown_Rule},
 		{proc(record: ^Row_Record) {record.absent_rule = max(u32)}, .Unknown_Rule},
 		{proc(record: ^Row_Record) {record.usable_mark = u32(max(Usable_Mark)) + 1}, .Unknown_Mark},

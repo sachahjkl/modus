@@ -10,22 +10,17 @@ package root
 // usable (Machine_Usable); this service does not judge what it started.
 
 import info "modus:contract/boot_info"
-import "modus:contract/errors"
-import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
+import "modus:private/root/start_policy_rules"
 import "modus:support/pci"
 import "modus:support/principals"
 import "modus:support/system"
 
-// What this service waits for of the start policy.
-Start_Policy_Stage :: enum u8 {
-	None,      // No start policy started yet.
-	Running,   // A start policy runs, and the machine is not usable yet: its stop or the hang bound starts the rescue.
-	Stopping,  // The processes of a failed start policy stop: the rescue starts when each one is gone.
-	Usable,    // The start policy that runs sent Machine_Usable.
-	No_Policy, // The rescue start policy failed too: no start policy runs, and this service starts nothing more by itself.
-}
+// What this service waits for of the start policy. The decisions on the
+// commands of a start policy are in the private part start_policy_rules,
+// which the host tests.
+Start_Policy_Stage :: start_policy_rules.Stage
 
 // The list of a start policy: the module is the same, the resource of the
 // boot image differs.
@@ -230,7 +225,9 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 // start_policy_running gives the place of the start policy that runs.
 start_policy_running :: proc "contextless" () -> ^Started {
 	for &item in started {
-		if item.process != 0 && .Start_Policy in item.role.grants {
+		// A failed start policy whose stop this service asked can still run
+		// past the bound of the stage Stopping: it is not the one that runs.
+		if item.process != 0 && .Start_Policy in item.role.grants && !item.stop_asked_by_root_service {
 			if state, _ := system.process_state(item.process); state != .Stopped {
 				return &item
 			}
@@ -280,16 +277,30 @@ start_policy_stopped :: proc "contextless" (item: ^Started, code: u32) {
 // starts at a pass of the loop where none of them is left.
 start_policy_rescue_begin :: proc "contextless" () {
 	start_policy_stage = .Stopping
-	start_policy_deadline = system.WAIT_FOREVER
+	// A process that does not end its stop must not hold the machine with
+	// no start policy: past the bound the rescue starts anyway, with a line.
+	start_policy_deadline = system.time() + START_POLICY_HANG_BOUND_MILLISECONDS
 	for &item in started {
 		if item.process != 0 && (item.asked_by_start_policy || item.is_terminal && item.writer != nil && item.writer.asked_by_start_policy) {
-			system.call(.Process_Stop, u64(item.process), 0)
+			root_stop_ask(&item)
 		}
 	}
 	if start_policy_process != nil {
-		system.call(.Process_Stop, u64(start_policy_process.process), 0)
+		root_stop_ask(start_policy_process)
 		start_policy_process = nil
 	}
+}
+
+// root_stop_ask stops a process that this service chooses to stop, and
+// marks it so: the reap then reads no fault and no absence in its stop.
+// The stop of `unlock` is asked through its stage, so it does not count
+// toward the bound of its restarts.
+root_stop_ask :: proc "contextless" (item: ^Started) {
+	item.stop_asked_by_root_service = true
+	if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
+		unlock_stop_ask()
+	}
+	system.call(.Process_Stop, u64(item.process), 0)
 }
 
 // start_policy_step runs after each reap: it starts the rescue when the
@@ -299,10 +310,17 @@ start_policy_step :: proc "contextless" () {
 	switch start_policy_stage {
 	case .None, .Usable, .No_Policy:
 	case .Stopping:
+		left := 0
 		for &item in started {
 			if item.process != 0 && (item.asked_by_start_policy || .Start_Policy in item.role.grants) {
-				return
+				left += 1
 			}
+		}
+		if left > 0 && system.time() < start_policy_deadline {
+			return
+		}
+		if left > 0 {
+			system.log_in("processes", .Warning, "root: ", u64(left), " processes of the failed start policy did not stop within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the rescue start policy starts beside them")
 		}
 		start_policy_launch(.Rescue)
 	case .Running:
@@ -313,7 +331,7 @@ start_policy_step :: proc "contextless" () {
 		if start_policy_list == .Rescue {
 			system.log_in("processes", .Error, "root: the rescue start policy ", hash, " sent no Machine_Usable within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms")
 			if start_policy_process != nil {
-				system.call(.Process_Stop, u64(start_policy_process.process), 0)
+				root_stop_ask(start_policy_process)
 			}
 			start_policy_none("the rescue start policy sent no Machine_Usable within the hang bound")
 			return
@@ -326,15 +344,15 @@ start_policy_step :: proc "contextless" () {
 // start_policy_wake gives the time at which the loop must run
 // start_policy_step even with no event.
 start_policy_wake :: proc "contextless" () -> u64 {
-	return start_policy_stage == .Running ? start_policy_deadline : system.WAIT_FOREVER
+	return start_policy_stage == .Running || start_policy_stage == .Stopping ? start_policy_deadline : system.WAIT_FOREVER
 }
 
 // start_policy_usable runs Machine_Usable: only from the start policy that
 // runs, and once.
 start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) -> system.Status {
-	if sender != start_policy_process || start_policy_stage != .Running {
-		values^ = errors.ring_fail(u32(root_ring.Root_Command.Machine_Usable), .Exists, .Processes)
-		return .Bad_State
+	if status, refusal := start_policy_rules.usable_decision(sender == start_policy_process, start_policy_stage); status != .Ok {
+		values^ = refusal
+		return status
 	}
 	start_policy_stage = .Usable
 	start_policy_deadline = system.WAIT_FOREVER
@@ -350,12 +368,19 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 // the handles of; each other name starts with the grants of its role. The
 // completion has a handle of the process with the right Read, so its stop
 // ends a wait of the start policy.
-start_policy_start :: proc "contextless" (sender: ^Started, name: string, values: ^[7]u64) -> system.Status {
-	// The dispatch writes the record of a refusal (root_command_refusal):
-	// it names Exists for a name that runs, and Reserved for a part of the
-	// system that no procedure here starts.
-	if sender != start_policy_process || find_running(name) != nil {
-		return .Bad_State
+// written: the procedure wrote the error record of its refusal, and the
+// dispatch must not write over it.
+start_policy_start :: proc "contextless" (sender: ^Started, name: string, values: ^[7]u64, written: ^bool) -> system.Status {
+	// The two processes of a test machine take the budget or the memory of
+	// the machine, and the stop of shortage stops the machine: they start
+	// only from the image of their test (start_policy_rules.start_refusal).
+	// The error record of a refusal is start_policy_rules.start_record,
+	// which root_command_answer writes.
+	facts := start_policy_facts(sender, name)
+	if refusal := start_policy_rules.start_refusal(facts); refusal != .Ok {
+		values^ = start_policy_rules.start_record(refusal, facts)
+		written^ = true
+		return refusal
 	}
 	status: system.Status
 	switch name {
@@ -394,6 +419,18 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 		values[0] = u64(given)
 	}
 	return .Ok
+}
+
+// start_policy_facts reads the facts of a Start of a start policy from the
+// state of this service, for start_policy_rules.
+start_policy_facts :: proc "contextless" (sender: ^Started, name: string) -> start_policy_rules.Start_Facts {
+	return {
+		sender_runs               = sender == start_policy_process,
+		name_runs                 = find_running(name) != nil,
+		name_is_a_start_policy    = .Start_Policy in role_of(name).grants,
+		name_is_of_a_test_machine = name == "shortage" || name == OPERATION_FUZZING_NAME,
+		name_in_image             = len(system.image_find(image, name)) != 0,
+	}
 }
 
 // find_running gives the process with a name that runs: a process that

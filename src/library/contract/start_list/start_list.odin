@@ -82,9 +82,11 @@ PART_NAMES := [Machine_Part]string {
 
 // What the start policy does with a row when a part that the row needs is
 // absent.
+// The zero value is the rule of a row that names no rule: no start, the
+// safe one. A word past the members is still refused at the border.
 Absent_Part_Rule :: enum u32 {
-	Not_Started    = 1, // No start, with one line.
-	Started_Anyway = 2,
+	Not_Started    = 0, // No start, with one line.
+	Started_Anyway = 1,
 }
 
 // Whether the machine is usable without the process of a row.

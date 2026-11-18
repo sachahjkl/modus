@@ -25,6 +25,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
+import "modus:private/root/start_policy_rules"
 import "modus:support/principals"
 import "modus:support/system"
 
@@ -37,6 +38,10 @@ Command_Answer :: struct {
 	// change of a passphrase): the loop goes on meanwhile, and the work
 	// sends it.
 	held:   bool,
+	// The procedure of the command wrote the error record of its refusal,
+	// for a command whose table says that the dispatch writes it: the
+	// refusals of a start policy (start_policy_rules).
+	written: bool,
 }
 
 // root_ring_serve answers each command that a process wrote on its root
@@ -66,7 +71,7 @@ root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) 
 	}
 	command := decision.command
 	answer = root_command_run(item, command, record, name)
-	if answer.status != .Ok && !answer.held && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
+	if answer.status != .Ok && !answer.held && !answer.written && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
 		answer.values = root_command_refusal(command, name, record.values[4], answer.status)
 	}
 	return answer
@@ -84,7 +89,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// handle of each process (start_policy.odin). A process that a
 		// process starts belongs to the session of the process that asks.
 		if .Start_Policy in item.role.grants {
-			answer.status = start_policy_start(item, name, &answer.values)
+			answer.status = start_policy_start(item, name, &answer.values, &answer.written)
 		} else {
 			answer.status = start(name, item.principal)
 		}
@@ -101,6 +106,12 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 				answer.status = .Ok
 				break
 			}
+		}
+		// A start policy learns nothing of a process that it did not ask
+		// for: each refusal is the one record Absent.
+		if answer.status != .Ok && .Start_Policy in item.role.grants {
+			answer.values = start_policy_rules.stop_record()
+			answer.written = true
 		}
 	case .Connect:
 		answer.status = root_connect(item, record, name, &answer.values)

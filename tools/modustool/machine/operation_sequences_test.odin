@@ -410,8 +410,9 @@ a_release_refuses_the_modules_of_a_test_image :: proc(t: ^testing.T) {
 	testing.expect_value(t, build.release_test_module_problem(build.boot_image_encode(files, len(files)), "an image"), "")
 }
 
-// The two modules of the operation sequences are in no image but their
-// own: the boot image of the build, and so a release, does not hold them.
+// The two modules of the operation sequences, and shortage, are in no
+// image but their own: the boot image of the build, and so a release, does
+// not hold them.
 @(test)
 the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testing.T) {
 	found := 0
@@ -420,10 +421,10 @@ the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testi
 			continue
 		}
 		found += 1
-		testing.expectf(t, build.name == foundation.OPERATION_FUZZING_MODULE || build.name == foundation.OPERATION_SEQUENCE_RUNNER_MODULE, "%s is in one image only", build.name)
-		testing.expect_value(t, build.only_in_image, foundation.BOOT_IMAGE_OPERATION_SEQUENCES)
+		testing.expectf(t, build.name == foundation.OPERATION_FUZZING_MODULE || build.name == foundation.OPERATION_SEQUENCE_RUNNER_MODULE || build.name == "shortage", "%s is in one image only", build.name)
+		testing.expect_value(t, build.only_in_image, build.name == "shortage" ? foundation.BOOT_IMAGE_SHORTAGE : foundation.BOOT_IMAGE_OPERATION_SEQUENCES)
 		testing.expect(t, !foundation.module_in_boot_image(build), "a module of one image is in the boot image")
 		testing.expect(t, foundation.module_in_a_boot_image(build), "a module of one image is in no image")
 	}
-	testing.expect_value(t, found, 2)
+	testing.expect_value(t, found, 3)
 }

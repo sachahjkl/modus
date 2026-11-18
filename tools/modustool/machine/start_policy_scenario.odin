@@ -14,8 +14,10 @@ import "modustool:foundation"
 // 1. the key R, pressed until the boot program reads it: the root service
 //    starts the rescue start policy in place of the default one, and the
 //    rescue makes the machine usable with its console;
-// 2. a start list whose row of the console names a module that does not
-//    exist: the default start policy stops before Machine_Usable, the root
+// 2. a start list with a row of `shortage`, which this image does not hold,
+//    refused with no stop of the machine, and a row of the console that
+//    names a module that does not exist: the default start policy stops
+//    before Machine_Usable, the root
 //    service stops what it asked for, and the rescue takes over, with its
 //    line;
 // 3. to 5. three machines with one variable store of the firmware: the
@@ -58,8 +60,11 @@ scenario_start_policy_key := [?]Step {
 
 @(rodata)
 scenario_start_policy_missing_console := [?]Step {
-	{kind = .Wait, text = "start_policy: the start list has 5 rows: each starts in its order"},
-	{kind = .Wait, text = "start_policy: cannot start console_missing: status "},
+	{kind = .Wait, text = "start_policy: the start list has 6 rows: each starts in its order"},
+	// shortage is not in this image: the root service refuses it before its
+	// procedure, which would stop the machine, and the machine runs on.
+	{kind = .Wait, text = "start_policy: cannot start shortage: status ", fails_on = "kernel: the machine stops with code"},
+	{kind = .Wait, text = "start_policy: cannot start console_missing: status ", fails_on = "kernel: the machine stops with code"},
 	{kind = .Wait, text = "start_policy: the machine is not usable without console_missing: the start policy stops before Machine_Usable"},
 	{kind = .Wait, text = " stopped before the machine was usable, with the code "},
 	{kind = .Wait, text = ": the rescue start policy starts"},
@@ -84,7 +89,8 @@ scenario_start_policy_boot_next := [?]Step {
 	{kind = .Wait, text = "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy "},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "root: the machine is usable, by the start policy "},
-	{kind = .Wait, text = RESCUE_USABLE_TEXT},
+	// The entry is there: the boot program writes no second one.
+	{kind = .Wait, text = RESCUE_USABLE_TEXT, fails_on = RESCUE_ENTRY_WRITTEN_LINE},
 	{kind = .Quit},
 }
 
@@ -108,6 +114,7 @@ start_policy_boot_entry_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.eprintfln("modustool: test failed: the log %s has no number after \"%s\"", TEST_OUTPUT_START_POLICY_ENTRY, RESCUE_ENTRY_WRITTEN_LINE)
 		return false
 	}
+	rescue_entry_last_in_the_order(number) or_return
 	// A machine test frees the temporary memory after each step: the texts
 	// that outlive a machine are in memory of their own.
 	boot_next := fmt.aprintf("%02x%02x", number & 0xFF, number >> 8)
@@ -134,6 +141,59 @@ start_policy_boot_entry_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Quit},
 	}
 	return machine_test(part, wrong_word[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_START_POLICY_WRONG_WORD, exit_status = 0, firmware_variables = START_POLICY_VARIABLES})
+}
+
+// rescue_entry_last_in_the_order checks the BootOrder that the first
+// machine left: the rescue entry is its last entry, and is there once, so
+// the firmware starts it only when the entries before it fail.
+rescue_entry_last_in_the_order :: proc(number: u16) -> bool {
+	order, found := firmware_variable_read("BootOrder")
+	if !found || len(order) == 0 || len(order) % 4 != 0 {
+		fmt.eprintfln("modustool: test failed: the variable store has no BootOrder of whole entries: %q", order)
+		return false
+	}
+	count := 0
+	last: u16
+	for place := 0; place < len(order); place += 4 {
+		low, low_ok := strconv.parse_u64_of_base(order[place:][:2], 16)
+		high, high_ok := strconv.parse_u64_of_base(order[place + 2:][:2], 16)
+		if !low_ok || !high_ok {
+			fmt.eprintfln("modustool: test failed: BootOrder %q is not hexadecimal", order)
+			return false
+		}
+		last = u16(low | high << 8)
+		if last == number {
+			count += 1
+		}
+	}
+	if count != 1 || last != number {
+		fmt.eprintfln("modustool: test failed: BootOrder %q holds the rescue entry Boot%04X %d times, and its last entry is Boot%04X", order, number, count, last)
+		return false
+	}
+	foundation.test_passed_print("BootOrder ends with the rescue entry Boot%04X, once", number)
+	return true
+}
+
+// run_within_the_hang_bound runs a host program, and ends it at the hang
+// bound: a program that hangs must not hold the test.
+run_within_the_hang_bound :: proc(command: []string) -> bool {
+	host_process, start_error := os.process_start({command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
+	if start_error != nil {
+		fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_error)
+		return false
+	}
+	state, wait_error := os.process_wait(host_process, foundation.HANG_BOUND)
+	if wait_error != nil || !state.exited {
+		_ = os.process_kill(host_process)
+		_, _ = os.process_wait(host_process)
+		fmt.eprintfln("modustool: test failed: %s did not end within %v", command[0], foundation.HANG_BOUND)
+		return false
+	}
+	if !state.success {
+		fmt.eprintfln("modustool: test failed: %s failed (code %d)", command[0], state.exit_code)
+		return false
+	}
+	return true
 }
 
 // rescue_entry_number reads the number of the entry from the line of the
@@ -193,7 +253,7 @@ firmware_variables_set :: proc(variables: [][2]string) -> bool {
 		return false
 	}
 	written := foundation.join(START_POLICY_VARIABLES, ".new")
-	foundation.run({"virt-fw-vars", "--input", START_POLICY_VARIABLES, "--output", written, "--set-json", START_POLICY_VARIABLES_JSON}) or_return
+	run_within_the_hang_bound({"virt-fw-vars", "--input", START_POLICY_VARIABLES, "--output", written, "--set-json", START_POLICY_VARIABLES_JSON}) or_return
 	if err := foundation.file_move(written, START_POLICY_VARIABLES); err != nil {
 		fmt.eprintfln("modustool: cannot move %s: %v", written, err)
 		return false
@@ -204,7 +264,7 @@ firmware_variables_set :: proc(variables: [][2]string) -> bool {
 // firmware_variable_read gives the bytes, in hexadecimal, of one boot
 // variable of the shared store.
 firmware_variable_read :: proc(name: string) -> (data: string, found: bool) {
-	foundation.run({"virt-fw-vars", "--input", START_POLICY_VARIABLES, "--output-json", START_POLICY_VARIABLES_JSON}) or_return
+	run_within_the_hang_bound({"virt-fw-vars", "--input", START_POLICY_VARIABLES, "--output-json", START_POLICY_VARIABLES_JSON}) or_return
 	text := foundation.read_file(START_POLICY_VARIABLES_JSON) or_return
 	store: Firmware_Variables_Json
 	if json.unmarshal(text, &store, allocator = context.temp_allocator) != nil {

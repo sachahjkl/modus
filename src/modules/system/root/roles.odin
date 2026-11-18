@@ -304,8 +304,8 @@ process_roles := [?]Process_Role_Row {
 	// The demand cache with Write and the font outlines
 	// (font_service_start).
 	{name = "glyphs", grants = {.System_Part}},
-	// On the machine of the test of a shortage of frames, its start list
-	// asks for it, and shortage_start gives it the machine with Inspect and
+	// Only the image of the test of a shortage of frames holds it: its
+	// start list asks for it, and shortage_start gives it the machine with Inspect and
 	// Stop; a command Start of another sender gives it no grant.
 	{name = "shortage"},
 	// On the machine of the operation sequences, its start list asks for

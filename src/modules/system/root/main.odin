@@ -302,6 +302,10 @@ Started :: struct {
 	// it stopped before the rescue starts, and a start policy stops only
 	// such a process (start_policy.odin).
 	asked_by_start_policy: bool,
+	// This service asked the stop of the process, for the rescue: its stop
+	// is no fault of the process, and the stop of the compositor so is no
+	// absence of the screen, whatever the order of the reap.
+	stop_asked_by_root_service: bool,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -538,6 +542,13 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 // failure on the boot display.
 failure_show :: proc "contextless" (text: string, status: system.Status) {
 	if compositor != 0 {
+		// This service asks the stop: the screen returns to it, and the
+		// stop is no absence of the screen.
+		for &item in started {
+			if item.process == compositor {
+				item.stop_asked_by_root_service = true
+			}
+		}
 		system.call(.Process_Stop, u64(compositor), 0) // The screen returns to this service.
 		// The compositor could leave the page 1 on the screen; the boot
 		// display is on the page 0, the framebuffer of the firmware.
@@ -972,6 +983,13 @@ compositor_place_free :: proc "contextless" (served: ^Started) {
 // on the page 0 of the framebuffer of the firmware, is on the screen again.
 compositor_end :: proc "contextless" () {
 	compositor = 0
+	// Each window ring was a handle in the table of that compositor, and
+	// died with it: a later Client_Remove for one would name a handle of
+	// the next compositor. This clears the window of each disk process too,
+	// as it is a place of the same table.
+	for &item in started {
+		item.client = 0
+	}
 	if display_registers_address != nil {
 		bochs_display.page_show(display_registers_address, 0, display_screen_height)
 	}
@@ -1937,7 +1955,7 @@ reap :: proc "contextless" () {
 			compositor_reaped := item.process == compositor
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
-			stopped_for_the_rescue := item.asked_by_start_policy && start_policy_stage == .Stopping
+			stopped_for_the_rescue := item.stop_asked_by_root_service
 			release(&item)
 			// A later start gets no window and a start with a terminal is
 			// refused (start_view_give), and nothing starts here.

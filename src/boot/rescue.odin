@@ -8,6 +8,7 @@ package boot
 // record. Both give the same Rescue in the boot record.
 
 import info "modus:contract/boot_info"
+import "modus:private/boot_program/rescue_entry"
 import "modus:support/bootscreen"
 import "base:intrinsics"
 
@@ -86,199 +87,158 @@ load_options_request :: proc "contextless" () -> info.Start_Request {
 	stop(string(text.bytes[:text.count]))
 }
 
-// The description of the rescue boot entry in the boot menu of the
-// firmware.
-RESCUE_ENTRY_DESCRIPTION :: "modus (rescue)"
-// The numbers of the boot options that the boot program reads at most, in
-// BootOrder and in its search of a free number.
-BOOT_OPTION_LIMIT :: 128
-// The bytes of one boot option that the boot program reads or writes at
-// most: its attributes, its description, its device path and its record.
-LOAD_OPTION_LIMIT :: 1024
-// The bytes of the device path of the boot program at most.
-DEVICE_PATH_LIMIT :: 512
+// The entries of BootOrder that the boot program reads at most: a larger
+// order is refused with its own line, never cut.
+BOOT_ORDER_LIMIT :: 512
 
-// boot_option_name writes the UTF-16 name of the variable Boot#### with
-// four upper case hexadecimal digits, as the specification names it.
-boot_option_name :: proc "contextless" (number: u16) -> (name: [9]u16) {
-	digits := "0123456789ABCDEF"
-	prefix := "Boot"
-	for index in 0 ..< len(prefix) {
-		name[index] = u16(prefix[index])
-	}
-	for index in 0 ..< 4 {
-		name[4 + index] = u16(digits[number >> (uint(3 - index) * 4) & 15])
-	}
-	return name
-}
-
-// option_is_the_rescue_entry says if the bytes of a boot option have the
-// description of the rescue entry: the description starts after the
-// attributes (4 bytes) and the length of the path (2 bytes).
-option_is_the_rescue_entry :: proc "contextless" (option: []u8) -> bool {
-	description := RESCUE_ENTRY_DESCRIPTION
-	if len(option) < 6 + 2 * (len(description) + 1) {
-		return false
-	}
-	for index in 0 ..= len(description) {
-		unit := u16(option[6 + 2 * index]) | u16(option[7 + 2 * index]) << 8
-		expected := index < len(description) ? u16(description[index]) : 0
-		if unit != expected {
-			return false
-		}
-	}
-	return true
-}
-
-// device_path_copy copies the nodes of a device path into output, up to
-// its end node, which it copies only when keep_end is set. It gives the
-// bytes written; ok is false for a node shorter than its header, or for a
-// path that does not end inside the room.
-device_path_copy :: proc "contextless" (path: ^Efi_Device_Path_Node, output: []u8, keep_end: bool) -> (written: int, ok: bool) {
-	node := path
-	for node != nil {
-		length := int(node.length[0]) | int(node.length[1]) << 8
-		if length < size_of(Efi_Device_Path_Node) {
-			return 0, false
-		}
-		end := node.type == DEVICE_PATH_END_TYPE && node.subtype == DEVICE_PATH_END_ENTIRE_SUBTYPE
-		if end && !keep_end {
-			return written, true
-		}
-		if written + length > len(output) {
-			return 0, false
-		}
-		intrinsics.mem_copy_non_overlapping(&output[written], node, length)
-		written += length
-		if end {
-			return written, true
-		}
-		node = (^Efi_Device_Path_Node)(uintptr(node) + uintptr(length))
-	}
-	return 0, false
-}
+// The attributes of each boot variable that the boot program writes.
+BOOT_VARIABLE_ATTRIBUTES :: EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS
 
 // rescue_entry_write writes the boot entry "modus (rescue)" when it is
 // absent, and puts its number at the end of BootOrder, so that the
 // firmware lists it in its boot menu and starts it only when the entries
 // before it fail. The system has no installer, and an image cannot hold a
 // variable of the firmware, so the boot program is the one writer of the
-// entry. A refusal of the firmware is one line: the start goes on.
+// entry. An entry is this entry by its description and by the device path
+// of this program: the entry of another boot volume is not it. A firmware
+// with no BootOrder gets the entry and no BootOrder: the boot program does
+// not make the order of the boot menu. A refusal of the firmware is one
+// line: the start goes on.
 rescue_entry_write :: proc "contextless" () {
+	path: [rescue_entry.DEVICE_PATH_LIMIT]u8
+	path_size, path_ok := boot_program_path(path[:])
+	if !path_ok {
+		return
+	}
 	variables := system.runtime_services
 	global := EFI_GLOBAL_VARIABLE_GUID
-	attributes :: EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS
 	order_name := [?]u16{'B', 'o', 'o', 't', 'O', 'r', 'd', 'e', 'r', 0}
-	order: [BOOT_OPTION_LIMIT + 1]u16
-	order_size := uint(BOOT_OPTION_LIMIT * size_of(u16))
+	order: [BOOT_ORDER_LIMIT + 1]u16
+	order_size := uint(BOOT_ORDER_LIMIT * size_of(u16))
 	order_count := 0
 	switch status := variables.get_variable(raw_data(order_name[:]), &global, nil, &order_size, &order[0]); status {
 	case 0:
 		order_count = int(order_size) / size_of(u16)
 	case EFI_NOT_FOUND:
+	case EFI_BUFFER_TOO_SMALL:
+		rescue_entry_refused("BootOrder holds more than the 512 entries that the boot program reads", 0)
+		return
 	case:
 		rescue_entry_refused("the firmware does not give BootOrder", status)
 		return
 	}
-	// The entry and the first free number, among the first numbers.
-	found, free_found := false, false
-	entry_number, free_number: u16
-	for number in 0 ..< u16(BOOT_OPTION_LIMIT) {
-		name := boot_option_name(number)
-		option: [LOAD_OPTION_LIMIT]u8
-		size := uint(LOAD_OPTION_LIMIT)
-		status := variables.get_variable(raw_data(name[:]), &global, nil, &size, &option[0])
-		if status == EFI_NOT_FOUND && !free_found {
-			free_number, free_found = number, true
+	// The entry, among each entry that BootOrder names.
+	for index in 0 ..< order_count {
+		if rescue_entry_is_at(order[index], path[:path_size]) {
+			return
 		}
-		if status == 0 && option_is_the_rescue_entry(option[:min(int(size), LOAD_OPTION_LIMIT)]) {
-			entry_number, found = number, true
+	}
+	// The first free number. With no order, the entry of an earlier start
+	// took the first free number of its time: it is before the first free
+	// number of now.
+	number: u16
+	free := false
+	for candidate in 0 ..= u32(max(u16)) {
+		name := rescue_entry.option_name(u16(candidate))
+		probe_size: uint
+		status := variables.get_variable(raw_data(name[:]), &global, nil, &probe_size, nil)
+		if status == EFI_NOT_FOUND {
+			number, free = u16(candidate), true
 			break
 		}
-	}
-	if found {
-		for index in 0 ..< order_count {
-			if order[index] == entry_number {
-				return
-			}
-		}
-	} else {
-		if !free_found {
-			rescue_entry_refused("no number of a boot option is free", 0)
-			return
-		}
-		entry_number = free_number
-		if !rescue_option_write(entry_number) {
+		if order_count == 0 && rescue_entry_is_at(u16(candidate), path[:path_size]) {
 			return
 		}
 	}
-	if order_count >= BOOT_OPTION_LIMIT {
-		rescue_entry_refused("BootOrder is full", 0)
+	if !free {
+		rescue_entry_refused("no number of a boot option is free", 0)
 		return
 	}
-	order[order_count] = entry_number
-	if status := variables.set_variable(raw_data(order_name[:]), &global, attributes, uint(order_count + 1) * size_of(u16), &order[0]); status != 0 {
-		rescue_entry_refused("the firmware refused the write of BootOrder", status)
+	if !rescue_option_write(number, path[:path_size]) {
 		return
 	}
 	text: bootscreen.Text
 	bootscreen.put(&text, "boot program: the boot entry ")
-	bootscreen.put(&text, RESCUE_ENTRY_DESCRIPTION)
+	bootscreen.put(&text, rescue_entry.DESCRIPTION)
 	bootscreen.put(&text, " is written as Boot")
-	bootscreen.put_hex(&text, u64(entry_number), 4)
+	bootscreen.put_hex(&text, u64(number), 4)
+	if order_count == 0 {
+		bootscreen.put(&text, "; the firmware has no BootOrder")
+		bootscreen.put(&text, "\r\n")
+		print(string(text.bytes[:text.count]))
+		return
+	}
+	if order_count >= BOOT_ORDER_LIMIT {
+		rescue_entry_refused("BootOrder is full", 0)
+		return
+	}
+	order[order_count] = number
+	if status := variables.set_variable(raw_data(order_name[:]), &global, BOOT_VARIABLE_ATTRIBUTES, uint(order_count + 1) * size_of(u16), &order[0]); status != 0 {
+		rescue_entry_refused("the firmware refused the write of BootOrder", status)
+		return
+	}
 	bootscreen.put(&text, "\r\n")
 	print(string(text.bytes[:text.count]))
 }
 
-// rescue_option_write writes the variable of the rescue entry: active, its
-// description, the device path of this program (the path of its device,
-// then the path of its file), and the record that asks for the rescue.
-rescue_option_write :: proc "contextless" (number: u16) -> bool {
+// rescue_entry_is_at says if the boot option with a number is the entry of
+// this program. An option that does not fit the room of a read is not it.
+rescue_entry_is_at :: proc "contextless" (number: u16, path: []u8) -> bool {
+	name := rescue_entry.option_name(number)
+	global := EFI_GLOBAL_VARIABLE_GUID
+	option: [rescue_entry.OPTION_LIMIT]u8
+	size := uint(rescue_entry.OPTION_LIMIT)
+	if system.runtime_services.get_variable(raw_data(name[:]), &global, nil, &size, &option[0]) != 0 {
+		return false
+	}
+	return rescue_entry.option_is_the_rescue_entry(option[:min(int(size), rescue_entry.OPTION_LIMIT)], path)
+}
+
+// boot_program_path copies the device path of this program into output:
+// the path of its device, then the path of its file. A firmware that gives
+// no path, or a path past the room, is one line.
+boot_program_path :: proc "contextless" (output: []u8) -> (size: int, ok: bool) {
 	loaded: rawptr
 	device_path: rawptr
 	loaded_guid := EFI_LOADED_IMAGE_GUID
 	path_guid := EFI_DEVICE_PATH_GUID
 	if system.boot_services.handle_protocol(image_handle, &loaded_guid, &loaded) != 0 || loaded == nil {
 		rescue_entry_refused("the firmware gives no loaded image of the boot program", 0)
-		return false
+		return 0, false
 	}
 	image := (^Efi_Loaded_Image)(loaded)
 	if system.boot_services.handle_protocol(image.device_handle, &path_guid, &device_path) != 0 || device_path == nil || image.file_path == nil {
 		rescue_entry_refused("the firmware gives no device path of the boot program", 0)
-		return false
+		return 0, false
 	}
-	path: [DEVICE_PATH_LIMIT]u8
-	device_bytes, device_ok := device_path_copy((^Efi_Device_Path_Node)(device_path), path[:], false)
-	file_bytes, file_ok := device_path_copy(image.file_path, path[device_bytes:], true)
-	if !device_ok || !file_ok {
+	device_bytes, device_ok := rescue_entry.device_path_copy(([^]u8)(device_path), output, false)
+	if !device_ok {
 		rescue_entry_refused("the device path of the boot program does not fit its room", 0)
-		return false
+		return 0, false
 	}
-	path_size := device_bytes + file_bytes
-	option: [LOAD_OPTION_LIMIT]u8
-	attributes := u32(LOAD_OPTION_ACTIVE)
-	intrinsics.mem_copy_non_overlapping(&option[0], &attributes, 4)
-	option[4], option[5] = u8(path_size), u8(path_size >> 8)
-	place := 6
-	description := RESCUE_ENTRY_DESCRIPTION
-	for index in 0 ..= len(description) {
-		unit := index < len(description) ? description[index] : 0
-		option[place], option[place + 1] = unit, 0
-		place += 2
+	file_bytes, file_ok := rescue_entry.device_path_copy(([^]u8)(image.file_path), output[device_bytes:], true)
+	if !file_ok {
+		rescue_entry_refused("the device path of the boot program does not fit its room", 0)
+		return 0, false
 	}
+	return device_bytes + file_bytes, true
+}
+
+// rescue_option_write writes the variable of the rescue entry: active, its
+// description, the device path of this program, and the record that asks
+// for the rescue.
+rescue_option_write :: proc "contextless" (number: u16, path: []u8) -> bool {
 	record := info.load_options_write(.Rescue)
-	if place + path_size + size_of(record) > LOAD_OPTION_LIMIT {
+	record_bytes := transmute([info.LOAD_OPTIONS_SIZE]u8)record
+	option: [rescue_entry.OPTION_LIMIT]u8
+	size, fits := rescue_entry.option_write(path, record_bytes[:], option[:])
+	if !fits {
 		rescue_entry_refused("the boot entry does not fit its room", 0)
 		return false
 	}
-	intrinsics.mem_copy_non_overlapping(&option[place], &path[0], path_size)
-	place += path_size
-	intrinsics.mem_copy_non_overlapping(&option[place], &record, size_of(record))
-	place += size_of(record)
-	name := boot_option_name(number)
+	name := rescue_entry.option_name(number)
 	global := EFI_GLOBAL_VARIABLE_GUID
-	variable_attributes :: EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS
-	if status := system.runtime_services.set_variable(raw_data(name[:]), &global, variable_attributes, uint(place), &option[0]); status != 0 {
+	if status := system.runtime_services.set_variable(raw_data(name[:]), &global, BOOT_VARIABLE_ATTRIBUTES, uint(size), &option[0]); status != 0 {
 		rescue_entry_refused("the firmware refused the write of the boot entry", status)
 		return false
 	}
@@ -289,7 +249,7 @@ rescue_option_write :: proc "contextless" (number: u16) -> bool {
 // written. It is not a stop: the key R still asks for the rescue.
 rescue_entry_refused :: proc "contextless" (cause: string, status: Efi_Status) {
 	print("boot program: the boot entry ")
-	print(RESCUE_ENTRY_DESCRIPTION)
+	print(rescue_entry.DESCRIPTION)
 	print(" is not written: ")
 	print(cause)
 	if status != 0 {

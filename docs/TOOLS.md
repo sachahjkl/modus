@@ -1355,7 +1355,7 @@ A damaged record is never an error. The tool decides for a module after its impo
 |---|---|---|
 | `main` (`build/boot_volume.img`) | `boot.image`: every module of the image | The system as it is |
 | `fails` | `boot_fails.image`: no `start_policy` | The start must fail: no start policy, and no rescue |
-| `shortage` | `boot_shortage.image`: no input service | Its start list and its rescue list start only the process `shortage` |
+| `shortage` | `boot_shortage.image`: no input service, and `shortage`, which no other image holds: it takes nearly every page and stops the machine | Its start list and its rescue list start only the process `shortage` |
 | `missing_console` | `boot_missing_console.image`: every module | Its start list has a row of the console that names no module: the rescue takes over |
 | `operation_sequences` | `boot_operation_sequences.image`: every module, and `operation_fuzzing` and `operation_sequence_runner`, which no other image holds | Its start list and its rescue list start only the process `operation_fuzzing` ("The operation sequences") |
 | `measure` | `boot_measure.image`: every module, and the resource `measure_run` | A measure run ("A check by count, a measure by time") |

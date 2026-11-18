@@ -19,7 +19,7 @@ import "modustool:resources"
 MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: foundation.BUILD_FOLDER + "/modules_without_debug_information"
 BOOT_IMAGE :: foundation.BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: foundation.BUILD_FOLDER + "/boot_fails.image"
-BOOT_IMAGE_SHORTAGE :: foundation.BUILD_FOLDER + "/boot_shortage.image"
+BOOT_IMAGE_SHORTAGE :: foundation.BOOT_IMAGE_SHORTAGE
 // The boot image of the test of the rescue: the modules of the boot image,
 // with a start list whose row of the console names no module
 // (start_lists.odin).

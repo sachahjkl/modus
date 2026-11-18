@@ -103,7 +103,10 @@ module_builds := [?]Module_Build {
 	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true},
 	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", entry = true, image = true},
+	// It takes nearly every page of the machine and stops the machine at its
+	// end: only the image of its test holds it, so no start policy of
+	// another image can start it.
+	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", entry = true, image = true, only_in_image = BOOT_IMAGE_SHORTAGE},
 	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
 	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true},
@@ -220,6 +223,10 @@ SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/system"
 // The boot image of the operation sequences: the modules of the boot image,
 // and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
 BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.image"
+
+// The boot image of the shortage of frames: no input service, and the
+// module shortage, which only it holds.
+BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
 
 OPERATION_FUZZING_MODULE :: "operation_fuzzing"
 

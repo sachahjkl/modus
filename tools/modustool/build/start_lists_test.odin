@@ -46,7 +46,17 @@ a_start_list_that_is_not_valid_is_refused :: proc(t: ^testing.T) {
 	missing := start_lists_of_image(BOOT_IMAGE_MISSING_CONSOLE)
 	testing.expect(t, missing.start_refused_on_purpose)
 	missing_problems := start_list_problems(missing.start, image_modules_with_an_entry(BOOT_IMAGE_MISSING_CONSOLE, ""), false)
-	testing.expect_value(t, len(missing_problems), 1)
+	testing.expect(t, refused_for_the_rows(missing_problems, REFUSED_ON_PURPOSE_ROWS[:]), "the list of the test of the rescue is not refused for its two rows alone")
+	// shortage is in the image of its test only.
+	testing.expect(t, len(start_list_problems(SHORTAGE_START_LIST[:], image_modules_with_an_entry(BOOT_IMAGE, ""), false)) == 1, "the main image holds shortage")
+	// The check of a list refused on purpose refuses one problem too few,
+	// one too many, and another row.
+	testing.expect(t, !refused_for_the_rows(missing_problems[:1], REFUSED_ON_PURPOSE_ROWS[:]))
+	more := make([dynamic]string, context.temp_allocator)
+	append(&more, ..missing_problems)
+	append(&more, "the row date names no module with an entry in the image")
+	testing.expect(t, !refused_for_the_rows(more[:], REFUSED_ON_PURPOSE_ROWS[:]))
+	testing.expect(t, !refused_for_the_rows(missing_problems, []string{ABSENT_TEST_MODULE, "date"}))
 }
 
 // The check of the source of the start policy: one line past the bound, an
@@ -68,7 +78,7 @@ a_start_policy_past_its_bound_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(start_policy_source_problems(past)), 1)
 	split := [][2]string{{"main.odin", lines_of(START_POLICY_SOURCE_LINE_LIMIT)}, {"rows.odin", "package start_policy\n"}}
 	testing.expect_value(t, len(start_policy_source_problems(split)), 1)
-	imports := [?]string{"import \"core:fmt\"\n", "import op \"modus:contract/operation\"\n", "import \"modus:support/storage\"\n", "import\n"}
+	imports := [?]string{"import \"core:fmt\"\n", "import op \"modus:contract/operation\"\n", "import \"modus:support/storage\"\n", "import\n", "foreign import code \"code.asm\"\n", "\tforeign code {\n", "foreign {\n"}
 	for line in imports {
 		source := [][2]string{{"main.odin", strings.concatenate({"package start_policy\n", line}, context.temp_allocator)}}
 		testing.expectf(t, len(start_policy_source_problems(source)) == 1, "the import %q is taken", line)

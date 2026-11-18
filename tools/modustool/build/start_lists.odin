@@ -71,18 +71,30 @@ OPERATION_SEQUENCES_START_LIST := [?]Start_List_Row{{name = foundation.OPERATION
 // the rescue: no module has this name.
 MISSING_CONSOLE_MODULE :: "console_missing"
 
+// The module of a test machine that the list of the test of the rescue
+// names, and that its image does not hold: the root service refuses it
+// before its procedure, which would stop the machine.
+ABSENT_TEST_MODULE :: "shortage"
+
 // The default start list with a row of the console that names a module
 // that does not exist: the test of the rescue (start_policy_tests_run).
-// The check of the lists refuses it, with the one problem that it holds:
-// it goes only into the image of that test.
+// Before it, a row of `shortage`, which only the image of its test holds.
+// The check of the lists refuses it for these two rows, and for nothing
+// else: it goes only into the image of that test.
 @(rodata)
 MISSING_CONSOLE_START_LIST := [?]Start_List_Row {
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "glyphs", absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
+	{name = ABSENT_TEST_MODULE, absent_rule = .Not_Started},
 	{name = MISSING_CONSOLE_MODULE, needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 }
+
+// The rows that the check must refuse in the list of the test of the
+// rescue, each for a name of no module of the image.
+@(rodata)
+REFUSED_ON_PURPOSE_ROWS := [?]string{ABSENT_TEST_MODULE, MISSING_CONSOLE_MODULE}
 
 // The lists of one boot image.
 Start_Lists :: struct {
@@ -191,8 +203,8 @@ start_list_resources :: proc(path: string, without: string) -> (files: []resourc
 		problems := start_list_problems(kind.rows, modules, kind.rescue)
 		refused_on_purpose := lists.start_refused_on_purpose && !kind.rescue
 		if refused_on_purpose {
-			if len(problems) != 1 || !strings.contains(problems[0], MISSING_CONSOLE_MODULE) {
-				fmt.eprintfln("modustool: the start list of %s must be refused for its row %s alone, and its check gives: %v", path, MISSING_CONSOLE_MODULE, problems)
+			if !refused_for_the_rows(problems, REFUSED_ON_PURPOSE_ROWS[:]) {
+				fmt.eprintfln("modustool: the start list of %s must be refused for its rows %v alone, and its check gives: %v", path, REFUSED_ON_PURPOSE_ROWS, problems)
 				return nil, false
 			}
 		} else if len(problems) > 0 {
@@ -214,6 +226,20 @@ start_list_resources :: proc(path: string, without: string) -> (files: []resourc
 		append(&written, resources.Resource_File{name = kind.resource, path = file})
 	}
 	return written[:], true
+}
+
+// refused_for_the_rows says if the problems are one problem of the module
+// of each row, in the order of the rows, and nothing else.
+refused_for_the_rows :: proc(problems: []string, rows: []string) -> bool {
+	if len(problems) != len(rows) {
+		return false
+	}
+	for row, index in rows {
+		if !strings.contains(problems[index], fmt.tprintf("the row %s names no module", row)) {
+			return false
+		}
+	}
+	return true
 }
 
 // The bound of the source of the start policy: it reads a list and asks
@@ -239,6 +265,12 @@ start_policy_source_problems :: proc(sources: [][2]string) -> []string {
 		lines += strings.count(text, "\n")
 		for line in strings.split_lines(text, context.temp_allocator) {
 			trimmed := strings.trim_space(line)
+			// A foreign import or block reaches code that no description of
+			// a module names, past the allowed set: refused whole.
+			if strings.has_prefix(trimmed, "foreign") {
+				append(&problems, fmt.tprintf("%s: a foreign import or block: %s: the start policy holds no code of its own past its imports", path, trimmed))
+				continue
+			}
 			// A bare `import` and a grouped `import (` are imports too: the
 			// path check below refuses each one, so no import escapes it.
 			if trimmed != "import" && !strings.has_prefix(trimmed, "import ") && !strings.has_prefix(trimmed, "import(") {

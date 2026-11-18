@@ -226,15 +226,14 @@ Efi_Loaded_Image :: struct {
 }
 
 // One node of a device path: a type, a subtype and the bytes of the node,
-// the 4 of the header included. The last node has the type End.
+// the 4 of the header included. The last node has the type End. The walk
+// of a path is modus:private/boot_program/rescue_entry.
 Efi_Device_Path_Node :: struct {
 	type:    u8,
 	subtype: u8,
 	length:  [2]u8, // Little-endian.
 }
 EFI_DEVICE_PATH_GUID :: Efi_Guid{0x09576E91, 0x6D3F, 0x11D2, {0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B}}
-DEVICE_PATH_END_TYPE :: 0x7F
-DEVICE_PATH_END_ENTIRE_SUBTYPE :: 0xFF
 
 // The keys of the console of the firmware (EFI_SIMPLE_TEXT_INPUT_PROTOCOL).
 Efi_Input_Key :: struct {
@@ -252,10 +251,10 @@ Efi_Simple_Text_Input :: struct {
 EFI_VARIABLE_NON_VOLATILE :: 0x1
 EFI_VARIABLE_BOOTSERVICE_ACCESS :: 0x2
 EFI_VARIABLE_RUNTIME_ACCESS :: 0x4
-// A boot option that the boot menu lists and starts.
-LOAD_OPTION_ACTIVE :: 0x1
-// The statuses of GetVariable that are not a fault: no such variable.
+// The statuses of GetVariable that are not a fault: no such variable, and
+// a variable larger than the room of the read.
 EFI_NOT_FOUND :: Efi_Status(1 << 63 | 14)
+EFI_BUFFER_TOO_SMALL :: Efi_Status(1 << 63 | 5)
 
 Efi_Simple_File_System :: struct {
 	revision:    u64,
