@@ -20,6 +20,10 @@
 // pixels; the origin of a text in the interface font is the one place
 // inside a pixel, on a third of a pixel.
 //
+// A color is a Draw_Color, 0xAARRGGBB with straight alpha: alpha 255 is
+// opaque, and a color of 0 is transparent. A record blends its color over
+// the pixels by one rule, in linear light (graphics.blend_fill).
+//
 // See [draw record](term:draw-record) and [draw table](term:draw-table).
 package draw_record
 
@@ -30,7 +34,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 13
+VERSION :: 14
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -90,6 +94,22 @@ Font_Weight :: enum u8 {
 	Bold    = 1, // The bold weight: at scale 1 only.
 }
 
+// A color of a record: 0xAARRGGBB, with straight alpha in the high byte.
+// Alpha 255 is opaque; a color of 0 is transparent, so a record of zeros
+// draws nothing. A distinct type, so that a color of a canvas, 0x00RRGGBB,
+// never passes for one: opaque gives the draw color of such a color.
+Draw_Color :: distinct u32
+
+ALPHA_SHIFT :: 24 // The place of the alpha in a Draw_Color.
+OPAQUE_ALPHA :: 255 // The alpha of an opaque color.
+CHANNELS_MASK :: 0x00FF_FFFF // The red, the green and the blue of a Draw_Color.
+
+// The form of the pixels of a Picture.
+Picture_Format :: enum u8 {
+	Opaque         = 0, // Each pixel is 0x00RRGGBB, copied as it is.
+	Straight_Alpha = 1, // Each pixel is 0xAARRGGBB with straight alpha, blended by the rule of the colors.
+}
+
 // The font of a text run (docs/FONTS.md, "12.6 Which text stays monospace").
 // Zero is the font of the cells, the font that needs no cache.
 Font_Kind :: enum u8 {
@@ -105,15 +125,15 @@ Problem :: enum u8 {
 	Box_Inverted              = 3, // The right edge of the box is left of its left edge, or its bottom above its top.
 	Box_Past_Coordinate_Limit = 4, // An edge of the box is past COORDINATE_LIMIT.
 	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel: no kind of this version draws inside a pixel.
-	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color with a high byte, a scale, a weight, a thickness, an end of a line, a count, an origin.
+	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical or not opaque where the kind asks for it, a format, a scale, a weight, a thickness, an end of a line, a count, an origin.
 }
 
 // One draw record, 48 bytes, little-endian. A record holds values only:
 // no address, so it means the same in each address space, and a GPU can
 // read it.
 //
-// Example: `record_of(Draw_Rectangle{color = 0x00102030}, 0, 0, 0, 640, 1536)`
-// is a rectangle of 10 by 24 pixels at the corner of the surface.
+// Example: `record_of(Draw_Rectangle{color = 0xFF102030}, 0, 0, 0, 640, 1536)`
+// is an opaque rectangle of 10 by 24 pixels at the corner of the surface.
 Draw_Record :: struct {
 	kind:     u8, // The word of the kind: draw_kind_of_word gives its Draw_Kind.
 	reserved: [3]u8, // 0.
@@ -139,7 +159,7 @@ Draw_Record :: struct {
 // not on the box, so two boxes of one surface show one pattern, and an
 // element that draws a part of it needs no clip.
 Rectangle_Fields :: struct {
-	color:       u32, // 0x00RRGGBB.
+	color:       u32, // A Draw_Color, canonical: a color with alpha 0 is 0.
 	cell_x:      i32, // The left edge of one cell of the pattern, in 1/64 pixel of the surface: a whole pixel inside COORDINATE_LIMIT.
 	cell_y:      i32, // The top edge of that cell, in 1/64 pixel.
 	cell_width:  u16, // In 1/64 pixel: a whole pixel, at least 1, at most step_x.
@@ -149,17 +169,21 @@ Rectangle_Fields :: struct {
 	reserved:    [4]u8, // 0.
 }
 
-// The fields of a Vertical_Gradient.
+// The fields of a Vertical_Gradient. The two colors mix in their encoded
+// values, alpha too, so the red, the green and the blue of an end with
+// alpha 0 still color the lines between: a fade to a transparent red stays
+// red. Two ends with alpha 0 draw nothing, and are both 0.
 Vertical_Gradient_Fields :: struct {
-	top_color:    u32, // 0x00RRGGBB: the color of the top line.
-	bottom_color: u32, // 0x00RRGGBB: the color of the bottom line.
+	top_color:    u32, // A Draw_Color: the color of the top line.
+	bottom_color: u32, // A Draw_Color: the color of the bottom line.
 	reserved:     [16]u8, // 0.
 }
 
-// The fields of a Horizontal_Gradient.
+// The fields of a Horizontal_Gradient, with the colors of a
+// Vertical_Gradient.
 Horizontal_Gradient_Fields :: struct {
-	left_color:  u32, // 0x00RRGGBB: the color of the left column.
-	right_color: u32, // 0x00RRGGBB: the color of the right column.
+	left_color:  u32, // A Draw_Color: the color of the left column.
+	right_color: u32, // A Draw_Color: the color of the right column.
 	reserved:    [16]u8, // 0.
 }
 
@@ -172,7 +196,7 @@ Horizontal_Gradient_Fields :: struct {
 Text_Fields :: struct {
 	first:    u32, // The first byte of the text in the text table.
 	count:    u32, // The bytes of the text; in the interface font, at most INTERFACE_TEXT_LIMIT.
-	color:    u32, // 0x00RRGGBB.
+	color:    u32, // An opaque Draw_Color: the glyphs do not blend with alpha yet.
 	origin_x: i32, // The origin of the text, in 1/64 pixel, at most INK_MARGIN_LIMIT pixels right of the left edge of the box: on a whole pixel in the font of the cells, on a third of a pixel in the interface font.
 	font:     u8, // The word of a Font_Kind.
 	scale:    u8, // 1 to TEXT_SCALE_LIMIT.
@@ -183,7 +207,8 @@ Text_Fields :: struct {
 // The fields of a Picture. Its size is the size of the box.
 Picture_Fields :: struct {
 	memory:          u8, // The number of its picture memory in the list of the draw table.
-	memory_reserved: [3]u8, // 0.
+	format:          u8, // The word of a Picture_Format.
+	memory_reserved: [2]u8, // 0.
 	first:           u32, // The index of its first pixel in that memory.
 	stride:          u32, // The pixels from one line to the next.
 	generation:      u32, // A new number when its pixels change: the difference sees the change.
@@ -204,7 +229,7 @@ Line_Fields :: struct {
 	start_y:   i32,
 	end_x:     i32, // The second end, in 1/64 pixel: a whole pixel.
 	end_y:     i32,
-	color:     u32, // 0x00RRGGBB.
+	color:     u32, // An opaque Draw_Color: the squares of a thick line overlap, so a translucent one would blend twice.
 	thickness: u8, // The side of the square drawn at each point of the path, 1 to LINE_THICKNESS_LIMIT pixels.
 	reserved:  [3]u8, // 0.
 }
@@ -222,7 +247,7 @@ Line_Fields :: struct {
 // record as their enums. The box stays in the record.
 Draw_Nothing :: struct {}
 Draw_Rectangle :: struct {
-	color:      u32,
+	color:      Draw_Color,
 	repetition: Repetition, // Zero: the rectangle is its box.
 }
 // The pattern of a Rectangle: the place of one cell, its size and the steps,
@@ -232,13 +257,14 @@ Repetition :: struct {
 	cell_width, cell_height, step_x, step_y: u16,
 }
 Draw_Vertical_Gradient :: struct {
-	top_color, bottom_color: u32,
+	top_color, bottom_color: Draw_Color,
 }
 Draw_Horizontal_Gradient :: struct {
-	left_color, right_color: u32,
+	left_color, right_color: Draw_Color,
 }
 Draw_Text :: struct {
-	first, count, color: u32,
+	first, count:        u32,
+	color:               Draw_Color, // Opaque.
 	origin_x:            i32, // In 1/64 pixel.
 	font:                Font_Kind,
 	scale:               u8,
@@ -247,6 +273,7 @@ Draw_Text :: struct {
 Draw_Clip :: struct {}
 Draw_Picture :: struct {
 	memory:                    u8,
+	format:                    Picture_Format,
 	first, stride, generation: u32,
 }
 Draw_Text_Grid :: struct {
@@ -254,7 +281,7 @@ Draw_Text_Grid :: struct {
 }
 Draw_Line :: struct {
 	start_x, start_y, end_x, end_y: i32, // In 1/64 pixel.
-	color:                          u32,
+	color:                          Draw_Color, // Opaque.
 	thickness:                      u8,
 }
 
@@ -288,6 +315,37 @@ font_kind_of_word :: proc "contextless" (word: u8) -> (font: Font_Kind, ok: bool
 	return enum_word.member_of_word(Font_Kind, u64(word))
 }
 
+// picture_format_of_word reads the word of the format of a picture.
+picture_format_of_word :: proc "contextless" (word: u8) -> (format: Picture_Format, ok: bool) {
+	return enum_word.member_of_word(Picture_Format, u64(word))
+}
+
+// opaque gives the opaque draw color of a color of a canvas, 0x00RRGGBB:
+// its high byte is not read.
+opaque :: #force_inline proc "contextless" (color: u32) -> Draw_Color {
+	return Draw_Color(color & CHANNELS_MASK | OPAQUE_ALPHA << ALPHA_SHIFT)
+}
+
+// with_alpha gives the draw color of a color of a canvas with an alpha, in
+// its canonical form: with alpha 0 it is 0, the one transparent color.
+with_alpha :: #force_inline proc "contextless" (color: u32, alpha: u8) -> Draw_Color {
+	if alpha == 0 {
+		return 0
+	}
+	return Draw_Color(color & CHANNELS_MASK | u32(alpha) << ALPHA_SHIFT)
+}
+
+// alpha_of gives the alpha of a draw color.
+alpha_of :: #force_inline proc "contextless" (color: Draw_Color) -> u8 {
+	return u8(u32(color) >> ALPHA_SHIFT)
+}
+
+// channels_of gives the red, the green and the blue of a draw color, as a
+// color of a canvas: 0x00RRGGBB.
+channels_of :: #force_inline proc "contextless" (color: Draw_Color) -> u32 {
+	return u32(color) & CHANNELS_MASK
+}
+
 // The record as words of 64 bits: the unit of the one copy.
 RECORD_WORDS :: RECORD_SIZE / size_of(u64)
 
@@ -309,14 +367,15 @@ copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Rec
 // reserved byte or a byte that the kind does not name that is not 0, a box
 // whose right is left of its left or whose bottom is above its top, an
 // edge past COORDINATE_LIMIT or not on a whole pixel, and a field of the
-// kind out of its range, a color whose high byte is not 0 too. A refused
-// record draws nothing. The checks run in that order, so a record with two
-// faults gives the problem of the first check.
+// kind out of its range: a color that is not canonical, and a color of a
+// text or a line that is not opaque, too. A refused record draws nothing.
+// The checks run in that order, so a record with two faults gives the
+// problem of the first check.
 //
 // A record that the border reads is canonical: each byte that the kind does
-// not name is 0, and each color has a high byte of 0. Two records that it
-// reads draw the same thing only if their bytes are equal, but the first
-// byte of a range in the text table.
+// not name is 0, and a color with alpha 0 that draws nothing is 0. Two
+// records that it reads draw the same thing only if their bytes are equal,
+// but the first byte of a range in the text table.
 //
 // The checks are on the record alone. What a record names in the tables of
 // its frame (a range of the text table, the pixels of a picture memory) is
@@ -355,28 +414,28 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 			return nil, .Reserved_Not_Zero
 		}
 		repetition := Repetition{cell_x = fields.cell_x, cell_y = fields.cell_y, cell_width = fields.cell_width, cell_height = fields.cell_height, step_x = fields.step_x, step_y = fields.step_y}
-		if !color_valid(fields.color) || !repetition_valid(repetition) {
+		if !color_canonical(Draw_Color(fields.color)) || !repetition_valid(repetition) {
 			return nil, .Field_Past_Bound
 		}
-		return Draw_Rectangle{color = fields.color, repetition = repetition}, .None
+		return Draw_Rectangle{color = Draw_Color(fields.color), repetition = repetition}, .None
 	case .Vertical_Gradient:
 		fields := transmute(Vertical_Gradient_Fields)record.fields
 		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		if !color_valid(fields.top_color) || !color_valid(fields.bottom_color) {
+		if !gradient_colors_canonical(Draw_Color(fields.top_color), Draw_Color(fields.bottom_color)) {
 			return nil, .Field_Past_Bound
 		}
-		return Draw_Vertical_Gradient{top_color = fields.top_color, bottom_color = fields.bottom_color}, .None
+		return Draw_Vertical_Gradient{top_color = Draw_Color(fields.top_color), bottom_color = Draw_Color(fields.bottom_color)}, .None
 	case .Horizontal_Gradient:
 		fields := transmute(Horizontal_Gradient_Fields)record.fields
 		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		if !color_valid(fields.left_color) || !color_valid(fields.right_color) {
+		if !gradient_colors_canonical(Draw_Color(fields.left_color), Draw_Color(fields.right_color)) {
 			return nil, .Field_Past_Bound
 		}
-		return Draw_Horizontal_Gradient{left_color = fields.left_color, right_color = fields.right_color}, .None
+		return Draw_Horizontal_Gradient{left_color = Draw_Color(fields.left_color), right_color = Draw_Color(fields.right_color)}, .None
 	case .Text:
 		fields := transmute(Text_Fields)record.fields
 		if !all_zero(fields.reserved) {
@@ -384,7 +443,7 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 		}
 		font, font_ok := font_kind_of_word(fields.font)
 		weight, weight_ok := font_weight_of_word(fields.weight)
-		if !font_ok || !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_valid(fields.color) || !origin_valid(fields.origin_x, record.left) {
+		if !font_ok || !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_opaque(Draw_Color(fields.color)) || !origin_valid(fields.origin_x, record.left) {
 			return nil, .Field_Past_Bound
 		}
 		// The font of the cells draws from a whole pixel and has no bound of
@@ -400,13 +459,17 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 				return nil, .Field_Past_Bound
 			}
 		}
-		return Draw_Text{first = fields.first, count = fields.count, color = fields.color, origin_x = fields.origin_x, font = font, scale = fields.scale, weight = weight}, .None
+		return Draw_Text{first = fields.first, count = fields.count, color = Draw_Color(fields.color), origin_x = fields.origin_x, font = font, scale = fields.scale, weight = weight}, .None
 	case .Picture:
 		fields := transmute(Picture_Fields)record.fields
 		if !all_zero(fields.memory_reserved) || !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		return Draw_Picture{memory = fields.memory, first = fields.first, stride = fields.stride, generation = fields.generation}, .None
+		format, format_ok := picture_format_of_word(fields.format)
+		if !format_ok {
+			return nil, .Field_Past_Bound
+		}
+		return Draw_Picture{memory = fields.memory, format = format, first = fields.first, stride = fields.stride, generation = fields.generation}, .None
 	case .Text_Grid:
 		fields := transmute(Text_Grid_Fields)record.fields
 		if !all_zero(fields.reserved) {
@@ -418,10 +481,10 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		if !color_valid(fields.color) || fields.thickness < 1 || fields.thickness > LINE_THICKNESS_LIMIT || !line_end_valid(fields.start_x) || !line_end_valid(fields.start_y) || !line_end_valid(fields.end_x) || !line_end_valid(fields.end_y) {
+		if !color_opaque(Draw_Color(fields.color)) || fields.thickness < 1 || fields.thickness > LINE_THICKNESS_LIMIT || !line_end_valid(fields.start_x) || !line_end_valid(fields.start_y) || !line_end_valid(fields.end_x) || !line_end_valid(fields.end_y) {
 			return nil, .Field_Past_Bound
 		}
-		return Draw_Line{start_x = fields.start_x, start_y = fields.start_y, end_x = fields.end_x, end_y = fields.end_y, color = fields.color, thickness = fields.thickness}, .None
+		return Draw_Line{start_x = fields.start_x, start_y = fields.start_y, end_x = fields.end_x, end_y = fields.end_y, color = Draw_Color(fields.color), thickness = fields.thickness}, .None
 	}
 	// The switch above is whole, and each case returns.
 	return nil, .Unknown_Kind
@@ -441,25 +504,25 @@ record_of :: proc "contextless" (primitive: Draw_Primitive, element: u32, left, 
 	case Draw_Rectangle:
 		record.kind = u8(Draw_Kind.Rectangle)
 		pattern := value.repetition
-		record.fields = transmute([FIELDS_SIZE]u8)Rectangle_Fields{color = value.color, cell_x = pattern.cell_x, cell_y = pattern.cell_y, cell_width = pattern.cell_width, cell_height = pattern.cell_height, step_x = pattern.step_x, step_y = pattern.step_y}
+		record.fields = transmute([FIELDS_SIZE]u8)Rectangle_Fields{color = u32(value.color), cell_x = pattern.cell_x, cell_y = pattern.cell_y, cell_width = pattern.cell_width, cell_height = pattern.cell_height, step_x = pattern.step_x, step_y = pattern.step_y}
 	case Draw_Vertical_Gradient:
 		record.kind = u8(Draw_Kind.Vertical_Gradient)
-		record.fields = transmute([FIELDS_SIZE]u8)Vertical_Gradient_Fields{top_color = value.top_color, bottom_color = value.bottom_color}
+		record.fields = transmute([FIELDS_SIZE]u8)Vertical_Gradient_Fields{top_color = u32(value.top_color), bottom_color = u32(value.bottom_color)}
 	case Draw_Horizontal_Gradient:
 		record.kind = u8(Draw_Kind.Horizontal_Gradient)
-		record.fields = transmute([FIELDS_SIZE]u8)Horizontal_Gradient_Fields{left_color = value.left_color, right_color = value.right_color}
+		record.fields = transmute([FIELDS_SIZE]u8)Horizontal_Gradient_Fields{left_color = u32(value.left_color), right_color = u32(value.right_color)}
 	case Draw_Text:
 		record.kind = u8(Draw_Kind.Text)
-		record.fields = transmute([FIELDS_SIZE]u8)Text_Fields{first = value.first, count = value.count, color = value.color, origin_x = value.origin_x, font = u8(value.font), scale = value.scale, weight = u8(value.weight)}
+		record.fields = transmute([FIELDS_SIZE]u8)Text_Fields{first = value.first, count = value.count, color = u32(value.color), origin_x = value.origin_x, font = u8(value.font), scale = value.scale, weight = u8(value.weight)}
 	case Draw_Picture:
 		record.kind = u8(Draw_Kind.Picture)
-		record.fields = transmute([FIELDS_SIZE]u8)Picture_Fields{memory = value.memory, first = value.first, stride = value.stride, generation = value.generation}
+		record.fields = transmute([FIELDS_SIZE]u8)Picture_Fields{memory = value.memory, format = u8(value.format), first = value.first, stride = value.stride, generation = value.generation}
 	case Draw_Text_Grid:
 		record.kind = u8(Draw_Kind.Text_Grid)
 		record.fields = transmute([FIELDS_SIZE]u8)Text_Grid_Fields{first = value.first, count = value.count, columns = value.columns}
 	case Draw_Line:
 		record.kind = u8(Draw_Kind.Line)
-		record.fields = transmute([FIELDS_SIZE]u8)Line_Fields{start_x = value.start_x, start_y = value.start_y, end_x = value.end_x, end_y = value.end_y, color = value.color, thickness = value.thickness}
+		record.fields = transmute([FIELDS_SIZE]u8)Line_Fields{start_x = value.start_x, start_y = value.start_y, end_x = value.end_x, end_y = value.end_y, color = u32(value.color), thickness = value.thickness}
 	}
 	return record
 }
@@ -588,9 +651,23 @@ all_zero :: proc "contextless" (bytes: [$COUNT]u8) -> bool {
 	return true
 }
 
-// color_valid says if a color is 0x00RRGGBB: its high byte is 0. A color
-// with another high byte draws the same pixels, so the border refuses it,
-// and two records that draw the same thing keep the same bytes.
-color_valid :: proc "contextless" (color: u32) -> bool {
-	return color & 0xFF00_0000 == 0
+// color_canonical says if a color of one color is in its one form: a color
+// with alpha 0 draws nothing whatever its channels, so it must be 0, and
+// two records that draw the same thing keep the same bytes.
+color_canonical :: proc "contextless" (color: Draw_Color) -> bool {
+	return alpha_of(color) != 0 || color == 0
+}
+
+// gradient_colors_canonical says if the two colors of a gradient are in
+// their one form. The channels of one end with alpha 0 color the mix with
+// the other end, so they stay; two ends with alpha 0 draw nothing, and must
+// both be 0.
+gradient_colors_canonical :: proc "contextless" (first, second: Draw_Color) -> bool {
+	return alpha_of(first) != 0 || alpha_of(second) != 0 || (first == 0 && second == 0)
+}
+
+// color_opaque says if a color has alpha 255: the color of a text and of a
+// line, whose drawing does not blend with alpha yet.
+color_opaque :: proc "contextless" (color: Draw_Color) -> bool {
+	return alpha_of(color) == OPAQUE_ALPHA
 }

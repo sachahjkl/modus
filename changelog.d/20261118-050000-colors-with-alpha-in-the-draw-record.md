@@ -1,0 +1,3 @@
+type: Changed
+
+**Colors with alpha in the draw record**: a color of a record is `0xAARRGGBB` with straight alpha, and a rectangle, a pattern, a vertical and a horizontal gradient and a picture with the format `Straight_Alpha` blend over what is drawn before them by one rule in linear light, the rule of the text. The interface package writes them with `draw_rectangle_with_alpha`, the two gradients with alpha and `draw_picture_with_alpha`. The draw record is version 14, and the drawing module exports `damage_of_draw_table_14` and `execute_draw_table_in_rectangles_14`. A record with opaque colors draws the same pixels as before; a text and a line stay opaque, and the border refuses a color with alpha 0 that is not 0.

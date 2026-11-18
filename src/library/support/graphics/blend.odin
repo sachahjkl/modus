@@ -1,7 +1,7 @@
 package graphics
 
-// The blends of src/library/support/graphics: one family, two kinds of cover of a pixel
-// of the canvas.
+// The blends of src/library/support/graphics: one family, three kinds of
+// cover of a pixel of the canvas.
 //
 // - blend_premultiplied_alpha: a picture with one alpha for each pixel,
 //   premultiplied (the pointer pictures, docs/POINTERS.md). It blends in
@@ -9,8 +9,12 @@ package graphics
 // - blend_coverage_row: a color with one coverage for each channel (the
 //   glyphs of the vector font with subpixel bands, docs/FONTS.md). It
 //   blends in linear light with a gamma of 2.
+// - blend_straight_alpha_row: colors with straight alpha, 0xAARRGGBB, one
+//   for each pixel: the colors of the draw records and the pictures with
+//   alpha (blend_fill, blend_copy). It is the rule of blend_coverage_row,
+//   with the alpha as the coverage of the three channels.
 //
-// Both use integers only, keep the pixel where nothing covers it and copy
+// All use integers only, keep the pixel where nothing covers it and copy
 // the source where it covers all.
 //
 // Each blend has two forms (docs/SIMD.md): the scalar form here, the
@@ -168,6 +172,117 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 			under_red, under_green, under_blue = destination >> 16 & 0xFF, destination >> 8 & 0xFF, destination & 0xFF
 		}
 		line[column] = channel(under_red, under_red * under_red, color_red, red_square, red, square_root) << 16 | channel(under_green, under_green * under_green, color_green, green_square, green, square_root) << 8 | channel(under_blue, under_blue * under_blue, color_blue, blue_square, blue, square_root)
+	}
+}
+
+// blend_fill paints a rectangle in a color with straight alpha, 0xAARRGGBB,
+// cut to the canvas: the rule of the draw records. With d the pixel, c the
+// color and a its alpha, for each channel:
+//
+//   result = sqrt((d * d * (255 - a) + c * c * a) / 255)
+//
+// in linear light with a gamma of 2, as blend_coverage_row. Alpha 0 keeps
+// each pixel, and alpha 255 is fill: the same pixels, with no blend.
+blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, color: u32) {
+	alpha := color >> 24
+	if alpha == 0 {
+		return
+	}
+	if alpha == 255 {
+		fill(canvas, x, y, width, height, color & 0x00FFFFFF)
+		return
+	}
+	x0 := max(x, 0)
+	y0 := max(y, 0)
+	x1 := min(x + width, canvas.width)
+	y1 := min(y + height, canvas.height)
+	if x0 >= x1 {
+		return
+	}
+	square_root := blend_square_root()
+	// The row of one color that the blend reads: a part of a span at a
+	// time, so the stack holds a fixed size. Only the columns that a part
+	// reads are written: a cell of a pattern of 1 pixel writes one.
+	colors: [BLEND_PART]u32 = ---
+	for index in 0 ..< min(BLEND_PART, x1 - x0) {
+		colors[index] = color
+	}
+	for line in y0 ..< y1 {
+		row := canvas.pixels[line * canvas.stride:]
+		for part := x0; part < x1; part += BLEND_PART {
+			blend_straight_alpha_row(row[part:], raw_data(colors[:]), min(BLEND_PART, x1 - part), square_root)
+		}
+	}
+}
+
+// blend_copy draws all of source at (x, y) of canvas, cut to the canvas,
+// each pixel of source a color with straight alpha, 0xAARRGGBB, blended by
+// the rule of blend_fill. A source with stride 0 has one line, that each
+// line of the result blends.
+blend_copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
+	x0 := max(x, 0)
+	y0 := max(y, 0)
+	x1 := min(x + source.width, canvas.width)
+	y1 := min(y + source.height, canvas.height)
+	if x0 >= x1 {
+		return
+	}
+	square_root := blend_square_root()
+	for line in y0 ..< y1 {
+		blend_straight_alpha_row(canvas.pixels[line * canvas.stride + x0:], source.pixels[(line - y) * source.stride + (x0 - x):], x1 - x0, square_root)
+	}
+}
+
+// The pixels of the row of one color of blend_fill.
+@(private)
+BLEND_PART :: 64
+
+// blend_square_root gives the table of the blend in linear light of the
+// text state, made on first use: a program that draws no text still blends.
+@(private)
+blend_square_root :: proc "contextless" () -> ^[4096]u8 {
+	if text_state.square_root[4095] == 0 {
+		square_root_table_fill(&text_state.square_root)
+	}
+	return &text_state.square_root
+}
+
+// blend_straight_alpha_row blends one row in the form of the target.
+@(private)
+blend_straight_alpha_row :: #force_inline proc "contextless" (to: [^]Color, from: [^]u32, count: int, square_root: ^[4096]u8) {
+	when ODIN_ARCH == .amd64 {
+		blend_straight_alpha_row_sse2(to, from, count, square_root)
+	} else {
+		blend_straight_alpha_row_scalar(to, from, count, square_root)
+	}
+}
+
+// blend_straight_alpha_row_scalar is the scalar form: count colors of from,
+// each 0xAARRGGBB, over the pixels of to. A color with alpha 0 keeps the
+// pixel whole; alpha 255 writes its channels; another alpha writes the
+// blend of each channel, with the high byte 0. This is the rule of
+// blend_coverage_row_in_order for a word that covers the three channels
+// with the alpha. The two rows must not overlap.
+@(private)
+blend_straight_alpha_row_scalar :: proc "contextless" (to: [^]Color, from: [^]u32, count: int, square_root: ^[4096]u8) #no_bounds_check {
+	channel :: #force_inline proc "contextless" (under, color, alpha: u32, square_root: ^[4096]u8) -> u32 #no_bounds_check {
+		return u32(square_root[(under * under * (255 - alpha) + color * color * alpha) >> 12])
+	}
+	for column in 0 ..< count {
+		value := from[column]
+		alpha := value >> 24
+		if alpha == 0 {
+			continue
+		}
+		if alpha == 255 {
+			to[column] = value & 0x00FFFFFF
+			continue
+		}
+		under := to[column]
+		red := channel(under >> 16 & 0xFF, value >> 16 & 0xFF, alpha, square_root)
+		green := channel(under >> 8 & 0xFF, value >> 8 & 0xFF, alpha, square_root)
+		blue := channel(under & 0xFF, value & 0xFF, alpha, square_root)
+		to[column] = red << 16 | green << 8 | blue
 	}
 }
 

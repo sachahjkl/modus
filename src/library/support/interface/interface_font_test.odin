@@ -216,6 +216,7 @@ ink_margin_of :: proc(view: Record_View) -> int {
 interface_text_record_of :: proc(fields: draw_record.Text_Fields, left, top, right, bottom: i32) -> Draw_Record {
 	in_font := fields
 	in_font.font = u8(Font_Kind.Interface)
+	in_font.color = u32(draw_record.opaque(fields.color))
 	return {kind = u8(Draw_Kind.Text), left = left, top = top, right = right, bottom = bottom, fields = transmute([draw_record.FIELDS_SIZE]u8)in_font}
 }
 

@@ -11,7 +11,8 @@ import "modus:contract/draw_record"
 
 // fuzz_draw_record_execute: the border gives a problem of its enumeration;
 // a record that it reads has a box that is not inverted, inside the limit
-// and on whole pixels, writes back to its own bytes, and keeps its bytes
+// and on whole pixels, holds no rectangle of alpha 0 but the color 0,
+// writes back to its own bytes, and keeps its bytes
 // when its range moves to its own first byte; a record that it refuses
 // changes no byte of the input.
 fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
@@ -45,6 +46,11 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		if record.right < record.left || record.bottom < record.top {
 			return fuzz_broken(.Contract, "the record %d: read takes the inverted box %d, %d, %d, %d", index, record.left, record.top, record.right, record.bottom)
 		}
+		// A color that draws nothing has one form, so two records that draw
+		// the same pixels have the same bytes.
+		if rectangle, is_rectangle := primitive.(draw_record.Draw_Rectangle); is_rectangle && draw_record.alpha_of(rectangle.color) == 0 && rectangle.color != 0 {
+			return fuzz_broken(.Contract, "the record %d: read takes a rectangle of alpha 0 whose color is %08x, not 0", index, u32(rectangle.color))
+		}
 		written := draw_record.record_of(primitive, record.element, record.left, record.top, record.right, record.bottom)
 		if written != record {
 			return fuzz_broken(.Round_Trip, "the record %d: the record of what read gave is other bytes", index)
@@ -59,22 +65,28 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	return FUZZ_PASSED
 }
 
-// One record of each kind, in a box of whole pixels.
+// One record of each kind, in a box of whole pixels, and the forms of a
+// color with alpha: a translucent rectangle, a gradient that fades to its
+// color with alpha 0, a picture with alpha.
 fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 	pixel :: draw_record.units_of_pixels
+	opaque :: draw_record.opaque
 	primitives := [?]draw_record.Draw_Primitive {
 		draw_record.Draw_Nothing{},
-		draw_record.Draw_Rectangle{color = 0x00102030},
-		draw_record.Draw_Vertical_Gradient{top_color = 1, bottom_color = 2},
-		draw_record.Draw_Horizontal_Gradient{left_color = 3, right_color = 4},
-		draw_record.Draw_Text{first = 0, count = 4, color = 5, scale = 1},
+		draw_record.Draw_Rectangle{color = opaque(0x00102030)},
+		draw_record.Draw_Vertical_Gradient{top_color = opaque(1), bottom_color = opaque(2)},
+		draw_record.Draw_Horizontal_Gradient{left_color = opaque(3), right_color = opaque(4)},
+		draw_record.Draw_Text{first = 0, count = 4, color = opaque(5), scale = 1},
 		draw_record.Draw_Clip{},
 		// The grid of points: a pattern of cells of 2 pixels each 24 pixels.
-		draw_record.Draw_Rectangle{color = 6, repetition = {cell_x = pixel(12), cell_y = pixel(12), cell_width = 2 * draw_record.UNITS_PER_PIXEL, cell_height = 2 * draw_record.UNITS_PER_PIXEL, step_x = 24 * draw_record.UNITS_PER_PIXEL, step_y = 24 * draw_record.UNITS_PER_PIXEL}},
+		draw_record.Draw_Rectangle{color = opaque(6), repetition = {cell_x = pixel(12), cell_y = pixel(12), cell_width = 2 * draw_record.UNITS_PER_PIXEL, cell_height = 2 * draw_record.UNITS_PER_PIXEL, step_x = 24 * draw_record.UNITS_PER_PIXEL, step_y = 24 * draw_record.UNITS_PER_PIXEL}},
 		draw_record.Draw_Picture{first = 0, stride = 16, generation = 1},
 		draw_record.Draw_Text_Grid{first = 0, count = 32, columns = 2},
-		draw_record.Draw_Line{start_x = pixel(1), start_y = pixel(1), end_x = pixel(9), end_y = pixel(5), color = 9, thickness = 2},
-		draw_record.Draw_Text{first = 0, count = 4, color = 10, origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, font = .Interface, scale = 1, weight = .Bold},
+		draw_record.Draw_Line{start_x = pixel(1), start_y = pixel(1), end_x = pixel(9), end_y = pixel(5), color = opaque(9), thickness = 2},
+		draw_record.Draw_Text{first = 0, count = 4, color = opaque(10), origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, font = .Interface, scale = 1, weight = .Bold},
+		draw_record.Draw_Rectangle{color = draw_record.with_alpha(0x00102030, 128)},
+		draw_record.Draw_Vertical_Gradient{top_color = draw_record.Draw_Color(0x00405060), bottom_color = opaque(0x00405060)},
+		draw_record.Draw_Picture{format = .Straight_Alpha, first = 0, stride = 16, generation = 1},
 	}
 	all := make([]u8, len(primitives) * draw_record.RECORD_SIZE)
 	for primitive, index in primitives {

@@ -11,8 +11,10 @@ Record_View :: struct {
 	kind:                           Draw_Kind,
 	read:                           bool, // The border read the record: false for a record that it refuses.
 	x, y, width, height:            int, // The box, in pixels.
-	color:                          graphics.Color, // A rectangle, a text, a line; the top or left color of a gradient.
-	second_color:                   graphics.Color, // The bottom or right color of a gradient.
+	color:                          graphics.Color, // The channels of the color of a rectangle, a text, a line; of the top or left color of a gradient.
+	second_color:                   graphics.Color, // The channels of the bottom or right color of a gradient.
+	alpha, second_alpha:            u8, // The alpha of each color.
+	format:                         Picture_Format, // A picture.
 	repetition:                     draw_record.Repetition, // The pattern of a rectangle; zero for one rectangle.
 	first, count:                   int, // The range of a text or of a grid in the text table; the first pixel of a picture.
 	scale:                          int, // A text.
@@ -41,22 +43,29 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 	case draw_record.Draw_Clip:
 		view.kind = .Clip
 	case draw_record.Draw_Rectangle:
-		view.kind, view.color, view.repetition = .Rectangle, fields.color, fields.repetition
+		view.kind, view.repetition = .Rectangle, fields.repetition
+		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)
 	case draw_record.Draw_Vertical_Gradient:
-		view.kind, view.color, view.second_color = .Vertical_Gradient, fields.top_color, fields.bottom_color
+		view.kind = .Vertical_Gradient
+		view.color, view.alpha = draw_record.channels_of(fields.top_color), draw_record.alpha_of(fields.top_color)
+		view.second_color, view.second_alpha = draw_record.channels_of(fields.bottom_color), draw_record.alpha_of(fields.bottom_color)
 	case draw_record.Draw_Horizontal_Gradient:
-		view.kind, view.color, view.second_color = .Horizontal_Gradient, fields.left_color, fields.right_color
+		view.kind = .Horizontal_Gradient
+		view.color, view.alpha = draw_record.channels_of(fields.left_color), draw_record.alpha_of(fields.left_color)
+		view.second_color, view.second_alpha = draw_record.channels_of(fields.right_color), draw_record.alpha_of(fields.right_color)
 	case draw_record.Draw_Text:
-		view.kind, view.color, view.font = .Text, fields.color, fields.font
+		view.kind, view.font = .Text, fields.font
+		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)
 		view.first, view.count, view.scale, view.weight, view.origin_x = int(fields.first), int(fields.count), int(fields.scale), fields.weight, fields.origin_x
 	case draw_record.Draw_Picture:
-		view.kind = .Picture
+		view.kind, view.format = .Picture, fields.format
 		view.memory, view.first, view.stride, view.generation = int(fields.memory), int(fields.first), int(fields.stride), int(fields.generation)
 	case draw_record.Draw_Text_Grid:
 		view.kind = .Text_Grid
 		view.first, view.count, view.columns = int(fields.first), int(fields.count), int(fields.columns)
 	case draw_record.Draw_Line:
-		view.kind, view.color, view.thickness = .Line, fields.color, int(fields.thickness)
+		view.kind, view.thickness = .Line, int(fields.thickness)
+		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)
 		view.start_x, view.start_y = draw_record.pixels_floor(fields.start_x), draw_record.pixels_floor(fields.start_y)
 		view.end_x, view.end_y = draw_record.pixels_floor(fields.end_x), draw_record.pixels_floor(fields.end_y)
 	}

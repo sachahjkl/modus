@@ -187,6 +187,56 @@ blend_coverage_row_sse2 :: proc "contextless" (line: [^]Color, words: [^]u32, fi
 }
 
 // ---------------------------------------------------------------------------
+// The blend of colors with straight alpha, one for each pixel
+// (blend_straight_alpha_row_scalar is the scalar form).
+//
+// It is the arithmetic of the blend of a glyph, with the alpha of each
+// color as the coverage of its three channels and the channels of each
+// color in place of one color: the same squares, products, sum, shift and
+// twelve reads of the table for four pixels. A color with alpha 0 keeps its
+// pixel whole, and alpha 255 writes its channels with the high byte 0.
+// ---------------------------------------------------------------------------
+
+// straight_alpha_four_pixels blends the four colors of source over the four
+// pixels at address.
+@(private)
+straight_alpha_four_pixels :: #force_inline proc "contextless" (address: ^Four_Pixels, source: Four_Pixels, square_root: ^[4096]u8) {
+	under_pixels := intrinsics.unaligned_load(address)
+	under := channels_of_four_pixels(under_pixels)
+	source_lanes := channels_of_four_pixels(source)
+	colors := intrinsics.simd_bit_and(source_lanes, COLOR_LANES_OF_FOUR_PIXELS)
+	alpha := intrinsics.simd_shuffle(source_lanes, source_lanes, 3, 3, 3, 3, 7, 7, 7, 7, 11, 11, 11, 11, 15, 15, 15, 15)
+	from_table := square_roots_one_at_a_time(square_root_indices(under, alpha, colors * colors), square_root)
+	opaque := intrinsics.simd_lanes_eq(alpha, Sixteen_Channels(255))
+	blended := four_pixels_of_channels(intrinsics.simd_bit_and(intrinsics.simd_select(opaque, colors, from_table), COLOR_LANES_OF_FOUR_PIXELS))
+	transparent := intrinsics.simd_lanes_eq(intrinsics.simd_bit_and(source, Four_Pixels(0xFF000000)), Four_Pixels(0))
+	intrinsics.unaligned_store(address, intrinsics.simd_select(transparent, under_pixels, blended))
+}
+
+// blend_straight_alpha_row_sse2 is the SSE2 form of
+// blend_straight_alpha_row_scalar: four pixels at a time. A group of four
+// transparent colors is not read; a group of four opaque colors is written
+// whole: the general path gives the same bytes for both, at a higher cost.
+@(private)
+blend_straight_alpha_row_sse2 :: proc "contextless" (to: [^]Color, from: [^]u32, count: int, square_root: ^[4096]u8) #no_bounds_check {
+	column := 0
+	for ; column + 4 <= count; column += 4 {
+		source := intrinsics.unaligned_load((^Four_Pixels)(&from[column]))
+		alphas := intrinsics.simd_bit_and(source, Four_Pixels(0xFF000000))
+		if intrinsics.simd_reduce_or(alphas) == 0 {
+			continue
+		}
+		address := (^Four_Pixels)(&to[column])
+		if intrinsics.simd_reduce_and(alphas) == 0xFF000000 {
+			intrinsics.unaligned_store(address, intrinsics.simd_bit_and(source, Four_Pixels(0x00FFFFFF)))
+			continue
+		}
+		straight_alpha_four_pixels(address, source, square_root)
+	}
+	blend_straight_alpha_row_scalar(to[column:], from[column:], count - column, square_root)
+}
+
+// ---------------------------------------------------------------------------
 // The blend of a picture with premultiplied alpha
 // (blend_premultiplied_alpha_row_scalar is the scalar form).
 //

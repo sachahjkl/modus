@@ -326,6 +326,126 @@ premultiplied_forms_meet_each_channel_value :: proc(t: ^testing.T) {
 	testing.expect_value(t, wrong, 0)
 }
 
+@(private = "file")
+straight_alpha_row_in_form :: proc(form: Blend_Form, to: [^]Color, from: [^]u32, count: int, table: ^[4096]u8) {
+	switch form {
+	case .Scalar:
+		blend_straight_alpha_row_scalar(to, from, count, table)
+	case .Sse2:
+		blend_straight_alpha_row_sse2(to, from, count, table)
+	}
+}
+
+// The colors with straight alpha of the draw records: every length from 0
+// to 67, every place of the colors and of the pixels against 16 bytes, the
+// edge values often, groups of four transparent or four opaque colors, and
+// guard words around each row: each form gives the bytes of the scalar
+// form and writes nothing outside its columns.
+@(test)
+straight_alpha_forms_give_the_bytes_of_the_scalar_form :: proc(t: ^testing.T) {
+	forms := VECTOR_FORMS
+	table: [4096]u8
+	square_root_table_fill(&table)
+	random := Test_Random{state = 0xD1B54A32D192ED03}
+	GUARD :: 16
+	LONGEST :: 67
+	SIZE :: GUARD + 3 + LONGEST + GUARD
+	wrong := 0
+	for length in 0 ..= LONGEST {
+		for source_place in 0 ..< 4 {
+			for pixel_place in 0 ..< 4 {
+				for round in 0 ..< 6 {
+					source, reference: [SIZE]u32
+					for &value, index in source {
+						value = edge_word(&random)
+						// Some rounds hold runs of one alpha: whole groups of
+						// transparent or of opaque colors take their own path.
+						switch round {
+						case 4:
+							value &= 0x00FFFFFF
+							if index % 9 == 0 {
+								value |= 0x80000000
+							}
+						case 5:
+							value |= 0xFF000000
+							if index % 11 == 0 {
+								value = value & 0x00FFFFFF | 0x7F000000
+							}
+						}
+					}
+					for &pixel in reference {
+						pixel = edge_word(&random)
+					}
+					before := reference
+					straight_alpha_row_in_form(.Scalar, raw_data(reference[GUARD + pixel_place:]), raw_data(source[GUARD + source_place:]), length, &table)
+					for form in forms {
+						pixels := before
+						straight_alpha_row_in_form(form, raw_data(pixels[GUARD + pixel_place:]), raw_data(source[GUARD + source_place:]), length, &table)
+						if pixels != reference {
+							wrong += 1
+							if wrong <= 5 {
+								drawn_start := GUARD + pixel_place
+								found := difference_of(reference[:], pixels[:], drawn_start, drawn_start + length)
+								column := found.index - drawn_start
+								source_value: u32 // The source of a column outside the drawn columns is not read.
+								if column >= 0 && column < length {
+									source_value = source[GUARD + source_place + column]
+								}
+								testing.expectf(t, false, "%v, length %d, places %d %d: column %d (pixel %08x, color %08x): scalar %08x, the form %08x; %d pixels differ outside the drawn columns", form, length, source_place, pixel_place, column, before[found.index], source_value, found.expected, found.found, found.outside_count)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// Each alpha over each value of a pixel, with the edge values of a color:
+// each form gives the bytes of the scalar form, and the scalar form gives
+// the bytes of the blend of a glyph whose word covers the three channels
+// with the alpha. One rule for a glyph and for a color with alpha.
+@(test)
+straight_alpha_forms_meet_each_channel_value :: proc(t: ^testing.T) {
+	forms := VECTOR_FORMS
+	table: [4096]u8
+	square_root_table_fill(&table)
+	wrong := 0
+	glyph_wrong := 0
+	for alpha in u32(0) ..= 255 {
+		color_values := [5]u32{0, 1, 127, 254, 255}
+		for color_value in color_values {
+			channels := color_value << 16 | (255 - color_value) << 8 | color_value / 2
+			source: [256]u32
+			words: [256]u32
+			reference: [256]Color
+			for column in 0 ..< 256 {
+				value := u32(column)
+				source[column] = alpha << 24 | channels
+				words[column] = alpha << 24
+				reference[column] = (255 - value) << 24 | value << 16 | (255 - value) << 8 | value
+			}
+			before := reference
+			straight_alpha_row_in_form(.Scalar, raw_data(reference[:]), raw_data(source[:]), 256, &table)
+			for form in forms {
+				pixels := before
+				straight_alpha_row_in_form(form, raw_data(pixels[:]), raw_data(source[:]), 256, &table)
+				if pixels != reference {
+					wrong += 1
+				}
+			}
+			glyph := before
+			blend_coverage_row_in_order(raw_data(glyph[:]), raw_data(words[:]), 0, 256, channels, .None, &table)
+			if glyph != reference {
+				glyph_wrong += 1
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+	testing.expect_value(t, glyph_wrong, 0)
+}
+
 // glyph_in_form draws one glyph as character_vector_with does, with the
 // rows blended in one form: the choice of the program does not decide here.
 @(private = "file")

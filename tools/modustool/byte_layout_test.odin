@@ -133,6 +133,7 @@ expected_fields :: proc() -> []Expected_Field {
 		{"draw_record.Text_Fields", "weight", offset_of(draw_record.Text_Fields, weight), size_of(text.weight)},
 		{"draw_record.Text_Fields", "reserved", offset_of(draw_record.Text_Fields, reserved), size_of(text.reserved)},
 		{"draw_record.Picture_Fields", "memory", offset_of(draw_record.Picture_Fields, memory), size_of(picture.memory)},
+		{"draw_record.Picture_Fields", "format", offset_of(draw_record.Picture_Fields, format), size_of(picture.format)},
 		{"draw_record.Picture_Fields", "memory_reserved", offset_of(draw_record.Picture_Fields, memory_reserved), size_of(picture.memory_reserved)},
 		{"draw_record.Picture_Fields", "first", offset_of(draw_record.Picture_Fields, first), size_of(picture.first)},
 		{"draw_record.Picture_Fields", "stride", offset_of(draw_record.Picture_Fields, stride), size_of(picture.stride)},
